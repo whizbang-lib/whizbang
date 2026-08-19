@@ -186,11 +186,15 @@ public sealed partial class PgCommitOrderStamperWorker(
 
           try {
             var skipWakeWait = false;
+            var fencedDrain = false;
             while (!stoppingToken.IsCancellationRequested) {
               // Wait for NOTIFY-fired wake OR polling-interval timeout. Either path fires
               // the same stamp. Skipped when the previous iteration left known work behind
               // (mid-drain or fenced) — pending work never waits on an external wake.
               if (!skipWakeWait) {
+                // Returning to wake-waiting ends any fenced-drain episode: subsequent stamps
+                // are steady-state again and must not ring the make-up doorbell.
+                fencedDrain = false;
                 try {
                   var effectiveInterval = ComputeEffectivePollingInterval(
                     _stamperOptions,
@@ -200,7 +204,7 @@ public sealed partial class PgCommitOrderStamperWorker(
               }
               skipWakeWait = false;
 
-              var stamped = await _stampOnceAsync(lockConn, stoppingToken);
+              var stamped = await _stampOnceAsync(lockConn, notifyOwners: fencedDrain, stoppingToken);
               _ = Interlocked.Add(ref _totalStamped, stamped);
               OnStampCompleted?.Invoke(stamped);
 
@@ -214,7 +218,10 @@ public sealed partial class PgCommitOrderStamperWorker(
                 // committing wake has already fired and will not repeat — without this
                 // retry they would sit invisible to perspective fetches until the next
                 // external backstop tick. Keep re-stamping on the tight interval until
-                // the fence clears and the pending set drains.
+                // the fence clears and the pending set drains — and have those stamps ring
+                // the owners' make-up doorbell (the commit-time doorbell was consumed by a
+                // pre-visibility claim; nothing else re-wakes the appliers).
+                fencedDrain = true;
                 try { await Task.Delay(_stamperOptions.FencedRetryInterval, stoppingToken); } catch (OperationCanceledException) { break; }
                 skipWakeWait = true;
               }
@@ -309,9 +316,15 @@ public sealed partial class PgCommitOrderStamperWorker(
     _ = await cmd.ExecuteScalarAsync();
   }
 
-  private async Task<int> _stampOnceAsync(NpgsqlConnection conn, CancellationToken ct) {
-    await using var cmd = new NpgsqlCommand("SELECT stamp_pending_commit_sequences(@bs)", conn);
+  private async Task<int> _stampOnceAsync(NpgsqlConnection conn, bool notifyOwners, CancellationToken ct) {
+    // notifyOwners: TRUE only on the fenced-retry drain — the one case where the rows'
+    // commit-time doorbell was provably consumed before they became visible, so the stamp
+    // must ring the make-up doorbell (migration 118). Steady-state stamps pass FALSE and
+    // keep the pre-117 doorbell rate: per-batch rings herd every owner's wake loops during
+    // bulk stamping (startup backlogs, imports) and starve tightly-pooled hosts.
+    await using var cmd = new NpgsqlCommand("SELECT stamp_pending_commit_sequences(@bs, @notify)", conn);
     cmd.Parameters.AddWithValue("bs", _stamperOptions.BatchSize);
+    cmd.Parameters.AddWithValue("notify", notifyOwners);
     var result = await cmd.ExecuteScalarAsync(ct);
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }

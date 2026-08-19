@@ -9,6 +9,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Workers;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -76,6 +77,28 @@ public class TurnkeyVisibilityChainRegistrationTests {
       .Because("without the gate registered, ClaimWorker silently falls back to tight polling — a cadence production does not run");
     await Assert.That(ReferenceEquals(gate, shared)).IsTrue()
       .Because("gate and shared connection must be the same singleton so availability probes and LISTEN share one connection");
+  }
+
+  [Test]
+  public async Task Turnkey_PerspectiveWorker_HostedExactlyOnce_EvenWithGeneratedRegistrationAsync() {
+    // The core pipeline hosts PerspectiveWorker unconditionally AND the generated
+    // AddPerspectiveRunners() still emits its own TryAdd + AddHostedService for back-compat.
+    // Both must collapse to ONE hosted entry: a second IHostedService descriptor resolving the
+    // same singleton means StartAsync runs twice on one BackgroundService — two execute loops,
+    // double claim/fetch churn, and exhausted connection pools in tightly-pooled hosts.
+    var services = _composeTurnkey();
+    services.AddPerspectiveRunners();
+
+    var hostedPerspectiveWorkers = services.Count(sd =>
+      sd.ServiceType == typeof(IHostedService) &&
+      (sd.ImplementationType == typeof(PerspectiveWorker)
+       || sd.ImplementationFactory?.Method.ReturnType == typeof(PerspectiveWorker)));
+
+    await Assert.That(hostedPerspectiveWorkers).IsEqualTo(1)
+      .Because("core registration + generated AddPerspectiveRunners() must dedupe to exactly one hosted PerspectiveWorker — "
+             + "a second IHostedService descriptor for the same singleton means StartAsync runs twice on one BackgroundService "
+             + "(two execute loops, double claim/fetch churn). Resolving the full hosted set needs a real host environment, so "
+             + "the descriptor count is the assertable seam.");
   }
 
   [Test]
