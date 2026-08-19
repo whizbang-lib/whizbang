@@ -214,24 +214,30 @@ public class AzureServiceBusOptions {
   /// before releasing the session and accepting a different one. Only applies when
   /// <see cref="EnableSessions"/> is true.
   /// <para>
-  /// The Azure SDK default is 60 seconds. For fan-out workloads (one event per stream × many
-  /// streams) this produces a 60-second plateau after every batch of concurrent sessions: each
-  /// session receives its single message, processes it, then <em>holds the concurrency slot idle
-  /// for the full 60 s</em> waiting for a second message that will never arrive. No new sessions
-  /// can be accepted until the wait expires.
+  /// <b>Why the default is long:</b> a waiting accept is push-completed by the broker the moment
+  /// a message arrives, so a long idle timeout adds <em>no</em> pickup latency — it only removes
+  /// empty re-accept churn. Every expiry is a broker operation: each idle concurrency slot costs
+  /// <c><see cref="MaxConcurrentSessions"/> / SessionIdleTimeout</c> accept ops/sec per
+  /// subscription, per consumer instance, <em>at idle</em>. A short timeout (this option once
+  /// defaulted to 1 s) lets a modest fleet saturate an ASB Standard namespace's shared request
+  /// quota while completely idle — starving connection keepalives and session-lock renewals so
+  /// that live traffic redelivers indefinitely. The receive machinery itself can consume the
+  /// entire namespace quota while zero messages flow, and it logs nothing when healthy.
   /// </para>
   /// <para>
-  /// Defaulted to 1 second: fan-out sessions release almost immediately; bulk-import sessions
-  /// (where a single stream may receive many messages in a short burst) still hold the session
-  /// long enough that the next message keeps the session alive. Tune higher (5–30 s) only if
-  /// your workload has sustained multi-message bursts within a single stream separated by gaps
-  /// of a few seconds.
+  /// The trade-off: during a fan-out burst with more pending sessions than
+  /// <see cref="MaxConcurrentSessions"/> slots, an idle-held session delays the excess sessions
+  /// by up to this timeout. That cost is bounded and self-clears in waves; the idle-churn cost
+  /// is unbounded and takes the whole namespace down. Tune lower only when sustained fan-out
+  /// bursts exceed the session concurrency cap AND the namespace has request quota to burn
+  /// (Premium tier), and watch the idle ops-rate self-check warning when you do.
   /// </para>
-  /// Default: 1 second
+  /// Default: 60 seconds (matches the Azure SDK default; ≈3.3 idle ops/sec per subscription at
+  /// the default 200 sessions)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#session-idle-timeout</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToOneSecondAsync</tests>
-  public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(1);
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToSixtySecondsAsync</tests>
+  public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
   /// <summary>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PrefetchCount_DefaultsTo50Async</tests>
