@@ -31,7 +31,14 @@ public static class AsbOpsRateSelfCheck {
   /// </summary>
   public static double ProjectIdleOpsPerSecond(AzureServiceBusOptions options, int sessionSubscriptionCount) {
     ArgumentNullException.ThrowIfNull(options);
-    return 0;
+    if (!options.EnableSessions || sessionSubscriptionCount <= 0) {
+      return 0;
+    }
+
+    // A zero/negative idle timeout would divide by zero; clamp to 1ms — the projection stays
+    // finite and lands far over any sane threshold, which is exactly the right signal.
+    var idleSeconds = Math.Max(options.SessionIdleTimeout.TotalSeconds, 0.001);
+    return sessionSubscriptionCount * options.MaxConcurrentSessions / idleSeconds;
   }
 
   /// <summary>
@@ -40,6 +47,8 @@ public static class AsbOpsRateSelfCheck {
   /// </summary>
   public static AsbOpsRateProjection Evaluate(AzureServiceBusOptions options, int sessionSubscriptionCount) {
     ArgumentNullException.ThrowIfNull(options);
-    return new AsbOpsRateProjection(0, options.OpsRateWarningThresholdPerSecond, false);
+    var projected = ProjectIdleOpsPerSecond(options, sessionSubscriptionCount);
+    var threshold = options.OpsRateWarningThresholdPerSecond;
+    return new AsbOpsRateProjection(projected, threshold, projected > threshold);
   }
 }

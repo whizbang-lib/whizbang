@@ -52,6 +52,8 @@ internal sealed class AzureServiceBusOptionsPostConfigure(IConfiguration? config
     _bindTimeSpan(section, "MaxRetryDelay", v => options.MaxRetryDelay = v);
     _bindDouble(section, "BackoffMultiplier", v => options.BackoffMultiplier = v);
     _bindBool(section, "RetryIndefinitely", v => options.RetryIndefinitely = v);
+    _bindBool(section, "EnableOpsRateSelfCheck", v => options.EnableOpsRateSelfCheck = v);
+    _bindDouble(section, "OpsRateWarningThresholdPerSecond", v => options.OpsRateWarningThresholdPerSecond = v);
   }
 
   private static void _bindTimeSpan(IConfigurationSection section, string key, Action<TimeSpan> apply) {
