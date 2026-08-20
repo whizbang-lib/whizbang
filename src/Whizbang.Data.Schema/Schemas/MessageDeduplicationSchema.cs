@@ -38,6 +38,20 @@ public static class MessageDeduplicationSchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
 ,
+      // Topology arc phase 8.5 — durable redelivery-observation counter (poison detection layer 2).
+      // This table is already the store-side idempotency record for every message id ever received,
+      // so it is where "how many times has the broker handed me this?" belongs; no new table, and
+      // no extra round trip (store_inbox_messages already writes here on every delivery).
+      // Deliberately NOT wh_inbox.attempts: that counts PROCESSING attempts on a claimed row and
+      // feeds wh_dead_letters.attempts_when_dlq. Conflating redeliveries with attempts would
+      // corrupt both signals.
+      new ColumnDefinition(
+        Name: "observation_count",
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(1)
+      )
+,
     ],
     Indexes: [new IndexDefinition(
         Name: "idx_message_dedup_first_seen",
@@ -52,5 +66,12 @@ public static class MessageDeduplicationSchema {
   public static class Columns {
     public const string MESSAGE_ID = "message_id";
     public const string FIRST_SEEN_AT = "first_seen_at";
+
+    /// <summary>
+    /// Durable redelivery-observation counter (topology arc phase 8.5). Incremented by
+    /// <c>store_inbox_messages</c> on every delivery of an already-seen message id; poison
+    /// detection layer 2 quarantines past the configured bound.
+    /// </summary>
+    public const string OBSERVATION_COUNT = "observation_count";
   }
 }

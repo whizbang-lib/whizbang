@@ -129,6 +129,43 @@ public partial class DapperWorkCoordinator(
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
+  /// <summary>
+  /// Topology arc phase 8.5 — same store, plus the durable redelivery observations
+  /// <c>store_inbox_messages</c> now returns for already-seen message ids. Reads the shared
+  /// jsonb projection so Dapper and EF Core cannot drift on the shape poison detection depends on.
+  /// </summary>
+  public async Task<IReadOnlyList<Whizbang.Core.Messaging.InboxRedeliveryObservation>>
+      StoreInboxMessagesWithObservationsAsync(
+      InboxMessage[] messages,
+      int partitionCount,
+      CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return [];
+    }
+
+    var json = _serializeNewInboxMessages(messages);
+    var observedIds = Array.ConvertAll(messages, static m => m.MessageId);
+    string? projection = null;
+
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+      var connection = __scope.Connection;
+      var now = DateTimeOffset.UtcNow;
+
+      // The store runs exactly as StoreInboxMessagesAsync runs it — same function, same
+      // parameters, result discarded. The observation read is a SECOND statement in the SAME
+      // command, so the pair is one round trip and Postgres orders them for us.
+      await connection.ExecuteAsync(
+        "SELECT * FROM store_inbox_messages(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount)",
+        new { messages = json, now, partitionCount });
+      projection = await connection.ExecuteScalarAsync<string>(
+        Whizbang.Data.Postgres.InboxRedeliveryObservationSql.ObservationQuery(string.Empty),
+        new { observedIds });
+    }, logger: _logger, cancellationToken: cancellationToken);
+
+    return Whizbang.Core.Messaging.InboxRedeliveryObservation.ParseProjection(projection);
+  }
+
   public async Task StoreOutboxMessagesAsync(
     OutboxMessage[] messages,
     int partitionCount,

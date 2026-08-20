@@ -341,6 +341,29 @@ public static class WorkerPipelineExtensions {
       new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME),
       sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>(),
       sp.GetService<IEventMarkerResolver>()));
+
+    // Poison detector (topology arc phase 8.5). Turnkey by construction: the valve it replaces —
+    // the broker's MaxDeliveryCount, and every transport branch reading the same counter — cannot
+    // fire on a session-enabled entity, because a lock lost to connection death does not increment
+    // that counter. Registering the policy here is what makes BOTH transports execute ONE decision;
+    // it stays an optional injected dependency at each consumption point, so a custom transport or
+    // a test double that never resolves it is unaffected (the IMessageDiscardPolicy idiom).
+    services.AddOptions<Whizbang.Core.Routing.PoisonMessageOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.PoisonMessageOptions>,
+      Whizbang.Core.Routing.PoisonMessageOptionsConfigurationBinder>(sp =>
+        new Whizbang.Core.Routing.PoisonMessageOptionsConfigurationBinder(
+          sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>())));
+    services.TryAddSingleton<Whizbang.Core.Routing.PoisonDetectionCapabilityState>();
+    services.TryAddSingleton<Whizbang.Core.Routing.IPoisonMessageDetector>(sp =>
+      new Whizbang.Core.Routing.PoisonMessageDetector(
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.PoisonMessageOptions>>(),
+        sp.GetRequiredService<ILogger<Whizbang.Core.Routing.PoisonMessageDetector>>(),
+        new System.Diagnostics.Metrics.Meter(Whizbang.Core.Routing.PoisonMessageDetector.METER_NAME),
+        sp.GetRequiredService<Whizbang.Core.Routing.PoisonDetectionCapabilityState>()));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Health.IWhizbangHealthSource,
+      Whizbang.Core.Health.PoisonDetectionHealthSource>());
 #pragma warning restore CA2000
 
     // Hosted services — delegate to the singleton instance so DI hands the same one

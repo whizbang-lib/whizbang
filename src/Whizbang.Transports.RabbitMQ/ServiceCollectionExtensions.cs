@@ -114,6 +114,14 @@ public static class ServiceCollectionExtensions {
     var options = new RabbitMQOptions();
     configureOptions?.Invoke(options);
 
+    // Topology arc phase 8.5 — hand this transport's delivery cap to Core's poison threshold
+    // derivation. RabbitMQ supplies no lock-renewal term (no per-delivery lock exists), so that
+    // half of the derivation keeps the framework default; see RabbitMQPoisonOptionsPostConfigure.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.PoisonMessageOptions>,
+      RabbitMQPoisonOptionsPostConfigure>(
+        _ => new RabbitMQPoisonOptionsPostConfigure(Microsoft.Extensions.Options.Options.Create(options))));
+
     // Get JSON options from JsonContextRegistry
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
     services.AddSingleton(jsonOptions);
@@ -207,8 +215,13 @@ public static class ServiceCollectionExtensions {
       var pool = sp.GetRequiredService<RabbitMQChannelPool>();
       var logger = sp.GetService<ILogger<RabbitMQTransport>>();
       var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
+      // Poison detector (topology arc phase 8.5) — Core owns the decision, this transport
+      // executes it. Optional: a container without the Whizbang worker pipeline keeps pre-8.5
+      // behavior. Shared with every namespace peer so one policy governs the whole fleet.
+      var poisonDetector = sp.GetService<Whizbang.Core.Routing.IPoisonMessageDetector>();
 
-      var transport = new RabbitMQTransport(connection, jsonOptions, pool, options, logger, discardPolicy);
+      var transport = new RabbitMQTransport(
+        connection, jsonOptions, pool, options, logger, discardPolicy, poisonDetector);
 
       // Initialize during registration
       transport.InitializeAsync().GetAwaiter().GetResult();
@@ -223,7 +236,7 @@ public static class ServiceCollectionExtensions {
       foreach (var namespaceKey in resources.Keys) {
         var (peerConnection, peerPool) = resources.Get(namespaceKey);
         var peer = new RabbitMQTransport(
-          peerConnection, jsonOptions, peerPool, options, logger, discardPolicy);
+          peerConnection, jsonOptions, peerPool, options, logger, discardPolicy, poisonDetector);
         peer.InitializeAsync().GetAwaiter().GetResult();
         peers[namespaceKey] = peer;
 

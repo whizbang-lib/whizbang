@@ -314,6 +314,44 @@ PR #513 before this decision; it stays (no revert).
   fresh message, on a slow-but-progressing one, or when disabled; the quarantined message lands
   in the per-namespace DLQ and is replayable by the existing recovery flow; the age default is
   derived from the lock/delivery options (property test, not a magic number).
+  **STATUS: implemented on feature/transport-topology (uncommitted).** Core owns the decision:
+  `IPoisonMessageDetector` + `PoisonMessageDetector` over the transport-neutral
+  `PoisonEvaluationContext { MessageId, FirstEnqueuedAt?, BrokerDeliveryCount?,
+  DurableObservationCount?, Now }` → `PoisonVerdict` (`Proceed()` / `Quarantine(reason, detail)`),
+  shaped on `IMessageDiscardPolicy` — optional injected policy, null ⇒ pre-8.5 behavior, NO new
+  `ITransport` member. `PoisonMessageOptions` (killswitch `Enabled`, `AgeThreshold?`,
+  `LockRenewalDuration?`, `MaxDeliveryAttempts?`, `AgeThresholdFloor`, `MaxDurableObservations`)
+  bound from `Whizbang:Routing:PoisonMessages` via an explicit-key AOT binder; the derivation
+  `max(floor, renewal x attempts)` is a pure static, matrix-property-locked (5x7x4 combos + the
+  non-positive and overflow degenerates), and each transport post-configures its OWN knobs into
+  it (ASB: MaxAutoLockRenewalDuration + MaxDeliveryAttempts; RMQ: delivery cap only — no
+  per-delivery lock exists, so it supplies no renewal term). BROKER DELIVERY COUNT IS CARRIED BUT
+  DELIBERATELY NOT ACTED ON by the default detector — it is the counter this phase stopped
+  trusting. Layer 1 (age) executes at each transport's receive boundary: ASB reads `EnqueuedTime`
+  and returns `AsbReceiveAction.DeadLetter` with reason `PoisonQuarantine` through the EXISTING
+  `AsbReceiveDecisionMaker` seam (poison gate runs FIRST — pure broker metadata, and a hostage
+  message may be perfectly well-formed); RMQ reads `BasicProperties.Timestamp` and
+  `BasicNack(requeue: false)`s to the DLX. RMQ now STAMPS `Timestamp` on both publish paths — the
+  broker sets none, so without it the signal would not exist on that transport at all. Layer 2
+  (durable observations) executes in Core at the inbox store gate: `wh_message_deduplication`
+  gained `observation_count` (mig **121** — the dedup write flips `ON CONFLICT DO NOTHING` to
+  `DO UPDATE … + 1`; `store_inbox_messages`' SIGNATURE AND RETURNED ROWSET ARE UNCHANGED, still
+  one row per newly-stored message, so `StoreInboxMessagesSqlTests`' dedup no-op lock still holds
+  — an earlier attempt that returned duplicate rows broke it and was reverted). The counts are
+  read from the dedup table as a SECOND statement in the SAME command (one round trip; the dedup
+  row is written on every delivery anyway), surfaced by the
+  `IWorkCoordinator.StoreInboxMessagesWithObservationsAsync` DIM (defaults to
+  store-and-report-nothing) implemented on both Postgres coordinators over one shared SQL
+  fragment, consumed by `TransportConsumerWorker` → `IDeadLetterStore.MoveAsync` (INBOX, new
+  `MessageFailureReason.PoisonRedeliveryLoop`) = the EXISTING recovery flow.
+  Capability honesty: `PoisonDetectionCapabilityState` + `PoisonDetectionHealthSource`
+  ("poison-detection", Degraded) + a one-shot WARNING per surface; reported on CHANGE only so the
+  hot path pays one lock-free lookup. Locks: Core matrix/derivation/killswitch/capability tests;
+  transport-level aged-quarantines / fresh-proceeds / slow-but-progressing-proceeds /
+  disabled-proceeds / no-detector-proceeds on BOTH transports; broker-tier integration on BOTH
+  (ASB: aged SESSION message → entity DLQ with `DeliveryCount == 1`, i.e. quarantined where every
+  count-based valve is provably inert; RMQ: aged → real `.dlq`, plus a foreign publish with no
+  timestamp that must NOT quarantine and MUST degrade visibly).
 
 - **Phase 9 — control class semantics** (#424 incr 3): `sys-control` tag, TTL≈2×cadence
   minting via `mint.Checkpoints`, sessionless subscriptions, non-durable receive path.

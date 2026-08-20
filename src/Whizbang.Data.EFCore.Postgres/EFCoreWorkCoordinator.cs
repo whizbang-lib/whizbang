@@ -3333,6 +3333,64 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
+  /// <summary>
+  /// Topology arc phase 8.5 — same store, plus the durable redelivery observations
+  /// <c>store_inbox_messages</c> now returns for already-seen message ids. The result set is
+  /// aggregated to ONE jsonb scalar in SQL so the read needs no keyless entity type in the model
+  /// for a diagnostic projection.
+  /// </summary>
+  public async Task<IReadOnlyList<Whizbang.Core.Messaging.InboxRedeliveryObservation>>
+      StoreInboxMessagesWithObservationsAsync(
+      InboxMessage[] messages,
+      int partitionCount,
+      CancellationToken cancellationToken = default) {
+    if (messages.Length == 0) {
+      return [];
+    }
+
+    Whizbang.Core.Messaging.EmptyStreamIdGuard.ThrowIfAnyHasEmptyStreamId(messages, _emptyStreamIdPolicy);
+
+    var json = _serializeNewInboxMessages(messages);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "store_inbox_messages");
+
+    // The store runs exactly as StoreInboxMessagesAsync runs it — same function, same parameters,
+    // result discarded. The observation read is a SECOND statement in the SAME command, so the
+    // pair is one round trip and Postgres orders them for us; store_inbox_messages' own signature
+    // and rowset stay untouched.
+#pragma warning disable S2077 // Schema-qualified names built from a validated schema constant
+    var sql = $"SELECT * FROM {functionName}(@messages::jsonb, NULL::uuid, NULL::timestamptz, @now, @partitionCount); "
+      + Whizbang.Data.Postgres.InboxRedeliveryObservationSql.ObservationQuery(
+          BuildSchemaQualifiedName(schema, string.Empty));
+#pragma warning restore S2077
+
+    var observedIds = Array.ConvertAll(messages, static m => m.MessageId);
+    string? projection = null;
+    await PostgresDeadlockRetry.ExecuteAsync(async () => {
+      await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = scope.Connection.CreateCommand();
+      cmd.CommandText = sql;
+      cmd.Parameters.AddWithValue("messages", json);
+      cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
+      cmd.Parameters.AddWithValue("partitionCount", partitionCount);
+      cmd.Parameters.AddWithValue("observedIds", observedIds);
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      // Skip the store's own rowset, then read the observation projection.
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) { /* discard */ }
+      if (await reader.NextResultAsync(cancellationToken).ConfigureAwait(false)
+          && await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        projection = reader.IsDBNull(0) ? null : reader.GetString(0);
+      }
+    }, logger: _logger, cancellationToken: cancellationToken);
+
+    return Whizbang.Core.Messaging.InboxRedeliveryObservation.ParseProjection(projection);
+  }
+
   public async Task StoreOutboxMessagesAsync(
     OutboxMessage[] messages,
     int partitionCount,

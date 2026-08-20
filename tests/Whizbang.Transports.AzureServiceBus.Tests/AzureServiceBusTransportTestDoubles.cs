@@ -50,14 +50,22 @@ internal static class AsbTransportTestData {
     };
 
   /// <summary>Builds a broker message carrying a real serialized envelope.</summary>
-  internal static ServiceBusReceivedMessage EnvelopeMessage(MessageEnvelope<TestMessage> envelope, int deliveryCount = 1) {
+  internal static ServiceBusReceivedMessage EnvelopeMessage(
+      MessageEnvelope<TestMessage> envelope,
+      int deliveryCount = 1,
+      DateTimeOffset enqueuedTime = default) {
     var typeInfo = CombinedOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var body = JsonSerializer.Serialize(envelope, typeInfo);
-    return RawMessage(body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!, deliveryCount);
+    return RawMessage(
+      body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!, deliveryCount, enqueuedTime);
   }
 
   /// <summary>Builds a broker message with an arbitrary body and optional EnvelopeType property.</summary>
-  internal static ServiceBusReceivedMessage RawMessage(string body, string? envelopeTypeName, int deliveryCount = 1) {
+  internal static ServiceBusReceivedMessage RawMessage(
+      string body,
+      string? envelopeTypeName,
+      int deliveryCount = 1,
+      DateTimeOffset enqueuedTime = default) {
     var properties = new Dictionary<string, object>();
     if (envelopeTypeName is not null) {
       properties["EnvelopeType"] = envelopeTypeName;
@@ -66,7 +74,8 @@ internal static class AsbTransportTestData {
       body: BinaryData.FromString(body),
       messageId: Guid.CreateVersion7().ToString(),
       properties: properties,
-      deliveryCount: deliveryCount);
+      deliveryCount: deliveryCount,
+      enqueuedTime: enqueuedTime);
   }
 
   /// <summary>Parses raw JSON into a detached JsonElement for destination metadata.</summary>

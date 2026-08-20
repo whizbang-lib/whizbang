@@ -470,6 +470,118 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     }
   }
 
+  // ========================================
+  // POISON QUARANTINE — TOPOLOGY ARC PHASE 8.5
+  // ========================================
+
+  [Test]
+  public async Task SubscribeAsync_AgedSessionMessage_QuarantinesToTheEntityDlqWithDeliveryCountOneAsync() {
+    // The arc's motivating failure, at broker tier on a SESSION-enabled subscription.
+    //
+    // The emulator spike and a live Standard-namespace probe both established that a lock lost to
+    // connection death on a session entity does NOT increment DeliveryCount. So the broker's
+    // MaxDeliveryCount valve and the transport's MaxDeliveryAttempts branch — both reading that
+    // counter — can never fire under a consumer-death storm, and the message is hostage forever.
+    // This test proves the replacement works where the counter cannot: the message quarantines on
+    // AGE with DeliveryCount still at 1, and lands in the real per-entity DLQ that the existing
+    // dead-letter drainer already replays.
+    //
+    // AgeThreshold = zero makes any already-enqueued message aged, which is the only way to write
+    // this as a bounded test — the derivation (renewal x attempts, floored at 30 minutes) is
+    // property-locked in Whizbang.Core.Tests, not re-derived here.
+    var options = new AzureServiceBusOptions { EnableSessions = true };
+    var transport = new AzureServiceBusTransport(
+      _fixture.Client,
+      JsonContextRegistry.CreateCombinedOptions(),
+      options,
+      logger: null,
+      adminClient: null,
+      poisonDetector: _poisonDetector(TimeSpan.Zero));
+    _disposables.Add(transport);
+    await transport.InitializeAsync();
+    await _drainDeadLetterQueueAsync("topic-fifo-02", "sub-fifo-session");
+
+    var handlerInvoked = 0;
+    var subscription = await transport.SubscribeAsync(
+      (_, _, _) => { Interlocked.Increment(ref handlerInvoked); return Task.CompletedTask; },
+      new TransportDestination("topic-fifo-02", "sub-fifo-session")
+    );
+
+    try {
+      // Session entities REQUIRE a SessionId; the bulk path stamps it from StreamId.
+      var envelope = _createTestEnvelope($"aged-session-{Guid.CreateVersion7():N}");
+      await transport.PublishBatchAsync(
+        [_createBulkItem(envelope, Guid.CreateVersion7())],
+        new TransportDestination("topic-fifo-02"));
+
+      var deadLettered = await _receiveDeadLetteredMessageAsync(
+        "topic-fifo-02", "sub-fifo-session", envelope.MessageId.Value.ToString());
+
+      await Assert.That(deadLettered).IsNotNull()
+        .Because("an aged session message must reach the DLQ on age alone");
+      await Assert.That(deadLettered!.DeadLetterReason).IsEqualTo("PoisonQuarantine");
+      await Assert.That(deadLettered.DeliveryCount).IsEqualTo(1)
+        .Because("the counter every legacy valve reads never moved — that is the whole point");
+      await Assert.That(Volatile.Read(ref handlerInvoked)).IsEqualTo(0)
+        .Because("quarantine happens at the receive boundary, before the handler");
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  [Test]
+  public async Task SubscribeAsync_FreshSessionMessage_IsNotQuarantinedAsync() {
+    // The negative half of the same lock: with a real (derived-scale) threshold, a message
+    // published moments ago flows to the handler untouched. Without this, a passing quarantine
+    // test would be indistinguishable from "quarantines everything".
+    var options = new AzureServiceBusOptions { EnableSessions = true };
+    var transport = new AzureServiceBusTransport(
+      _fixture.Client,
+      JsonContextRegistry.CreateCombinedOptions(),
+      options,
+      logger: null,
+      adminClient: null,
+      poisonDetector: _poisonDetector(TimeSpan.FromHours(6)));
+    _disposables.Add(transport);
+    await transport.InitializeAsync();
+
+    var received = Channel.CreateUnbounded<string>();
+    var marker = $"fresh-session-{Guid.CreateVersion7():N}";
+    var subscription = await transport.SubscribeAsync(
+      async (env, _, _) => {
+        if (env.Payload is TestMessage m) { await received.Writer.WriteAsync(m.Content, CancellationToken.None); }
+      },
+      new TransportDestination("topic-fifo-02", "sub-fifo-session")
+    );
+
+    try {
+      await transport.PublishBatchAsync(
+        [_createBulkItem(_createTestEnvelope(marker), Guid.CreateVersion7())],
+        new TransportDestination("topic-fifo-02"));
+
+      using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+      string? delivered = null;
+      while (delivered != marker) {
+        delivered = await received.Reader.ReadAsync(cts.Token);
+      }
+
+      await Assert.That(delivered).IsEqualTo(marker)
+        .Because("a fresh message must never be quarantined");
+    } finally {
+      subscription.Dispose();
+    }
+  }
+
+  /// <summary>Real Core detector with an explicit age threshold; layer 2 is unreachable here
+  /// (the transport boundary reports no durable observation count), so any quarantine is layer 1.</summary>
+  private static Whizbang.Core.Routing.PoisonMessageDetector _poisonDetector(TimeSpan ageThreshold) =>
+    new Whizbang.Core.Routing.PoisonMessageDetector(
+      Microsoft.Extensions.Options.Options.Create(new Whizbang.Core.Routing.PoisonMessageOptions {
+        AgeThreshold = ageThreshold,
+      }),
+      Microsoft.Extensions.Logging.Abstractions.NullLogger<Whizbang.Core.Routing.PoisonMessageDetector>.Instance,
+      new System.Diagnostics.Metrics.Meter("Whizbang.Transports.AzureServiceBus.Integration.Tests.Poison"));
+
   [Test]
   public async Task SubscribeAsync_MalformedJsonBody_AcksAndDropsWithoutDeadLetteringAsync() {
     // Arrange — slice 1 hotfix behavior: a body that fails deserialization for a

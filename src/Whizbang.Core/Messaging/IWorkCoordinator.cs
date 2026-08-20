@@ -283,6 +283,32 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Stores inbox messages exactly as <see cref="StoreInboxMessagesAsync"/> does and additionally
+  /// reports the store's durable REDELIVERY OBSERVATIONS — message ids the store had already seen,
+  /// with the post-write count (topology arc phase 8.5, poison detection layer 2).
+  /// <para>
+  /// This is not a second query: the store-side idempotency record is written on every delivery
+  /// anyway, so the count comes back as a by-product of work already paid for. It is the only
+  /// bound available when the broker's own delivery counter cannot rise — a lock lost to
+  /// connection death on a SESSION-enabled entity leaves that counter at 1, which is what makes
+  /// MaxDeliveryCount structurally unreachable there.
+  /// </para>
+  /// Default implementation stores and reports NOTHING, so a coordinator that cannot supply the
+  /// count (test fakes, non-Postgres backends) degrades to layer 1 rather than breaking.
+  /// </summary>
+  /// <param name="messages">Inbox messages to store.</param>
+  /// <param name="partitionCount">Partition count; see <see cref="StoreInboxMessagesAsync"/>.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One entry per message the store had already recorded, newest count first written.</returns>
+  async Task<IReadOnlyList<InboxRedeliveryObservation>> StoreInboxMessagesWithObservationsAsync(
+      InboxMessage[] messages,
+      int partitionCount,
+      CancellationToken cancellationToken = default) {
+    await StoreInboxMessagesAsync(messages, partitionCount, cancellationToken).ConfigureAwait(false);
+    return [];
+  }
+
+  /// <summary>
   /// Stores new outbox messages directly. Lightweight alternative to <c>process_work_batch</c>
   /// that calls <c>store_outbox_messages</c> SQL function. Used by Dispatcher's
   /// <see cref="IWorkCoordinatorStrategy"/> implementations to insert queued outbox messages

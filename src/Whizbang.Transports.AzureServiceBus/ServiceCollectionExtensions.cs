@@ -119,6 +119,12 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<Microsoft.Extensions.Options.IPostConfigureOptions<AzureServiceBusOptions>>(sp =>
       new AzureServiceBusOptionsPostConfigure(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
 
+    // Topology arc phase 8.5 — hand this transport's lock/delivery knobs to Core's poison
+    // threshold derivation, so the age default tracks the transport's own configuration.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.PoisonMessageOptions>,
+      AsbPoisonOptionsPostConfigure>());
+
     // Client factory for the NON-default TransportNamespaces (topology arc phase 8). Registered
     // unconditionally so both overloads share one container shape, and never RESOLVED unless a
     // class namespace is actually configured — a single-namespace host opens exactly one client.
@@ -295,6 +301,10 @@ public static class ServiceCollectionExtensions {
     var absorbedNamespaces = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()
       ?.Value.AbsorbedNamespaces;
 
+    // Poison detector (topology arc phase 8.5) — Core owns the decision, this transport executes
+    // it. Optional: a container without the Whizbang worker pipeline keeps pre-8.5 behavior.
+    var poisonDetector = sp.GetService<Whizbang.Core.Routing.IPoisonMessageDetector>();
+
     return new AzureServiceBusTransport(
       client, jsonOptions, options, logger, adminClient,
       receptorRegistry: receptorRegistry,
@@ -302,7 +312,9 @@ public static class ServiceCollectionExtensions {
       rawReceptorRegistry: rawReceptorRegistry,
       typeBinder: typeBinder,
       discardPolicy: discardPolicy,
-      absorbedNamespaces: absorbedNamespaces);
+      absorbedNamespaces: absorbedNamespaces,
+      timeProvider: null,
+      poisonDetector: poisonDetector);
   }
 
   /// <summary>

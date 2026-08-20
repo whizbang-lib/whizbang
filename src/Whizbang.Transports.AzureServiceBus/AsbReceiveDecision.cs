@@ -75,6 +75,14 @@ internal sealed record AsbReceiveDecision {
   /// otherwise.
   /// </summary>
   public JsonElement? RawPayload { get; init; }
+
+  /// <summary>
+  /// Topology arc phase 8.5 — set when the <c>DeadLetter</c> action was chosen by the Core poison
+  /// detector rather than by a broker-metadata failure. The transport carries it to
+  /// <see cref="Whizbang.Core.Routing.IPoisonMessageDetector.RecordQuarantine"/> so the quarantine
+  /// telemetry names the layer that fired. Null on every non-poison decision.
+  /// </summary>
+  public Whizbang.Core.Routing.PoisonVerdict? PoisonVerdict { get; init; }
 }
 
 /// <summary>
@@ -89,4 +97,11 @@ internal static class AsbReceiveReason {
   internal const string DESERIALIZATION_FAILED = "DeserializationFailed";
   internal const string NO_LOCAL_CONSUMER = "NoLocalConsumer";
   internal const string RAW_RECEPTOR_MATCH = "RawReceptorMatch";
+
+  /// <summary>
+  /// Topology arc phase 8.5 — the Core poison detector quarantined the message (age, or durable
+  /// redelivery observations). Distinct from <see cref="MISSING_ENVELOPE_TYPE"/> so the DLQ reason
+  /// names the actual defect: this is a message the delivery-count valve could never have caught.
+  /// </summary>
+  internal const string POISON_QUARANTINE = "PoisonQuarantine";
 }

@@ -47,6 +47,7 @@ public static class WhizbangMeters {
     MessageDiscardPolicy.METER_NAME,
     PerspectiveMetrics.METER_NAME,
     PinnedPoolMetrics.METER_NAME,
+    PoisonMessageDetector.METER_NAME,
     StartupPipelineMetrics.METER_NAME,
     StreamIntegrityMetrics.METER_NAME,
     TableStatisticsMetrics.METER_NAME,

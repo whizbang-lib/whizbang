@@ -25,6 +25,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private const string TRANSPORT_NOT_INITIALIZED_MESSAGE = "RabbitMQ transport is not initialized. Call InitializeAsync() first.";
   private const string ENVELOPE_TYPE_HEADER = "EnvelopeType";
 
+  /// <summary>Transport identifier on poison-detection capability reports and quarantine metrics.</summary>
+  private const string RABBITMQ_TRANSPORT_TAG = "rabbitmq";
+
   private readonly IConnection _connection;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly RabbitMQChannelPool _channelPool;
@@ -32,6 +35,11 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private readonly ILogger<RabbitMQTransport>? _logger;
   private readonly ConcurrentDictionary<string, bool> _declaredExchanges = new();
   private readonly IMessageDiscardPolicy? _discardPolicy;
+  private readonly IPoisonMessageDetector? _poisonDetector;
+  private readonly TimeProvider _timeProvider;
+
+  /// <summary>Last age-capability value reported per queue — see <c>_tryQuarantinePoisonAsync</c>.</summary>
+  private readonly ConcurrentDictionary<string, bool> _reportedAgeCapability = new(StringComparer.Ordinal);
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
@@ -44,13 +52,19 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <param name="channelPool">Thread-safe channel pool</param>
   /// <param name="options">Transport configuration options</param>
   /// <param name="logger">Optional logger instance</param>
+  /// <param name="discardPolicy">Optional shared no-consumer discard policy.</param>
+  /// <param name="poisonDetector">Topology arc phase 8.5 — Core's poison policy. Optional; null
+  /// keeps pre-phase-8.5 behavior (the <c>IMessageDiscardPolicy</c> idiom — no new ITransport member).</param>
+  /// <param name="timeProvider">Clock used for message-age evaluation and publish stamping.</param>
   public RabbitMQTransport(
     IConnection connection,
     JsonSerializerOptions jsonOptions,
     RabbitMQChannelPool channelPool,
     RabbitMQOptions options,
     ILogger<RabbitMQTransport>? logger = null,
-    IMessageDiscardPolicy? discardPolicy = null
+    IMessageDiscardPolicy? discardPolicy = null,
+    IPoisonMessageDetector? poisonDetector = null,
+    TimeProvider? timeProvider = null
   ) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(jsonOptions);
@@ -63,6 +77,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     _options = options;
     _logger = logger;
     _discardPolicy = discardPolicy;
+    _poisonDetector = poisonDetector;
+    _timeProvider = timeProvider ?? TimeProvider.System;
 
     // Hook into connection recovery event to notify subscribers
     _connection.RecoverySucceededAsync += _onConnectionRecoverySucceededAsync;
@@ -266,6 +282,11 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         MessageId = envelope.MessageId.Value.ToString(),
         ContentType = "application/json",
         Persistent = true,
+        // Topology arc phase 8.5 — first-enqueue stamp. RabbitMQ has no broker-set equivalent of
+        // Azure Service Bus's EnqueuedTime, so the publisher must supply it; it then survives
+        // every requeue and the dead-letter exchange, which is what makes age-based poison
+        // detection possible on this transport at all.
+        Timestamp = _publishTimestamp(),
         Headers = new Dictionary<string, object?>()
       };
 
@@ -428,6 +449,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       MessageId = envelope.MessageId.Value.ToString(),
       ContentType = "application/json",
       Persistent = true,
+      // Phase 8.5 first-enqueue stamp — see the single-publish path.
+      Timestamp = _publishTimestamp(),
       Headers = new Dictionary<string, object?>()
     };
 
@@ -458,6 +481,13 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       cancellationToken: cancellationToken
     );
   }
+
+  /// <summary>
+  /// The AMQP first-enqueue stamp applied to every publish (topology arc phase 8.5). AMQP
+  /// timestamps are whole unix seconds — sub-second precision is not available on the wire and is
+  /// irrelevant to a threshold measured in tens of minutes.
+  /// </summary>
+  private AmqpTimestamp _publishTimestamp() => new(_timeProvider.GetUtcNow().ToUnixTimeSeconds());
 
   /// <summary>
   /// Sets correlation and causation ID headers on message properties from the envelope.
@@ -884,6 +914,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     CancellationToken cancellationToken
   ) {
     try {
+      // Topology arc phase 8.5 — poison gate FIRST, on broker metadata alone. A message held
+      // hostage by a redelivery storm may be perfectly well-formed, so this cannot sit behind
+      // deserialization or the no-consumer filter. Quarantine is BasicNack(requeue: false),
+      // which routes to the queue's dead-letter exchange — requeueing would re-arm the loop.
+      if (await _tryQuarantinePoisonAsync(channel, args, queueName)) {
+        return;
+      }
+
       var envelope = _deserializeMessage(args, out var envelopeTypeName);
       if (envelope == null) {
         await _nackDeserializationFailureAsync(channel, args, queueName);
@@ -912,6 +950,81 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     } catch (Exception ex) when (ex is not AlreadyClosedException) {
       await _handleMessageFailureAsync(channel, args, queueName, ex);
     }
+  }
+
+  /// <summary>
+  /// Topology arc phase 8.5 — asks Core's poison detector whether this delivery must be
+  /// quarantined, and executes the verdict with RabbitMQ's native mechanism:
+  /// <c>BasicNackAsync(requeue: false)</c>, which routes the message to the queue's dead-letter
+  /// exchange (the per-namespace DLQ the existing dead-letter drainer replays).
+  /// <para>
+  /// <b>Capability honesty.</b> RabbitMQ's message timestamp is PUBLISHER-set, unlike Azure
+  /// Service Bus's broker-set <c>EnqueuedTime</c>. Whizbang stamps its own publishes, so
+  /// Whizbang-to-Whizbang traffic has a trustworthy first-enqueue time that survives requeue and
+  /// the dead-letter exchange — but a message from a foreign publisher, or from a build predating
+  /// this phase, arrives without one. On that surface layer 1 CANNOT work, so the transport
+  /// declares the surface incapable (health-visible warning) and detection degrades to layer 2's
+  /// durable observation counting. It never treats an absent stamp as an infinitely old message,
+  /// and it never goes quietly inert — silence is precisely how the delivery-count valve failed.
+  /// </para>
+  /// </summary>
+  /// <returns><c>true</c> when the message was quarantined and the caller must stop.</returns>
+  private async Task<bool> _tryQuarantinePoisonAsync(
+      IChannel channel, BasicDeliverEventArgs args, string queueName) {
+    if (_poisonDetector is null) {
+      return false;
+    }
+
+    var messageId = args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID;
+    var unixSeconds = args.BasicProperties.Timestamp.UnixTime;
+    var hasTrustworthyAge = unixSeconds > 0;
+
+    // Report only on CHANGE. This runs per message on the receive hot path and the capability state
+    // is a shared dictionary; an unconditional write per delivery would turn a diagnostic into a
+    // contention point. A lock-free read keeps steady state to one lookup.
+    if (!_reportedAgeCapability.TryGetValue(queueName, out var previousCapability)
+        || previousCapability != hasTrustworthyAge) {
+      _reportedAgeCapability[queueName] = hasTrustworthyAge;
+      _poisonDetector.ReportAgeCapability(RABBITMQ_TRANSPORT_TAG, queueName, hasTrustworthyAge);
+    }
+
+    var context = new PoisonEvaluationContext(
+      MessageId: messageId,
+      FirstEnqueuedAt: hasTrustworthyAge ? DateTimeOffset.FromUnixTimeSeconds(unixSeconds) : null,
+      // RabbitMQ exposes no delivery counter on a classic queue — `redelivered` is a boolean, so
+      // the best honest reading is 1 or 2. Carried for telemetry only: the default detector never
+      // acts on it (that counter is exactly what this phase stopped trusting).
+      BrokerDeliveryCount: args.Redelivered ? 2 : 1,
+      DurableObservationCount: null,
+      Now: _timeProvider.GetUtcNow());
+
+    var verdict = _poisonDetector.Evaluate(context);
+    if (!verdict.ShouldQuarantine) {
+      return false;
+    }
+
+    _poisonDetector.RecordQuarantine(
+      PoisonQuarantineGate.Receive, verdict, context,
+      new Dictionary<string, object?> {
+        ["transport"] = RABBITMQ_TRANSPORT_TAG,
+        ["queue"] = queueName,
+      });
+
+    _logger?.LogWarning(
+      "NACK reason: Poison quarantine ({PoisonReason}) for message {MessageId} from queue {QueueName} "
+      + "- sending to dead letter exchange. {Detail}",
+      verdict.Reason, messageId, queueName, verdict.Detail);
+
+    try {
+      await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: false);
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(
+        ex,
+        "RabbitMQ channel closed/disposed while quarantining poison message {MessageId} from queue "
+        + "{QueueName} — broker will redeliver and the quarantine re-evaluates",
+        messageId, queueName);
+    }
+    return true;
   }
 
   /// <summary>

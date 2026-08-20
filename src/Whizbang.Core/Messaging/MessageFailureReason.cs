@@ -154,5 +154,17 @@ public enum MessageFailureReason {
   /// event-store append rolled back. The whole composite is rejected
   /// (no partial inner events recorded).
   /// </summary>
-  CompositeExpansionFailure = 16
+  CompositeExpansionFailure = 16,
+
+  /// <summary>
+  /// The poison detector (topology arc phase 8.5) quarantined the message: this service has
+  /// durably observed the same message id past the configured bound without ever settling it.
+  /// <para>
+  /// Distinct from <see cref="MaxAttemptsExceeded"/>, which counts PROCESSING attempts on a
+  /// claimed row. This reason counts REDELIVERIES — the broker handing the same message back
+  /// because the consumer died before acking. On session-enabled entities that loop increments no
+  /// broker counter at all, so nothing else bounds it.
+  /// </para>
+  /// </summary>
+  PoisonRedeliveryLoop = 17
 }

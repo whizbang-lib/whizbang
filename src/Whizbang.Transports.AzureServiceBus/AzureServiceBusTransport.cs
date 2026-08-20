@@ -20,6 +20,9 @@ namespace Whizbang.Transports.AzureServiceBus;
 public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private const string ENVELOPE_TYPE_PROPERTY = "EnvelopeType";
 
+  /// <summary>Transport identifier on poison-detection capability reports and quarantine metrics.</summary>
+  private const string ASB_TRANSPORT_TAG = "azure-service-bus";
+
   private readonly ServiceBusClient _client;
   private readonly IServiceBusAdminClient? _adminClient;
   private readonly ILogger<AzureServiceBusTransport> _logger;
@@ -34,6 +37,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
   private readonly IMessageDiscardPolicy? _discardPolicy;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
+  private readonly Whizbang.Core.Routing.IPoisonMessageDetector? _poisonDetector;
+
+  /// <summary>Last age-capability value reported per entity — see <c>_buildPoisonContext</c>.</summary>
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _reportedAgeCapability = new(StringComparer.Ordinal);
   private readonly bool _isEmulator;
   private readonly ReceiveLivenessWatchdog? _livenessWatchdog;
   private readonly TimeProvider _timeProvider;
@@ -83,7 +90,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null,
     IMessageDiscardPolicy? discardPolicy = null,
     IReadOnlySet<string>? absorbedNamespaces = null,
-    TimeProvider? timeProvider = null
+    TimeProvider? timeProvider = null,
+    Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -110,6 +118,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // fallback works without explicit DI configuration. Tests can inject a fake.
     _typeBinder = typeBinder ?? new Whizbang.Core.Messaging.MultiPassMessageTypeBinder();
     _discardPolicy = discardPolicy;
+    _poisonDetector = poisonDetector;
     _absorbedNamespaces = absorbedNamespaces
       ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -1399,6 +1408,67 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
   }
 
+  /// <summary>
+  /// Topology arc phase 8.5 — adapts a broker message into the transport-NEUTRAL poison context
+  /// Core decides on, and declares this surface's age capability.
+  /// <para>
+  /// <c>EnqueuedTime</c> is the broker's first-enqueue stamp and survives every redelivery, which
+  /// is what makes it the only usable signal on a session-enabled entity: a lock lost to connection
+  /// death does not increment <c>DeliveryCount</c>, so the broker's MaxDeliveryCount valve and this
+  /// transport's own <c>MaxDeliveryAttempts</c> branch are both structurally unreachable there.
+  /// A real Service Bus namespace always stamps it; a message arriving without one (default) means
+  /// this surface cannot do age detection at all, and says so rather than silently treating an
+  /// absent stamp as an infinitely old message.
+  /// </para>
+  /// </summary>
+  private Whizbang.Core.Routing.PoisonEvaluationContext _buildPoisonContext(
+      ServiceBusReceivedMessage message, TransportDestination destination, string subscription) {
+    var enqueuedTime = message.EnqueuedTime;
+    var hasTrustworthyAge = enqueuedTime != default;
+    if (_poisonDetector is not null) {
+      // Report only on CHANGE. This runs per message on the receive hot path, and the capability
+      // state is a shared dictionary — an unconditional write per delivery would turn a diagnostic
+      // into a contention point. A lock-free read of the last-reported value keeps steady state to
+      // one lookup.
+      var entity = $"{destination.Address}/{subscription}";
+      if (_reportedAgeCapability.TryGetValue(entity, out var previous) != true
+          || previous != hasTrustworthyAge) {
+        _reportedAgeCapability[entity] = hasTrustworthyAge;
+        _poisonDetector.ReportAgeCapability(ASB_TRANSPORT_TAG, entity, hasTrustworthyAge);
+      }
+    }
+
+    return new Whizbang.Core.Routing.PoisonEvaluationContext(
+      MessageId: message.MessageId,
+      FirstEnqueuedAt: hasTrustworthyAge ? enqueuedTime : null,
+      BrokerDeliveryCount: message.DeliveryCount,
+      DurableObservationCount: null,
+      Now: _timeProvider.GetUtcNow());
+  }
+
+  /// <summary>
+  /// Emits the quarantine telemetry for a poison dead-letter. No-op for every other DeadLetter
+  /// reason, so the caller can invoke it unconditionally in the branch.
+  /// </summary>
+  private void _recordPoisonQuarantine(
+      AsbReceiveDecision decision,
+      Whizbang.Core.Routing.PoisonEvaluationContext poisonContext,
+      TransportDestination destination,
+      string subscription) {
+    if (_poisonDetector is null || decision.PoisonVerdict is not { } verdict) {
+      return;
+    }
+    _poisonDetector.RecordQuarantine(
+      Whizbang.Core.Routing.PoisonQuarantineGate.Receive,
+      verdict,
+      poisonContext,
+      new Dictionary<string, object?> {
+        ["transport"] = ASB_TRANSPORT_TAG,
+        ["topic"] = destination.Address,
+        ["subscription"] = subscription,
+      });
+  }
+
   private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedMessageAsync(
     ProcessMessageEventArgs args,
     TransportDestination destination
@@ -1414,6 +1484,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       );
     }
 
+    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+    var poisonContext = _buildPoisonContext(args.Message, destination, subscription);
+
     var decision = _decisionMaker.Decide(
       args.Message.ApplicationProperties,
       json,
@@ -1422,9 +1495,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _buildIsHandledLocally(),
       _rawReceptorRegistry,
       _typeBinder,
-      absorbedNamespaces: _absorbedNamespaces);
-
-    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+      absorbedNamespaces: _absorbedNamespaces,
+      poisonDetector: _poisonDetector,
+      poisonContext: poisonContext);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:
@@ -1474,6 +1547,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           destination.Address,
           subscription
         );
+        _recordPoisonQuarantine(decision, poisonContext, destination, subscription);
         await _safeDeadLetterAsync(args, decision.Reason, decision.Description);
         return (null, decision.EnvelopeTypeName);
 
@@ -1495,6 +1569,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   ) {
     var json = args.Message.Body.ToString();
 
+    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+    var poisonContext = _buildPoisonContext(args.Message, destination, subscription);
+
     var decision = _decisionMaker.Decide(
       args.Message.ApplicationProperties,
       json,
@@ -1503,9 +1580,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _buildIsHandledLocally(),
       _rawReceptorRegistry,
       _typeBinder,
-      absorbedNamespaces: _absorbedNamespaces);
-
-    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+      absorbedNamespaces: _absorbedNamespaces,
+      poisonDetector: _poisonDetector,
+      poisonContext: poisonContext);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:
@@ -1549,6 +1626,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           destination.Address,
           subscription
         );
+        _recordPoisonQuarantine(decision, poisonContext, destination, subscription);
         await _safeDeadLetterAsync(args, decision.Reason, decision.Description);
         return (null, decision.EnvelopeTypeName);
 

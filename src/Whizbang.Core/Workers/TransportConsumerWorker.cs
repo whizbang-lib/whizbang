@@ -559,10 +559,29 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // PartitionCount is sourced from WorkCoordinatorPublisherOptions — the single source
     // of truth across this service's TransportConsumerWorker, WorkBatchCoordinator, and
     // WorkCoordinatorPublisherWorker — preventing the partition mismatch wedge.
-    await workCoordinator.StoreInboxMessagesAsync(
-      [.. inboxMessages],
-      partitionCount: _partitionCount,
-      cancellationToken: cancellationToken);
+    //
+    // Topology arc phase 8.5 — poison detection LAYER 2. When a detector is wired, use the store
+    // overload that also reports durable REDELIVERY OBSERVATIONS. This is not a second query: the
+    // store-side idempotency record is written on every delivery regardless, so the count comes
+    // back as a by-product of work already being done. It is the only bound available for poison
+    // that dies mid-processing rather than mid-lock, and for surfaces with no trustworthy broker
+    // first-enqueue timestamp — on a session-enabled entity the broker's delivery counter never
+    // rises under connection-death lock loss, so MaxDeliveryCount is structurally unreachable.
+    // Without a detector nothing changes: same call, same shape, same behavior as before.
+    var poisonDetector = scope.ServiceProvider.GetService<Routing.IPoisonMessageDetector>();
+    if (poisonDetector is null) {
+      await workCoordinator.StoreInboxMessagesAsync(
+        [.. inboxMessages],
+        partitionCount: _partitionCount,
+        cancellationToken: cancellationToken);
+    } else {
+      var observations = await workCoordinator.StoreInboxMessagesWithObservationsAsync(
+        [.. inboxMessages],
+        partitionCount: _partitionCount,
+        cancellationToken: cancellationToken);
+      await _quarantinePoisonRedeliveriesAsync(
+        observations, poisonDetector, scope.ServiceProvider, cancellationToken);
+    }
     _metrics?.InboxMessagesProcessed.Add(inboxMessages.Count);
 
     if (_logger.IsEnabled(LogLevel.Debug)) {
@@ -679,6 +698,72 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       return (null, null);
     } finally {
       inboxActivity?.Dispose();
+    }
+  }
+
+  /// <summary>
+  /// Topology arc phase 8.5, layer 2 — asks Core's poison detector about each durable redelivery
+  /// observation the store reported, and executes a quarantine verdict by moving the inbox row
+  /// into the EXISTING dead-letter store, from which the existing recovery flow replays it.
+  /// <para>
+  /// The evaluation context deliberately carries NO first-enqueue timestamp: age (layer 1) is the
+  /// transport receive boundary's job and has already run there. This gate exists for the cases
+  /// layer 1 structurally cannot see, so it must decide on the durable count alone.
+  /// </para>
+  /// Best-effort by design — a dead-letter store that is absent or throwing must never fail the
+  /// batch, because failing here would nack the whole delivery and feed the very redelivery loop
+  /// being quarantined.
+  /// </summary>
+  private async Task _quarantinePoisonRedeliveriesAsync(
+      IReadOnlyList<InboxRedeliveryObservation> observations,
+      Routing.IPoisonMessageDetector poisonDetector,
+      IServiceProvider scopedProvider,
+      CancellationToken cancellationToken) {
+    if (observations.Count == 0) {
+      return;
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    foreach (var observation in observations) {
+      var context = new Routing.PoisonEvaluationContext(
+        MessageId: observation.MessageId.ToString(),
+        FirstEnqueuedAt: null,
+        BrokerDeliveryCount: null,
+        DurableObservationCount: observation.ObservationCount,
+        Now: now);
+
+      var verdict = poisonDetector.Evaluate(context);
+      if (!verdict.ShouldQuarantine) {
+        continue;
+      }
+
+      poisonDetector.RecordQuarantine(
+        Routing.PoisonQuarantineGate.Inbox, verdict, context,
+        new Dictionary<string, object?> { ["source_table"] = DeadLetterSourceTable.INBOX });
+
+      var deadLetterStore = scopedProvider.GetService<IDeadLetterStore>();
+      var generationProvider = scopedProvider.GetService<IGenerationProvider>();
+      var instanceProvider = scopedProvider.GetService<IServiceInstanceProvider>();
+      if (deadLetterStore is null || generationProvider is null || instanceProvider is null) {
+        continue;
+      }
+
+      try {
+        await deadLetterStore.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: observation.MessageId,
+          failureReason: MessageFailureReason.PoisonRedeliveryLoop,
+          errorText: verdict.Detail,
+          instanceId: instanceProvider.InstanceId,
+          generation: generationProvider.GetGeneration(),
+          ct: cancellationToken).ConfigureAwait(false);
+      } catch (Exception ex) {
+        _logger.LogError(
+          ex,
+          "Poison quarantine could not move inbox row {MessageId} to dead letters; the redelivery "
+          + "loop remains unbounded for this message", observation.MessageId);
+      }
     }
   }
 
