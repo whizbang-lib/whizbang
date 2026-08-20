@@ -154,6 +154,33 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<Whizbang.Core.Health.IWhizbangHealthSource>(sp =>
       new AsbOpsRateHealthSource(sp.GetRequiredService<ITransport>()));
 
+    // Broker DLQ import (issue #514 / broker-dlq-import proposal): the ONE
+    // ITransportDeadLetterDrainer this hosting registration contributes. Per-subscription
+    // drainers cannot be individual DI registrations (subscriptions are established at runtime,
+    // after the container seals), so the fleet drainer snapshots the transport's active
+    // subscriptions on every pass. Everything resolves LAZILY — constructing the fleet drainer
+    // never dials the broker and never touches the database, so container validation stays
+    // hermetic. The import seam resolves IWorkCoordinator per call from a fresh scope; a
+    // coordinator that cannot give custody (or the absence of one) THROWS, which makes the
+    // drainer abandon — the message stays on the broker DLQ instead of being silently lost.
+    services.AddSingleton<Whizbang.Core.Transports.ITransportDeadLetterDrainer>(sp => {
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      return new AzureServiceBusFleetDeadLetterDrainer(
+        clientFactory: () => sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>(),
+        activeSubscriptions: () =>
+          sp.GetRequiredService<ITransport>() is AzureServiceBusTransport asb
+            ? asb.ActiveSubscriptions
+            : [],
+        importAsync: async (import, ct) => {
+          using var scope = scopeFactory.CreateScope();
+          var coordinator = scope.ServiceProvider.GetService<Whizbang.Core.Messaging.IWorkCoordinator>()
+            ?? throw new InvalidOperationException(
+              "Broker DLQ import requires an IWorkCoordinator; none is registered — message stays on the broker DLQ.");
+          return await coordinator.ImportBrokerDeadLetterAsync(import, ct).ConfigureAwait(false);
+        },
+        loggerFactory: sp.GetRequiredService<ILoggerFactory>());
+    });
+
     // Register transport readiness check
     services.AddSingleton<ITransportReadinessCheck>(sp => {
       var transport = sp.GetRequiredService<ITransport>();

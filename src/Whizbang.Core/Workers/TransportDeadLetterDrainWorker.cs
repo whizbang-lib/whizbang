@@ -52,6 +52,7 @@ public partial class TransportDeadLetterDrainWorker(
   private readonly Counter<long> _drained = _buildCounter(whizbangMetrics);
 
   private long _totalDrained;
+  private bool _warnedNoDrainers;
 
   /// <summary>Meter name used by <see cref="TransportDeadLetterDrainWorker"/>.</summary>
 #pragma warning disable CA1707
@@ -117,7 +118,13 @@ public partial class TransportDeadLetterDrainWorker(
     using var scope = _scopeFactory.CreateScope();
     var drainers = scope.ServiceProvider.GetServices<ITransportDeadLetterDrainer>().ToList();
     if (drainers.Count == 0) {
-      // First tick logs once; subsequent ticks stay quiet (no drainers = no work).
+      // Warn ONCE: an enabled drain worker with zero drainers means broker dead-letter
+      // queues are never recovered — the silent-no-op wiring gap behind issue #514 must
+      // never be silent again. Subsequent ticks stay quiet (no drainers = no work).
+      if (!_warnedNoDrainers) {
+        _warnedNoDrainers = true;
+        LogNoDrainers(_logger);
+      }
       return;
     }
 
@@ -150,6 +157,10 @@ public partial class TransportDeadLetterDrainWorker(
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
     Message = "TransportDeadLetterDrainWorker stopped")]
   static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Warning,
+    Message = "TransportDeadLetterDrainWorker is ENABLED but no ITransportDeadLetterDrainer is registered — broker dead-letter queues will NOT be recovered (see the transport hosting registration)")]
+  static partial void LogNoDrainers(ILogger logger);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Warning,
     Message = "TransportDeadLetterDrainWorker cycle failed; will retry on next tick")]

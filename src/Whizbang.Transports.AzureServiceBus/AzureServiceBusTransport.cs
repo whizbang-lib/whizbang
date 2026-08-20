@@ -41,6 +41,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private bool _disposed;
   private bool _isInitialized;
   private int _sessionSubscriptionCount;
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<(string TopicName, string SubscriptionName), byte> _activeSubscriptionKeys = new();
+
+  /// <summary>
+  /// Snapshot of the (topic, subscription) pairs this transport has subscribed — the fleet
+  /// dead-letter drainer enumerates these on every drain pass so subscriptions established
+  /// after container build still get their broker DLQs drained.
+  /// </summary>
+  internal IReadOnlyCollection<(string TopicName, string SubscriptionName)> ActiveSubscriptions
+    => [.. _activeSubscriptionKeys.Keys];
 
   // ===== Adaptive session acceptors =====
   // One governor per session subscription; the sweep loop is shared (one PeriodicTimer per
@@ -741,6 +750,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         : await _startNonSessionBatchSubscriptionAsync(
             topicName, subscriptionName, batchHandler, batchOptions, destination, cancellationToken);
 
+      _activeSubscriptionKeys.TryAdd((topicName, subscriptionName), 0);
       if (_livenessWatchdog is not null) {
         _livenessWatchdog.Track(topicName, subscriptionName);
         _livenessWatchdog.Start();
@@ -1289,6 +1299,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         await processor.StartProcessingAsync(cancellationToken);
       }
 
+      _activeSubscriptionKeys.TryAdd((topicName, subscriptionName), 0);
       if (_livenessWatchdog is not null) {
         _livenessWatchdog.Track(topicName, subscriptionName);
         _livenessWatchdog.Start();

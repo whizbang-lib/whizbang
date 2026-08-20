@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using Whizbang.Core.Transports;
@@ -5,51 +9,45 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Transports.RabbitMQ;
 
 /// <summary>
-/// v0.502 slice C.9 — drains a RabbitMQ dead-letter queue (default topology:
-/// <c>&lt;queue&gt;.dlq</c> bound to <c>&lt;exchange&gt;.dlx</c>) by re-publishing each
-/// message back onto its original exchange. Symmetric with
-/// <see cref="Whizbang.Transports.AzureServiceBus.AzureServiceBusDeadLetterDrainer"/>.
+/// Drains one RabbitMQ dead-letter queue by IMPORTING each message into Whizbang's durable
+/// dead-letter custody (<c>wh_dead_letters</c>, via
+/// <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>) and then acking it at the broker. One
+/// hop, no re-publish, and no broker carousel: once imported, retry belongs to the dead-letter
+/// recovery flow (per-reason policies, operator disposition, generation-tagged auto-replay), and
+/// a message the current build still cannot process re-parks VISIBLY instead of orbiting the
+/// broker DLQ.
 /// </summary>
 /// <remarks>
-/// <para>
-/// One instance per DLQ. Registered in DI alongside <see cref="RabbitMQTransport"/>; the
-/// <see cref="Whizbang.Core.Workers.TransportDeadLetterDrainWorker"/> resolves all registered
-/// drainers on every backstop tick (default 10 min) and invokes
-/// <see cref="DrainDeadLetterQueueAsync"/> on each.
-/// </para>
-/// <para>
-/// Re-publish semantics: the drainer reads the original exchange + routing key from the
-/// <c>x-death</c> header that RMQ adds when a message enters DLQ. Body and headers are
-/// preserved. The new message starts fresh — RMQ's per-message delivery count resets. If the
-/// underlying defect is permanent the message lands back in DLQ; the worker's re-attempt rate
-/// is capped by <see cref="Whizbang.Core.Workers.TransportDeadLetterDrainWorkerOptions.IntervalMinutes"/>.
-/// </para>
+/// The import is raw custody: the wire body travels verbatim and nothing here deserializes it.
+/// Only messages whose <c>MessageId</c> parses as a GUID are imported (Whizbang publishes
+/// envelope ids as the AMQP MessageId); a foreign message is nacked back with requeue and the
+/// pass ENDS — RabbitMQ's single-message poll would otherwise re-fetch the same requeued head
+/// forever within one pass.
 /// </remarks>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqDeadLetterDrainerTests.cs</tests>
 public sealed class RabbitMqDeadLetterDrainer : ITransportDeadLetterDrainer {
   private readonly IConnection _connection;
   private readonly string _dlqName;
-  private readonly string _fallbackExchange;
+  private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync;
   private readonly ILogger<RabbitMqDeadLetterDrainer> _logger;
 
-  /// <summary>
-  /// Creates a drainer bound to a single RMQ DLQ.
-  /// </summary>
-  /// <param name="connection">Shared <see cref="IConnection"/>. Lifetime owned by DI; not closed here.</param>
-  /// <param name="dlqName">Name of the DLQ to drain (e.g. <c>orders.dlq</c>).</param>
-  /// <param name="fallbackExchange">Exchange to publish to when the message has no
-  /// <c>x-death</c> header (typically the original main exchange that fed the DLX).
-  /// Used as a safety net when the broker stripped headers.</param>
+  /// <summary>Creates a drainer bound to a single dead-letter queue.</summary>
+  /// <param name="connection">Shared broker connection. Lifetime owned by DI; not disposed here.</param>
+  /// <param name="dlqName">The dead-letter queue to drain (convention: <c>{queue}.dlq</c>).</param>
+  /// <param name="importAsync">Custody seam — wraps <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>.
+  ///   Returns <c>true</c> when a custody row was created, <c>false</c> for a duplicate (still safe
+  ///   to ack), and THROWS on failure so the message is requeued for the next pass.</param>
   /// <param name="logger">Logger.</param>
   public RabbitMqDeadLetterDrainer(
     IConnection connection,
     string dlqName,
-    string fallbackExchange,
+    Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
     ILogger<RabbitMqDeadLetterDrainer> logger) {
     _connection = connection ?? throw new ArgumentNullException(nameof(connection));
     _dlqName = !string.IsNullOrWhiteSpace(dlqName) ? dlqName
       : throw new ArgumentException("DLQ name required", nameof(dlqName));
-    _fallbackExchange = fallbackExchange ?? "";
+    _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<RabbitMqDeadLetterDrainer>.Instance;
   }
 
@@ -67,43 +65,46 @@ public sealed class RabbitMqDeadLetterDrainer : ITransportDeadLetterDrainer {
     int drained = 0;
     while (drained < maxCount && !ct.IsCancellationRequested) {
       // BasicGetAsync with autoAck=false — single-message poll keeps the implementation
-      // simple. For high-volume DLQs we could switch to a BasicConsume loop, but DLQ
-      // recovery is intentionally low-cadence; throughput isn't the limiting factor.
+      // simple. DLQ recovery is intentionally low-cadence; throughput isn't the limiting factor.
       var result = await channel.BasicGetAsync(_dlqName, autoAck: false, cancellationToken: ct).ConfigureAwait(false);
       if (result is null) {
         // DLQ is empty.
         break;
       }
 
+      ct.ThrowIfCancellationRequested();
+
+      if (!TryBuildImport(result, _dlqName, out var import)) {
+#pragma warning disable CA1848, CA1873
+        _logger.LogWarning(
+          "RMQ DLQ drain skipped a message from {Dlq}: MessageId is not a Whizbang wire id (GUID) — requeueing and ending this pass",
+          _dlqName);
+#pragma warning restore CA1848, CA1873
+        await _nackGuardedAsync(channel, result.DeliveryTag, ct).ConfigureAwait(false);
+        break;   // the requeued head would be re-fetched immediately — end the pass instead
+      }
+
       try {
-        var (exchange, routingKey) = _resolveOriginalDestination(result);
-        var props = new BasicProperties(result.BasicProperties);
-        await channel.BasicPublishAsync(
-          exchange: exchange,
-          routingKey: routingKey,
-          mandatory: false,
-          basicProperties: props,
-          body: result.Body,
-          cancellationToken: ct).ConfigureAwait(false);
+        // FALSE = duplicate custody (already imported) — still ack so the broker copy leaves
+        // the DLQ. Failures THROW and route to the requeue arm.
+        var imported = await _importAsync(import, ct).ConfigureAwait(false);
         await channel.BasicAckAsync(result.DeliveryTag, multiple: false, ct).ConfigureAwait(false);
         drained++;
 #pragma warning disable CA1848, CA1873
         _logger.LogInformation(
-          "RMQ DLQ drained message from {Dlq} → exchange={Exchange}/routingKey={RoutingKey}",
-          _dlqName, exchange, routingKey);
+          "RMQ DLQ imported message {MessageId} from {Dlq} into wh_dead_letters (duplicate={Duplicate})",
+          import.MessageId, _dlqName, !imported);
 #pragma warning restore CA1848, CA1873
+      } catch (OperationCanceledException) {
+        throw;
       } catch (Exception ex) {
 #pragma warning disable CA1848, CA1873
         _logger.LogWarning(ex,
-          "RMQ DLQ drain failed for a message from {Dlq} — nacking with requeue",
-          _dlqName);
+          "RMQ DLQ import failed for message {MessageId} from {Dlq} — requeueing and ending this pass",
+          import.MessageId, _dlqName);
 #pragma warning restore CA1848, CA1873
-        try {
-          // Requeue=true keeps it in DLQ for the next sweep instead of dropping it.
-          await channel.BasicNackAsync(result.DeliveryTag, multiple: false, requeue: true, ct).ConfigureAwait(false);
-        } catch {
-          // Best-effort cleanup; ignore.
-        }
+        await _nackGuardedAsync(channel, result.DeliveryTag, ct).ConfigureAwait(false);
+        break;   // same head-blocking guard as above
       }
     }
 
@@ -111,47 +112,70 @@ public sealed class RabbitMqDeadLetterDrainer : ITransportDeadLetterDrainer {
   }
 
   /// <summary>
-  /// Reads the original (exchange, routing-key) from the <c>x-death</c> header RabbitMQ adds
-  /// when a message enters DLQ. Falls back to <see cref="_fallbackExchange"/> + the message's
-  /// current routing key when the header is missing or malformed.
+  /// Maps a broker message to the import record — pure metadata + raw body, no deserialization.
+  /// Returns false when the AMQP MessageId is not a GUID (not a Whizbang wire message).
+  /// Internal for direct regression testing of the mapping.
   /// </summary>
-  private (string Exchange, string RoutingKey) _resolveOriginalDestination(BasicGetResult result) {
-    return ResolveOriginalDestination(
-      headers: result.BasicProperties.Headers,
-      fallbackRoutingKey: result.RoutingKey ?? "",
-      fallbackExchange: _fallbackExchange);
+  internal static bool TryBuildImport(BasicGetResult result, string dlqName, out BrokerDeadLetterImport import) {
+    var props = result.BasicProperties;
+    if (!Guid.TryParse(props.MessageId, out var messageId)) {
+      import = null!;
+      return false;
+    }
+    string? messageType = null;
+    if (props.Headers is { } headers && headers.TryGetValue("EnvelopeType", out var et)) {
+      messageType = et switch {
+        byte[] bytes => System.Text.Encoding.UTF8.GetString(bytes),
+        string str => str,
+        _ => null,
+      };
+    }
+    var (reason, count) = ParseXDeath(props.Headers);
+    import = new BrokerDeadLetterImport(
+      MessageId: messageId,
+      StreamId: null,
+      MessageType: messageType,
+      Destination: dlqName,
+      EnvelopeJson: System.Text.Encoding.UTF8.GetString(result.Body.Span),
+      BrokerReason: reason,
+      BrokerDescription: null,
+      EnqueuedAt: null,
+      DeliveryCount: count is null ? null : (int)Math.Min(count.Value, int.MaxValue));
+    return true;
   }
 
   /// <summary>
-  /// Internal x-death header parser — pure function so it can be unit-tested without a
-  /// real broker / <see cref="BasicGetResult"/>. Public-ish signature takes the raw headers
-  /// dictionary and the fallback values; returns the resolved exchange + routing-key pair.
+  /// Reads the dead-letter reason and death count from the <c>x-death</c> header RabbitMQ adds
+  /// when a message enters a DLQ. Pure function so it can be unit-tested without a broker.
   /// </summary>
-  internal static (string Exchange, string RoutingKey) ResolveOriginalDestination(
-      IDictionary<string, object?>? headers,
-      string fallbackRoutingKey,
-      string fallbackExchange) {
+  internal static (string? Reason, long? Count) ParseXDeath(IDictionary<string, object?>? headers) {
     if (headers is null
         || !headers.TryGetValue("x-death", out var xDeathRaw)
         || xDeathRaw is not IList<object?> xDeathList
         || xDeathList.Count == 0
         || xDeathList[0] is not IDictionary<string, object?> first) {
-      return (fallbackExchange, fallbackRoutingKey);
+      return (null, null);
     }
-
-    string? exchange = null;
-    string? routingKey = null;
-
-    if (first.TryGetValue("exchange", out var ex) && ex is byte[] exBytes) {
-      exchange = System.Text.Encoding.UTF8.GetString(exBytes);
+    string? reason = null;
+    long? count = null;
+    if (first.TryGetValue("reason", out var r) && r is byte[] reasonBytes) {
+      reason = System.Text.Encoding.UTF8.GetString(reasonBytes);
     }
-    if (first.TryGetValue("routing-keys", out var rkRaw)
-        && rkRaw is IList<object?> rkList
-        && rkList.Count > 0
-        && rkList[0] is byte[] rkBytes) {
-      routingKey = System.Text.Encoding.UTF8.GetString(rkBytes);
+    if (first.TryGetValue("count", out var c) && c is long countValue) {
+      count = countValue;
     }
+    return (reason, count);
+  }
 
-    return (exchange ?? fallbackExchange, routingKey ?? fallbackRoutingKey);
+  private async Task _nackGuardedAsync(IChannel channel, ulong deliveryTag, CancellationToken ct) {
+    try {
+      await channel.BasicNackAsync(deliveryTag, multiple: false, requeue: true, ct).ConfigureAwait(false);
+    } catch (Exception nackEx) when (
+        nackEx is global::RabbitMQ.Client.Exceptions.AlreadyClosedException or ObjectDisposedException) {
+#pragma warning disable CA1848, CA1873
+      _logger.LogWarning(nackEx,
+        "RMQ DLQ nack failed on a closed channel for {Dlq} — broker re-delivers naturally", _dlqName);
+#pragma warning restore CA1848, CA1873
+    }
   }
 }

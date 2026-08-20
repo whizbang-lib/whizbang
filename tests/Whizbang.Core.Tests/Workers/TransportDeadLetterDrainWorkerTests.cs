@@ -140,4 +140,39 @@ public class TransportDeadLetterDrainWorkerTests {
     // metric dimension wiring contract holds at the type level by reading it back here.
     await Assert.That(d.TransportName).IsEqualTo("asb:my-topic/my-sub");
   }
+
+  private sealed class _recordingLogger : Microsoft.Extensions.Logging.ILogger<TransportDeadLetterDrainWorker> {
+    public readonly List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries = [];
+    IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+      => Entries.Add((logLevel, formatter(state, exception)));
+  }
+
+  [Test]
+  public async Task NoDrainersRegistered_WarnsExactlyOnceAcrossPassesAsync() {
+    // Issue #514: an enabled drain worker with zero drainers silently recovered nothing for
+    // months. The wiring gap must announce itself — once, not per tick.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    var provider = services.BuildServiceProvider();
+    var logger = new _recordingLogger();
+    var worker = new TransportDeadLetterDrainWorker(
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 500 }),
+      whizbangMetrics: new WhizbangMetrics(),
+      logger: logger);
+
+    await worker.DrainOnceAsync(CancellationToken.None);
+    await worker.DrainOnceAsync(CancellationToken.None);
+
+    var warnings = logger.Entries.Where(e =>
+      e.Level == Microsoft.Extensions.Logging.LogLevel.Warning
+      && e.Message.Contains("no ITransportDeadLetterDrainer", StringComparison.Ordinal)).ToList();
+    await Assert.That(warnings.Count).IsEqualTo(1)
+      .Because("the silent-no-op failure mode must be visible, but a 10-minute cadence must not "
+             + "produce warning spam");
+  }
 }
+
