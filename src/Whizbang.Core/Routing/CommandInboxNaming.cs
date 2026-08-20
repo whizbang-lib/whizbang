@@ -19,6 +19,14 @@ public static class CommandInboxNaming {
   /// <summary>The system broadcast inbox entity every service subscribes to.</summary>
   private const string SYSTEM_BROADCAST_INBOX_TOPIC = "inbox.whizbang";
 
+  /// <summary>
+  /// The control-class broadcast entity (topology arc phase 9). Carries the SUPERSEDABLE control
+  /// signals only; created when the control split is opted into
+  /// (<c>ControlClassOptions.SessionlessSubscriptions</c>) so the class can be provisioned
+  /// sessionless while durable system commands keep their session-ordered entity.
+  /// </summary>
+  private const string CONTROL_BROADCAST_INBOX_TOPIC = "inbox.whizbang.control";
+
   /// <summary>The framework-reserved contract-namespace subtree (lowercase-invariant).</summary>
   private const string FRAMEWORK_RESERVED_NAMESPACE = "whizbang.core";
 
@@ -30,6 +38,9 @@ public static class CommandInboxNaming {
 
   /// <summary>Gets the system broadcast inbox entity name (<c>inbox.whizbang</c>).</summary>
   public static string SystemBroadcastTopic => SYSTEM_BROADCAST_INBOX_TOPIC;
+
+  /// <summary>Gets the control-class broadcast entity name (<c>inbox.whizbang.control</c>).</summary>
+  public static string ControlBroadcastTopic => CONTROL_BROADCAST_INBOX_TOPIC;
 
   /// <summary>
   /// Metadata key marking a <see cref="TransportDestination"/> as a consumer-provisioned

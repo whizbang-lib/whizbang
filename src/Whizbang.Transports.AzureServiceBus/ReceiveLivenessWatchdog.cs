@@ -76,6 +76,14 @@ internal sealed partial class ReceiveLivenessWatchdog : IAsyncDisposable {
     _lastReceiveActivity[(topicName, subscriptionName)] = _timeProvider.GetUtcNow();
 
   /// <summary>
+  /// Every (topic, subscription) currently monitored — the SAME registry of live entities the
+  /// backlog-age duty samples, so the duty can never drift from what this instance actually
+  /// consumes from.
+  /// </summary>
+  public IReadOnlyList<(string Topic, string Subscription)> TrackedEntities =>
+    [.. _lastReceiveActivity.Keys];
+
+  /// <summary>
   /// Records a received message — proof the subscription's receiver is alive.
   /// </summary>
   public void RecordActivity(string topicName, string subscriptionName) =>

@@ -192,7 +192,8 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
         queueName,
         _routingPatternsOf(subscription),
         _logger,
-        cancellationToken);
+        cancellationToken,
+        controlClass: NamespaceInboxStrategy.IsControlClassSubscription(subscription));
       _declaredSubscriptions[(exchangeName, queueName)] = true;
       _declaredExchanges[exchangeName] = true;
     }

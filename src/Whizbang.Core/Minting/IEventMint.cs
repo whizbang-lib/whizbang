@@ -20,7 +20,7 @@ public interface IEventMint {
   /// <summary>The collective family. Placeholder — its minting surface lands with topology arc phase 6.</summary>
   ICollectiveMint Collective { get; }
 
-  /// <summary>The checkpoint family. Placeholder — its minting surface (control-class TTL minting) lands with topology arc phase 9.</summary>
+  /// <summary>The checkpoint family — the control class's TTL authority behind every control-plane publisher.</summary>
   ICheckpointMint Checkpoints { get; }
 }
 
@@ -35,11 +35,25 @@ public interface ICollectiveMint {
 }
 
 /// <summary>
-/// The checkpoint mint family. Empty by design at phase 4: the facade fixes the shape
-/// (<c>mint.Checkpoints</c>) now so producers bind to a stable seam; the minting members
-/// (control-class checkpoints with TTL ≈ 2× cadence) land with topology arc phase 9.
+/// The checkpoint mint family: where a control-class message acquires its broker LIFETIME.
+/// A supersedable control signal is re-derived on the next cadence, so minting it with
+/// <c>TimeToLive ≈ 2× cadence</c> means a superseded copy expires on the broker instead of
+/// queueing — a control backlog becomes structurally impossible rather than merely unlikely.
 /// </summary>
+/// <remarks>
+/// The derivation lives here, at construction, precisely so it is not recomputed at every
+/// control-plane publish site. Callers stamp the minted lifetime onto their destination with
+/// <c>ControlMessageTtl.Stamp</c>; each transport lifts it into its native expiry.
+/// </remarks>
 /// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Minting/EventMintTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Minting/CheckpointMintTests.cs</tests>
 public interface ICheckpointMint {
+  /// <summary>
+  /// Mints <paramref name="request"/>'s payload with the lifetime its cadence implies.
+  /// </summary>
+  /// <typeparam name="TPayload">The control message type.</typeparam>
+  /// <param name="request">The payload plus the cadence it is emitted on.</param>
+  /// <returns>The unchanged payload plus its lifetime (null when TTL minting is disabled).</returns>
+  MintedControlMessage<TPayload> Mint<TPayload>(ControlMintRequest<TPayload> request)
+    where TPayload : notnull;
 }

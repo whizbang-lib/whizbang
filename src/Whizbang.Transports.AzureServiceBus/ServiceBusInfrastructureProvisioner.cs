@@ -159,7 +159,8 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
       if (!await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken)) {
         try {
           await ServiceBusEntityProvisioning.CreateSubscriptionAsync(
-            _adminClient, _options, topicName, subscriptionName, _logger, cancellationToken);
+            _adminClient, _options, topicName, subscriptionName, _logger, cancellationToken,
+            controlClass: NamespaceInboxStrategy.IsControlClassSubscription(subscription));
         } catch (RequestFailedException ex) when (ex.Status == 409) {
           // Race condition — another instance created it, safe to ignore
           if (_logger.IsEnabled(LogLevel.Debug)) {

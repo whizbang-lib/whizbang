@@ -296,9 +296,17 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Add correlation and causation IDs if present
       _setCorrelationAndCausationHeaders(envelope, properties);
 
+      // Control-class lifetime (topology arc phase 9): lift the minted TTL out of the metadata bag
+      // into per-message expiry. Unlifted it would fall through to Headers below, where the broker
+      // never looks — i.e. a control backlog that still queues forever.
+      _applyControlClassTimeToLive(properties, ControlMessageTtl.FromMetadata(destination.Metadata));
+
       // Add custom metadata (convert JsonElement to RabbitMQ-compatible types)
       if (destination.Metadata != null) {
         foreach (var (key, value) in destination.Metadata) {
+          if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+            continue;  // lifted above
+          }
           properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
         }
       }
@@ -458,8 +466,16 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     _setCorrelationAndCausationHeaders(envelope, properties);
 
+    // Control-class lifetime (topology arc phase 9): per-item stamp wins over the shared
+    // destination's, matching the collide-by-overwrite contract PerItemMetadata already documents.
+    _applyControlClassTimeToLive(
+      properties, ControlMessageTtl.Resolve(item.PerItemMetadata, destination.Metadata));
+
     if (destination.Metadata != null) {
       foreach (var (key, value) in destination.Metadata) {
+        if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+          continue;  // lifted above
+        }
         properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
       }
     }
@@ -468,6 +484,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     // (e.g., whizbang.body-size, whizbang.is-claim) — that's the contract.
     if (item.PerItemMetadata != null) {
       foreach (var (key, value) in item.PerItemMetadata) {
+        if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+          continue;  // lifted above
+        }
         properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
       }
     }
@@ -488,6 +507,24 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// irrelevant to a threshold measured in tens of minutes.
   /// </summary>
   private AmqpTimestamp _publishTimestamp() => new(_timeProvider.GetUtcNow().ToUnixTimeSeconds());
+
+  /// <summary>
+  /// Applies a minted control-class lifetime as AMQP per-message expiry (topology arc phase 9).
+  /// The wire encoding is a millisecond count as a string; a null or non-positive lifetime leaves
+  /// <c>Expiration</c> unset, which is the pre-phase-9 wire shape exactly. Values beyond
+  /// <see cref="long.MaxValue"/> milliseconds saturate rather than throwing — a degenerate
+  /// configuration must never fault a publish.
+  /// </summary>
+  private static void _applyControlClassTimeToLive(BasicProperties properties, TimeSpan? timeToLive) {
+    if (timeToLive is not { } lifetime || lifetime <= TimeSpan.Zero) {
+      return;
+    }
+
+    var milliseconds = lifetime.TotalMilliseconds >= long.MaxValue
+      ? long.MaxValue
+      : (long)lifetime.TotalMilliseconds;
+    properties.Expiration = milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+  }
 
   /// <summary>
   /// Sets correlation and causation ID headers on message properties from the envelope.

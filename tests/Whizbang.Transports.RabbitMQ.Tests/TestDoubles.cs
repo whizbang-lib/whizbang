@@ -291,13 +291,20 @@ internal class FakeChannel : IChannel {
   public Task ExchangeUnbindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> MessageCountAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
 
+  /// <summary>
+  /// Message count a passive declare reports per queue (phase 10 backlog peek). Unset queues
+  /// report 0, exactly as before — existing callers are unaffected.
+  /// </summary>
+  public Dictionary<string, uint> PassiveQueueDepths { get; } = [];
+
   public Task<QueueDeclareOk> QueueDeclarePassiveAsync(string queue, CancellationToken cancellationToken = default) {
     PassiveQueueDeclareCount++;
     if (!ExistingQueues.Contains(queue)) {
       throw new OperationInterruptedException(
         new ShutdownEventArgs(ShutdownInitiator.Peer, 404, $"NOT_FOUND - no queue '{queue}'"));
     }
-    return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
+    var depth = PassiveQueueDepths.TryGetValue(queue, out var mapped) ? mapped : 0u;
+    return Task.FromResult(new QueueDeclareOk(queue, depth, 0));
   }
   public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueuePurgeAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();

@@ -169,6 +169,11 @@ public static class ServiceCollectionExtensions {
       return new TransportNamespaceResolver(tagOptions);
     });
 
+    // Control-class resolver (topology arc phase 9): the sibling lookup the RECEIVE boundary
+    // consults, answering "is this type-name in the sys-control class?" so the non-durable path is
+    // taken for it and for nothing else. Singleton for the same caching reason as above.
+    services.TryAddSingleton(_ => new ControlClassResolver());
+
     // Register TracingOptions with IOptions pattern
     _configureTracingOptions(services, coreOptions);
 
@@ -295,6 +300,9 @@ public static class ServiceCollectionExtensions {
     // repeat AddWhizbang() calls idempotent and lets a host substitute its own families first.
     services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
     services.TryAddSingleton<Minting.ICollectiveMint, Minting.CollectiveMint>();
+    // The checkpoint family reads the control-class options for its TTL derivation (phase 9);
+    // register them here too so `AddWhizbang()` alone still yields a mint that derives correctly.
+    services.AddOptions<Routing.ControlClassOptions>();
     services.TryAddSingleton<Minting.ICheckpointMint, Minting.CheckpointMint>();
     services.TryAddSingleton<Minting.IEventMint, Minting.EventMint>();
 

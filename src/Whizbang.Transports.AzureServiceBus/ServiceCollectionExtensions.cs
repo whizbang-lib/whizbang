@@ -206,6 +206,22 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<Whizbang.Core.Health.IWhizbangHealthSource>(sp =>
       new AsbOpsRateHealthSource(sp.GetRequiredService<ITransport>()));
 
+    // Backlog-age duty's peek (topology arc phase 10): the transport contributes the admin-plane
+    // sampler; the duty itself lives in Core and is inert without one. Enumerable so a
+    // multi-transport host contributes one peek per transport.
+    services.AddSingleton<Whizbang.Core.Transports.IBacklogPeek>(sp =>
+      new AsbBacklogPeek(
+        sp.GetRequiredService<ITransport>(),
+        sp.GetService<Whizbang.Core.Tags.TagOptions>()));
+
+    // Per-class ops-rate gauge feed (topology arc phase 10): the self-check already computes this
+    // number to decide whether to degrade health; publishing it per namespace is what makes the
+    // failure mode of the motivating incident — invisible while healthy — a graph.
+    services.AddSingleton<Whizbang.Core.Transports.ITrafficClassOpsRateSource>(sp =>
+      new AsbTrafficClassOpsRateSource(
+        sp.GetRequiredService<ITransport>(),
+        sp.GetService<Whizbang.Core.Tags.TagOptions>()));
+
     // Register transport readiness check
     services.AddSingleton<ITransportReadinessCheck>(sp => {
       var transport = sp.GetRequiredService<ITransport>();

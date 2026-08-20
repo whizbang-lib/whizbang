@@ -354,6 +354,29 @@ public static class WorkerPipelineExtensions {
       Whizbang.Core.Routing.PoisonMessageOptionsConfigurationBinder>(sp =>
         new Whizbang.Core.Routing.PoisonMessageOptionsConfigurationBinder(
           sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>())));
+    // Control class (topology arc phase 9). Options only — the TTL half is turnkey (the mint reads
+    // them), the sessionless + non-durable halves are opt-in migration steps consulted LIVE by the
+    // inbox strategy and the receive boundary, so a rollback is a configuration edit, not a deploy.
+    services.AddOptions<Whizbang.Core.Routing.ControlClassOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.ControlClassOptions>,
+      Whizbang.Core.Routing.ControlClassOptionsConfigurationBinder>(sp =>
+        new Whizbang.Core.Routing.ControlClassOptionsConfigurationBinder(
+          sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>())));
+
+    // Backlog-age duty (topology arc phase 10): the observability half of the same lesson the
+    // poison detector is the enforcement half of — a backlog that is HOSTAGE (deep, young,
+    // draining) and one that is STUCK (shallow, ancient) look identical on a depth graph.
+    // Registered unconditionally; inert until a transport contributes an IBacklogPeek.
+    services.AddOptions<Whizbang.Core.Observability.BacklogAgeOptions>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeState>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Observability.BacklogAgeWorker>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Health.IWhizbangHealthSource,
+      Whizbang.Core.Health.BacklogAgeHealthSource>());
+
     services.TryAddSingleton<Whizbang.Core.Routing.PoisonDetectionCapabilityState>();
     services.TryAddSingleton<Whizbang.Core.Routing.IPoisonMessageDetector>(sp =>
       new Whizbang.Core.Routing.PoisonMessageDetector(

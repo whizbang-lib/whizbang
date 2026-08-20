@@ -166,6 +166,73 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   internal ReceiveLivenessWatchdog? LivenessWatchdog => _livenessWatchdog;
 
   /// <summary>
+  /// Test seam for the head peek that supplies backlog AGE. Defaults to a real receiver peek;
+  /// tests substitute it so the duty's adapter logic is exercised without a broker.
+  /// </summary>
+  internal Func<string, string, CancellationToken, Task<DateTimeOffset?>>? OldestEnqueuedTimeProbe { get; set; }
+
+  /// <summary>
+  /// Samples every subscription this transport currently consumes from (topology arc phase 10):
+  /// DEPTH from the management plane, AGE from a single head peek. One management operation and
+  /// one peek per entity per call — an observer of idle churn must never become idle churn.
+  /// </summary>
+  /// <remarks>
+  /// A failure on either read degrades that entity's sample rather than the whole pass: depth
+  /// without age is still useful, and the duty reports the missing age as a capability gap instead
+  /// of silently treating an unknown age as a young one.
+  /// </remarks>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One sample per live subscription; empty when nothing is subscribed yet.</returns>
+  internal async Task<IReadOnlyList<Whizbang.Core.Transports.BacklogSample>> PeekBacklogsAsync(
+      CancellationToken cancellationToken) {
+    if (_livenessWatchdog is null || _adminClient is null) {
+      return [];
+    }
+
+    var samples = new List<Whizbang.Core.Transports.BacklogSample>();
+    foreach (var (topic, subscription) in _livenessWatchdog.TrackedEntities) {
+      long depth;
+      try {
+        depth = await _adminClient.GetSubscriptionActiveMessageCountAsync(topic, subscription, cancellationToken)
+          .ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        continue;  // this entity is unreadable right now; the next tick retries.
+      }
+
+      DateTimeOffset? oldestEnqueued = null;
+      try {
+        oldestEnqueued = await _peekOldestEnqueuedTimeAsync(topic, subscription, cancellationToken)
+          .ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Age unavailable on this surface right now — reported as a capability gap upstream.
+      }
+
+      samples.Add(new Whizbang.Core.Transports.BacklogSample(
+        Entity: $"{topic}/{subscription}",
+        Depth: depth,
+        OldestAge: oldestEnqueued is { } enqueued && enqueued > DateTimeOffset.MinValue
+          ? DateTimeOffset.UtcNow - enqueued
+          : null));
+    }
+
+    return samples;
+  }
+
+  private async Task<DateTimeOffset?> _peekOldestEnqueuedTimeAsync(
+      string topic, string subscription, CancellationToken cancellationToken) {
+    if (OldestEnqueuedTimeProbe is { } probe) {
+      return await probe(topic, subscription, cancellationToken).ConfigureAwait(false);
+    }
+
+    // A head peek neither locks nor settles nor counts against delivery — the cheapest read that
+    // can answer "how old is the front of this entity".
+    await using var receiver = _client.CreateReceiver(topic, subscription);
+    var head = await receiver.PeekMessageAsync(fromSequenceNumber: null, cancellationToken)
+      .ConfigureAwait(false);
+    return head?.EnqueuedTime;
+  }
+
+  /// <summary>
   /// Slice 2 receptor-registry filter — returns true if any local receptor handles the given
   /// message type at any lifecycle stage, OR any local perspective Apply's it. Returns false
   /// (drop this message) when neither registry was injected — that signals a legacy / test
@@ -503,9 +570,18 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         message.ApplicationProperties["CausationId"] = causationId.Value.Value.ToString();
       }
 
+      // Control-class lifetime (topology arc phase 9): lift the minted TTL out of the metadata bag
+      // into the SDK property, exactly as StreamId is lifted into SessionId above. Unlifted it
+      // would fall through to ApplicationProperties below — inert decoration the broker never
+      // reads, i.e. a control backlog that still queues forever.
+      _applyControlClassTimeToLive(message, ControlMessageTtl.FromMetadata(destination.Metadata));
+
       // Add custom metadata (converting JsonElement to AMQP-compatible primitives)
       if (destination.Metadata != null) {
         foreach (var (key, value) in destination.Metadata) {
+          if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+            continue;  // lifted above
+          }
           message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
         }
       }
@@ -718,8 +794,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       message.ApplicationProperties["CausationId"] = causationId.Value.Value.ToString();
     }
 
+    // Control-class lifetime (topology arc phase 9): per-item stamp wins over the shared
+    // destination's, matching the collide-by-overwrite contract PerItemMetadata already documents
+    // — one batch can carry mixed classes.
+    _applyControlClassTimeToLive(
+      message, ControlMessageTtl.Resolve(item.PerItemMetadata, destination.Metadata));
+
     if (destination.Metadata != null) {
       foreach (var (key, value) in destination.Metadata) {
+        if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+          continue;  // lifted above
+        }
         message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
       }
     }
@@ -728,11 +813,28 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // (e.g., whizbang.body-size, whizbang.is-claim) — that's the contract.
     if (item.PerItemMetadata != null) {
       foreach (var (key, value) in item.PerItemMetadata) {
+        if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+          continue;  // lifted above
+        }
         message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
       }
     }
 
     return message;
+  }
+
+  /// <summary>
+  /// Applies a minted control-class lifetime to <paramref name="message"/>. A null lifetime leaves
+  /// the SDK default (<see cref="TimeSpan.MaxValue"/> — "use the entity default"), which is the
+  /// pre-phase-9 wire shape exactly. Values beyond the SDK's representable maximum saturate rather
+  /// than throwing: a degenerate configuration must never fault a publish.
+  /// </summary>
+  private static void _applyControlClassTimeToLive(ServiceBusMessage message, TimeSpan? timeToLive) {
+    if (timeToLive is not { } lifetime || lifetime <= TimeSpan.Zero) {
+      return;
+    }
+
+    message.TimeToLive = lifetime;
   }
 
   /// <inheritdoc />

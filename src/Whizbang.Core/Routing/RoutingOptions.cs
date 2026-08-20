@@ -287,6 +287,17 @@ public sealed class RoutingOptions {
   public bool SharedInboxRetired => _retireSharedInbox;
 
   /// <summary>
+  /// The control class's delivery semantics (topology arc phase 9). Consulted LIVE by
+  /// <see cref="NamespaceInboxStrategy"/>, so a configuration-driven change to the sessionless /
+  /// non-durable migration steps needs no strategy re-registration — the same treatment
+  /// <see cref="SharedInboxRetired"/> gets. Replaced at first options resolution with the
+  /// DI-bound instance, so there is exactly ONE control-class options object per host.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#control-class</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassSubscriptionSplitTests.cs</tests>
+  public ControlClassOptions ControlClass { get; set; } = new();
+
+  /// <summary>
   /// RETIRES the legacy shared inbox — the explicit opt-in completing the
   /// per-namespace-command-inbox migration (topology arc phase 7). Under retirement
   /// <see cref="NamespaceInboxStrategy"/> drops its transitional shared-inbox subscription,

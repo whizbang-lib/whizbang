@@ -50,6 +50,7 @@ public static class WhizbangMeters {
     PoisonMessageDetector.METER_NAME,
     StartupPipelineMetrics.METER_NAME,
     StreamIntegrityMetrics.METER_NAME,
+    BacklogAgeMetrics.METER_NAME,
     TableStatisticsMetrics.METER_NAME,
     TransportDeadLetterDrainWorker.METER_NAME,
     TransportMetrics.METER_NAME,

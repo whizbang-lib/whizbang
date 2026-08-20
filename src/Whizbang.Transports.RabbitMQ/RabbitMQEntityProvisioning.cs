@@ -27,7 +27,8 @@ internal static class RabbitMQEntityProvisioning {
     string queueName,
     IReadOnlyList<string> routingPatterns,
     ILogger? logger,
-    CancellationToken cancellationToken
+    CancellationToken cancellationToken,
+    bool controlClass = false
   ) {
     await channel.ExchangeDeclareAsync(
       exchange: exchangeName,
@@ -48,7 +49,12 @@ internal static class RabbitMQEntityProvisioning {
     if (options.AutoDeclareDeadLetterExchange) {
       queueArgs["x-dead-letter-exchange"] = $"{exchangeName}.dlx";
     }
-    if (options.EnableSingleActiveConsumer) {
+    // Control class (topology arc phase 9): the plain-queue analogue of a sessionless Service Bus
+    // subscription. RabbitMQ's ordering primitive pins a queue to ONE consumer at a time; control
+    // consumers need no ordering, so pinning them only reintroduces the head-of-line queueing the
+    // class exists to avoid. The dead-letter exchange above is untouched — plain is about ordering,
+    // never about giving up the broker's own poison valve.
+    if (options.EnableSingleActiveConsumer && !controlClass) {
       queueArgs["x-single-active-consumer"] = true;
     }
 

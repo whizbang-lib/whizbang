@@ -61,6 +61,19 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   /// </summary>
   public static string SystemCommandNamespace => SYSTEM_COMMAND_NAMESPACE;
 
+  /// <summary>
+  /// True when <paramref name="routingPattern"/> is the SUPERSEDABLE control-plane family's
+  /// pattern (topology arc phase 9). The one place that decides which side of the
+  /// durable/supersedable split a framework pattern belongs on, so the two sides can never drift
+  /// apart or overlap: durable system commands and minted composite envelopes are NOT control
+  /// class — the first is one-shot operator intent, the second wraps real events.
+  /// </summary>
+  /// <param name="routingPattern">A pattern from <see cref="BuildRoutingPatterns"/>.</param>
+  /// <returns>True for the control-plane family's pattern.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassSubscriptionSplitTests.cs:ControlSplitOn_EveryFrameworkPatternIsStillCoveredExactlyOnceAsync</tests>
+  internal static bool IsControlPlanePattern(string routingPattern) =>
+    string.Equals(routingPattern, CONTROL_PLANE_NAMESPACE + ".#", StringComparison.Ordinal);
+
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
 
   /// <summary>

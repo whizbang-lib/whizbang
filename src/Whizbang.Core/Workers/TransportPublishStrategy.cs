@@ -231,7 +231,13 @@ public partial class TransportPublishStrategy(
       } catch (Exception ex) {
         var reason = TransportFailureClassifier.Classify(ex);
         if (reason == MessageFailureReason.Throttled && attempt < _throttleRetry.MaxAttempts) {
-          _metrics?.OutboxPublishThrottled.Add(1, new KeyValuePair<string, object?>("transport", _transportTag));
+          // Per-NAMESPACE attribution (topology arc phase 10): each TransportNamespace brings its
+          // own request quota, so "which pool ran out" is the question that decides whether to move
+          // a class or raise a tier. A host-wide count cannot answer it.
+          _metrics?.OutboxPublishThrottled.Add(1,
+            new KeyValuePair<string, object?>("transport", _transportTag),
+            new KeyValuePair<string, object?>(
+              "transport_namespace", TransportNamespaces.FromMetadata(destination.Metadata)));
           var delay = _throttleRetry.ComputeDelay(attempt);
           LogThrottleRetry(work.MessageId, attempt, _throttleRetry.MaxAttempts, delay.TotalMilliseconds, _transportTag);
           await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
@@ -392,7 +398,12 @@ public partial class TransportPublishStrategy(
               && TransportFailureClassifier.Classify(new InvalidOperationException(r.Error ?? "")) == MessageFailureReason.Throttled);
 
         if (batchThrottled && batchAttempt < _throttleRetry.MaxAttempts) {
-          _metrics?.OutboxPublishThrottled.Add(bulkItems.Count, new KeyValuePair<string, object?>("transport", _transportTag));
+          // The batch group is keyed by namespace already, so the shared destination names exactly
+          // one broker — the whole group's throttles belong to that pool.
+          _metrics?.OutboxPublishThrottled.Add(bulkItems.Count,
+            new KeyValuePair<string, object?>("transport", _transportTag),
+            new KeyValuePair<string, object?>(
+              "transport_namespace", TransportNamespaces.FromMetadata(sharedDestination.Metadata)));
           var delay = _throttleRetry.ComputeDelay(batchAttempt);
           LogThrottleRetryBatch(bulkItems.Count, batchAttempt, _throttleRetry.MaxAttempts, delay.TotalMilliseconds, _transportTag);
           await Task.Delay(delay, cancellationToken).ConfigureAwait(false);

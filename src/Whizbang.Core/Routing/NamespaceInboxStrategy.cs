@@ -44,8 +44,33 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
   /// with the publish side through <see cref="CommandInboxNaming"/> (phase 6).</summary>
   public static string SystemBroadcastInboxTopic => CommandInboxNaming.SystemBroadcastTopic;
 
+  /// <summary>Backing constant for <see cref="ControlClassMetadataKey"/>.</summary>
+  private const string CONTROL_CLASS_METADATA_KEY = "ControlClassSubscription";
+
+  /// <summary>
+  /// Metadata key marking a subscription as belonging to the CONTROL CLASS (topology arc
+  /// phase 9). Provisioners read it to create the entity WITHOUT sessions: control consumers need
+  /// no ordering, so the accept/lock machinery is pure idle cost for this class — and a sessionless
+  /// entity is one whose delivery counter actually rises under lock loss, which restores the
+  /// broker's own dead-letter valve for it (phase 8.5 established that a session-enabled entity's
+  /// never does).
+  /// </summary>
+  public static string ControlClassMetadataKey => CONTROL_CLASS_METADATA_KEY;
+
   private readonly SharedTopicInboxStrategy _transitionalShared;
   private readonly RoutingOptions? _routingOptions;
+  private readonly ControlClassOptions? _controlClass;
+
+  /// <summary>
+  /// True when <paramref name="subscription"/> carries the control-class marker — the single
+  /// question both provisioners ask before choosing session enablement.
+  /// </summary>
+  /// <param name="subscription">The subscription to test.</param>
+  /// <returns>True for control-class subscriptions.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassSubscriptionSplitTests.cs:ControlSplitOn_AddsADedicatedControlEntityAsync</tests>
+  public static bool IsControlClassSubscription(InboxSubscription? subscription) =>
+    subscription?.Metadata?.TryGetValue(CONTROL_CLASS_METADATA_KEY, out var marker) == true
+      && marker is true;
 
   /// <summary>
   /// Creates the strategy. The transitional shared-inbox subscription (superset guarantee,
@@ -67,9 +92,15 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
   /// <param name="routingOptions">The service's routing options; null behaves like the
   /// unbound overload (retirement can never engage).</param>
   /// <param name="sharedInboxTopic">Today's shared inbox topic. Default: "inbox".</param>
-  public NamespaceInboxStrategy(RoutingOptions? routingOptions, string sharedInboxTopic = "inbox") {
+  /// <param name="controlClass">The control-class options (topology arc phase 9); null keeps the
+  /// pre-phase-9 single-broadcast-entity shape. Consulted LIVE, like the retirement flag.</param>
+  public NamespaceInboxStrategy(
+      RoutingOptions? routingOptions,
+      string sharedInboxTopic = "inbox",
+      ControlClassOptions? controlClass = null) {
     _transitionalShared = new SharedTopicInboxStrategy(sharedInboxTopic);
     _routingOptions = routingOptions;
+    _controlClass = controlClass;
   }
 
   /// <summary>
@@ -152,6 +183,31 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
     // shared strategy uses today (with no owned domains), so it carries exactly the
     // system-command + control-plane + minting patterns — locked by tests.
     var systemPatterns = SharedTopicInboxStrategy.BuildRoutingPatterns(FrozenSet<string>.Empty);
+
+    // Part 2b (topology arc phase 9, opt-in) — THE DURABLE/SUPERSEDABLE SPLIT. Session enablement
+    // is a property of the ENTITY, so a single broadcast entity cannot be both session-ordered for
+    // durable system commands and sessionless for control. Under the split the supersedable family
+    // (whizbang.core.messaging.*) MOVES to its own entity; durable system commands and composite
+    // envelopes — whose payload is real, not supersedable — stay put. The two pattern sets
+    // partition the original: nothing is dropped and nothing is carried twice.
+    if ((_controlClass ?? _routingOptions?.ControlClass)?.SessionlessSubscriptions == true) {
+      var controlPatterns = new List<string>();
+      var durablePatterns = new List<string>();
+      foreach (var pattern in systemPatterns) {
+        (SharedTopicInboxStrategy.IsControlPlanePattern(pattern) ? controlPatterns : durablePatterns)
+          .Add(pattern);
+      }
+
+      systemPatterns = durablePatterns;
+      subscriptions.Add(new InboxSubscription(
+        Topic: CommandInboxNaming.ControlBroadcastTopic,
+        FilterExpression: string.Join(",", controlPatterns),
+        Metadata: new Dictionary<string, object> {
+          ["RoutingPatterns"] = controlPatterns,
+          [CONTROL_CLASS_METADATA_KEY] = true
+        }));
+    }
+
     subscriptions.Add(new InboxSubscription(
       Topic: CommandInboxNaming.SystemBroadcastTopic,
       FilterExpression: string.Join(",", systemPatterns),

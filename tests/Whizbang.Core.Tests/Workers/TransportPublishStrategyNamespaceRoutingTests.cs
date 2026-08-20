@@ -145,15 +145,79 @@ public class TransportPublishStrategyNamespaceRoutingTests {
       options, () => [CoalesceGroupResolverTests.TagRegistration(typeof(BulkClassEvent), "bulk-import")]);
   }
 
+  // ========================================
+  // Per-namespace throttle counters (topology arc phase 10, spec increment 5)
+  // ========================================
+
+  [Test]
+  public async Task PublishAsync_Throttled_CountsAgainstTheRoutedNamespaceAsync() {
+    // The whole point of multi-namespace routing is that each namespace brings its OWN request
+    // quota. A throttle counter that only says "asb" cannot tell an operator WHICH pool is
+    // exhausted, which is the question that decides whether to move a class or raise a tier.
+    using var factory = new Observability.TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(factory));
+    using var recorder = new Observability.MetricAssertionHelper(factory.CreatedMeters[0]);
+    var strategy = _strategy(new ThrottlingTransport(), _bulkResolver(), metrics);
+
+    await strategy.PublishAsync(_eventWork(typeof(BulkClassEvent), "myapp.records"), CancellationToken.None);
+
+    var throttles = recorder.Measurements
+      .Where(m => m.InstrumentName == "whizbang.transport.outbox.publish_throttled")
+      .ToList();
+    await Assert.That(throttles).IsNotEmpty();
+    await Assert.That(throttles.All(m => m.Tags.Any(t => t.Key == "transport_namespace" && (string?)t.Value == "bulk")))
+      .IsTrue()
+      .Because("the counter must attribute the throttle to the namespace whose credits ran out");
+  }
+
+  [Test]
+  public async Task PublishAsync_Throttled_UnroutedTrafficCountsAgainstDefaultAsync() {
+    using var factory = new Observability.TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(factory));
+    using var recorder = new Observability.MetricAssertionHelper(factory.CreatedMeters[0]);
+    var strategy = _strategy(new ThrottlingTransport(), _bulkResolver(), metrics);
+
+    await strategy.PublishAsync(_eventWork(typeof(PlainEvent), "myapp.records"), CancellationToken.None);
+
+    var throttles = recorder.Measurements
+      .Where(m => m.InstrumentName == "whizbang.transport.outbox.publish_throttled")
+      .ToList();
+    await Assert.That(throttles).IsNotEmpty();
+    await Assert.That(throttles.All(m => m.Tags.Any(t =>
+      t.Key == "transport_namespace" && (string?)t.Value == TransportNamespaces.DefaultKey))).IsTrue();
+  }
+
+  /// <summary>Transport whose every publish is refused as broker throttling.</summary>
+  private sealed class ThrottlingTransport : ITransport {
+    public bool IsInitialized => true;
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination,
+        string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null,
+        CancellationToken cancellationToken = default) =>
+      Task.FromException(new global::RabbitMQ.Client.ThrottleSignalException());
+
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination, TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope,
+        TransportDestination destination, CancellationToken cancellationToken = default)
+        where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+  }
+
   private static TransportPublishStrategy _strategy(
-      ITransport transport, TransportNamespaceResolver? transportNamespaces) {
+      ITransport transport, TransportNamespaceResolver? transportNamespaces,
+      TransportMetrics? metrics = null) {
     return new TransportPublishStrategy(
       transport,
       new DefaultTransportReadinessCheck(),
       "inbox",
       loggerFactory: null,
-      throttleRetryOptions: null,
-      metrics: null,
+      throttleRetryOptions: new ThrottleRetryOptions { MaxAttempts = 2, BaseDelay = TimeSpan.FromMilliseconds(1) },
+      metrics: metrics,
       postSerializeHookChain: null,
       jsonOptions: null,
       namespaceRouting: null,

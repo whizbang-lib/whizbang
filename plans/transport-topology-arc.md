@@ -356,7 +356,73 @@ PR #513 before this decision; it stays (no revert).
 - **Phase 9 — control class semantics** (#424 incr 3): `sys-control` tag, TTL≈2×cadence
   minting via `mint.Checkpoints`, sessionless subscriptions, non-durable receive path.
   Decide the `whizbang.core.commands.system` vs `whizbang.core.messaging` split here.
+  **STATUS: implemented on feature/transport-topology (uncommitted).**
+  THE SPLIT (the open decision, now locked): `IControlPlaneMessage` is a SECURITY + no-DLQ marker,
+  NOT a traffic class — the two sets deliberately differ. `whizbang.core.commands.system`
+  (durable system commands: run-control, killswitches, rebuild/reseed) stays on the phase-7
+  BROADCAST inbox with sessions and no TTL: it is one-shot operator intent a lifetime would
+  silently discard. `whizbang.core.minting` (composite envelopes) also stays — wire-only wrappers
+  around DURABLE payload. `whizbang.core.messaging` (integrity checkpoints/manifests/gap+divergence
+  reports, redelivery + manifest requests) IS the class: every member is re-derived on the next
+  cadence. `RebuildPerspectiveCommand` is the trap the locks name explicitly — it carries the
+  marker and must NOT join the class. Signal probes are out of scope by construction: they ride
+  `ISignalTransport` (Postgres NOTIFY / in-memory), never the broker.
+  Membership carrier: `SystemControlTagAttribute : MessageTagAttribute` applied
+  `[SystemControlTag(Tag = SystemTags.CONTROL, Properties = [])]` (the SystemAuditTagAttribute
+  idiom — explicit syntactic tag, no hook payload), `SystemTags.CONTROL = "sys-control"` +
+  `IsFrameworkTag`, so `RouteNamespace("sys-control", …)` now passes reserved-prefix validation.
+  TTL: `ControlClassOptions` (bindable `Whizbang:Routing:ControlClass`) with the pure static
+  `DeriveTimeToLive(cadence, multiplier, floor) = max(floor, cadence × multiplier)` — matrix-locked
+  (7 combos + non-positive cadence/multiplier/floor + overflow-saturates), defaults 2× and a 30s
+  floor, per-call and per-options overrides. `ICheckpointMint.Mint` (the phase-4 placeholder's
+  first real implementation) applies it at construction; `ControlMessageTtl` (shaped exactly on
+  `TransportNamespaces`) is the destination rail; each transport LIFTS the key into
+  `ServiceBusMessage.TimeToLive` / `BasicProperties.Expiration` and REMOVES it from the metadata
+  bag (unlifted it would land in ApplicationProperties/Headers as inert decoration). First
+  consumer: `IntegrityCheckpointWorker`, cadence = `CheckpointIntervalSeconds`, stamped AFTER
+  `ControlPlaneDestination.WithSession` (which replaces the metadata bag wholesale) so the session
+  key survives.
+  SESSIONLESS (opt-in `ControlClassOptions.SessionlessSubscriptions`): the broadcast subscription
+  SPLITS — `inbox.whizbang.control` carries `whizbang.core.messaging.#` and is marked
+  `ControlClassSubscription`; `inbox.whizbang` keeps system-command + minting patterns. The two
+  pattern sets PARTITION the original (completeness + no-overlap locked). Provisioners read the
+  marker: ASB `requiresSession: false` (can only ever REMOVE sessions), RMQ omits
+  `x-single-active-consumer` while keeping the DLX. PHASE-8.5 INTERACTION, asserted: a sessionless
+  entity's DeliveryCount DOES rise under lock loss, so the broker's own MaxDeliveryCount valve
+  works for this class — the age-based detector is its BACKSTOP, not its only defence.
+  NON-DURABLE RECEIVE (opt-in `NonDurableReceive`): `TransportConsumerWorker` gates per MESSAGE on
+  `ControlClassResolver` (name-keyed over the tag registry, the `TransportNamespaceResolver` idiom;
+  unresolvable ⇒ NOT control, fail-safe toward durability) and runs receive → compare → discard:
+  the class's receptors fire inline at `PostInboxInline` (the SAME stage the durable path fires, so
+  control receptors are unchanged), no inbox row, no completion bookkeeping, and a failed
+  comparison is swallowed — rethrowing would abandon the broker message, i.e. redelivery.
+  Both migration steps are OPT-IN like phases 5/6/7; TTL minting is ON by default (its only members
+  have a successor already scheduled). Killswitch yields the pre-phase-9 wire shape exactly.
 - **Phase 10 — backlog-age duty + OTel** (#424 incr 4b+5).
+  **STATUS: implemented on feature/transport-topology (uncommitted).**
+  DUTY: no scheduling abstraction existed to reuse (`IDutyElector` is leader ELECTION, not
+  scheduling), so `BacklogAgeWorker` follows `TableStatisticsCollector` — periodic
+  `BackgroundService` refreshing gauge caches with a public `PeekOnceAsync` as the deterministic
+  test seam — and is per-instance by design (each instance observes what IT consumes from).
+  `IBacklogPeek` is optional+injected (the `IMessageDiscardPolicy` / `IPoisonMessageDetector`
+  shape — nothing added to `ITransport`). `BacklogAgeOptions` (Enabled, Interval 1m, AgeThreshold
+  15m) → `BacklogAgeState` → `BacklogAgeHealthSource` ("backlog", Degraded, ENTITY NAMED).
+  Findings are REPLACED per tick so the signal goes DOWN on heal. AGE, not depth, is the
+  discriminator: the incident's 16,642-message backlog was hostage, not poison. ASB supplies depth
+  (admin plane) + age (one head peek, which neither locks nor settles nor counts against delivery),
+  walking the liveness watchdog's live-entity registry and fanning over namespace peers; RMQ
+  supplies depth (passive declare, dedicated channel per probe) and reports NO age — AMQP cannot
+  read the head timestamp without a get-and-requeue that would mark messages redelivered every
+  minute, corrupting the counters the poison detector reads. That gap is surfaced
+  (`HasUnknownAgeSurface`), never silently inert — the phase-8.5 capability-honesty rule.
+  OTEL: new Core meter `Whizbang.TrafficClasses` (registered in `WhizbangMeters`, drift-locked)
+  with `whizbang.traffic_class.backlog_depth`, `whizbang.traffic_class.backlog_age_seconds`,
+  `whizbang.traffic_class.ops_rate` — ObservableGauges over caches, every instrument tagged
+  `transport` / `transport_namespace` / `traffic_class` (+ `entity` for backlog). Ops-rate is fed
+  by `ITrafficClassOpsRateSource` (ASB publishes its existing idle projection per namespace, never
+  summed — each pool is its own budget). Throttle counters: the EXISTING
+  `whizbang.transport.outbox.publish_throttled` gained a `transport_namespace` tag at both publish
+  sites, so an operator can name WHICH credit pool is exhausted.
 - **Spike (before phase 6 DLQ tests):** #424's open question — does connection-death lock
   loss increment DeliveryCount? Emulator investigation; DLQ backstop assumptions depend on it.
 

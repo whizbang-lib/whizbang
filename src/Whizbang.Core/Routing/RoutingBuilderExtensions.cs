@@ -95,6 +95,12 @@ public static class RoutingBuilderExtensions {
     builder.Services.AddSingleton<IOptions<RoutingOptions>>(sp => {
       RoutingOptionsConfigurationBinder.Apply(
         sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(), options);
+      // Control class (topology arc phase 9): adopt the DI-bound instance so the strategy, the
+      // mint and the receive boundary all read ONE object — a second copy is how a class ends up
+      // provisioned sessionless while the receive path still writes inbox rows for it.
+      if (sp.GetService<IOptions<ControlClassOptions>>()?.Value is { } controlClass) {
+        options.ControlClass = controlClass;
+      }
       // Startup validation (topology arc phase 7): retiring the shared inbox is valid ONLY
       // once every command namespace is flipped — runs AFTER configuration binding so
       // code-callback and configuration-driven retirement are guarded identically.

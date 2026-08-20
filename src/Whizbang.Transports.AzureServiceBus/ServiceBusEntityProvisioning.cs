@@ -48,17 +48,33 @@ internal static class ServiceBusEntityProvisioning {
   /// <c>SubscriptionLockDuration</c> the lock — so a DARK-provisioned subscription is
   /// indistinguishable from a subscribe-time one.
   /// </summary>
+  /// <param name="adminClient">The management-plane client.</param>
+  /// <param name="options">The transport's options.</param>
+  /// <param name="topicName">The topic to subscribe under.</param>
+  /// <param name="subscriptionName">The subscription name.</param>
+  /// <param name="logger">Logger.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <param name="controlClass">
+  /// True for a CONTROL-CLASS entity (topology arc phase 9): the subscription is created WITHOUT
+  /// sessions regardless of <c>EnableSessions</c>. Control consumers need no ordering, so the
+  /// accept/lock machinery is pure idle cost for this class — and a sessionless entity is one whose
+  /// delivery counter actually rises under lock loss, which restores the broker's own dead-letter
+  /// valve (phase 8.5 established a session-enabled entity's never does). The flag can only ever
+  /// REMOVE sessions: a host that disabled them globally is unaffected.
+  /// </param>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbControlClassProvisioningTests.cs:ProvisionManifest_ControlClassSubscription_CreatedWithoutSessionsAsync</tests>
   internal static async Task CreateSubscriptionAsync(
       IServiceBusAdminClient adminClient,
       AzureServiceBusOptions options,
       string topicName,
       string subscriptionName,
       ILogger logger,
-      CancellationToken cancellationToken) {
+      CancellationToken cancellationToken,
+      bool controlClass = false) {
     if (logger.IsEnabled(LogLevel.Information)) {
       logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
     }
-    if (options.EnableSessions) {
+    if (options.EnableSessions && !controlClass) {
       await adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, options.MaxDeliveryAttempts, options.SubscriptionLockDuration, cancellationToken);
     } else {
       await adminClient.CreateSubscriptionAsync(topicName, subscriptionName, options.MaxDeliveryAttempts, options.SubscriptionLockDuration, cancellationToken);

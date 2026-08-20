@@ -116,6 +116,10 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   // WorkCoordinatorPublisherOptions so all three call sites — this consumer,
   // WorkBatchCoordinator, and WorkCoordinatorPublisherWorker — agree by construction.
   private readonly int _partitionCount;
+  // Control class (topology arc phase 9): non-durable receive is a migration step consulted LIVE
+  // off the shared options instance, so a rollback is a configuration edit, not a redeploy.
+  private readonly Routing.ControlClassOptions? _controlClass;
+  private readonly Tags.ControlClassResolver? _controlClassResolver;
 
   /// <summary>
   /// Initializes a new instance of TransportConsumerWorker.
@@ -160,7 +164,11 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
     // database work against a schema that may not exist yet on a first boot. Optional only so
     // existing fixtures construct unchanged; DI always supplies it.
-    ISchemaReadyGate? schemaReadyGate = null
+    ISchemaReadyGate? schemaReadyGate = null,
+    // Control class (topology arc phase 9). Both optional: absent ⇒ every message takes the
+    // durable path, i.e. pre-phase-9 behavior with no new branch reachable at all.
+    Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions>? controlClass = null,
+    Tags.ControlClassResolver? controlClassResolver = null
   ) {
 #pragma warning restore S107
     ArgumentNullException.ThrowIfNull(transport);
@@ -190,6 +198,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _transportBatchOptions = transportBatchOptions ?? new TransportBatchOptions();
     _workChannelWriter = workChannelWriter;
     _partitionCount = claimWorkerOptions?.Value?.PartitionCount ?? new ClaimWorkerOptions().PartitionCount;
+    _controlClass = controlClass?.Value;
+    _controlClassResolver = controlClassResolver;
 
     var maxConcurrent = messageProcessingOptions?.MaxConcurrentMessages ?? 40;
     _concurrencySemaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent) : null;
@@ -529,6 +539,21 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         }
       }
 
+      // CONTROL CLASS — non-durable receive (topology arc phase 9): receive → compare → discard.
+      // A supersedable control signal is re-derived on the next cadence, so a stored copy is
+      // worthless when read AND not inert: the durable inbox feeds retry and recovery, so a burst
+      // of control failures becomes a backlog every subsequent boot replays. This is the
+      // receive-boundary extension of the rule DeadLetterDropPolicy already applies at the
+      // dead-letter boundary. The comparison is not skipped — it MOVES here, at the same
+      // lifecycle stage the durable path fires it at, so control receptors are unchanged.
+      if (_controlClass?.NonDurableReceive == true
+          && _controlClassResolver is not null
+          && !string.IsNullOrWhiteSpace(msg.EnvelopeType)
+          && _controlClassResolver.IsControlClass(EnvelopeTypeNameHelper.ExtractInnerTypeName(msg.EnvelopeType))) {
+        await _compareAndDiscardControlMessageAsync(msg, scope.ServiceProvider, cancellationToken);
+        continue;
+      }
+
       var (inboxMessage, cleanupClaim) = await _tryBuildInboxMessageFromTransportAsync(msg, scope.ServiceProvider, cancellationToken);
       if (inboxMessage is not null) {
         // Composites are stored as ordinary inbox rows — fan-out moved to the dispatch seam
@@ -601,6 +626,42 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       _ = _fireActiveCleanupAsync(pendingCleanupClaims, cancellationToken);
     }
     // Handler returns → transport ACKs all N messages → next batch starts collecting
+  }
+
+  /// <summary>
+  /// The control class's non-durable receive: invoke the class's receptors inline (the "compare"),
+  /// then discard. Never writes an inbox row, never records completion, and never dead-letters.
+  /// </summary>
+  /// <remarks>
+  /// A failed comparison is swallowed BY DESIGN. Rethrowing would abandon the broker message,
+  /// which is redelivery — the unbounded loop this class exists to make structurally impossible —
+  /// and dead-lettering would resurrect the durable control backlog the path removes. The next
+  /// cadence re-derives the signal and the comparison simply runs again on fresher data.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerControlClassReceiveTests.cs:ControlMessage_ComparisonThrows_DropsWithoutDeadLetteringAsync</tests>
+  private async Task _compareAndDiscardControlMessageAsync(
+      TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {
+    try {
+      var invoker = scopedProvider.GetService<IReceptorInvoker>();
+      if (invoker is not null) {
+        // The SAME stage the durable path fires for an inbox delivery, so a control receptor sees
+        // no difference; only the durability around it disappears.
+        await invoker.InvokeAsync(
+          msg.Envelope,
+          LifecycleStage.PostInboxInline,
+          new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.PostInboxInline,
+            MessageSource = MessageSource.Inbox,
+            AttemptNumber = 1,
+          },
+          cancellationToken);
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger.LogWarning(ex,
+        "Control-class comparison failed for {EnvelopeType}; dropping (control-plane failures drop "
+        + "rather than dead-letter — the next cadence re-derives this signal)",
+        msg.EnvelopeType);
+    }
   }
 
   /// <summary>

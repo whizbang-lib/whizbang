@@ -181,6 +181,14 @@ public static class ServiceCollectionExtensions {
       Whizbang.Core.Health.IWhizbangHealthSource,
       Whizbang.Core.Health.TopologyDriftHealthSource>());
 
+    // Backlog-age duty's peek (topology arc phase 10): queue depth from a passive declare over the
+    // queues this instance actually consumes from. Depth only — see RabbitMQBacklogPeek for why
+    // an age on this transport would cost more than it is worth.
+    services.AddSingleton<Whizbang.Core.Transports.IBacklogPeek>(sp =>
+      new RabbitMQBacklogPeek(
+        sp.GetRequiredService<RabbitMQChannelPool>(),
+        () => _consumedQueueNames(sp)));
+
     // Register infrastructure provisioner for domain topic auto-provisioning + the
     // manifest-driven DARK provisioning (phase 5) — queue args must mirror the transport's,
     // so the SAME options instance flows in.
@@ -421,4 +429,18 @@ public static class ServiceCollectionExtensions {
 
     return services;
   }
+  /// <summary>
+  /// The queue names this instance consumes from, derived from the same subscription set the
+  /// consumer worker subscribes with — so the backlog duty samples what this service actually
+  /// listens on and never drifts into sampling entities it does not own.
+  /// </summary>
+  private static IReadOnlyList<string> _consumedQueueNames(IServiceProvider services) {
+    var manifest = services.GetService<Whizbang.Core.Routing.TopologyManifest>();
+    if (manifest is null) {
+      return [];
+    }
+
+    return [.. manifest.Subscriptions.Select(s => $"{manifest.ServiceName}-{s.Topic.ToLowerInvariant()}")];
+  }
+
 }

@@ -12,7 +12,7 @@ public sealed class EventMint : IEventMint {
   /// <summary>Aggregates the resolved family services.</summary>
   /// <param name="composites">The composite family.</param>
   /// <param name="collective">The collective family (placeholder until phase 6).</param>
-  /// <param name="checkpoints">The checkpoint family (placeholder until phase 9).</param>
+  /// <param name="checkpoints">The checkpoint family (control-class TTL minting).</param>
   /// <exception cref="ArgumentNullException">Thrown when any family is null.</exception>
   public EventMint(ICompositeFactory composites, ICollectiveMint collective, ICheckpointMint checkpoints) {
     Composites = composites ?? throw new ArgumentNullException(nameof(composites));
@@ -37,13 +37,4 @@ public sealed class EventMint : IEventMint {
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Minting/EventMintTests.cs</tests>
 public sealed class CollectiveMint : ICollectiveMint {
-}
-
-/// <summary>
-/// Default (placeholder) <see cref="ICheckpointMint"/> — carries no members yet; the checkpoint
-/// minting surface lands with topology arc phase 9.
-/// </summary>
-/// <docs>resilience/stream-integrity</docs>
-/// <tests>tests/Whizbang.Core.Tests/Minting/EventMintTests.cs</tests>
-public sealed class CheckpointMint : ICheckpointMint {
 }
