@@ -226,6 +226,36 @@ public class AzureServiceBusTransportUnitTests {
   }
 
   [Test]
+  public async Task EnableAdaptiveAcceptors_DefaultsToTrueAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.EnableAdaptiveAcceptors).IsTrue()
+      .Because("the spec's stated intent replaces the standing acceptor army: session acceptors scale with observed demand and the idle cost of the receive machinery trends to zero by construction");
+  }
+
+  [Test]
+  public async Task AcceptorFloor_DefaultsToFourAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.AcceptorFloor).IsEqualTo(4)
+      .Because("a small always-on acceptor pool keeps first-message pickup instant while costing ≈0.07 idle ops/sec per subscription at the 60s idle timeout");
+  }
+
+  [Test]
+  public async Task AcceptorEvaluationInterval_DefaultsToThirtySecondsAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.AcceptorEvaluationInterval).IsEqualTo(TimeSpan.FromSeconds(30))
+      .Because("one growth/decay decision per half-minute reacts to a fan-out burst within one window without thrashing UpdateConcurrency on every session event");
+  }
+
+  [Test]
   public async Task EnableOpsRateSelfCheck_DefaultsToTrueAsync() {
     // Arrange & Act
     var options = new AzureServiceBusOptions();

@@ -121,6 +121,7 @@ internal sealed class RecordingTransportLogger : ILogger<AzureServiceBusTranspor
 internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = "unit-test.servicebus.windows.net") : ServiceBusClient {
   public RaisableProcessor? LastProcessor { get; private set; }
   public RaisableSessionProcessor? LastSessionProcessor { get; private set; }
+  public ServiceBusSessionProcessorOptions? LastSessionProcessorOptions { get; private set; }
   public RecordingBatchSender? LastSender { get; private set; }
 
   /// <summary>Injected into every created sender's single-message send path.</summary>
@@ -147,6 +148,7 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   public override ServiceBusSessionProcessor CreateSessionProcessor(
     string topicName, string subscriptionName, ServiceBusSessionProcessorOptions options) {
     LastSessionProcessor = new RaisableSessionProcessor();
+    LastSessionProcessorOptions = options;
     return LastSessionProcessor;
   }
 
@@ -196,6 +198,10 @@ internal sealed class RaisableSessionProcessor : ServiceBusSessionProcessor {
   public Task RaiseSessionMessageAsync(ProcessSessionMessageEventArgs args) => OnProcessSessionMessageAsync(args);
 
   public Task RaiseErrorAsync(ProcessErrorEventArgs args) => OnProcessErrorAsync(args);
+
+  public Task RaiseSessionInitializingAsync(ProcessSessionEventArgs args) => OnSessionInitializingAsync(args);
+
+  public Task RaiseSessionClosingAsync(ProcessSessionEventArgs args) => OnSessionClosingAsync(args);
 
   private sealed class InnerRaisableProcessor : ServiceBusProcessor {
   }

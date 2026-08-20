@@ -40,10 +40,12 @@ public class AsbOpsRateSelfCheckWiringTests {
 
   [Test]
   public async Task Subscribe_ChurnHeavySessionConfiguration_LogsOpsRateWarningAsync() {
-    // 200 acceptors / 1s idle timeout = 200 projected idle ops/sec — over the 100/sec default.
+    // 200 STANDING acceptors / 1s idle timeout = 200 projected idle ops/sec — over the 100/sec
+    // default. Adaptive acceptors disabled: this locks the legacy standing-army projection.
     var (transport, logger) = _createTransport(new AzureServiceBusOptions {
       AutoProvisionInfrastructure = false,
       EnableSessions = true,
+      EnableAdaptiveAcceptors = false,
       MaxConcurrentSessions = 200,
       SessionIdleTimeout = TimeSpan.FromSeconds(1),
     });
@@ -73,6 +75,7 @@ public class AsbOpsRateSelfCheckWiringTests {
     var (transport, logger) = _createTransport(new AzureServiceBusOptions {
       AutoProvisionInfrastructure = false,
       EnableSessions = true,
+      EnableAdaptiveAcceptors = false,
       MaxConcurrentSessions = 200,
       SessionIdleTimeout = TimeSpan.FromSeconds(1),
       EnableOpsRateSelfCheck = false,
@@ -87,11 +90,12 @@ public class AsbOpsRateSelfCheckWiringTests {
 
   [Test]
   public async Task Subscribe_ProjectionAccumulatesAcrossSubscriptionsAsync() {
-    // 120 sessions / 2s = 60 ops/sec per subscription: one subscription sits under the 100/sec
-    // threshold, the second pushes the cumulative projection to 120 and must warn.
+    // 120 standing sessions / 2s = 60 ops/sec per subscription: one subscription sits under the
+    // 100/sec threshold, the second pushes the cumulative projection to 120 and must warn.
     var (transport, logger) = _createTransport(new AzureServiceBusOptions {
       AutoProvisionInfrastructure = false,
       EnableSessions = true,
+      EnableAdaptiveAcceptors = false,
       MaxConcurrentSessions = 120,
       SessionIdleTimeout = TimeSpan.FromSeconds(2),
     });
@@ -104,6 +108,24 @@ public class AsbOpsRateSelfCheckWiringTests {
     await _subscribeAsync(transport, "domain-events");
     await Assert.That(logger.Contains(LogLevel.Warning, WARNING_FRAGMENT)).IsTrue()
       .Because("the projection is per-instance across ALL session subscriptions: 2 × 60 = 120 ops/sec exceeds 100");
+  }
+
+  [Test]
+  public async Task Subscribe_AdaptiveAcceptors_ChurnHeavyCeilingDoesNotWarnAsync() {
+    // The same 200-slot / 1s configuration that warns as a standing army projects only the
+    // 4-slot floor under adaptive acceptors — the ceiling is potential, not idle spend.
+    var (transport, logger) = _createTransport(new AzureServiceBusOptions {
+      AutoProvisionInfrastructure = false,
+      EnableSessions = true,
+      MaxConcurrentSessions = 200,
+      SessionIdleTimeout = TimeSpan.FromSeconds(1),
+    });
+    await transport.InitializeAsync();
+
+    await _subscribeAsync(transport, "inbox");
+
+    await Assert.That(logger.Contains(LogLevel.Warning, WARNING_FRAGMENT)).IsFalse()
+      .Because("an adaptive pool idles at the floor (4/1s = 4 ops/sec) — warning on the ceiling would flag exactly the configurations adaptive acceptors fix");
   }
 
   [Test]

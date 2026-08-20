@@ -54,6 +54,9 @@ internal sealed class AzureServiceBusOptionsPostConfigure(IConfiguration? config
     _bindBool(section, "RetryIndefinitely", v => options.RetryIndefinitely = v);
     _bindBool(section, "EnableOpsRateSelfCheck", v => options.EnableOpsRateSelfCheck = v);
     _bindDouble(section, "OpsRateWarningThresholdPerSecond", v => options.OpsRateWarningThresholdPerSecond = v);
+    _bindBool(section, "EnableAdaptiveAcceptors", v => options.EnableAdaptiveAcceptors = v);
+    _bindInt(section, "AcceptorFloor", v => options.AcceptorFloor = v);
+    _bindTimeSpan(section, "AcceptorEvaluationInterval", v => options.AcceptorEvaluationInterval = v);
   }
 
   private static void _bindTimeSpan(IConfigurationSection section, string key, Action<TimeSpan> apply) {
