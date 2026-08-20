@@ -479,7 +479,14 @@ public class PerspectiveApplyExactlyOnceTests {
     var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
+    // Synchronise on the ASSERTED outcome, not on a claim-cycle proxy. _cycleCount increments at
+    // the START of ClaimWorkAsync, while the dispatch happens later on the async drain path — so
+    // waiting for "2 cycles" could cancel the worker mid-flight before cycle 1's work dispatched,
+    // and the count came back 0 under parallel load. Wait for the dispatch itself...
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    // ...then let a FURTHER cycle run, so "exactly once" is proven against a coordinator that has
+    // had another opportunity to hand the same work out again, rather than merely not-yet-observed.
+    await coordinator.WaitForCyclesAsync(minCycles: 3, timeout: TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
 

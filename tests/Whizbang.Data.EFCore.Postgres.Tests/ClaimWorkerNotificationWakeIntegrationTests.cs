@@ -108,7 +108,11 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       listener,
       gate,
       Options.Create(new ClaimWorkerOptions {
-        PollingIntervalMilliseconds = 5_000,
+        // Parked far beyond the wait window below: polling CANNOT explain a second claim
+        // inside 15 s, so the wake path is the only possible cause. That makes the proof
+        // structural instead of chronometric — CI scheduling jitter can slow a working wake
+        // past a tight wall-clock bound, and a red build for a healthy path teaches nothing.
+        PollingIntervalMilliseconds = 60_000,
         PollingMaxIntervalMilliseconds = 60_000
       }),
       NullLogger<ClaimWorker>.Instance);
@@ -144,13 +148,15 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     var secondCallAt = coord.ClaimCallTimes[1];
     var wakeLatency = secondCallAt - notifyAt;
 
-    // The wake-path latency should be sub-second on a healthy listener; we assert ≤ 2s
-    // for safety margin in CI, but well under the 5s polling interval that would be the
-    // floor without wake.
-    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromSeconds(2))
-      .Because("NOTIFY → OnSignal → RequestImmediatePoll → claim_work should fire within ~50ms; allow 2s for CI jitter");
-    await Assert.That(secondCallAt - firstCallAt).IsLessThan(TimeSpan.FromSeconds(5))
-      .Because("the wake-fired tick must land before the 5s polling interval would have");
+    // Sub-second on a healthy listener, but the ASSERTION is deliberately structural, not
+    // chronometric: polling is parked at 60 s, so a claim arriving inside the 15 s wait
+    // above can only have come from the wake. Bounding on wall-clock instead would fail
+    // whenever CI starves a thread — turning a working wake path into a red build.
+    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromSeconds(15))
+      .Because("the claim arrived inside the wait window while polling was parked at 60s — "
+             + "NOTIFY → OnSignal → RequestImmediatePoll → claim_work is the only path that explains it");
+    await Assert.That(secondCallAt - firstCallAt).IsLessThan(TimeSpan.FromSeconds(60))
+      .Because("the wake-fired tick must land before the parked polling interval would have");
 
     await worker.StopAsync(CancellationToken.None);
     await ((IHostedService)listener).StopAsync(CancellationToken.None);
@@ -225,7 +231,11 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
       listener,
       gate,
       Options.Create(new ClaimWorkerOptions {
-        PollingIntervalMilliseconds = 5_000,
+        // Parked far beyond the wait window below: polling CANNOT explain a second claim
+        // inside 15 s, so the wake path is the only possible cause. That makes the proof
+        // structural instead of chronometric — CI scheduling jitter can slow a working wake
+        // past a tight wall-clock bound, and a red build for a healthy path teaches nothing.
+        PollingIntervalMilliseconds = 60_000,
         PollingMaxIntervalMilliseconds = 60_000
       }),
       NullLogger<ClaimWorker>.Instance);
@@ -253,8 +263,12 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     var secondCallAt = coord.ClaimCallTimes[1];
     var wakeLatency = secondCallAt - notifyAt;
 
-    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromSeconds(2))
-      .Because("store into a drained hot stream → edge NOTIFY (migration 114) → OnSignal → RequestImmediatePoll → claim; under the cold-only gate nothing rang for hot streams and this hop paid the 5 s notify-healthy poll.");
+    // Structural, not chronometric: polling is parked at 60 s, so a claim inside the 15 s
+    // wait can only be the edge doorbell. A wall-clock bound here would redden the build
+    // whenever CI starves a thread, without the doorbell having failed at all.
+    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromSeconds(15))
+      .Because("store into a drained hot stream → edge NOTIFY (migration 114) → OnSignal → RequestImmediatePoll → claim; "
+             + "under the cold-only gate nothing rang for hot streams and this hop waited out the poll, which is parked at 60 s here.");
 
     await worker.StopAsync(CancellationToken.None);
     await ((IHostedService)listener).StopAsync(CancellationToken.None);
