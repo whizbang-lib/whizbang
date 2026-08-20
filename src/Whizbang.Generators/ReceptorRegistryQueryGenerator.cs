@@ -40,6 +40,14 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string FIREAT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
   private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
+  private const string MESSAGE_KIND_ATTRIBUTE = "Whizbang.Core.Routing.MessageKindAttribute";
+  private const string ICOMMAND_INTERFACE = "global::Whizbang.Core.ICommand";
+  private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
+  private const string IQUERY_INTERFACE = "global::Whizbang.Core.IQuery";
+
+  /// <summary>The framework system namespace subtree whose types classify as MessageKind.System.
+  /// Mirror of <c>Whizbang.Core.Routing.MessageKindDetector</c>'s framework-system tier.</summary>
+  private const string FRAMEWORK_SYSTEM_NAMESPACE = "Whizbang.Core.Commands.System";
 
   /// <summary>The lifecycle stages we expose lookups for. Mirror of <c>Whizbang.Core.Messaging.LifecycleStage</c> values
   /// that the receive boundary cares about (PreInbox + PostInbox).</summary>
@@ -113,11 +121,16 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// One entry per (receptor class × stage) — so a receptor with two FireAt attributes produces
   /// two entries. Receptors with no FireAt fall back to ImmediateDetached (which we don't expose
   /// in the gate; it's not Pre/PostInbox), but we still record them as inbox handlers.
+  /// ContractNamespace (lowercase-invariant CLR namespace) and Kind (MessageKind member name,
+  /// mirroring MessageKindDetector's priority rules) feed the HandledMessages enumeration
+  /// (topology arc phase 3).
   /// </summary>
   private sealed record ReceptorRegistryEntry(
       string MessageType,
       ImmutableArray<string> Stages,
-      bool IsInboxHandler
+      bool IsInboxHandler,
+      string ContractNamespace,
+      string Kind
   );
 
   private static ReceptorRegistryEntry? _extractReceptorEntry(
@@ -138,9 +151,12 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var messageType = receptorInterface.TypeArguments[0]
+    var messageTypeSymbol = receptorInterface.TypeArguments[0];
+    var messageType = messageTypeSymbol
       .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
       .Replace("global::", "");
+    var contractNamespace = _contractNamespaceOf(messageTypeSymbol);
+    var kind = _detectMessageKind(messageTypeSymbol);
 
     var stages = ImmutableArray.CreateBuilder<string>();
     foreach (var attr in classSymbol.GetAttributes()) {
@@ -176,7 +192,95 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
                       || s.StartsWith("PostLifecycle", System.StringComparison.Ordinal));
     var isInboxHandler = !hasOnlyLifecycleStages;
 
-    return new ReceptorRegistryEntry(messageType, stages.ToImmutable(), isInboxHandler);
+    return new ReceptorRegistryEntry(messageType, stages.ToImmutable(), isInboxHandler, contractNamespace, kind);
+  }
+
+  /// <summary>
+  /// The message type's contract namespace, lowercase-invariant to match routing-key
+  /// conventions (OwnDomains patterns, broker routing keys). Empty for global-namespace types.
+  /// </summary>
+  private static string _contractNamespaceOf(ITypeSymbol messageType) {
+    var ns = messageType.ContainingNamespace;
+    return ns is null || ns.IsGlobalNamespace
+      ? string.Empty
+      : ns.ToDisplayString().ToLowerInvariant();
+  }
+
+  /// <summary>
+  /// Compile-time mirror of <c>Whizbang.Core.Routing.MessageKindDetector</c>'s priority
+  /// rules: [MessageKind] attribute, framework system namespace, marker interface,
+  /// namespace convention, type-name suffix. Returns the MessageKind member NAME.
+  /// </summary>
+  private static string _detectMessageKind(ITypeSymbol messageType) {
+    // Priority 1: [MessageKind] attribute (explicit override)
+    foreach (var attr in messageType.GetAttributes()) {
+      if (attr.AttributeClass?.ToDisplayString() != MESSAGE_KIND_ATTRIBUTE
+          || attr.ConstructorArguments.Length == 0) {
+        continue;
+      }
+      var arg = attr.ConstructorArguments[0];
+      if (arg.Type is INamedTypeSymbol enumType && arg.Value is int v) {
+        var member = enumType.GetMembers().OfType<IFieldSymbol>()
+          .FirstOrDefault(f => f.HasConstantValue && System.Convert.ToInt32(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture) == v);
+        if (member is not null) {
+          return member.Name;
+        }
+      }
+    }
+
+    // Priority 2: framework system namespace subtree (outranks interfaces — framework
+    // system commands implement ICommand yet are broadcast/run-control traffic)
+    var ns = messageType.ContainingNamespace is { IsGlobalNamespace: false } containing
+      ? containing.ToDisplayString()
+      : string.Empty;
+    if (ns == FRAMEWORK_SYSTEM_NAMESPACE
+        || ns.StartsWith(FRAMEWORK_SYSTEM_NAMESPACE + ".", System.StringComparison.Ordinal)) {
+      return "System";
+    }
+
+    // Priority 3: marker interfaces
+    foreach (var iface in messageType.AllInterfaces) {
+      var display = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      if (display == ICOMMAND_INTERFACE) {
+        return "Command";
+      }
+      if (display == IEVENT_INTERFACE) {
+        return "Event";
+      }
+      if (display == IQUERY_INTERFACE) {
+        return "Query";
+      }
+    }
+
+    // Priority 4: namespace convention segments
+    foreach (var segment in ns.Split('.')) {
+      if (string.Equals(segment, "Commands", System.StringComparison.OrdinalIgnoreCase)) {
+        return "Command";
+      }
+      if (string.Equals(segment, "Events", System.StringComparison.OrdinalIgnoreCase)) {
+        return "Event";
+      }
+      if (string.Equals(segment, "Queries", System.StringComparison.OrdinalIgnoreCase)) {
+        return "Query";
+      }
+    }
+
+    // Priority 5: type-name suffix
+    var name = messageType.Name;
+    if (name.EndsWith("Command", System.StringComparison.Ordinal)) {
+      return "Command";
+    }
+    if (name.EndsWith("Query", System.StringComparison.Ordinal)) {
+      return "Query";
+    }
+    if (name.EndsWith("Event", System.StringComparison.Ordinal)
+        || name.EndsWith("Created", System.StringComparison.Ordinal)
+        || name.EndsWith("Updated", System.StringComparison.Ordinal)
+        || name.EndsWith("Deleted", System.StringComparison.Ordinal)) {
+      return "Event";
+    }
+
+    return "Unknown";
   }
 
   // ===== Discovery: perspectives =====
@@ -305,6 +409,10 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     var inboxHandlerTypes = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
 
+    // Handled-message enumeration (topology arc phase 3): every receptor's message type with
+    // its contract namespace + compile-time-detected kind, deduplicated by type name.
+    var handledMessages = new System.Collections.Generic.SortedDictionary<string, (string ContractNamespace, string Kind)>(System.StringComparer.Ordinal);
+
     // Every receptor message type goes here regardless of which stage(s) it fires at.
     // Critical for HasAnyConsumer correctness: a receptor [FireAt(PostAllPerspectivesDetached)]
     // would otherwise be missed by anyConsumerTypes (since PostAllPerspectives is NOT an
@@ -324,6 +432,9 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       }
       if (entry.IsInboxHandler) {
         inboxHandlerTypes.Add(entry.MessageType);
+      }
+      if (!handledMessages.ContainsKey(entry.MessageType)) {
+        handledMessages[entry.MessageType] = (entry.ContractNamespace, entry.Kind);
       }
     }
 
@@ -418,6 +529,13 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine("      },");
     sb.AppendLine("      StageTypes = stageTypes,");
+    // HandledMessages: fully-qualified type references so consumer types named
+    // HandledMessageInfo / MessageKind can never collide with the emitted code.
+    sb.AppendLine("      HandledMessages = new global::Whizbang.Core.Messaging.HandledMessageInfo[] {");
+    foreach (var kvp in handledMessages) {
+      sb.AppendLine($"        new global::Whizbang.Core.Messaging.HandledMessageInfo(\"{kvp.Key}\", \"{kvp.Value.ContractNamespace}\", global::Whizbang.Core.Routing.MessageKind.{kvp.Value.Kind}),");
+    }
+    sb.AppendLine("      },");
     sb.AppendLine("    };");
     sb.AppendLine();
     sb.AppendLine("    AssemblyRegistry<ReceptorRegistryContribution>.Register(contribution);");

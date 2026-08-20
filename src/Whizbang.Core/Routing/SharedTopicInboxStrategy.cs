@@ -76,6 +76,24 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   }
 
   /// <summary>
+  /// Explicit plural override (topology arc phase 3): the shared-topic strategy has exactly
+  /// one subscription — the shared inbox with the namespace filter — so the plural surface
+  /// returns that same single subscription. Overridden (rather than inherited from the
+  /// default interface member) so the seam is exercised by the built-in strategies;
+  /// bit-identical output is locked by tests.
+  /// </summary>
+  /// <param name="context">Service identity, owned domains, and handled-message enumeration
+  /// (unused here — the shared inbox filters by owned domains only).</param>
+  /// <returns>A one-element list containing today's singular subscription.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
+  /// <docs>fundamentals/dispatcher/routing#shared-topic-inbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/InboxRoutingStrategyTests.cs:SharedTopicInboxStrategy_GetSubscriptions_BitIdenticalToSingularAsync</tests>
+  public IReadOnlyList<InboxSubscription> GetSubscriptions(InboxSubscriptionContext context) {
+    ArgumentNullException.ThrowIfNull(context);
+    return [GetSubscription(context.OwnedDomains, context.ServiceName, MessageKind.Command)];
+  }
+
+  /// <summary>
   /// Builds routing patterns for namespace-based filtering.
   /// Always includes system commands namespace.
   /// </summary>

@@ -322,6 +322,206 @@ public record OrphanEvent : IEvent { public string Id { get; init; } = string.Em
     await Assert.That(generated!).DoesNotContain("OrphanEvent");
   }
 
+  // ===== HandledMessages enumeration (topology arc phase 3) =====
+  // The generated registration contributes a compile-time enumeration of every receptor's
+  // message type — (MessageTypeName, ContractNamespace, MessageKind) — so the routing seam
+  // (IInboxRoutingStrategy.GetSubscriptions / topology manifest) can enumerate handled
+  // messages without reflection. Predicates alone cannot answer "what does this service
+  // handle" — only "does it handle X".
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithCommandReceptor_EmitsHandledMessageWithCommandKindAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Orders.Commands;
+
+public record CreateOrder : ICommand { public string OrderId { get; init; } = string.Empty; }
+public record OrderCreated : IEvent { public string OrderId { get; init; } = string.Empty; }
+
+public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated { OrderId = message.OrderId });
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var handledRegion = _extractRegion(generated!, "HandledMessages");
+    await Assert.That(handledRegion).Contains("MyApp.Orders.Commands.CreateOrder")
+      .Because("The receptor's message type must be enumerable for the routing seam.");
+    await Assert.That(handledRegion).Contains("\"myapp.orders.commands\"")
+      .Because("The contract namespace must be lowercase-invariant, matching routing-key conventions (OwnDomains, routing patterns).");
+    await Assert.That(handledRegion).Contains("MessageKind.Command");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithEventReceptor_EmitsHandledMessageWithEventKindAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Orders.Events;
+
+public record OrderShipped : IEvent { public string OrderId { get; init; } = string.Empty; }
+
+public class ShipmentReceptor : IReceptor<OrderShipped> {
+  public ValueTask HandleAsync(OrderShipped message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var handledRegion = _extractRegion(generated!, "HandledMessages");
+    await Assert.That(handledRegion).Contains("MyApp.Orders.Events.OrderShipped");
+    await Assert.That(handledRegion).Contains("\"myapp.orders.events\"");
+    await Assert.That(handledRegion).Contains("MessageKind.Event");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_FrameworkSystemNamespaceReceptor_EmitsSystemKindAsync() {
+    // Framework system/broadcast traffic (run-control, killswitches, durable system commands)
+    // classifies as MessageKind.System even though the types implement ICommand — the
+    // framework-system-namespace tier outranks interface detection, mirroring MessageKindDetector.
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace Whizbang.Core.Commands.System {
+  public record FakeSystemCommand : ICommand { public string Id { get; init; } = string.Empty; }
+}
+
+namespace MyApp {
+  using Whizbang.Core.Commands.System;
+
+  public class SystemCommandReceptor : IReceptor<FakeSystemCommand> {
+    public ValueTask HandleAsync(FakeSystemCommand message, CancellationToken ct = default)
+      => ValueTask.CompletedTask;
+  }
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var handledRegion = _extractRegion(generated!, "HandledMessages");
+    await Assert.That(handledRegion).Contains("Whizbang.Core.Commands.System.FakeSystemCommand");
+    await Assert.That(handledRegion).Contains("MessageKind.System");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_LifecycleOnlyReceptor_StillEnumeratedInHandledMessagesAsync() {
+    // A [FireAt] lifecycle receptor is not an inbox handler, but its message type is still a
+    // handled message — the topology seam needs the full receptor surface, not just handlers.
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace MyApp.Orders.Events;
+
+public record OrderAudited : IEvent { public string Id { get; init; } = string.Empty; }
+
+[FireAt(LifecycleStage.PreInboxInline)]
+public class AuditReceptor : IReceptor<OrderAudited> {
+  public ValueTask HandleAsync(OrderAudited message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var handledRegion = _extractRegion(generated!, "HandledMessages");
+    await Assert.That(handledRegion).Contains("MyApp.Orders.Events.OrderAudited");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_TwoReceptorsSameMessage_EmitsOneHandledMessageEntryAsync() {
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Orders.Commands;
+
+public record CreateOrder : ICommand { public string OrderId { get; init; } = string.Empty; }
+
+public class FirstReceptor : IReceptor<CreateOrder> {
+  public ValueTask HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}
+
+public class SecondReceptor : IReceptor<CreateOrder> {
+  public ValueTask HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    var handledRegion = _extractRegion(generated!, "HandledMessages");
+    var occurrences = handledRegion.Split("MyApp.Orders.Commands.CreateOrder").Length - 1;
+    await Assert.That(occurrences).IsEqualTo(1)
+      .Because("Handled-message entries are deduplicated by message type name.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NoReceptors_EmitsEmptyHandledMessagesAsync() {
+    const string source = @"
+namespace MyApp;
+public class Empty {}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
+
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangReceptorRegistryQueryRegistration.g.cs");
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated!).Contains("HandledMessages")
+      .Because("The property is always emitted (empty when no receptors) so the contribution shape is uniform.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_HandledMessagesEmission_CompilesCleanlyAsync() {
+    // The emitted registration references HandledMessageInfo and MessageKind — verify the
+    // generated code actually compiles against Whizbang.Core (fully-qualified names, no
+    // using-collisions with consumer types).
+    const string source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Orders.Commands;
+
+public record CreateOrder : ICommand { public string OrderId { get; init; } = string.Empty; }
+
+public class OrderReceptor : IReceptor<CreateOrder> {
+  public ValueTask HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.CompletedTask;
+}";
+
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<ReceptorRegistryQueryGenerator>(source);
+
+    await Assert.That(errors).IsEmpty();
+  }
+
   // ===== Generated file structure =====
 
   [Test]

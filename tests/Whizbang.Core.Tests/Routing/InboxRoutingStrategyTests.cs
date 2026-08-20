@@ -286,4 +286,97 @@ public class InboxRoutingStrategyTests {
   }
 
   #endregion
+
+  #region GetSubscriptions (plural seam - topology arc phase 3)
+
+  // Zero-behavior-change contract: the plural surface must produce EXACTLY the same
+  // single subscription as today's singular GetSubscription for both built-in strategies.
+
+  [Test]
+  public async Task SharedTopicInboxStrategy_GetSubscriptions_BitIdenticalToSingularAsync() {
+    // Arrange
+    var strategy = new SharedTopicInboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
+    var context = new InboxSubscriptionContext("OrderService", ownedDomains, []);
+
+    // Act
+    var singular = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
+    var plural = strategy.GetSubscriptions(context);
+
+    // Assert - exactly one subscription, identical in every observable dimension
+    await Assert.That(plural.Count).IsEqualTo(1);
+    await Assert.That(plural[0].Topic).IsEqualTo(singular.Topic);
+    await Assert.That(plural[0].FilterExpression).IsEqualTo(singular.FilterExpression);
+    var singularPatterns = (IReadOnlyList<string>)singular.Metadata!["RoutingPatterns"];
+    var pluralPatterns = (IReadOnlyList<string>)plural[0].Metadata!["RoutingPatterns"];
+    await Assert.That(pluralPatterns.SequenceEqual(singularPatterns)).IsTrue();
+  }
+
+  [Test]
+  public async Task SharedTopicInboxStrategy_GetSubscriptions_NullContext_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var strategy = new SharedTopicInboxStrategy();
+
+    // Act & Assert
+    await Assert.That(() => strategy.GetSubscriptions(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task CustomSingularOnlyStrategy_GetSubscriptions_DefaultWrapsSingularAsCommandAsync() {
+    // Arrange - a strategy implementing ONLY the singular method (pre-phase-3 shape) gets
+    // the plural surface for free via the default interface member, which must wrap
+    // GetSubscription(ownedDomains, serviceName, MessageKind.Command) in a one-element list.
+    var strategy = new RecordingSingularOnlyStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
+    var context = new InboxSubscriptionContext("OrderService", ownedDomains, []);
+
+    // Act
+    var plural = ((IInboxRoutingStrategy)strategy).GetSubscriptions(context);
+
+    // Assert
+    await Assert.That(plural.Count).IsEqualTo(1);
+    await Assert.That(plural[0].Topic).IsEqualTo("custom-topic");
+    await Assert.That(strategy.LastKind).IsEqualTo(MessageKind.Command);
+    await Assert.That(strategy.LastServiceName).IsEqualTo("OrderService");
+    await Assert.That(strategy.LastOwnedDomains).IsSameReferenceAs(ownedDomains);
+  }
+
+  [Test]
+  public async Task InboxSubscriptionContext_CarriesAllComponentsAsync() {
+    // Arrange
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
+    var handled = new List<Whizbang.Core.Messaging.HandledMessageInfo> {
+      new("MyApp.Orders.Commands.CreateOrder", "myapp.orders.commands", MessageKind.Command)
+    };
+
+    // Act
+    var context = new InboxSubscriptionContext("OrderService", ownedDomains, handled);
+
+    // Assert
+    await Assert.That(context.ServiceName).IsEqualTo("OrderService");
+    await Assert.That(context.OwnedDomains).IsSameReferenceAs(ownedDomains);
+    await Assert.That(context.HandledMessages.Count).IsEqualTo(1);
+    await Assert.That(context.HandledMessages[0].MessageTypeName).IsEqualTo("MyApp.Orders.Commands.CreateOrder");
+    await Assert.That(context.HandledMessages[0].ContractNamespace).IsEqualTo("myapp.orders.commands");
+    await Assert.That(context.HandledMessages[0].Kind).IsEqualTo(MessageKind.Command);
+  }
+
+  /// <summary>Singular-only strategy proving pre-phase-3 implementations keep working and
+  /// recording what the plural default interface member passes through.</summary>
+  private sealed class RecordingSingularOnlyStrategy : IInboxRoutingStrategy {
+    public IReadOnlySet<string>? LastOwnedDomains { get; private set; }
+    public string? LastServiceName { get; private set; }
+    public MessageKind? LastKind { get; private set; }
+
+    public InboxSubscription GetSubscription(
+        IReadOnlySet<string> ownedDomains, string serviceName, MessageKind kind) {
+      LastOwnedDomains = ownedDomains;
+      LastServiceName = serviceName;
+      LastKind = kind;
+      return new InboxSubscription("custom-topic");
+    }
+  }
+
+  #endregion
 }

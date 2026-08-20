@@ -258,9 +258,17 @@ public sealed class InboxRoutingOptionsBuilder {
   /// Uses shared topic inbox strategy (default).
   /// All commands route to a single shared topic with broker-side filtering.
   /// </summary>
-  /// <param name="topic">Topic name. Default: "whizbang.inbox".</param>
+  /// <remarks>
+  /// The default topic matches <see cref="SharedTopicInboxStrategy"/>'s parameterless
+  /// constructor and <see cref="SharedTopicOutboxStrategy.DefaultInboxTopic"/> ("inbox").
+  /// It was previously "whizbang.inbox" here — an inconsistency that would silently split
+  /// publisher and subscriber onto different topics for anyone relying on this builder's
+  /// default (fixed in the topology arc, phase 3; locked by tests).
+  /// </remarks>
+  /// <param name="topic">Topic name. Default: "inbox".</param>
   /// <returns>The parent options for chaining.</returns>
-  public RoutingOptions UseSharedTopic(string topic = "whizbang.inbox") {
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:Inbox_UseSharedTopic_DefaultTopic_IsInboxMatchingStrategyDefaultAsync</tests>
+  public RoutingOptions UseSharedTopic(string topic = "inbox") {
     _parent.SetInboxStrategy(new SharedTopicInboxStrategy(topic));
     return _parent;
   }

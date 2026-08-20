@@ -284,4 +284,152 @@ public class OutboxRoutingStrategyTests {
   }
 
   #endregion
+
+  #region MessageKind.System branch (topology arc phase 3 - dormant capability)
+
+  // System is not passed by any production call site yet. These tests LOCK the dormant
+  // behavior: system traffic routes to the same entities commands use today. Phase 5/7
+  // redirect this to the dedicated broadcast inbox.
+
+  [Test]
+  public async Task SharedTopicOutboxStrategy_SystemKind_RoutesToSharedInboxWithCommandShapedKeyAsync() {
+    // Arrange
+    var strategy = new SharedTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    // Act
+    var destination = strategy.GetDestination(
+      typeof(OutboxTestTypes.Orders.Commands.CreateOrder),
+      ownedDomains,
+      MessageKind.System
+    );
+
+    // Assert - same shared inbox as commands today, same "{namespace}.{typename}" key shape
+    await Assert.That(destination.Address).IsEqualTo("inbox");
+    await Assert.That(destination.RoutingKey).IsEqualTo("outboxtesttypes.orders.commands.createorder");
+  }
+
+  [Test]
+  public async Task SharedTopicOutboxStrategy_AllThreeKinds_LockedOutputsAsync() {
+    // Zero-behavior-change lock across every kind the strategy handles.
+    var strategy = new SharedTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var type = typeof(OutboxTestTypes.Orders.Commands.CreateOrder);
+
+    var command = strategy.GetDestination(type, ownedDomains, MessageKind.Command);
+    var @event = strategy.GetDestination(type, ownedDomains, MessageKind.Event);
+    var system = strategy.GetDestination(type, ownedDomains, MessageKind.System);
+
+    // Command → shared inbox + namespace-qualified key
+    await Assert.That(command.Address).IsEqualTo("inbox");
+    await Assert.That(command.RoutingKey).IsEqualTo("outboxtesttypes.orders.commands.createorder");
+    // Event → namespace topic + type-name key
+    await Assert.That(@event.Address).IsEqualTo("outboxtesttypes.orders.commands");
+    await Assert.That(@event.RoutingKey).IsEqualTo("createorder");
+    // System (dormant) → SAME address+key as command today
+    await Assert.That(system.Address).IsEqualTo(command.Address);
+    await Assert.That(system.RoutingKey).IsEqualTo(command.RoutingKey);
+  }
+
+  [Test]
+  public async Task DomainTopicOutboxStrategy_AllThreeKinds_LockedOutputsAsync() {
+    // DomainTopicOutboxStrategy routes every kind identically (namespace topic + type-name
+    // key); System must be no exception.
+    var strategy = new DomainTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var type = typeof(OutboxTestTypes.Orders.Events.OrderCreated);
+
+    var command = strategy.GetDestination(type, ownedDomains, MessageKind.Command);
+    var @event = strategy.GetDestination(type, ownedDomains, MessageKind.Event);
+    var system = strategy.GetDestination(type, ownedDomains, MessageKind.System);
+
+    foreach (var destination in new[] { command, @event, system }) {
+      await Assert.That(destination.Address).IsEqualTo("outboxtesttypes.orders.events");
+      await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
+    }
+  }
+
+  #endregion
+
+  #region GetCompositeGroupKey (topology arc phase 3)
+
+  // Load-bearing invariant: SAME KEY ⇔ SAME DESTINATION. The composite group key is a
+  // canonical projection of GetDestination — route, split, subscribe, provision must all
+  // project from the same authority.
+
+  [Test]
+  public async Task GetCompositeGroupKey_SameKeyIffSameDestination_AcrossStrategiesTypesAndKindsAsync() {
+    // Arrange - both built-in strategies × several message types × all message kinds
+    var strategies = new IOutboxRoutingStrategy[] {
+      new SharedTopicOutboxStrategy(),
+      new DomainTopicOutboxStrategy()
+    };
+    var types = new[] {
+      typeof(OutboxTestTypes.Orders.Events.OrderCreated),
+      typeof(OutboxTestTypes.Orders.Events.OrderUpdated),
+      typeof(OutboxTestTypes.Orders.Commands.CreateOrder),
+      typeof(OutboxTestTypes.Users.Events.UserCreated),
+      typeof(OutboxTestTypes.Users.Commands.CreateUser)
+    };
+    var kinds = new[] { MessageKind.Command, MessageKind.Event, MessageKind.Query, MessageKind.System };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var strategy in strategies) {
+      // Act - project every (type, kind) pair through both surfaces
+      var projections = new List<(string Key, string Address, string? RoutingKey)>();
+      foreach (var type in types) {
+        foreach (var kind in kinds) {
+          var key = strategy.GetCompositeGroupKey(type, ownedDomains, kind);
+          var destination = strategy.GetDestination(type, ownedDomains, kind);
+          projections.Add((key, destination.Address, destination.RoutingKey));
+        }
+      }
+
+      // Assert - property-style: for every pair, key equality ⇔ (Address, RoutingKey) equality
+      for (var i = 0; i < projections.Count; i++) {
+        for (var j = 0; j < projections.Count; j++) {
+          var sameKey = projections[i].Key == projections[j].Key;
+          var sameDestination = projections[i].Address == projections[j].Address
+            && projections[i].RoutingKey == projections[j].RoutingKey;
+          await Assert.That(sameKey).IsEqualTo(sameDestination)
+            .Because($"strategy {strategy.GetType().Name}: key[{i}] vs key[{j}] must agree with destination equality — same key ⇔ same destination.");
+        }
+      }
+    }
+  }
+
+  [Test]
+  public async Task GetCompositeGroupKey_CanonicalShape_AddressPipeRoutingKeyAsync() {
+    // Lock the canonical key derivation: Address + "|" + (RoutingKey ?? "").
+    // (Interface cast: GetCompositeGroupKey is a default interface member.)
+    var strategy = new SharedTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    var type = typeof(OutboxTestTypes.Orders.Commands.CreateOrder);
+
+    var key = ((IOutboxRoutingStrategy)strategy).GetCompositeGroupKey(type, ownedDomains, MessageKind.Command);
+
+    await Assert.That(key).IsEqualTo("inbox|outboxtesttypes.orders.commands.createorder");
+  }
+
+  [Test]
+  public async Task GetCompositeGroupKey_NullRoutingKey_UsesEmptySegmentAsync() {
+    // A strategy returning a null routing key still yields a stable canonical key.
+    var strategy = new NullRoutingKeyStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    var key = ((IOutboxRoutingStrategy)strategy).GetCompositeGroupKey(
+      typeof(OutboxTestTypes.Orders.Events.OrderCreated), ownedDomains, MessageKind.Event);
+
+    await Assert.That(key).IsEqualTo("fixed-address|");
+  }
+
+  /// <summary>Custom strategy proving the default interface member derives the key from
+  /// GetDestination for implementations that predate the seam.</summary>
+  private sealed class NullRoutingKeyStrategy : IOutboxRoutingStrategy {
+    public TransportDestination GetDestination(
+        Type messageType, IReadOnlySet<string> ownedDomains, MessageKind kind)
+      => new("fixed-address", RoutingKey: null);
+  }
+
+  #endregion
 }

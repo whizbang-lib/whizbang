@@ -39,4 +39,22 @@ public sealed class DomainTopicInboxStrategy(string suffix) : IInboxRoutingStrat
       Metadata: null
     );
   }
+
+  /// <summary>
+  /// Explicit plural override (topology arc phase 3): the domain-topic strategy has exactly
+  /// one subscription — the primary domain's inbox topic — so the plural surface returns
+  /// that same single subscription. Overridden (rather than inherited from the default
+  /// interface member) so the seam is exercised by the built-in strategies; bit-identical
+  /// output is locked by tests.
+  /// </summary>
+  /// <param name="context">Service identity, owned domains, and handled-message enumeration
+  /// (unused here — the topic derives from the primary owned domain).</param>
+  /// <returns>A one-element list containing today's singular subscription.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
+  /// <docs>fundamentals/dispatcher/routing#domain-topic-inbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/DomainTopicInboxStrategyTests.cs:GetSubscriptions_BitIdenticalToSingularAsync</tests>
+  public IReadOnlyList<InboxSubscription> GetSubscriptions(InboxSubscriptionContext context) {
+    ArgumentNullException.ThrowIfNull(context);
+    return [GetSubscription(context.OwnedDomains, context.ServiceName, MessageKind.Command)];
+  }
 }

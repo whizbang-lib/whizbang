@@ -105,6 +105,23 @@ PR #513 before this decision; it stays (no revert).
   `SharedTopicInboxStrategy` reimplemented on the plural interface returning its one
   subscription — bit-identical topology, locked by tests. Invariant tests: same key ⇔ same
   destination; route/split/subscribe/provision all projections of GetDestination.
+  **STATUS: implemented on feature/topology-phase3-routing-seam (uncommitted).**
+  `MessageKind.System` (appended, values stable) + detector framework-system tier
+  (attribute > system-ns > interface > ns > suffix; detector still off the hot path);
+  `HandledMessageInfo` + `IReceptorRegistryQuery.GetHandledMessages()` DIM (defaults [])
+  emitted by `ReceptorRegistryQueryGenerator` into `ReceptorRegistryContribution.HandledMessages`
+  (aggregated/deduped/sorted by `WhizbangReceptorRegistryQuery.GetHandledMessages`);
+  `InboxSubscriptionContext` + plural DIM wrapping singular(Command), explicit overrides on
+  both built-in inbox strategies; `TransportSubscriptionBuilder.BuildInboxDestinations()`
+  (plural, DI-strategy-first with options fallback, registry-fed context) — both
+  `TransportConsumerBuilderExtensions` factory sites + `AddTransportSubscriptionBuilder`
+  now resolve strategy/registry from DI; `UseSharedTopic` inbox default fixed
+  "whizbang.inbox"→"inbox" (RED-locked); `GetCompositeGroupKey` DIM (Address|RoutingKey,
+  same-key⇔same-destination property test); dormant System branches on both outbox
+  strategies (locked for Command/Event/System); `TopologyManifest`/`TopologyManifestBuilder`
+  pure projection over `MessageTypeCatalogEntry`. NO `[Obsolete]` on singular
+  `GetSubscription` — CS0618 is escalated to error repo-wide (Directory.Build.props); doc-note
+  deprecation instead, removal rides the shared-inbox retirement phase.
 - **Phase 4 — Minting.** `Whizbang.Core.Minting`: `IEventMint`, `ICompositeFactory`
   (group key + count cap + byte budget in one splitter), AOT-safe creation seam, analyzer vs
   direct construction (new WHIZ block 150+, EphemeralAnalyzer idiom). First consumers:

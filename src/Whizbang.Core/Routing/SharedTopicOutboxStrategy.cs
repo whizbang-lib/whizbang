@@ -79,6 +79,21 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
       );
     }
 
+    if (kind == MessageKind.System) {
+      // DORMANT CAPABILITY (topology arc phase 3): no production call site passes System
+      // yet. System traffic routes to the SAME shared inbox commands use today, with the
+      // same "{namespace}.{typename}" routing-key shape — bit-identical to command routing
+      // by construction. A later phase (dedicated system broadcast inbox, shared-inbox
+      // retirement) redirects this branch to the broadcast inbox entity.
+      var systemRoutingKey = $"{ns}.{typeName}";  // "whizbang.core.commands.system.rebuildperspectivecommand"
+
+      return new TransportDestination(
+        Address: InboxTopic,
+        RoutingKey: systemRoutingKey,
+        Metadata: _createMetadata(ns, kind)
+      );
+    }
+
     // Events go to namespace-specific topic
     // Subscribers bind directly to namespace topics they care about
     return new TransportDestination(

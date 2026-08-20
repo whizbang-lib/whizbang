@@ -162,11 +162,16 @@ public static class TransportConsumerBuilderExtensions {
       // Get service name from provider or use fallback
       var serviceName = _getServiceName(sp);
 
-      // Build and populate destinations using TransportSubscriptionBuilder
+      // Build and populate destinations using TransportSubscriptionBuilder.
+      // The inbox strategy resolves from DI (options fallback inside the builder) and the
+      // receptor registry feeds the handled-message enumeration into the subscription
+      // context (topology arc phase 3).
       var subscriptionBuilder = new TransportSubscriptionBuilder(
           routingOptions,
           discovery,
-          serviceName);
+          serviceName,
+          sp.GetService<IInboxRoutingStrategy>(),
+          sp.GetService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
 
@@ -301,11 +306,16 @@ public static class TransportConsumerBuilderExtensions {
       // Get service name from provider or use fallback
       var serviceName = _getServiceName(sp);
 
-      // Build and populate destinations using TransportSubscriptionBuilder
+      // Build and populate destinations using TransportSubscriptionBuilder.
+      // The inbox strategy resolves from DI (options fallback inside the builder) and the
+      // receptor registry feeds the handled-message enumeration into the subscription
+      // context (topology arc phase 3).
       var subscriptionBuilder = new TransportSubscriptionBuilder(
           routingOptions,
           discovery,
-          serviceName);
+          serviceName,
+          sp.GetService<IInboxRoutingStrategy>(),
+          sp.GetService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
 

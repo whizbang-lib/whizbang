@@ -121,6 +121,35 @@ public class WhizbangReceptorRegistryQueryAdapterTests {
     var sut = new WhizbangReceptorRegistryQueryAdapter();
     await Assert.That(sut).IsAssignableTo<IReceptorRegistryQuery>();
   }
+
+  [Test]
+  public async Task GetHandledMessages_DelegatesToGeneratedStaticAsync() {
+    // The adapter must surface the SAME enumeration as the aggregating static — same
+    // count, same order (both read the merged AssemblyRegistry contributions).
+    var sut = new WhizbangReceptorRegistryQueryAdapter();
+
+    IReadOnlyList<HandledMessageInfo> direct = ((IReceptorRegistryQuery)sut).GetHandledMessages();
+    var static_ = Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();
+
+    await Assert.That(direct.Count).IsEqualTo(static_.Count);
+    await Assert.That(direct.SequenceEqual(static_)).IsTrue();
+  }
+
+  [Test]
+  public async Task CustomPredicatesOnlyImplementation_GetHandledMessages_DefaultsToEmptyAsync() {
+    // Default-interface-member contract: implementations that predate the enumeration
+    // surface (custom/test fakes with predicates only) keep compiling AND degrade to an
+    // empty enumeration — topology consumers fall back to the singular strategy behavior.
+    IReceptorRegistryQuery predicatesOnly = new _predicatesOnlyQueryFake();
+
+    await Assert.That(predicatesOnly.GetHandledMessages()).IsEmpty();
+  }
+
+  private sealed class _predicatesOnlyQueryFake : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
+    public bool HasInboxHandler(string messageType) => false;
+    public bool HasAnyConsumer(string messageType) => false;
+  }
 }
 
 /// <summary>Probe message for the runtime-consumer registry test (public: the generator emits dispatcher glue for it).</summary>

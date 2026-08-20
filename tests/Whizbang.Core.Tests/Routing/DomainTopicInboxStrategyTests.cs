@@ -94,4 +94,26 @@ public class DomainTopicInboxStrategyTests {
     await Assert.That(() => strategy.GetSubscription(null!, "any", MessageKind.Event))
       .Throws<ArgumentNullException>();
   }
+
+  [Test]
+  public async Task GetSubscriptions_BitIdenticalToSingularAsync() {
+    // Zero-behavior-change lock (topology arc phase 3): the plural seam returns EXACTLY the
+    // one subscription today's singular call produces.
+    var strategy = new DomainTopicInboxStrategy(".inbox");
+    var ownedDomains = new HashSet<string> { "orders" };
+    var context = new InboxSubscriptionContext("OrderService", ownedDomains, []);
+
+    var singular = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
+    var plural = strategy.GetSubscriptions(context);
+
+    await Assert.That(plural.Count).IsEqualTo(1);
+    await Assert.That(plural[0]).IsEqualTo(singular);
+  }
+
+  [Test]
+  public async Task GetSubscriptions_NullContext_ThrowsArgumentNullExceptionAsync() {
+    var strategy = new DomainTopicInboxStrategy(".inbox");
+    await Assert.That(() => strategy.GetSubscriptions(null!))
+      .Throws<ArgumentNullException>();
+  }
 }

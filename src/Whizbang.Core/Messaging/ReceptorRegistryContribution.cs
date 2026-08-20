@@ -29,4 +29,12 @@ public sealed class ReceptorRegistryContribution {
   /// the lifecycle stage; values are the message types with at least one
   /// <c>[FireAt(stage)]</c> receptor.</summary>
   public required IReadOnlyDictionary<LifecycleStage, IReadOnlyCollection<string>> StageTypes { get; init; }
+
+  /// <summary>
+  /// Enumeration of every receptor-handled message type in this assembly —
+  /// (type name, contract namespace, kind) — for the routing seam (topology arc phase 3).
+  /// NOT <c>required</c>: contributions built by older generator output or hand-built in
+  /// tests keep compiling and simply contribute no handled-message metadata.
+  /// </summary>
+  public IReadOnlyList<HandledMessageInfo> HandledMessages { get; init; } = [];
 }
