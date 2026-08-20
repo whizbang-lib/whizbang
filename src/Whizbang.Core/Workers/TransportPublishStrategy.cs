@@ -40,6 +40,18 @@ namespace Whizbang.Core.Workers;
 /// <param name="transport">The transport to publish messages to</param>
 /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
 /// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
+/// <param name="namespaceRouting">The publisher-flip seam (topology arc phase 6, widened to
+/// the strategy-agnostic <see cref="ICommandInboxAddressResolver"/> interface in phase 7):
+/// commands whose contract namespace the resolver FLIPS route to their per-namespace inbox
+/// entity at publish time (resolved name-based — the outbox row carries the type-name
+/// string, not the CLR type). Both built-in command-routing strategies implement the seam;
+/// <see cref="SharedTopicOutboxStrategy"/> never flips, so wiring it here is byte-identical
+/// to null. Null keeps today's behavior: every command to <paramref name="inboxTopic"/>.</param>
+/// <param name="transportNamespaces">The TransportNamespace seam (topology arc phase 8, #424
+/// increment 2): resolves the message type's tag-bound broker namespace and STAMPS the key on
+/// destination metadata for the transport to map to a client. Entity naming is untouched — the
+/// routing strategies stay TransportNamespace-unaware (plan resolution 5). Null, or a resolver
+/// with no bindings, is byte-identical to today (the single-namespace no-op guarantee).</param>
 public partial class TransportPublishStrategy(
   ITransport transport,
   ITransportReadinessCheck readinessCheck,
@@ -48,7 +60,9 @@ public partial class TransportPublishStrategy(
   ThrottleRetryOptions? throttleRetryOptions = null,
   TransportMetrics? metrics = null,
   Whizbang.Core.Offloads.PostSerializeHookChain? postSerializeHookChain = null,
-  System.Text.Json.JsonSerializerOptions? jsonOptions = null
+  System.Text.Json.JsonSerializerOptions? jsonOptions = null,
+  ICommandInboxAddressResolver? namespaceRouting = null,
+  Whizbang.Core.Tags.TransportNamespaceResolver? transportNamespaces = null
 ) : IMessagePublishStrategy {
   private const string LOG_CATEGORY = "Whizbang.Core.Transport";
 
@@ -60,6 +74,8 @@ public partial class TransportPublishStrategy(
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
+  private readonly ICommandInboxAddressResolver? _namespaceRouting = namespaceRouting;
+  private readonly Whizbang.Core.Tags.TransportNamespaceResolver? _transportNamespaces = transportNamespaces;
   private readonly Whizbang.Core.Offloads.PostSerializeHookChain? _hookChain = postSerializeHookChain;
   private readonly System.Text.Json.JsonSerializerOptions? _jsonOptions = jsonOptions;
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
@@ -215,7 +231,13 @@ public partial class TransportPublishStrategy(
       } catch (Exception ex) {
         var reason = TransportFailureClassifier.Classify(ex);
         if (reason == MessageFailureReason.Throttled && attempt < _throttleRetry.MaxAttempts) {
-          _metrics?.OutboxPublishThrottled.Add(1, new KeyValuePair<string, object?>("transport", _transportTag));
+          // Per-NAMESPACE attribution (topology arc phase 10): each TransportNamespace brings its
+          // own request quota, so "which pool ran out" is the question that decides whether to move
+          // a class or raise a tier. A host-wide count cannot answer it.
+          _metrics?.OutboxPublishThrottled.Add(1,
+            new KeyValuePair<string, object?>("transport", _transportTag),
+            new KeyValuePair<string, object?>(
+              "transport_namespace", TransportNamespaces.FromMetadata(destination.Metadata)));
           var delay = _throttleRetry.ComputeDelay(attempt);
           LogThrottleRetry(work.MessageId, attempt, _throttleRetry.MaxAttempts, delay.TotalMilliseconds, _transportTag);
           await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
@@ -290,10 +312,17 @@ public partial class TransportPublishStrategy(
       }
     }
 
-    // Group by (destination address, stream ID) for batch transport calls.
+    // Group by (destination address, stream ID, TransportNamespace) for batch transport calls.
     // Messages with the same StreamId stay together to preserve FIFO ordering.
     // Different StreamIds get separate batch calls so transports can handle sessions correctly.
-    var groups = transportableItems.GroupBy(item => (item.Destination.Address, item.Work.StreamId));
+    // The namespace key joins the key because a group lands on exactly ONE namespace's client:
+    // a routed item and an unrouted item to the same address are two different brokers.
+    // Unrouted traffic all resolves to the same default key, so single-namespace hosts group
+    // exactly as they do today.
+    var groups = transportableItems.GroupBy(item => (
+      item.Destination.Address,
+      item.Work.StreamId,
+      NamespaceKey: TransportNamespaces.FromMetadata(item.Destination.Metadata)));
 
     foreach (var group in groups) {
       var groupItems = group.ToList();
@@ -369,7 +398,12 @@ public partial class TransportPublishStrategy(
               && TransportFailureClassifier.Classify(new InvalidOperationException(r.Error ?? "")) == MessageFailureReason.Throttled);
 
         if (batchThrottled && batchAttempt < _throttleRetry.MaxAttempts) {
-          _metrics?.OutboxPublishThrottled.Add(bulkItems.Count, new KeyValuePair<string, object?>("transport", _transportTag));
+          // The batch group is keyed by namespace already, so the shared destination names exactly
+          // one broker — the whole group's throttles belong to that pool.
+          _metrics?.OutboxPublishThrottled.Add(bulkItems.Count,
+            new KeyValuePair<string, object?>("transport", _transportTag),
+            new KeyValuePair<string, object?>(
+              "transport_namespace", TransportNamespaces.FromMetadata(sharedDestination.Metadata)));
           var delay = _throttleRetry.ComputeDelay(batchAttempt);
           LogThrottleRetryBatch(bulkItems.Count, batchAttempt, _throttleRetry.MaxAttempts, delay.TotalMilliseconds, _transportTag);
           await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
@@ -412,13 +446,36 @@ public partial class TransportPublishStrategy(
   }
 
   /// <summary>
-  /// Resolves the actual transport destination for a message.
-  /// ALWAYS routes commands to shared inbox topic - this is critical for message delivery.
-  /// Events use their destination directly (already namespace topics).
+  /// Resolves the transport destination for a message and applies the TransportNamespace
+  /// post-process: the entity name comes from the routing strategies (which stay
+  /// TransportNamespace-unaware — plan resolution 5), then the message type's tag-bound
+  /// broker namespace is stamped onto destination metadata for the transport to map to a
+  /// client. Only NON-default classes are stamped, so unrouted traffic keeps today's wire
+  /// shape byte-identical (no extra broker application property).
   /// </summary>
   /// <param name="work">The outbox work item</param>
   /// <returns>The resolved transport destination</returns>
   private TransportDestination _resolveDestination(OutboxWork work) {
+    var destination = _resolveEntityDestination(work);
+
+    if (_transportNamespaces is not { HasBindings: true }) {
+      return destination;
+    }
+
+    var namespaceKey = _transportNamespaces.ResolveNamespaceKey(work.MessageType);
+    return TransportNamespaces.IsDefault(namespaceKey)
+      ? destination
+      : TransportNamespaces.Stamp(destination, namespaceKey);
+  }
+
+  /// <summary>
+  /// Names the ENTITY for a message.
+  /// ALWAYS routes commands to shared inbox topic - this is critical for message delivery.
+  /// Events use their destination directly (already namespace topics).
+  /// </summary>
+  /// <param name="work">The outbox work item</param>
+  /// <returns>The resolved transport destination, before TransportNamespace stamping</returns>
+  private TransportDestination _resolveEntityDestination(OutboxWork work) {
     // ALWAYS detect message kind - commands MUST go to inbox, not individual command topics
     // This is critical: without this, commands would be published to non-existent topics
     // and silently dropped by the message broker
@@ -432,6 +489,24 @@ public partial class TransportPublishStrategy(
       var typeName = _extractTypeName(work.MessageType)?.ToLowerInvariant() ?? work.Destination;
       var ns = _extractNamespace(work.MessageType)?.ToLowerInvariant() ?? "";
       var routingKey = string.IsNullOrEmpty(ns) ? typeName : $"{ns}.{typeName}";
+
+      // Publisher flip (topology arc phase 6): a FLIPPED command namespace routes to its
+      // per-namespace inbox entity instead of the shared inbox. Name-based on purpose —
+      // the outbox row carries the type-name string, not the CLR type (AOT holds). The
+      // destination is marked RequireProvisionedEntity so the transport fails LOUDLY
+      // (UnroutableDestinationException) instead of silently dropping when the handling
+      // service never dark-provisioned the entity. Unflipped namespaces keep TODAY'S wire
+      // shape byte-identical (no metadata) — rollback is removing the flip.
+      var flippedAddress = _namespaceRouting?.ResolveFlippedCommandInboxAddress(ns);
+      if (flippedAddress is not null) {
+        return new TransportDestination(
+          Address: flippedAddress,
+          RoutingKey: routingKey,
+          Metadata: new Dictionary<string, JsonElement> {
+            [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("true").RootElement
+          }
+        );
+      }
 
       return new TransportDestination(
         Address: _inboxTopic,

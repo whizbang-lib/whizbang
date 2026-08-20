@@ -12,6 +12,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -363,7 +364,7 @@ public class CompositeInboxFanoutTests {
     var auditWireType = typeof(Whizbang.Core.SystemEvents.EventAudited).AssemblyQualifiedName!;
     var idA = Guid.NewGuid();
     var idB = Guid.NewGuid();
-    var composite = new Whizbang.Core.SystemEvents.AuditEventsComposite {
+    var composite = new Whizbang.Core.Minting.AuditEventsComposite {
       StreamId = streamId,
       InnerPayloads = [
         _raw("{\"Id\":\"" + idA + "\",\"OriginalEventType\":\"Contracts.SomethingHappened\"}"),
@@ -395,7 +396,7 @@ public class CompositeInboxFanoutTests {
   public async Task AuditEventsComposite_IsNonAtomic_OneBadRecordMustNotSinkSiblingsAsync() {
     // Audit records are independent facts; a poison record must dead-letter alone, never take its
     // siblings with it. Lock the carrier's atomicity so a future refactor cannot flip it.
-    var composite = new Whizbang.Core.SystemEvents.AuditEventsComposite();
+    var composite = new Whizbang.Core.Minting.AuditEventsComposite();
 
     await Assert.That(composite.Atomicity).IsEqualTo(FanoutAtomicity.Independent);
   }

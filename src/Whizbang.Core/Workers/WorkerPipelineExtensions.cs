@@ -214,7 +214,8 @@ public static class WorkerPipelineExtensions {
       sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
       sp.GetService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
       sp.GetService<TimeProvider>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>()));
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<Whizbang.Core.Minting.ICompositeFactory>()));
     // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
     // registration constructable (the F2-era lesson: extensions must be self-contained).
     services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
@@ -340,6 +341,52 @@ public static class WorkerPipelineExtensions {
       new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME),
       sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>(),
       sp.GetService<IEventMarkerResolver>()));
+
+    // Poison detector (topology arc phase 8.5). Turnkey by construction: the valve it replaces —
+    // the broker's MaxDeliveryCount, and every transport branch reading the same counter — cannot
+    // fire on a session-enabled entity, because a lock lost to connection death does not increment
+    // that counter. Registering the policy here is what makes BOTH transports execute ONE decision;
+    // it stays an optional injected dependency at each consumption point, so a custom transport or
+    // a test double that never resolves it is unaffected (the IMessageDiscardPolicy idiom).
+    services.AddOptions<Whizbang.Core.Routing.PoisonMessageOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.PoisonMessageOptions>,
+      Whizbang.Core.Routing.PoisonMessageOptionsConfigurationBinder>(sp =>
+        new Whizbang.Core.Routing.PoisonMessageOptionsConfigurationBinder(
+          sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>())));
+    // Control class (topology arc phase 9). Options only — the TTL half is turnkey (the mint reads
+    // them), the sessionless + non-durable halves are opt-in migration steps consulted LIVE by the
+    // inbox strategy and the receive boundary, so a rollback is a configuration edit, not a deploy.
+    services.AddOptions<Whizbang.Core.Routing.ControlClassOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.ControlClassOptions>,
+      Whizbang.Core.Routing.ControlClassOptionsConfigurationBinder>(sp =>
+        new Whizbang.Core.Routing.ControlClassOptionsConfigurationBinder(
+          sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>())));
+
+    // Backlog-age duty (topology arc phase 10): the observability half of the same lesson the
+    // poison detector is the enforcement half of — a backlog that is HOSTAGE (deep, young,
+    // draining) and one that is STUCK (shallow, ancient) look identical on a depth graph.
+    // Registered unconditionally; inert until a transport contributes an IBacklogPeek.
+    services.AddOptions<Whizbang.Core.Observability.BacklogAgeOptions>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeState>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Observability.BacklogAgeWorker>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Health.IWhizbangHealthSource,
+      Whizbang.Core.Health.BacklogAgeHealthSource>());
+
+    services.TryAddSingleton<Whizbang.Core.Routing.PoisonDetectionCapabilityState>();
+    services.TryAddSingleton<Whizbang.Core.Routing.IPoisonMessageDetector>(sp =>
+      new Whizbang.Core.Routing.PoisonMessageDetector(
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.PoisonMessageOptions>>(),
+        sp.GetRequiredService<ILogger<Whizbang.Core.Routing.PoisonMessageDetector>>(),
+        new System.Diagnostics.Metrics.Meter(Whizbang.Core.Routing.PoisonMessageDetector.METER_NAME),
+        sp.GetRequiredService<Whizbang.Core.Routing.PoisonDetectionCapabilityState>()));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Health.IWhizbangHealthSource,
+      Whizbang.Core.Health.PoisonDetectionHealthSource>());
 #pragma warning restore CA2000
 
     // Hosted services — delegate to the singleton instance so DI hands the same one

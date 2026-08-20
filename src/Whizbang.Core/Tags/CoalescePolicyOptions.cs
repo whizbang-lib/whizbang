@@ -1,4 +1,5 @@
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 
 namespace Whizbang.Core.Tags;
 

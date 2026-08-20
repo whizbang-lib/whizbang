@@ -145,7 +145,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   // Marker interfaces stamped onto the entry so the transport receive path can derive EventFlags by
   // type name — an incoming payload is a JsonElement there, so runtime `payload is` checks are blind.
   private const string COLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
-  private const string COMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICompositeEvent";
+  private const string COMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Minting.ICompositeEvent";
   private const string COMPACTED_EVENT_INTERFACE = "global::Whizbang.Core.ICompactedEvent";
 
   private static bool _implementsInterface(INamedTypeSymbol typeSymbol, string fullyQualifiedInterface)

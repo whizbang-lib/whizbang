@@ -41,6 +41,15 @@ internal sealed class AsbReceiveDecisionMaker {
   /// <see cref="AsbReceiveAction.AckAndDrop"/>'d with reason
   /// <see cref="AsbReceiveReason.NoLocalConsumer"/>. When null, no filtering happens
   /// (legacy / pre-slice-2 callers).</param>
+  /// <param name="rawReceptorRegistry">Opt-in raw-receptor registry (slice 5).</param>
+  /// <param name="typeBinder">Multi-pass type binder fallback (slice 4).</param>
+  /// <param name="absorbedNamespaces">Namespaces whose unconsumed events are kept, not dropped.</param>
+  /// <param name="poisonDetector">Topology arc phase 8.5 — Core's poison policy. Optional; null
+  /// means pre-phase-8.5 behavior (the <c>IMessageDiscardPolicy</c> idiom).</param>
+  /// <param name="poisonContext">Transport-neutral facts for <paramref name="poisonDetector"/>,
+  /// adapted from the broker message by the caller.</param>
+  [SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters",
+    Justification = "Each parameter is an independent optional receive-side policy seam; bundling them would obscure which are wired at each call site.")]
   public AsbReceiveDecision Decide(
       IReadOnlyDictionary<string, object> applicationProperties,
       string bodyJson,
@@ -49,9 +58,30 @@ internal sealed class AsbReceiveDecisionMaker {
       Func<Type, bool>? isHandledLocally = null,
       IRawReceptorRegistry? rawReceptorRegistry = null,
       IMessageTypeBinder? typeBinder = null,
-      IReadOnlySet<string>? absorbedNamespaces = null) {
+      IReadOnlySet<string>? absorbedNamespaces = null,
+      Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null,
+      Whizbang.Core.Routing.PoisonEvaluationContext poisonContext = default) {
     ArgumentNullException.ThrowIfNull(applicationProperties);
     ArgumentNullException.ThrowIfNull(getTypeInfoByName);
+
+    // Topology arc phase 8.5 — poison gate FIRST. It reads only broker metadata (first-enqueue
+    // timestamp, durable observation count), so it is the cheapest branch here AND the one that
+    // must not be gated behind payload concerns: a message stuck in a session lock-loss storm can
+    // be undeserializable, unconsumed, or perfectly well-formed, and it is hostage either way.
+    // Attributing it to POISON rather than to a downstream branch is what makes the DLQ reason
+    // point at the real defect. Routed through the existing DeadLetter action — the transport
+    // already maps that onto DeadLetterMessageAsync — never a parallel settlement path.
+    if (poisonDetector is not null) {
+      var verdict = poisonDetector.Evaluate(poisonContext);
+      if (verdict.ShouldQuarantine) {
+        return new AsbReceiveDecision {
+          Action = AsbReceiveAction.DeadLetter,
+          Reason = AsbReceiveReason.POISON_QUARANTINE,
+          Description = verdict.Detail ?? verdict.Reason.ToString(),
+          PoisonVerdict = verdict,
+        };
+      }
+    }
 
     if (!applicationProperties.TryGetValue(AsbMessageHeaderReader.ENVELOPE_TYPE_PROPERTY_KEY, out var envelopeTypeObj)
         || envelopeTypeObj is not string envelopeTypeName
@@ -153,7 +183,7 @@ internal sealed class AsbReceiveDecisionMaker {
     var payloadType = envelope.Payload?.GetType();
     if (isHandledLocally != null && payloadType != null
         && envelope.Payload is not Whizbang.Core.Offloads.BodyClaimEnvelopePayload
-        && envelope.Payload is not Whizbang.Core.Messaging.ICompositeEvent
+        && envelope.Payload is not Whizbang.Core.Minting.ICompositeEvent
         && !isHandledLocally(payloadType)
         && !_isAbsorbedNamespace(payloadType, absorbedNamespaces)) {
       return new AsbReceiveDecision {

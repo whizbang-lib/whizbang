@@ -162,11 +162,16 @@ public static class TransportConsumerBuilderExtensions {
       // Get service name from provider or use fallback
       var serviceName = _getServiceName(sp);
 
-      // Build and populate destinations using TransportSubscriptionBuilder
+      // Build and populate destinations using TransportSubscriptionBuilder.
+      // The inbox strategy resolves from DI (options fallback inside the builder) and the
+      // receptor registry feeds the handled-message enumeration into the subscription
+      // context (topology arc phase 3).
       var subscriptionBuilder = new TransportSubscriptionBuilder(
           routingOptions,
           discovery,
-          serviceName);
+          serviceName,
+          sp.GetService<IInboxRoutingStrategy>(),
+          sp.GetService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
 
@@ -175,6 +180,12 @@ public static class TransportConsumerBuilderExtensions {
 
       return options;
     });
+
+    // Manifest-driven DARK provisioning wiring (topology arc phase 5): make the
+    // TopologyManifest resolvable so TransportConsumerWorker can provision every entity the
+    // strategies name — built from the registered strategies + registry + catalog at first
+    // resolve. TryAdd: harmless when AddTransportSubscriptionBuilder already registered one.
+    TransportSubscriptionBuilderExtensions.TryAddTopologyManifest(builder.Services, _getServiceName);
 
     // Register OrderedStreamProcessor (required by TransportConsumerWorker)
     builder.Services.TryAddSingleton<OrderedStreamProcessor>();
@@ -301,11 +312,16 @@ public static class TransportConsumerBuilderExtensions {
       // Get service name from provider or use fallback
       var serviceName = _getServiceName(sp);
 
-      // Build and populate destinations using TransportSubscriptionBuilder
+      // Build and populate destinations using TransportSubscriptionBuilder.
+      // The inbox strategy resolves from DI (options fallback inside the builder) and the
+      // receptor registry feeds the handled-message enumeration into the subscription
+      // context (topology arc phase 3).
       var subscriptionBuilder = new TransportSubscriptionBuilder(
           routingOptions,
           discovery,
-          serviceName);
+          serviceName,
+          sp.GetService<IInboxRoutingStrategy>(),
+          sp.GetService<Messaging.IReceptorRegistryQuery>());
 
       subscriptionBuilder.ConfigureOptions(options);
 
@@ -314,6 +330,12 @@ public static class TransportConsumerBuilderExtensions {
 
       return options;
     });
+
+    // Manifest-driven DARK provisioning wiring (topology arc phase 5): make the
+    // TopologyManifest resolvable so TransportConsumerWorker can provision every entity the
+    // strategies name — built from the registered strategies + registry + catalog at first
+    // resolve. TryAdd: harmless when AddTransportSubscriptionBuilder already registered one.
+    TransportSubscriptionBuilderExtensions.TryAddTopologyManifest(builder.Services, _getServiceName);
 
     // Register OrderedStreamProcessor (required by TransportConsumerWorker)
     builder.Services.TryAddSingleton<OrderedStreamProcessor>();

@@ -14,6 +14,12 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// automatic: the transport re-projects on every subscribe and whenever adaptive acceptors
 /// resize a pool, so a decayed pool clears the degradation without a redeploy.
 /// </summary>
+/// <remarks>
+/// Multi-namespace hosts (transport traffic classes, topology arc phase 8) report the WORST
+/// namespace, never the sum: the threshold is a PER-NAMESPACE request budget, so each
+/// TransportNamespace projects against its own quota. Adding namespaces must never degrade a
+/// fleet that is healthy in every one of them.
+/// </remarks>
 /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbOpsRateHealthSourceTests.cs</tests>
 public sealed class AsbOpsRateHealthSource : IWhizbangHealthSource {
@@ -33,14 +39,34 @@ public sealed class AsbOpsRateHealthSource : IWhizbangHealthSource {
 
   /// <inheritdoc />
   public ValueTask<ComponentHealth> ReportAsync(CancellationToken cancellationToken) {
-    if (_transport is not AzureServiceBusTransport asbTransport
-        || asbTransport.IdleOpsRateProjection is not { ExceedsThreshold: true } projection) {
+    var projection = _worstProjection();
+    if (projection is not { ExceedsThreshold: true } exceeded) {
       return ValueTask.FromResult(new ComponentHealth(ComponentState.Operational));
     }
 
     var detail = string.Create(
       CultureInfo.InvariantCulture,
-      $"idle ops-rate self-check: receive machinery projects {projection.ProjectedIdleOpsPerSecond:F1} idle broker ops/sec, over the {projection.ThresholdPerSecond:F0}/sec warning threshold — idle accept churn alone is consuming a material share of the namespace request quota");
+      $"idle ops-rate self-check: receive machinery projects {exceeded.ProjectedIdleOpsPerSecond:F1} idle broker ops/sec, over the {exceeded.ThresholdPerSecond:F0}/sec warning threshold — idle accept churn alone is consuming a material share of the namespace request quota");
     return ValueTask.FromResult(new ComponentHealth(ComponentState.Degraded, detail));
   }
+
+  /// <summary>
+  /// The highest projection across every TransportNamespace this transport spans (one entry for
+  /// a single-namespace host). Deliberately a MAX and not a SUM — see the type remarks.
+  /// </summary>
+  private AsbOpsRateProjection? _worstProjection() {
+    AsbOpsRateProjection? worst = null;
+    foreach (var transport in _namespaceTransports()) {
+      if (transport is AzureServiceBusTransport asb
+          && asb.IdleOpsRateProjection is { } projection
+          && (worst is null || projection.ProjectedIdleOpsPerSecond > worst.Value.ProjectedIdleOpsPerSecond)) {
+        worst = projection;
+      }
+    }
+
+    return worst;
+  }
+
+  private IEnumerable<ITransport> _namespaceTransports() =>
+    _transport is NamespaceRoutingTransport router ? router.Transports : [_transport];
 }

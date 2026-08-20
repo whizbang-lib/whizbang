@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
 
-namespace Whizbang.Core.Messaging;
+namespace Whizbang.Core.Minting;
 
 /// <summary>
 /// The generic coalesced-batch carrier: one wire envelope bundling the pending singles a

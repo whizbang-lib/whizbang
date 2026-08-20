@@ -13,5 +13,12 @@ public enum MessageKind {
   /// <summary>Notification of state change - routes to owner's outbox.</summary>
   Event,
   /// <summary>Request for data - routes to owner's inbox, expects response.</summary>
-  Query
+  Query,
+  /// <summary>
+  /// Framework system/broadcast traffic — run-control commands, killswitches, and durable
+  /// system commands every service must receive (e.g. perspective rebuilds). Routed by the
+  /// outbox strategies' system branch; currently lands on the same entities commands use
+  /// (dormant capability — a later phase redirects it to the dedicated broadcast inbox).
+  /// </summary>
+  System
 }

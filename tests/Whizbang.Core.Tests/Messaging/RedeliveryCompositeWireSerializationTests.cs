@@ -10,7 +10,7 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// Stream-integrity R1c prerequisite: a <see cref="Whizbang.Core.Messaging.RedeliveryComposite"/>
+/// Stream-integrity R1c prerequisite: a <see cref="Whizbang.Core.Minting.RedeliveryComposite"/>
 /// must round-trip through the combined JSON options with its polymorphic inner <see cref="IMessage"/>
 /// list intact — discriminators written on serialize, concrete payloads restored on deserialize.
 /// This is the wire fidelity every repair bundle depends on.
@@ -46,17 +46,17 @@ public class RedeliveryCompositeWireSerializationTests {
     var streamId = TrackedGuid.NewMedo().Value;
     var e1 = TrackedGuid.NewMedo().Value;
     var e2 = TrackedGuid.NewMedo().Value;
-    var composite = new Whizbang.Core.Messaging.RedeliveryComposite {
+    var composite = new Whizbang.Core.Minting.RedeliveryComposite {
       StreamId = streamId,
       InnerPayloads = [JsonDocument.Parse("{\"x\":2}").RootElement.Clone(), JsonDocument.Parse("{\"x\":3}").RootElement.Clone()],
       InnerTypeNames = ["Contracts.WireProbe, Contracts", "Contracts.WireProbe, Contracts"],
       InnerEventIds = [e1, e2],
     };
 
-    var json = JsonSerializer.Serialize(composite, options.GetTypeInfo(typeof(Whizbang.Core.Messaging.RedeliveryComposite)));
+    var json = JsonSerializer.Serialize(composite, options.GetTypeInfo(typeof(Whizbang.Core.Minting.RedeliveryComposite)));
 
-    var back = (Whizbang.Core.Messaging.RedeliveryComposite)JsonSerializer.Deserialize(
-      json, options.GetTypeInfo(typeof(Whizbang.Core.Messaging.RedeliveryComposite)))!;
+    var back = (Whizbang.Core.Minting.RedeliveryComposite)JsonSerializer.Deserialize(
+      json, options.GetTypeInfo(typeof(Whizbang.Core.Minting.RedeliveryComposite)))!;
     await Assert.That(back.InnerEventIds).IsEquivalentTo([e1, e2]);
     await Assert.That(back.InnerTypeNames).IsEquivalentTo(composite.InnerTypeNames);
     await Assert.That(back.InnerPayloads.Select(pd => pd.GetProperty("x").GetInt32()).ToList()).IsEquivalentTo([2, 3])
@@ -71,16 +71,16 @@ public class RedeliveryCompositeWireSerializationTests {
     _ensureRegistered();
     var options = JsonContextRegistry.CreateCombinedOptions();
     var exotic = "{\"tags\":[\"a\",\"b\"],\"nested\":{\"set\":[1,2,3]},\"unregistered\":true}";
-    var composite = new Whizbang.Core.Messaging.RedeliveryComposite {
+    var composite = new Whizbang.Core.Minting.RedeliveryComposite {
       StreamId = TrackedGuid.NewMedo().Value,
       InnerPayloads = [JsonDocument.Parse(exotic).RootElement.Clone()],
       InnerTypeNames = ["Totally.Unregistered.Type, Nowhere"],
       InnerEventIds = [TrackedGuid.NewMedo().Value],
     };
 
-    var json = JsonSerializer.Serialize(composite, options.GetTypeInfo(typeof(Whizbang.Core.Messaging.RedeliveryComposite)));
-    var back = (Whizbang.Core.Messaging.RedeliveryComposite)JsonSerializer.Deserialize(
-      json, options.GetTypeInfo(typeof(Whizbang.Core.Messaging.RedeliveryComposite)))!;
+    var json = JsonSerializer.Serialize(composite, options.GetTypeInfo(typeof(Whizbang.Core.Minting.RedeliveryComposite)));
+    var back = (Whizbang.Core.Minting.RedeliveryComposite)JsonSerializer.Deserialize(
+      json, options.GetTypeInfo(typeof(Whizbang.Core.Minting.RedeliveryComposite)))!;
 
     await Assert.That(back.InnerPayloads[0].GetRawText()).IsEqualTo(composite.InnerPayloads[0].GetRawText())
       .Because("an origin must be able to repair events whose payload shapes it has NO serializer " +

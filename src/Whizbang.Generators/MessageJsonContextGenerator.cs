@@ -49,7 +49,7 @@ namespace Whizbang.Generators;
 public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
-  private const string I_COMPOSITE_EVENT = "Whizbang.Core.Messaging.ICompositeEvent";
+  private const string I_COMPOSITE_EVENT = "Whizbang.Core.Minting.ICompositeEvent";
   private const string JSON_IGNORE_ATTRIBUTE = "System.Text.Json.Serialization.JsonIgnoreAttribute";
 
   /// <summary>True if the property carries <c>[JsonIgnore]</c> (any condition) — excluded from the

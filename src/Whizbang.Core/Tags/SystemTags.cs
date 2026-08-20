@@ -32,10 +32,28 @@ public static class SystemTags {
   public const string AUDIT = "sys-audit";
 
   /// <summary>
+  /// The framework control-plane traffic class (transport traffic classes, topology arc phase 9).
+  /// Carried by the SUPERSEDABLE control signals — the integrity checkpoint / manifest /
+  /// re-delivery-request families in <c>Whizbang.Core.Messaging</c>, every one of which is
+  /// re-derived on the next cadence. Binding it with
+  /// <see cref="TagOptions.RouteNamespace(string, string)"/> moves the class to its own broker
+  /// namespace; <c>ControlClassOptions</c> binds its delivery semantics (short TTL, sessionless
+  /// subscriptions, non-durable receive).
+  /// </summary>
+  /// <remarks>
+  /// Deliberately NOT carried by <c>Whizbang.Core.Commands.System</c>'s durable system commands
+  /// (run-control, killswitches, rebuild/reseed) — those are one-shot operator intent that a TTL
+  /// would silently lose — nor by <c>Whizbang.Core.Minting</c>'s composite envelopes, which are
+  /// wire-only wrappers around durable payload. <c>IControlPlaneMessage</c> is a security/dead-letter
+  /// marker, not a traffic class: the two sets deliberately differ.
+  /// </remarks>
+  public const string CONTROL = "sys-control";
+
+  /// <summary>
   /// Whether <paramref name="tag"/> is a member of the framework's own tag set — the exemption
   /// the reserved-prefix validation consults.
   /// </summary>
   /// <param name="tag">The tag value to test.</param>
   /// <returns><c>true</c> for tags the framework itself ships; <c>false</c> otherwise.</returns>
-  public static bool IsFrameworkTag(string tag) => tag is AUDIT;
+  public static bool IsFrameworkTag(string tag) => tag is AUDIT or CONTROL;
 }

@@ -1,4 +1,5 @@
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
 

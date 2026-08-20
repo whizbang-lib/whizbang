@@ -738,11 +738,14 @@ internal static class RabbitTestWire {
     FakeConnection connection,
     RabbitMQOptions? options = null,
     ILogger<RabbitMQTransport>? logger = null,
-    IMessageDiscardPolicy? discardPolicy = null
+    IMessageDiscardPolicy? discardPolicy = null,
+    Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null,
+    TimeProvider? timeProvider = null
   ) {
     var pool = new RabbitMQChannelPool(connection, maxChannels: 5);
     var transport = new RabbitMQTransport(
-      connection, JsonOptions, pool, options ?? new RabbitMQOptions(), logger, discardPolicy);
+      connection, JsonOptions, pool, options ?? new RabbitMQOptions(), logger, discardPolicy,
+      poisonDetector, timeProvider);
     await transport.InitializeAsync();
     return transport;
   }

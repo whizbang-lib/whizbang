@@ -161,6 +161,69 @@ public class AsbOpsRateHealthSourceTests {
       .Because("decay shrank the projection back under the threshold — recovery must not require a redeploy");
   }
 
+  #region Multi-namespace (topology arc phase 8)
+
+  [Test]
+  public async Task Report_MultiNamespaceRouter_TakesTheWorstNamespaceWithoutSummingAsync() {
+    // The idle ops-rate threshold is a PER-NAMESPACE request budget: each namespace has its
+    // own quota, its own acceptors, its own projection. Summing the mirrored subscriptions
+    // across namespaces would degrade a perfectly healthy fleet, so the source reports the
+    // WORST namespace, never the total.
+    var options = new AzureServiceBusOptions {
+      EnableAdaptiveAcceptors = false,
+      MaxConcurrentSessions = 4,
+      SessionIdleTimeout = TimeSpan.FromSeconds(1),
+      OpsRateWarningThresholdPerSecond = 6
+    };
+    var (@default, _, _) = _createTransport(options);
+    var (bulk, _, _) = _createTransport(options);
+    await @default.InitializeAsync();
+    await bulk.InitializeAsync();
+    await _subscribeAsync(@default);
+    await _subscribeAsync(bulk);
+
+    var router = new NamespaceRoutingTransport(
+      @default, new Dictionary<string, ITransport> { ["bulk"] = bulk });
+    var source = new AsbOpsRateHealthSource(router);
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Operational)
+      .Because("each namespace projects 4 idle ops/sec against its OWN 6/sec budget — the sum (8) is not a real quota");
+  }
+
+  [Test]
+  public async Task Report_MultiNamespaceRouter_DegradesWhenAnyNamespaceExceedsAsync() {
+    var healthyOptions = new AzureServiceBusOptions {
+      EnableAdaptiveAcceptors = false,
+      MaxConcurrentSessions = 2,
+      SessionIdleTimeout = TimeSpan.FromSeconds(1),
+      OpsRateWarningThresholdPerSecond = 6
+    };
+    var hotOptions = new AzureServiceBusOptions {
+      EnableAdaptiveAcceptors = false,
+      MaxConcurrentSessions = 50,
+      SessionIdleTimeout = TimeSpan.FromSeconds(1),
+      OpsRateWarningThresholdPerSecond = 6
+    };
+    var (@default, _, _) = _createTransport(healthyOptions);
+    var (bulk, _, _) = _createTransport(hotOptions);
+    await @default.InitializeAsync();
+    await bulk.InitializeAsync();
+    await _subscribeAsync(@default);
+    await _subscribeAsync(bulk);
+
+    var source = new AsbOpsRateHealthSource(new NamespaceRoutingTransport(
+      @default, new Dictionary<string, ITransport> { ["bulk"] = bulk }));
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Degraded)
+      .Because("one namespace burning its request quota at idle is a real problem even when the others are quiet");
+  }
+
+  #endregion
+
   /// <summary>Minimal non-ASB ITransport so the source's type guard is exercised.</summary>
   private sealed class NonAsbTransportStub : ITransport {
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;

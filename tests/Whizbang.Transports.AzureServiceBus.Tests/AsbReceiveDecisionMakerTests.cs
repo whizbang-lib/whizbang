@@ -6,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Offloads;
 using Whizbang.Core.ValueObjects;
@@ -484,7 +485,7 @@ public class AsbReceiveDecisionMakerTests {
     };
     var body = JsonSerializer.Serialize(envelope, compositeTypeInfo);
     var props = _withEnvelopeType(
-      "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.RedeliveryComposite, Whizbang.Core]], Whizbang.Core");
+      "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Minting.RedeliveryComposite, Whizbang.Core]], Whizbang.Core");
 
     // Faithful to every real service: nothing consumes the composite type itself.
     static bool _isHandledLocally(Type t) => false;

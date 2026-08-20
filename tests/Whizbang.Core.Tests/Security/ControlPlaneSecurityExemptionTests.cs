@@ -2,6 +2,7 @@ using System.Linq;
 using TUnit.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;

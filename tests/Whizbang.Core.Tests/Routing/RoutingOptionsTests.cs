@@ -427,6 +427,27 @@ public class RoutingOptionsTests {
   }
 
   [Test]
+  public async Task Inbox_UseSharedTopic_DefaultTopic_IsInboxMatchingStrategyDefaultAsync() {
+    // Arrange - topology arc phase 3: the builder default previously said "whizbang.inbox"
+    // while SharedTopicInboxStrategy's parameterless ctor and SharedTopicOutboxStrategy's
+    // DefaultInboxTopic both say "inbox". The builder default must match the strategy
+    // defaults so publisher (outbox) and subscriber (inbox) land on the SAME topic.
+    var options = new RoutingOptions();
+
+    // Act
+    options.Inbox.UseSharedTopic();
+
+    // Assert
+    var subscription = options.InboxStrategy!.GetSubscription(
+      new HashSet<string> { "myapp.orders.commands" },
+      "test-service",
+      MessageKind.Command
+    );
+    await Assert.That(subscription.Topic).IsEqualTo("inbox");
+    await Assert.That(subscription.Topic).IsEqualTo(SharedTopicOutboxStrategy.DefaultInboxTopic);
+  }
+
+  [Test]
   public async Task Inbox_UseSharedTopic_WithCustomTopic_SetsCustomTopicAsync() {
     // Arrange
     var options = new RoutingOptions();

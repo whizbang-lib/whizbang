@@ -51,6 +51,7 @@ public class StreamIdGeneratorTests {
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Messaging;
+            using Whizbang.Core.Minting;
 
             namespace TestNamespace;
 

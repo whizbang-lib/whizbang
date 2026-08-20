@@ -4,12 +4,13 @@ using System.Text.Json;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Messaging;
 
-namespace Whizbang.Core.SystemEvents;
+namespace Whizbang.Core.Minting;
 
 /// <summary>
-/// The batched-audit carrier: one wire envelope bundling many pending <see cref="EventAudited"/>
-/// singles, folded by the sliding-window audit shipper (see
-/// <see cref="SystemEventOptions.AuditShipSlideSeconds"/>) and expanded by the standard composite
+/// The batched-audit carrier: one wire envelope bundling many pending
+/// <see cref="Whizbang.Core.SystemEvents.EventAudited"/> singles, folded by the sliding-window audit
+/// shipper (see <see cref="Whizbang.Core.SystemEvents.SystemEventOptions.AuditShipSlideSeconds"/>)
+/// and expanded by the standard composite
 /// fan-out at the consumer. Per-event audit singles under a bulk workload multiply broker traffic
 /// by the event count; folding N singles into one composite divides it back.
 /// </summary>
@@ -23,7 +24,7 @@ namespace Whizbang.Core.SystemEvents;
 /// <para>
 /// <b>Identity preservation</b> (<see cref="IIdentityPreservingComposite"/>): each child keeps its
 /// single's ORIGINAL message id. A single that raced past its
-/// <see cref="SystemEventOptions.AuditShipMaxDelaySeconds"/> floor and shipped individually while
+/// <see cref="Whizbang.Core.SystemEvents.SystemEventOptions.AuditShipMaxDelaySeconds"/> floor and shipped individually while
 /// also being folded dedups at the consumer's inbox instead of double-recording the audit entry.
 /// </para>
 /// <para>
@@ -39,8 +40,9 @@ namespace Whizbang.Core.SystemEvents;
 public sealed class AuditEventsComposite
   : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite, Whizbang.Core.Messaging.IControlPlaneMessage {
   /// <summary>
-  /// Each folded single's raw stored payload JSON (the serialized <see cref="EventAudited"/>),
-  /// verbatim from its outbox row — never rehydrated (see <see cref="IRawInnerComposite"/>).
+  /// Each folded single's raw stored payload JSON (the serialized
+  /// <see cref="Whizbang.Core.SystemEvents.EventAudited"/>), verbatim from its outbox row — never
+  /// rehydrated (see <see cref="IRawInnerComposite"/>).
   /// </summary>
   public List<JsonElement> InnerPayloads { get; init; } = [];
 

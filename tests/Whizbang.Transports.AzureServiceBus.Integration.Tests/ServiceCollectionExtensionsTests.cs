@@ -82,7 +82,9 @@ public class ServiceCollectionExtensionsTests(ServiceBusEmulatorFixtureSource fi
     var services = new ServiceCollection();
 
     // Act & Assert
-    await Assert.That(() => services.AddAzureServiceBusTransport(null!))
+    // Cast disambiguates the connection-string overload from the TransportNamespace map
+    // overload (topology arc phase 8) — the null-connection-string contract is unchanged.
+    await Assert.That(() => services.AddAzureServiceBusTransport((string)null!))
       .Throws<ArgumentException>();
   }
 

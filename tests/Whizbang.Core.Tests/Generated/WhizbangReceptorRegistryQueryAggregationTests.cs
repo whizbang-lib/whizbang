@@ -143,6 +143,99 @@ public class WhizbangReceptorRegistryQueryAggregationTests {
     await Assert.That(WhizbangReceptorRegistryQuery.HasReceptors(LifecycleStage.PreInboxInline, "Any.Type, Asm")).IsFalse();
   }
 
+  // ===== HandledMessages enumeration (topology arc phase 3) =====
+
+  [Test]
+  public async Task ContributionWithoutHandledMessages_GetHandledMessages_ReturnsEmptyAsync() {
+    // Pre-phase-3 contribution shape (HandledMessages not set) must keep working —
+    // the property defaults to empty, and the aggregate enumeration is simply empty.
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = ["MyApp.SomeEvent"],
+      InboxHandlerTypes = [],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+    });
+
+    await Assert.That(WhizbangReceptorRegistryQuery.GetHandledMessages()).IsEmpty();
+  }
+
+  [Test]
+  public async Task TwoContributions_GetHandledMessages_UnionsAndDeduplicatesAsync() {
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = [],
+      InboxHandlerTypes = [],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+      HandledMessages = [
+        new HandledMessageInfo("AssemblyA.Commands.DoWork", "assemblya.commands", Whizbang.Core.Routing.MessageKind.Command),
+        new HandledMessageInfo("Shared.Events.ThingHappened", "shared.events", Whizbang.Core.Routing.MessageKind.Event),
+      ],
+    });
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = [],
+      InboxHandlerTypes = [],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+      HandledMessages = [
+        new HandledMessageInfo("AssemblyB.Commands.DoMore", "assemblyb.commands", Whizbang.Core.Routing.MessageKind.Command),
+        // Duplicate across assemblies — must collapse to one entry
+        new HandledMessageInfo("Shared.Events.ThingHappened", "shared.events", Whizbang.Core.Routing.MessageKind.Event),
+      ],
+    });
+
+    var handled = WhizbangReceptorRegistryQuery.GetHandledMessages();
+
+    await Assert.That(handled.Count).IsEqualTo(3)
+      .Because("Union across contributions, deduplicated by message type name.");
+    await Assert.That(handled.Select(h => h.MessageTypeName))
+      .Contains("AssemblyA.Commands.DoWork");
+    await Assert.That(handled.Select(h => h.MessageTypeName))
+      .Contains("AssemblyB.Commands.DoMore");
+    await Assert.That(handled.Count(h => h.MessageTypeName == "Shared.Events.ThingHappened")).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task GetHandledMessages_DeterministicOrder_SortedByTypeNameAsync() {
+    // Registration order must not leak into the enumeration — topology projections
+    // (manifest, drift checks) need a deterministic sequence.
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = [],
+      InboxHandlerTypes = [],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+      HandledMessages = [
+        new HandledMessageInfo("Zeta.Commands.Last", "zeta.commands", Whizbang.Core.Routing.MessageKind.Command),
+        new HandledMessageInfo("Alpha.Commands.First", "alpha.commands", Whizbang.Core.Routing.MessageKind.Command),
+      ],
+    });
+
+    var handled = WhizbangReceptorRegistryQuery.GetHandledMessages();
+
+    await Assert.That(handled[0].MessageTypeName).IsEqualTo("Alpha.Commands.First");
+    await Assert.That(handled[1].MessageTypeName).IsEqualTo("Zeta.Commands.Last");
+  }
+
+  [Test]
+  public async Task NewContribution_GetHandledMessages_CacheInvalidatesAsync() {
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = [],
+      InboxHandlerTypes = [],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+      HandledMessages = [
+        new HandledMessageInfo("First.Commands.One", "first.commands", Whizbang.Core.Routing.MessageKind.Command),
+      ],
+    });
+    await Assert.That(WhizbangReceptorRegistryQuery.GetHandledMessages().Count).IsEqualTo(1);
+
+    AssemblyRegistry<ReceptorRegistryContribution>.Register(new ReceptorRegistryContribution {
+      AnyConsumerTypes = [],
+      InboxHandlerTypes = [],
+      StageTypes = new Dictionary<LifecycleStage, IReadOnlyCollection<string>>(),
+      HandledMessages = [
+        new HandledMessageInfo("Second.Commands.Two", "second.commands", Whizbang.Core.Routing.MessageKind.Command),
+      ],
+    });
+
+    await Assert.That(WhizbangReceptorRegistryQuery.GetHandledMessages().Count).IsEqualTo(2)
+      .Because("Count-based cache invalidation must cover the handled-message enumeration too.");
+  }
+
   // ===== Cache invalidation on additional registrations =====
 
   [Test]

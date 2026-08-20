@@ -20,6 +20,9 @@ public sealed class RoutingOptions {
   private readonly HashSet<string> _ownedDomains = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _subscribedNamespaces = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _absorbedNamespaces = new(StringComparer.OrdinalIgnoreCase);
+  private readonly HashSet<string> _commandNamespacesToInbox = new(StringComparer.OrdinalIgnoreCase);
+  private bool _routeAllCommandNamespacesToInbox;
+  private bool _retireSharedInbox;
 
   /// <summary>
   /// Gets the command namespaces owned by this service.
@@ -208,6 +211,147 @@ public sealed class RoutingOptions {
   }
 
   /// <summary>
+  /// Gets the contract namespaces whose COMMANDS are flipped to their per-namespace inbox
+  /// entity (<c>inbox.&lt;ns&gt;</c>) by <see cref="NamespaceOutboxStrategy"/> — the topology
+  /// arc phase-6 publisher flip, migrated namespace-at-a-time. Lowercase-invariant.
+  /// Empty (and <see cref="AllCommandNamespacesRouteToInbox"/> false) = no namespace flipped.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  public IReadOnlySet<string> CommandNamespacesToInbox => _commandNamespacesToInbox;
+
+  /// <summary>
+  /// Gets whether EVERY command contract namespace routes to its per-namespace inbox —
+  /// set by <see cref="RouteAllCommandNamespacesToInbox"/>, the end-state of the
+  /// namespace-at-a-time migration.
+  /// </summary>
+  public bool AllCommandNamespacesRouteToInbox => _routeAllCommandNamespacesToInbox;
+
+  /// <summary>
+  /// FLIPS one command contract namespace to its per-namespace inbox entity
+  /// (<c>inbox.&lt;ns&gt;</c>): once flipped, <see cref="NamespaceOutboxStrategy"/> (and the
+  /// publish-time seam in <c>TransportPublishStrategy</c>) route that namespace's commands to
+  /// the entity the handling service dark-provisioned in phase 5, instead of the legacy
+  /// shared inbox. Repeatable — flip one namespace per call, migrate namespace-at-a-time.
+  /// ROLLBACK = remove the call (or the configuration entry
+  /// <c>Whizbang:Routing:CommandNamespacesToInbox</c>): unflipped namespaces route
+  /// byte-identically to the legacy shared inbox.
+  /// </summary>
+  /// <param name="contractNamespace">The command contract namespace to flip
+  /// (case-insensitive; stored lowercase-invariant).</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="ArgumentException">Thrown when the namespace is null or whitespace.</exception>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:RouteCommandNamespaceToInbox_IsRepeatableAndLowercasesAsync</tests>
+  public RoutingOptions RouteCommandNamespaceToInbox(string contractNamespace) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(contractNamespace);
+    _commandNamespacesToInbox.Add(contractNamespace.ToLowerInvariant());
+    return this;
+  }
+
+  /// <summary>
+  /// Flips EVERY command contract namespace to its per-namespace inbox — the end-state of
+  /// the migration (also bindable from configuration as the <c>"*"</c> entry in
+  /// <c>Whizbang:Routing:CommandNamespacesToInbox</c>). Framework-reserved namespaces
+  /// (<c>whizbang.core.*</c>) are never given per-namespace inboxes — under a full flip they
+  /// route to the system broadcast inbox instead (see <see cref="NamespaceOutboxStrategy"/>).
+  /// </summary>
+  /// <returns>This options instance for chaining.</returns>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:RouteAllCommandNamespacesToInbox_FlipsEveryNamespaceAsync</tests>
+  public RoutingOptions RouteAllCommandNamespacesToInbox() {
+    _routeAllCommandNamespacesToInbox = true;
+    return this;
+  }
+
+  /// <summary>
+  /// True when commands in <paramref name="contractNamespace"/> are flipped to their
+  /// per-namespace inbox (explicitly or via <see cref="RouteAllCommandNamespacesToInbox"/>).
+  /// Consulted LIVE by <see cref="NamespaceOutboxStrategy"/> on every routing decision, so
+  /// configuration-bound flips and rollbacks need no strategy re-registration.
+  /// </summary>
+  /// <param name="contractNamespace">The contract namespace (case-insensitive).</param>
+  /// <returns>True when flipped.</returns>
+  public bool IsCommandNamespaceRoutedToInbox(string contractNamespace) {
+    return _routeAllCommandNamespacesToInbox
+      || (!string.IsNullOrWhiteSpace(contractNamespace) && _commandNamespacesToInbox.Contains(contractNamespace));
+  }
+
+  /// <summary>
+  /// Gets whether the legacy shared inbox is RETIRED (topology arc phase 7, spec migration
+  /// step 3): the transitional shared-inbox subscription is dropped, the manifest and both
+  /// provisioners exclude the shared entity, and the command topology is exactly
+  /// per-namespace inboxes + the one system broadcast inbox. Set via
+  /// <see cref="RetireSharedInbox"/> or configuration
+  /// (<c>Whizbang:Routing:RetireSharedInbox</c>).
+  /// </summary>
+  public bool SharedInboxRetired => _retireSharedInbox;
+
+  /// <summary>
+  /// The control class's delivery semantics (topology arc phase 9). Consulted LIVE by
+  /// <see cref="NamespaceInboxStrategy"/>, so a configuration-driven change to the sessionless /
+  /// non-durable migration steps needs no strategy re-registration — the same treatment
+  /// <see cref="SharedInboxRetired"/> gets. Replaced at first options resolution with the
+  /// DI-bound instance, so there is exactly ONE control-class options object per host.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#control-class</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassSubscriptionSplitTests.cs</tests>
+  public ControlClassOptions ControlClass { get; set; } = new();
+
+  /// <summary>
+  /// RETIRES the legacy shared inbox — the explicit opt-in completing the
+  /// per-namespace-command-inbox migration (topology arc phase 7). Under retirement
+  /// <see cref="NamespaceInboxStrategy"/> drops its transitional shared-inbox subscription,
+  /// so the subscription set becomes exactly per-namespace inboxes + the system broadcast
+  /// inbox; the <see cref="TopologyManifest"/> (and therefore both transports' provisioners)
+  /// carries zero references to the shared entity.
+  /// </summary>
+  /// <remarks>
+  /// Valid ONLY once EVERY command namespace is flipped
+  /// (<see cref="RouteAllCommandNamespacesToInbox"/> / the <c>"*"</c> entry in
+  /// <c>Whizbang:Routing:CommandNamespacesToInbox</c>) — a namespace still publishing to the
+  /// shared inbox after the subscription is dropped would be SILENT LOSS, so startup
+  /// validation throws instead (see the WithRouting options factory). Also bindable from
+  /// configuration as <c>Whizbang:Routing:RetireSharedInbox</c> (<c>true</c>/<c>false</c>);
+  /// rollback = remove the call/entry (the transitional shared subscription returns).
+  /// </remarks>
+  /// <returns>This options instance for chaining.</returns>
+  /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/SharedInboxRetirementTests.cs:RetireSharedInbox_DefaultsOff_FluentSetsAndChainsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/SharedInboxRetirementTests.cs:WithRouting_RetirementWithoutFullFlip_ThrowsClearStartupErrorAsync</tests>
+  public RoutingOptions RetireSharedInbox() {
+    _retireSharedInbox = true;
+    return this;
+  }
+
+  /// <summary>
+  /// The retirement guard (topology arc phase 7): throws when <see cref="RetireSharedInbox"/>
+  /// is set while the command-namespace flip is incomplete. Called by the WithRouting options
+  /// factory at first resolution (startup validation, after configuration binding) and by
+  /// <see cref="NamespaceInboxStrategy.GetSubscriptions"/> as defense in depth for manually
+  /// constructed options. The error names the unflipped state so the operator can see how far
+  /// the migration got.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Thrown when retirement is enabled without
+  /// <see cref="RouteAllCommandNamespacesToInbox"/>.</exception>
+  internal void ThrowIfRetirementIncomplete() {
+    if (!_retireSharedInbox || _routeAllCommandNamespacesToInbox) {
+      return;
+    }
+
+    var explicitFlips = _commandNamespacesToInbox.Count == 0
+      ? "none"
+      : string.Join(", ", _commandNamespacesToInbox.Order(StringComparer.Ordinal));
+    throw new InvalidOperationException(
+      "RetireSharedInbox is set, but the command-namespace flip is incomplete: "
+      + "RouteAllCommandNamespacesToInbox (configuration: the \"*\" entry in "
+      + "Whizbang:Routing:CommandNamespacesToInbox) is not set. Retiring the shared inbox while "
+      + "any namespace still publishes to it would leave those commands on a topic with no "
+      + "subscriber — silent loss. Unflipped state: AllCommandNamespacesRouteToInbox=false; "
+      + $"explicitly flipped namespaces: {explicitFlips}. "
+      + "Complete the flip (or remove RetireSharedInbox) before retiring.");
+  }
+
+  /// <summary>
   /// Configures inbox routing using an action.
   /// </summary>
   /// <param name="configure">Action to configure inbox options.</param>
@@ -258,10 +402,38 @@ public sealed class InboxRoutingOptionsBuilder {
   /// Uses shared topic inbox strategy (default).
   /// All commands route to a single shared topic with broker-side filtering.
   /// </summary>
-  /// <param name="topic">Topic name. Default: "whizbang.inbox".</param>
+  /// <remarks>
+  /// The default topic matches <see cref="SharedTopicInboxStrategy"/>'s parameterless
+  /// constructor and <see cref="SharedTopicOutboxStrategy.DefaultInboxTopic"/> ("inbox").
+  /// It was previously "whizbang.inbox" here — an inconsistency that would silently split
+  /// publisher and subscriber onto different topics for anyone relying on this builder's
+  /// default (fixed in the topology arc, phase 3; locked by tests).
+  /// </remarks>
+  /// <param name="topic">Topic name. Default: "inbox".</param>
   /// <returns>The parent options for chaining.</returns>
-  public RoutingOptions UseSharedTopic(string topic = "whizbang.inbox") {
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:Inbox_UseSharedTopic_DefaultTopic_IsInboxMatchingStrategyDefaultAsync</tests>
+  public RoutingOptions UseSharedTopic(string topic = "inbox") {
     _parent.SetInboxStrategy(new SharedTopicInboxStrategy(topic));
+    return _parent;
+  }
+
+  /// <summary>
+  /// Uses per-namespace command inboxes (topology arc phase 5): one <c>inbox.&lt;ns&gt;</c>
+  /// subscription per handled command contract namespace, plus the system broadcast inbox
+  /// (<c>inbox.whizbang</c>), plus — transitionally, until
+  /// <see cref="RoutingOptions.RetireSharedInbox"/> — today's shared-inbox subscription
+  /// unchanged. The strategy is bound to these options, so the retirement switch (code or
+  /// configuration) is consulted LIVE. NOT the default; the default-flip decision rides the
+  /// publisher flip (phase 6/7).
+  /// </summary>
+  /// <param name="sharedInboxTopic">Topic for the transitional shared-inbox subscription.
+  /// Default: "inbox" (must match the publishers' shared inbox until the flip).</param>
+  /// <returns>The parent options for chaining.</returns>
+  /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:Inbox_UseNamespaceInboxes_SetsNamespaceStrategyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:Inbox_UseNamespaceInboxes_BindsParentOptionsSoRetirementIsConsultedLiveAsync</tests>
+  public RoutingOptions UseNamespaceInboxes(string sharedInboxTopic = "inbox") {
+    _parent.SetInboxStrategy(new NamespaceInboxStrategy(_parent, sharedInboxTopic));
     return _parent;
   }
 
@@ -327,6 +499,28 @@ public sealed class OutboxRoutingOptionsBuilder {
   /// </remarks>
   public RoutingOptions UseSharedTopic(string inboxTopic = "inbox") {
     _parent.SetOutboxStrategy(new SharedTopicOutboxStrategy(inboxTopic));
+    return _parent;
+  }
+
+  /// <summary>
+  /// Uses namespace routing (topology arc phase 6, opt-in): events publish to domain topics
+  /// exactly as <see cref="DomainTopicOutboxStrategy"/> (today's default); commands publish
+  /// to their per-namespace inbox (<c>inbox.&lt;contract-namespace&gt;</c>) once their
+  /// namespace is FLIPPED via <see cref="RoutingOptions.RouteCommandNamespaceToInbox"/> /
+  /// <see cref="RoutingOptions.RouteAllCommandNamespacesToInbox"/> (or configuration
+  /// <c>Whizbang:Routing:CommandNamespacesToInbox</c>) — unflipped namespaces keep routing
+  /// byte-identically to the legacy shared inbox; System traffic publishes to the system
+  /// broadcast inbox. NOT the default; pair with
+  /// <see cref="InboxRoutingOptionsBuilder.UseNamespaceInboxes"/> on the consuming services
+  /// (the flip requires phase-5 dark-provisioned entities to exist).
+  /// </summary>
+  /// <param name="sharedInboxTopic">The legacy shared inbox topic unflipped commands keep
+  /// using. Default: "inbox".</param>
+  /// <returns>The parent options for chaining.</returns>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:Outbox_UseNamespaceRouting_SetsNamespaceStrategyAsync</tests>
+  public RoutingOptions UseNamespaceRouting(string sharedInboxTopic = "inbox") {
+    _parent.SetOutboxStrategy(new NamespaceOutboxStrategy(_parent, sharedInboxTopic));
     return _parent;
   }
 

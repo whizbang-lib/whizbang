@@ -262,6 +262,7 @@ public class MessageTypeCatalogGeneratorTests {
       using System.Collections.Generic;
       using Whizbang.Core;
       using Whizbang.Core.Messaging;
+      using Whizbang.Core.Minting;
 
       namespace MyApp;
 

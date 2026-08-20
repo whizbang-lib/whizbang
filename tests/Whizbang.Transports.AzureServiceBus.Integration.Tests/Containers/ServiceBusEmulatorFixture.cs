@@ -77,21 +77,28 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     var projectName = $"whizbang-azure-servicebus-{_port}";
 
     try {
-      // Check if emulator container is already running (reuse from previous test run)
+      // Check if emulator container is already running (reuse from previous test run).
+      // Reuse is only valid when the running container was created from the SAME
+      // Config.json — the emulator reads its topology once at startup, so a container
+      // started from an older config silently lacks newly added entities.
       var existingState = await _getContainerStateAsync(containerName, cancellationToken);
       if (existingState == "running") {
-        Console.WriteLine($"[ServiceBusEmulator] Reusing existing container '{containerName}'");
-        _client = new ServiceBusClient(ConnectionString);
+        if (await _configMatchesRunningContainerAsync(containerName, cancellationToken)) {
+          Console.WriteLine($"[ServiceBusEmulator] Reusing existing container '{containerName}'");
+          _client = new ServiceBusClient(ConnectionString);
 
-        // Quick warmup to verify connectivity
-        await _warmupAsync(cancellationToken);
+          // Quick warmup to verify connectivity
+          await _warmupAsync(cancellationToken);
 
-        Console.WriteLine("[ServiceBusEmulator] ✅ Existing emulator verified and ready!");
-        _isInitialized = true;
-        return;
+          Console.WriteLine("[ServiceBusEmulator] ✅ Existing emulator verified and ready!");
+          _isInitialized = true;
+          return;
+        }
+
+        Console.WriteLine($"[ServiceBusEmulator] Running container '{containerName}' was created from a DIFFERENT Config.json — recreating with the current topology...");
       }
 
-      // Container not running — start fresh
+      // Container not running (or running with a stale topology) — start fresh
       if (existingState != null) {
         Console.WriteLine($"[ServiceBusEmulator] Found stopped container '{containerName}' (state: {existingState}), cleaning up...");
         await _runDockerComposeAsyncIgnoreErrors($"-p {projectName} down -v --remove-orphans", _dockerComposeFile, cancellationToken);
@@ -276,6 +283,8 @@ services:
       - MSSQL_SA_PASSWORD=ServiceBus!Pass
       - SQL_SERVER=mssql
       - CONFIG_PATH=/ServiceBus_Emulator/ConfigFiles/Config.json
+    labels:
+      - "whizbang.config.sha256={_computeConfigHash()}"
     volumes:
       - "{_configFilePath}:/ServiceBus_Emulator/ConfigFiles/Config.json:ro"
     depends_on:
@@ -439,6 +448,60 @@ services:
       }
     } catch {
       // Ignore cleanup errors
+    }
+  }
+
+  /// <summary>
+  /// Content hash of the current Config.json — stamped as a compose label on the emulator
+  /// container so reuse can verify the running topology matches the current config.
+  /// </summary>
+  private string _computeConfigHash() {
+    var bytes = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(_configFilePath));
+    return Convert.ToHexStringLower(bytes);
+  }
+
+  /// <summary>
+  /// True when the running container carries the current Config.json's content hash in its
+  /// <c>whizbang.config.sha256</c> label. The emulator loads its topology ONCE at startup,
+  /// so a reused container started from an older config would silently lack any entity
+  /// added since — tests would then fail with entity-not-found instead of pointing at the
+  /// real cause. Label-based (stamped at compose time) because the bind-mount source path
+  /// from docker inspect is not reliably readable across Docker Desktop platforms. Any
+  /// doubt (no label, inspection failure) counts as a mismatch → recreate.
+  /// </summary>
+  private async Task<bool> _configMatchesRunningContainerAsync(string containerName, CancellationToken ct) {
+    try {
+      // {{json .Config.Labels}} deliberately contains no spaces — ProcessStartInfo.Arguments
+      // is argv-split on whitespace, so a template with embedded spaces would fragment.
+      var psi = new ProcessStartInfo {
+        FileName = DockerExecutable.PathOrThrow,
+        Arguments = $"inspect --format={{{{json .Config.Labels}}}} {containerName}",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+      };
+
+      using var process = Process.Start(psi);
+      if (process == null) {
+        return false;
+      }
+
+      var output = await process.StandardOutput.ReadToEndAsync(ct);
+      await process.WaitForExitAsync(ct);
+      if (process.ExitCode != 0) {
+        return false;
+      }
+
+      using var labels = System.Text.Json.JsonDocument.Parse(output.Trim());
+      var runningHash = labels.RootElement.ValueKind == System.Text.Json.JsonValueKind.Object
+          && labels.RootElement.TryGetProperty("whizbang.config.sha256", out var hashElement)
+        ? hashElement.GetString()
+        : null;
+      return !string.IsNullOrEmpty(runningHash)
+        && string.Equals(runningHash, _computeConfigHash(), StringComparison.OrdinalIgnoreCase);
+    } catch {
+      return false; // any inspection failure → recreate (slow but correct)
     }
   }
 

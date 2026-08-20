@@ -20,6 +20,9 @@ namespace Whizbang.Transports.AzureServiceBus;
 public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsyncDisposable {
   private const string ENVELOPE_TYPE_PROPERTY = "EnvelopeType";
 
+  /// <summary>Transport identifier on poison-detection capability reports and quarantine metrics.</summary>
+  private const string ASB_TRANSPORT_TAG = "azure-service-bus";
+
   private readonly ServiceBusClient _client;
   private readonly IServiceBusAdminClient? _adminClient;
   private readonly ILogger<AzureServiceBusTransport> _logger;
@@ -34,6 +37,10 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly Whizbang.Core.Messaging.IMessageTypeBinder _typeBinder;
   private readonly IMessageDiscardPolicy? _discardPolicy;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
+  private readonly Whizbang.Core.Routing.IPoisonMessageDetector? _poisonDetector;
+
+  /// <summary>Last age-capability value reported per entity — see <c>_buildPoisonContext</c>.</summary>
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _reportedAgeCapability = new(StringComparer.Ordinal);
   private readonly bool _isEmulator;
   private readonly ReceiveLivenessWatchdog? _livenessWatchdog;
   private readonly TimeProvider _timeProvider;
@@ -92,7 +99,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     Whizbang.Core.Messaging.IMessageTypeBinder? typeBinder = null,
     IMessageDiscardPolicy? discardPolicy = null,
     IReadOnlySet<string>? absorbedNamespaces = null,
-    TimeProvider? timeProvider = null
+    TimeProvider? timeProvider = null,
+    Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -119,6 +127,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // fallback works without explicit DI configuration. Tests can inject a fake.
     _typeBinder = typeBinder ?? new Whizbang.Core.Messaging.MultiPassMessageTypeBinder();
     _discardPolicy = discardPolicy;
+    _poisonDetector = poisonDetector;
     _absorbedNamespaces = absorbedNamespaces
       ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -164,6 +173,73 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <see cref="ReceiveLivenessWatchdog.ProbeAsync"/>.
   /// </summary>
   internal ReceiveLivenessWatchdog? LivenessWatchdog => _livenessWatchdog;
+
+  /// <summary>
+  /// Test seam for the head peek that supplies backlog AGE. Defaults to a real receiver peek;
+  /// tests substitute it so the duty's adapter logic is exercised without a broker.
+  /// </summary>
+  internal Func<string, string, CancellationToken, Task<DateTimeOffset?>>? OldestEnqueuedTimeProbe { get; set; }
+
+  /// <summary>
+  /// Samples every subscription this transport currently consumes from (topology arc phase 10):
+  /// DEPTH from the management plane, AGE from a single head peek. One management operation and
+  /// one peek per entity per call — an observer of idle churn must never become idle churn.
+  /// </summary>
+  /// <remarks>
+  /// A failure on either read degrades that entity's sample rather than the whole pass: depth
+  /// without age is still useful, and the duty reports the missing age as a capability gap instead
+  /// of silently treating an unknown age as a young one.
+  /// </remarks>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>One sample per live subscription; empty when nothing is subscribed yet.</returns>
+  internal async Task<IReadOnlyList<Whizbang.Core.Transports.BacklogSample>> PeekBacklogsAsync(
+      CancellationToken cancellationToken) {
+    if (_livenessWatchdog is null || _adminClient is null) {
+      return [];
+    }
+
+    var samples = new List<Whizbang.Core.Transports.BacklogSample>();
+    foreach (var (topic, subscription) in _livenessWatchdog.TrackedEntities) {
+      long depth;
+      try {
+        depth = await _adminClient.GetSubscriptionActiveMessageCountAsync(topic, subscription, cancellationToken)
+          .ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        continue;  // this entity is unreadable right now; the next tick retries.
+      }
+
+      DateTimeOffset? oldestEnqueued = null;
+      try {
+        oldestEnqueued = await _peekOldestEnqueuedTimeAsync(topic, subscription, cancellationToken)
+          .ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Age unavailable on this surface right now — reported as a capability gap upstream.
+      }
+
+      samples.Add(new Whizbang.Core.Transports.BacklogSample(
+        Entity: $"{topic}/{subscription}",
+        Depth: depth,
+        OldestAge: oldestEnqueued is { } enqueued && enqueued > DateTimeOffset.MinValue
+          ? DateTimeOffset.UtcNow - enqueued
+          : null));
+    }
+
+    return samples;
+  }
+
+  private async Task<DateTimeOffset?> _peekOldestEnqueuedTimeAsync(
+      string topic, string subscription, CancellationToken cancellationToken) {
+    if (OldestEnqueuedTimeProbe is { } probe) {
+      return await probe(topic, subscription, cancellationToken).ConfigureAwait(false);
+    }
+
+    // A head peek neither locks nor settles nor counts against delivery — the cheapest read that
+    // can answer "how old is the front of this entity".
+    await using var receiver = _client.CreateReceiver(topic, subscription);
+    var head = await receiver.PeekMessageAsync(fromSequenceNumber: null, cancellationToken)
+      .ConfigureAwait(false);
+    return head?.EnqueuedTime;
+  }
 
   /// <summary>
   /// Slice 2 receptor-registry filter — returns true if any local receptor handles the given
@@ -406,8 +482,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ReadOnlyMemory<byte>? preSerializedBytes,
     CancellationToken cancellationToken
   ) {
+    // Consumer-provisioned entities (per-namespace command inboxes / the system broadcast
+    // inbox, topology arc phase 6): the publisher must never create them — entity existence
+    // is the proof the handling service dark-provisioned its subscription. Missing entity =
+    // LOUD typed failure, never a silent broker-side drop.
+    var requiresProvisionedEntity = CommandInboxNaming.RequiresProvisionedEntity(destination);
+
     try {
-      var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
+      var sender = await _getOrCreateSenderAsync(
+        destination.Address, cancellationToken, requireExistingEntity: requiresProvisionedEntity);
 
       // Use provided envelope type name if available, otherwise get it from runtime type
       // IMPORTANT: The envelope object is already correctly typed (MessageEnvelope<JsonElement>), so we serialize using envelope.GetType()
@@ -496,9 +579,18 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         message.ApplicationProperties["CausationId"] = causationId.Value.Value.ToString();
       }
 
+      // Control-class lifetime (topology arc phase 9): lift the minted TTL out of the metadata bag
+      // into the SDK property, exactly as StreamId is lifted into SessionId above. Unlifted it
+      // would fall through to ApplicationProperties below — inert decoration the broker never
+      // reads, i.e. a control backlog that still queues forever.
+      _applyControlClassTimeToLive(message, ControlMessageTtl.FromMetadata(destination.Metadata));
+
       // Add custom metadata (converting JsonElement to AMQP-compatible primitives)
       if (destination.Metadata != null) {
         foreach (var (key, value) in destination.Metadata) {
+          if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+            continue;  // lifted above
+          }
           message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
         }
       }
@@ -529,6 +621,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           subject
         );
       }
+    } catch (ServiceBusException sbEx)
+        when (requiresProvisionedEntity && sbEx.Reason == ServiceBusFailureReason.MessagingEntityNotFound) {
+      // No-admin-plane deployments (e.g. the emulator) cannot pre-check existence — the
+      // SDK's entity-not-found send failure becomes the same LOUD typed failure the admin
+      // pre-check produces, carrying the entity name for the operator.
+      _logger.LogError(
+        sbEx,
+        "Unroutable command: consumer-provisioned entity {Destination} does not exist (send failed)",
+        destination.Address
+      );
+      throw new UnroutableDestinationException(destination.Address, sbEx);
 #pragma warning disable S2139 // Intentional log-and-rethrow: transport errors cross async/DI boundaries where the original exception context may be lost.
     } catch (Exception ex) {
       _logger.LogError(
@@ -556,7 +659,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       return [];
     }
 
-    var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
+    // Consumer-provisioned entities are never auto-created on the batch path either (phase
+    // 6); the typed failure surfaces through the caller's per-item failure mapping.
+    var sender = await _getOrCreateSenderAsync(
+      destination.Address, cancellationToken,
+      requireExistingEntity: CommandInboxNaming.RequiresProvisionedEntity(destination));
 
     // Group items by StreamId to ensure messages in the same session go into the same batch.
     // ASB requires all messages in a ServiceBusMessageBatch to have the same SessionId
@@ -696,8 +803,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       message.ApplicationProperties["CausationId"] = causationId.Value.Value.ToString();
     }
 
+    // Control-class lifetime (topology arc phase 9): per-item stamp wins over the shared
+    // destination's, matching the collide-by-overwrite contract PerItemMetadata already documents
+    // — one batch can carry mixed classes.
+    _applyControlClassTimeToLive(
+      message, ControlMessageTtl.Resolve(item.PerItemMetadata, destination.Metadata));
+
     if (destination.Metadata != null) {
       foreach (var (key, value) in destination.Metadata) {
+        if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+          continue;  // lifted above
+        }
         message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
       }
     }
@@ -706,11 +822,28 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     // (e.g., whizbang.body-size, whizbang.is-claim) — that's the contract.
     if (item.PerItemMetadata != null) {
       foreach (var (key, value) in item.PerItemMetadata) {
+        if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+          continue;  // lifted above
+        }
         message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
       }
     }
 
     return message;
+  }
+
+  /// <summary>
+  /// Applies a minted control-class lifetime to <paramref name="message"/>. A null lifetime leaves
+  /// the SDK default (<see cref="TimeSpan.MaxValue"/> — "use the entity default"), which is the
+  /// pre-phase-9 wire shape exactly. Values beyond the SDK's representable maximum saturate rather
+  /// than throwing: a degenerate configuration must never fault a publish.
+  /// </summary>
+  private static void _applyControlClassTimeToLive(ServiceBusMessage message, TimeSpan? timeToLive) {
+    if (timeToLive is not { } lifetime || lifetime <= TimeSpan.Zero) {
+      return;
+    }
+
+    message.TimeToLive = lifetime;
   }
 
   /// <inheritdoc />
@@ -1388,6 +1521,67 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     }
   }
 
+  /// <summary>
+  /// Topology arc phase 8.5 — adapts a broker message into the transport-NEUTRAL poison context
+  /// Core decides on, and declares this surface's age capability.
+  /// <para>
+  /// <c>EnqueuedTime</c> is the broker's first-enqueue stamp and survives every redelivery, which
+  /// is what makes it the only usable signal on a session-enabled entity: a lock lost to connection
+  /// death does not increment <c>DeliveryCount</c>, so the broker's MaxDeliveryCount valve and this
+  /// transport's own <c>MaxDeliveryAttempts</c> branch are both structurally unreachable there.
+  /// A real Service Bus namespace always stamps it; a message arriving without one (default) means
+  /// this surface cannot do age detection at all, and says so rather than silently treating an
+  /// absent stamp as an infinitely old message.
+  /// </para>
+  /// </summary>
+  private Whizbang.Core.Routing.PoisonEvaluationContext _buildPoisonContext(
+      ServiceBusReceivedMessage message, TransportDestination destination, string subscription) {
+    var enqueuedTime = message.EnqueuedTime;
+    var hasTrustworthyAge = enqueuedTime != default;
+    if (_poisonDetector is not null) {
+      // Report only on CHANGE. This runs per message on the receive hot path, and the capability
+      // state is a shared dictionary — an unconditional write per delivery would turn a diagnostic
+      // into a contention point. A lock-free read of the last-reported value keeps steady state to
+      // one lookup.
+      var entity = $"{destination.Address}/{subscription}";
+      if (_reportedAgeCapability.TryGetValue(entity, out var previous) != true
+          || previous != hasTrustworthyAge) {
+        _reportedAgeCapability[entity] = hasTrustworthyAge;
+        _poisonDetector.ReportAgeCapability(ASB_TRANSPORT_TAG, entity, hasTrustworthyAge);
+      }
+    }
+
+    return new Whizbang.Core.Routing.PoisonEvaluationContext(
+      MessageId: message.MessageId,
+      FirstEnqueuedAt: hasTrustworthyAge ? enqueuedTime : null,
+      BrokerDeliveryCount: message.DeliveryCount,
+      DurableObservationCount: null,
+      Now: _timeProvider.GetUtcNow());
+  }
+
+  /// <summary>
+  /// Emits the quarantine telemetry for a poison dead-letter. No-op for every other DeadLetter
+  /// reason, so the caller can invoke it unconditionally in the branch.
+  /// </summary>
+  private void _recordPoisonQuarantine(
+      AsbReceiveDecision decision,
+      Whizbang.Core.Routing.PoisonEvaluationContext poisonContext,
+      TransportDestination destination,
+      string subscription) {
+    if (_poisonDetector is null || decision.PoisonVerdict is not { } verdict) {
+      return;
+    }
+    _poisonDetector.RecordQuarantine(
+      Whizbang.Core.Routing.PoisonQuarantineGate.Receive,
+      verdict,
+      poisonContext,
+      new Dictionary<string, object?> {
+        ["transport"] = ASB_TRANSPORT_TAG,
+        ["topic"] = destination.Address,
+        ["subscription"] = subscription,
+      });
+  }
+
   private async Task<(IMessageEnvelope? Envelope, string? EnvelopeTypeName)> _deserializeReceivedMessageAsync(
     ProcessMessageEventArgs args,
     TransportDestination destination
@@ -1403,6 +1597,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       );
     }
 
+    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+    var poisonContext = _buildPoisonContext(args.Message, destination, subscription);
+
     var decision = _decisionMaker.Decide(
       args.Message.ApplicationProperties,
       json,
@@ -1411,9 +1608,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _buildIsHandledLocally(),
       _rawReceptorRegistry,
       _typeBinder,
-      absorbedNamespaces: _absorbedNamespaces);
-
-    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+      absorbedNamespaces: _absorbedNamespaces,
+      poisonDetector: _poisonDetector,
+      poisonContext: poisonContext);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:
@@ -1463,6 +1660,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           destination.Address,
           subscription
         );
+        _recordPoisonQuarantine(decision, poisonContext, destination, subscription);
         await _safeDeadLetterAsync(args, decision.Reason, decision.Description);
         return (null, decision.EnvelopeTypeName);
 
@@ -1484,6 +1682,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   ) {
     var json = args.Message.Body.ToString();
 
+    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+    var poisonContext = _buildPoisonContext(args.Message, destination, subscription);
+
     var decision = _decisionMaker.Decide(
       args.Message.ApplicationProperties,
       json,
@@ -1492,9 +1693,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _buildIsHandledLocally(),
       _rawReceptorRegistry,
       _typeBinder,
-      absorbedNamespaces: _absorbedNamespaces);
-
-    var subscription = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+      absorbedNamespaces: _absorbedNamespaces,
+      poisonDetector: _poisonDetector,
+      poisonContext: poisonContext);
 
     switch (decision.Action) {
       case AsbReceiveAction.Process:
@@ -1538,6 +1739,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           destination.Address,
           subscription
         );
+        _recordPoisonQuarantine(decision, poisonContext, destination, subscription);
         await _safeDeadLetterAsync(args, decision.Reason, decision.Description);
         return (null, decision.EnvelopeTypeName);
 
@@ -2073,19 +2275,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
   }
 
-  /// <summary>Creates the subscription — honoring EnableSessions for the RequiresSession flag —
-  /// and logs at Information when enabled.</summary>
-  private async Task _createSubscriptionAsync(
-      string topicName, string subscriptionName, CancellationToken cancellationToken) {
-    if (_logger.IsEnabled(LogLevel.Information)) {
-      _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
-    }
-    if (_options.EnableSessions) {
-      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
-    } else {
-      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
-    }
-  }
+  /// <summary>Creates the subscription — honoring EnableSessions for the RequiresSession flag.
+  /// Delegates to <see cref="ServiceBusEntityProvisioning"/>, the ONE code path shared with the
+  /// manifest-driven DARK provisioning (phase 5) so settings can never drift.</summary>
+  private Task _createSubscriptionAsync(
+      string topicName, string subscriptionName, CancellationToken cancellationToken) =>
+    ServiceBusEntityProvisioning.CreateSubscriptionAsync(
+      _adminClient!, _options, topicName, subscriptionName, _logger, cancellationToken);
 
   /// <summary>
   /// Applies SqlFilter rules for routing pattern matching.
@@ -2100,78 +2296,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatterns_AppliesSqlFilterRuleAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternWithBareWildcard_TranslatesToPercentAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternRuleCreationFails_ProceedsWithoutFilterAsync</tests>
-  private async Task _applyRoutingPatternFilterAsync(
+  private Task _applyRoutingPatternFilterAsync(
     string topicName,
     string subscriptionName,
     IEnumerable<string> routingPatterns,
     CancellationToken cancellationToken) {
 
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
-      return;
+      return Task.CompletedTask;
     }
 
-    // Build SQL filter expression
-    // "ns1.#,ns2.#" → "sys.Label LIKE 'ns1.%' OR sys.Label LIKE 'ns2.%'"
-    // NOTE: Azure Service Bus SqlFilter uses sys.Label for the Subject/Label property,
-    // NOT [Subject]. The [Subject] syntax doesn't work for SqlRuleFilter expressions.
-    // See: https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-messaging-sql-filter
-    var likePatterns = routingPatterns
-      .Select(p => p.Replace(".#", ".%").Replace(".*", ".%").Replace("#", "%").Replace("*", "%"))
-      .Select(p => $"sys.Label LIKE '{p}'");
-
-    var sqlExpression = string.Join(" OR ", likePatterns);
-
-    const string ruleName = "RoutingPatternFilter";
-
-    try {
-      // Idempotency: when the subscription's rules already converge on exactly the desired
-      // SqlFilter, leave them alone. Deleting-then-recreating opens a brief no-rule window in
-      // which published messages match nothing and are silently dropped — resubscribes (deploy,
-      // connection recovery, receive-liveness watchdog) must not reopen that window for a no-op.
-      var existingRules = new List<RuleProperties>();
-      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
-        existingRules.Add(rule);
-      }
-      if (existingRules.Count == 1
-          && existingRules[0].Name == ruleName
-          && existingRules[0].Filter is SqlRuleFilter existingFilter
-          && existingFilter.SqlExpression == sqlExpression) {
-        if (_logger.IsEnabled(LogLevel.Debug)) {
-          _logger.LogDebug(
-            "[SqlFilter] Rule already correct on {TopicName}/{SubscriptionName}; skipping re-application",
-            topicName,
-            subscriptionName);
-        }
-        return;
-      }
-
-      // Delete existing rules (including $Default)
-      var deletedRules = new List<string>();
-      foreach (var rule in existingRules) {
-        await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
-        deletedRules.Add(rule.Name);
-      }
-
-      // Create SqlFilter rule
-      var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));
-      await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
-
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug(
-          "[SqlFilter] Deleted {RuleCount} existing rules and applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
-          deletedRules.Count,
-          sqlExpression,
-          topicName,
-          subscriptionName);
-      }
-    } catch (Exception ex) {
-      _logger.LogWarning(
-        ex,
-        "Failed to apply routing pattern filter to {TopicName}/{SubscriptionName}. Proceeding without filter.",
-        topicName,
-        subscriptionName
-      );
-    }
+    // Delegates to ServiceBusEntityProvisioning — the ONE code path shared with the
+    // manifest-driven DARK provisioning (phase 5) so filter shapes can never drift.
+    return ServiceBusEntityProvisioning.ApplyRoutingPatternFilterAsync(
+      _adminClient, topicName, subscriptionName, routingPatterns, _logger, cancellationToken);
   }
 
   #endregion
@@ -2203,27 +2341,19 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_EnsuresTopicExistsAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_TopicAlreadyExists_SkipsCreationAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_RaceCondition_HandlesGracefullyAsync</tests>
-  private async Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
+  private Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
-      return;
+      return Task.CompletedTask;
     }
 
-    try {
-      if (!await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
-        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          _logger.LogInformation("Auto-created topic '{TopicName}'", topicName);
-        }
-      }
-    } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
-      // Race condition — another instance created it, safe to ignore
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug(ex, "Topic '{TopicName}' already exists (race condition)", topicName);
-      }
-    }
+    // Delegates to ServiceBusEntityProvisioning — the ONE code path shared with the
+    // manifest-driven DARK provisioning (phase 5).
+    return ServiceBusEntityProvisioning.EnsureTopicExistsAsync(
+      _adminClient, topicName, _logger, cancellationToken);
   }
 
-  private async Task<ServiceBusSender> _getOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
+  private async Task<ServiceBusSender> _getOrCreateSenderAsync(
+      string topicName, CancellationToken cancellationToken, bool requireExistingEntity = false) {
     if (_senders.TryGetValue(topicName, out var existingSender)) {
       return existingSender;
     }
@@ -2235,9 +2365,22 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         return existingSender;
       }
 
-      // Ensure topic exists before creating sender (on-demand provisioning)
-      // This matches RabbitMQ's idempotent ExchangeDeclareAsync behavior
-      await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
+      if (requireExistingEntity) {
+        // Consumer-provisioned entity (phase 6): NEVER auto-create — verify it exists and
+        // fail LOUDLY when it doesn't. The negative answer is deliberately NOT cached so an
+        // outbox retry succeeds the moment the handling service provisions the entity. The
+        // positive answer is cached implicitly (the sender lands in _senders). Without an
+        // admin client the send itself surfaces MessagingEntityNotFound, which the publish
+        // path wraps into the same typed failure.
+        if (_adminClient is not null
+            && !await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
+          throw new UnroutableDestinationException(topicName);
+        }
+      } else {
+        // Ensure topic exists before creating sender (on-demand provisioning)
+        // This matches RabbitMQ's idempotent ExchangeDeclareAsync behavior
+        await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
+      }
 
       var sender = _client.CreateSender(topicName);
       _senders[topicName] = sender;

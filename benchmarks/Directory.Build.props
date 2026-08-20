@@ -6,5 +6,8 @@
     <!-- Temporarily suppress Guid usage analyzer warnings in benchmark projects -->
     <!-- Remove after Phase 5 migration completes all usages -->
     <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
+    <!-- Suppress the command-ownership rule in benchmarks: they deliberately register sync AND -->
+    <!-- async receptors for the same command to compare surfaces — a fixture, not a service. -->
+    <NoWarn>$(NoWarn);WHIZ151</NoWarn>
   </PropertyGroup>
 </Project>

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
@@ -47,13 +48,15 @@ public sealed partial class CoalesceShipWorker(
   CoalesceGroupResolver? coalesceResolver = null,
   ILogger<CoalesceShipWorker>? logger = null,
   TimeProvider? timeProvider = null,
-  IServiceInstanceProvider? instanceProvider = null) : BackgroundService {
+  IServiceInstanceProvider? instanceProvider = null,
+  ICompositeFactory? compositeFactory = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
   private readonly ILogger<CoalesceShipWorker>? _logger = logger;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly ICompositeFactory _compositeFactory = compositeFactory ?? new CompositeFactory();
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -181,25 +184,33 @@ public sealed partial class CoalesceShipWorker(
         break;
       }
 
-      // A composite has ONE destination — split a mixed fetch per destination.
-      foreach (var destinationBatch in singles.GroupBy(m => m.Destination, StringComparer.Ordinal)) {
-        var batchSingles = destinationBatch.ToList();
-        var batch = new CoalesceFoldBatch {
+      // A composite has ONE destination — the mint splits a mixed fetch per destination (the
+      // singles' stamped Destination IS the routing strategy's GetDestination projection, so the
+      // key preserves same-key ⇔ same-destination) and invokes the binding's family factory once
+      // per plan. The fetch is already bounded by MaxBatchCount; passing it as the count cap
+      // documents the bound at the splitter.
+      var plans = _compositeFactory.Create(new CompositeMintRequest<OutboxMessage> {
+        Constituents = singles,
+        GroupKey = CompositeGroupKey.FromKey<OutboxMessage>(m => m.Destination),
+        MaxConstituentsPerComposite = binding.MaxBatchCount,
+        BuildComposite = batch => (binding.CompositeFactory ?? BuildDefaultComposite)(new CoalesceFoldBatch {
           Group = group,
-          Singles = batchSingles,
+          Singles = batch.Constituents,
           Atomicity = binding.Atomicity
-        };
-        var composite = (binding.CompositeFactory ?? BuildDefaultComposite)(batch);
-        var compositeMessage = _buildCompositeOutboxMessage(serializer, composite, destinationBatch.Key);
+        }),
+      });
+
+      foreach (var plan in plans) {
+        var compositeMessage = _buildCompositeOutboxMessage(serializer, plan.Composite, plan.GroupKey);
 
         await coordinator.CompleteCoalesceFoldAsync(
-          [.. batchSingles.Select(m => m.MessageId)],
+          [.. plan.Constituents.Select(m => m.MessageId)],
           [compositeMessage],
           partitionCount,
           cancellationToken).ConfigureAwait(false);
 
         if (_logger is not null) {
-          LogFolded(_logger, batchSingles.Count, group, compositeMessage.MessageId);
+          LogFolded(_logger, plan.Constituents.Count, group, compositeMessage.MessageId);
         }
       }
 

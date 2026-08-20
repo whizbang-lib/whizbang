@@ -1,4 +1,5 @@
 using System;
+using Whizbang.Core.Minting;
 
 namespace Whizbang.Core.Messaging;
 

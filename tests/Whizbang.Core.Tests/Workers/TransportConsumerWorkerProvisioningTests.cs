@@ -130,6 +130,82 @@ public class TransportConsumerWorkerProvisioningTests {
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);
   }
 
+  /// <summary>
+  /// When a TopologyManifest is resolvable from DI, the worker additionally runs the
+  /// manifest-driven DARK provisioning (phase 5) — before subscriptions are created.
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_WithManifestResolvable_CallsProvisionManifestBeforeSubscriptionsAsync() {
+    // Arrange
+    var callOrder = new CallOrderRecorder();
+    var provisioner = new TrackingProvisioner(callOrder);
+    var transport = new TrackingTransport(callOrder);
+    var manifest = new Whizbang.Core.Routing.TopologyManifest("test-service", [], []);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IInfrastructureProvisioner>(provisioner);
+    services.AddSingleton(manifest);
+    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions()));
+    var serviceProvider = services.BuildServiceProvider();
+
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic", "#"));
+
+    var worker = _createWorker(transport, options, serviceProvider);
+
+    // Act — signal-driven (see the ordering test above)
+    using var cts = new CancellationTokenSource();
+    try {
+      await worker.StartAsync(cts.Token);
+      await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    } finally {
+      cts.Cancel();
+      await worker.StopAsync(CancellationToken.None);
+    }
+
+    // Assert
+    await Assert.That(provisioner.ProvisionedManifest).IsNotNull();
+    await Assert.That(provisioner.ProvisionedManifest!.ServiceName).IsEqualTo("test-service");
+    await Assert.That(callOrder.IndexOf("provision-manifest")).IsGreaterThanOrEqualTo(0);
+    await Assert.That(callOrder.IndexOf("provision-manifest")).IsLessThan(callOrder.IndexOf("subscribe"))
+      .Because("DARK provisioning must complete before the broker can deliver anything");
+  }
+
+  /// <summary>
+  /// Without a manifest in DI, manifest provisioning is skipped — existing consumers see
+  /// zero behavior change (owned-domain provisioning and subscriptions run as before).
+  /// </summary>
+  [Test]
+  public async Task ExecuteAsync_NoManifestRegistered_SkipsManifestProvisioningAsync() {
+    // Arrange
+    var provisioner = new TrackingProvisioner();
+    var transport = new TrackingTransport();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IInfrastructureProvisioner>(provisioner);
+    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new RoutingOptions()));
+    var serviceProvider = services.BuildServiceProvider();
+
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic", "#"));
+
+    var worker = _createWorker(transport, options, serviceProvider);
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    try {
+      await worker.StartAsync(cts.Token);
+      await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    } finally {
+      cts.Cancel();
+      await worker.StopAsync(CancellationToken.None);
+    }
+
+    // Assert
+    await Assert.That(provisioner.ProvisionedManifest).IsNull();
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);
+  }
+
   // ========================================
   // HELPER METHODS
   // ========================================
@@ -180,12 +256,21 @@ public class TransportConsumerWorkerProvisioningTests {
   /// </summary>
   private sealed class TrackingProvisioner(CallOrderRecorder? callOrder = null) : IInfrastructureProvisioner {
     public IReadOnlySet<string>? ProvisionedDomains { get; private set; }
+    public Whizbang.Core.Routing.TopologyManifest? ProvisionedManifest { get; private set; }
 
     public Task ProvisionOwnedDomainsAsync(
         IReadOnlySet<string> ownedDomains,
         CancellationToken cancellationToken = default) {
       callOrder?.Record("provision");
       ProvisionedDomains = ownedDomains;
+      return Task.CompletedTask;
+    }
+
+    public Task ProvisionManifestAsync(
+        Whizbang.Core.Routing.TopologyManifest manifest,
+        CancellationToken cancellationToken = default) {
+      callOrder?.Record("provision-manifest");
+      ProvisionedManifest = manifest;
       return Task.CompletedTask;
     }
   }

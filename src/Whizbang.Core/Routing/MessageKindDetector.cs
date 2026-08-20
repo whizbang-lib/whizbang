@@ -8,12 +8,25 @@ namespace Whizbang.Core.Routing;
 /// <remarks>
 /// Detection priority:
 /// 1. [MessageKind] attribute (explicit override)
-/// 2. Interface implementation (ICommand, IEvent, IQuery)
-/// 3. Namespace convention (Commands, Events, Queries in namespace)
-/// 4. Type name suffix (Command, Event, Query, Created, Updated, Deleted)
+/// 2. Framework system namespace (Whizbang.Core.Commands.System → System) — outranks
+///    interface detection because framework system commands implement ICommand yet are
+///    broadcast/run-control traffic, not domain commands
+/// 3. Interface implementation (ICommand, IEvent, IQuery)
+/// 4. Namespace convention (Commands, Events, Queries in namespace)
+/// 5. Type name suffix (Command, Event, Query, Created, Updated, Deleted)
+/// NOTE: the detector is deliberately OFF the routing hot path — dispatcher call sites
+/// pass literal kinds; this classifier is metadata/tooling only.
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#message-kind</docs>
 public static class MessageKindDetector {
+  /// <summary>
+  /// The framework system namespace subtree whose types classify as
+  /// <see cref="MessageKind.System"/> (run-control, killswitches, durable system commands).
+  /// Consumer namespaces that merely end in ".Commands.System" do NOT match — only the
+  /// framework-owned subtree does.
+  /// </summary>
+  private const string FRAMEWORK_SYSTEM_NAMESPACE = "Whizbang.Core.Commands.System";
+
   // Event suffixes that indicate an event type
   private static readonly string[] _eventSuffixes = [
     "Event",
@@ -37,20 +50,40 @@ public static class MessageKindDetector {
       return attributeResult;
     }
 
-    // Priority 2: Check for interface implementation
+    // Priority 2: Framework system namespace — must precede interface detection because
+    // framework system commands implement ICommand yet are System (broadcast) traffic.
+    if (_isFrameworkSystemNamespace(type)) {
+      return MessageKind.System;
+    }
+
+    // Priority 3: Check for interface implementation
     var interfaceResult = _detectFromInterface(type);
     if (interfaceResult != MessageKind.Unknown) {
       return interfaceResult;
     }
 
-    // Priority 3: Check namespace convention
+    // Priority 4: Check namespace convention
     var namespaceResult = _detectFromNamespace(type);
     if (namespaceResult != MessageKind.Unknown) {
       return namespaceResult;
     }
 
-    // Priority 4: Check type name suffix
+    // Priority 5: Check type name suffix
     return _detectFromTypeName(type);
+  }
+
+  /// <summary>
+  /// True when the type lives in the framework system namespace subtree
+  /// (<c>Whizbang.Core.Commands.System</c> or a sub-namespace of it).
+  /// </summary>
+  private static bool _isFrameworkSystemNamespace(Type type) {
+    var ns = type.Namespace;
+    if (string.IsNullOrEmpty(ns)) {
+      return false;
+    }
+
+    return ns.Equals(FRAMEWORK_SYSTEM_NAMESPACE, StringComparison.Ordinal)
+        || ns.StartsWith(FRAMEWORK_SYSTEM_NAMESPACE + ".", StringComparison.Ordinal);
   }
 
   /// <summary>

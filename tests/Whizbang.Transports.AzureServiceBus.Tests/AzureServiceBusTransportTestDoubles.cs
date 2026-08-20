@@ -50,14 +50,22 @@ internal static class AsbTransportTestData {
     };
 
   /// <summary>Builds a broker message carrying a real serialized envelope.</summary>
-  internal static ServiceBusReceivedMessage EnvelopeMessage(MessageEnvelope<TestMessage> envelope, int deliveryCount = 1) {
+  internal static ServiceBusReceivedMessage EnvelopeMessage(
+      MessageEnvelope<TestMessage> envelope,
+      int deliveryCount = 1,
+      DateTimeOffset enqueuedTime = default) {
     var typeInfo = CombinedOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var body = JsonSerializer.Serialize(envelope, typeInfo);
-    return RawMessage(body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!, deliveryCount);
+    return RawMessage(
+      body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!, deliveryCount, enqueuedTime);
   }
 
   /// <summary>Builds a broker message with an arbitrary body and optional EnvelopeType property.</summary>
-  internal static ServiceBusReceivedMessage RawMessage(string body, string? envelopeTypeName, int deliveryCount = 1) {
+  internal static ServiceBusReceivedMessage RawMessage(
+      string body,
+      string? envelopeTypeName,
+      int deliveryCount = 1,
+      DateTimeOffset enqueuedTime = default) {
     var properties = new Dictionary<string, object>();
     if (envelopeTypeName is not null) {
       properties["EnvelopeType"] = envelopeTypeName;
@@ -66,7 +74,8 @@ internal static class AsbTransportTestData {
       body: BinaryData.FromString(body),
       messageId: Guid.CreateVersion7().ToString(),
       properties: properties,
-      deliveryCount: deliveryCount);
+      deliveryCount: deliveryCount,
+      enqueuedTime: enqueuedTime);
   }
 
   /// <summary>Parses raw JSON into a detached JsonElement for destination metadata.</summary>
@@ -124,6 +133,16 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   public ServiceBusSessionProcessorOptions? LastSessionProcessorOptions { get; private set; }
   public RecordingBatchSender? LastSender { get; private set; }
 
+  /// <summary>Every topic a sender was created for, in order — one entry per broker
+  /// sender-link. The O(3N) throughput lock asserts a burst reuses ONE sender.</summary>
+  public List<string> CreatedSenderTopics { get; } = [];
+
+  /// <summary>Every (topic, subscription) a NON-session processor was created for, in order,
+  /// paired with its processor — the phase-7 retirement lock asserts the legacy shared topic
+  /// gets ZERO receive-side operations, and delivers per-entity through the matching
+  /// processor. <see cref="LastProcessor"/> stays the last entry for existing tests.</summary>
+  public List<(string Topic, string Subscription, RaisableProcessor Processor)> CreatedProcessors { get; } = [];
+
   /// <summary>Injected into every created sender's single-message send path.</summary>
   public Exception? SendException { get; set; }
 
@@ -142,6 +161,7 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   public override ServiceBusProcessor CreateProcessor(
     string topicName, string subscriptionName, ServiceBusProcessorOptions options) {
     LastProcessor = new RaisableProcessor();
+    CreatedProcessors.Add((topicName, subscriptionName, LastProcessor));
     return LastProcessor;
   }
 
@@ -153,6 +173,7 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   }
 
   public override ServiceBusSender CreateSender(string queueOrTopicName) {
+    CreatedSenderTopics.Add(queueOrTopicName);
     LastSender = new RecordingBatchSender {
       SendException = SendException,
       SendBatchException = SendBatchException,
@@ -461,25 +482,45 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   public Exception? CreateTopicException { get; init; }
   public Exception? CreateSubscriptionException { get; init; }
 
+  /// <summary>
+  /// Total management-plane operations issued against this double — the phase-5 boot budget
+  /// counter ("management-op count per boot bounded and asserted"). Every interface member
+  /// increments it once per call (rule enumeration counts once, not per rule).
+  /// </summary>
+  public int ManagementOpCount { get; private set; }
+
   /// <summary>Active-message count reported for every subscription (liveness backlog probe).</summary>
   public long ActiveMessageCountResult { get; set; }
 
   /// <summary>Failure injection for the liveness backlog probe.</summary>
   public Exception? ActiveMessageCountException { get; set; }
 
-  public Task<long> GetSubscriptionActiveMessageCountAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) =>
-    ActiveMessageCountException is null
+  public Task<long> GetSubscriptionActiveMessageCountAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
+    return ActiveMessageCountException is null
       ? Task.FromResult(ActiveMessageCountResult)
       : Task.FromException<long>(ActiveMessageCountException);
+  }
 
-  public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken cancellationToken = default) =>
+  public Task<NamespaceProperties> GetNamespacePropertiesAsync(CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     // NamespaceProperties has no public constructor; the transport ignores the value.
-    Task.FromResult<NamespaceProperties>(null!);
+    return Task.FromResult<NamespaceProperties>(null!);
+  }
 
-  public Task<bool> TopicExistsAsync(string topicName, CancellationToken cancellationToken = default) =>
-    Task.FromResult(ExistingTopics.Contains(topicName));
+  /// <summary>Every topic name an existence check was issued for — the phase-7 retirement
+  /// lock asserts the legacy shared inbox receives ZERO management operations, existence
+  /// probes included.</summary>
+  public List<string> TopicExistenceChecks { get; } = [];
+
+  public Task<bool> TopicExistsAsync(string topicName, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
+    TopicExistenceChecks.Add(topicName);
+    return Task.FromResult(ExistingTopics.Contains(topicName));
+  }
 
   public Task CreateTopicAsync(string topicName, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     if (CreateTopicException is not null) {
       return Task.FromException(CreateTopicException);
     }
@@ -488,10 +529,13 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     return Task.CompletedTask;
   }
 
-  public Task<bool> SubscriptionExistsAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) =>
-    Task.FromResult(ExistingSubscriptions.Contains((topicName, subscriptionName)));
+  public Task<bool> SubscriptionExistsAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
+    return Task.FromResult(ExistingSubscriptions.Contains((topicName, subscriptionName)));
+  }
 
   public Task CreateSubscriptionAsync(string topicName, string subscriptionName, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     if (CreateSubscriptionException is not null) {
       return Task.FromException(CreateSubscriptionException);
     }
@@ -501,6 +545,7 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   }
 
   public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     if (CreateSubscriptionException is not null) {
       return Task.FromException(CreateSubscriptionException);
     }
@@ -512,12 +557,15 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     return Task.CompletedTask;
   }
 
-  public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default) =>
-    Task.CompletedTask;
+  public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
+    return Task.CompletedTask;
+  }
 
 
 
   public Task<SubscriptionProperties> GetSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     var properties = ServiceBusModelFactory.SubscriptionProperties(
       topicName: topicName,
       subscriptionName: subscriptionName,
@@ -531,6 +579,7 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   }
 
   public Task DeleteSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     DeletedSubscriptions.Add((topicName, subscriptionName));
     ExistingSubscriptions.Remove((topicName, subscriptionName));
     return Task.CompletedTask;
@@ -540,6 +589,7 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     string topicName,
     string subscriptionName,
     [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     await Task.CompletedTask;
     foreach (var rule in ExistingRules.ToList()) {
       yield return rule;
@@ -547,13 +597,36 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   }
 
   public Task DeleteRuleAsync(string topicName, string subscriptionName, string ruleName, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     DeletedRules.Add((topicName, subscriptionName, ruleName));
     ExistingRules.RemoveAll(r => r.Name == ruleName);
     return Task.CompletedTask;
   }
 
   public Task CreateRuleAsync(string topicName, string subscriptionName, CreateRuleOptions options, CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
     CreatedRules.Add((topicName, subscriptionName, options));
     return Task.CompletedTask;
+  }
+
+  public async IAsyncEnumerable<SubscriptionProperties> GetSubscriptionsAsync(
+    string topicName,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    ManagementOpCount++;
+    await Task.CompletedTask;
+    foreach (var (topic, subscription) in ExistingSubscriptions.ToList()) {
+      if (!string.Equals(topic, topicName, StringComparison.OrdinalIgnoreCase)) {
+        continue;
+      }
+      yield return ServiceBusModelFactory.SubscriptionProperties(
+        topicName: topic,
+        subscriptionName: subscription,
+        lockDuration: TimeSpan.FromMinutes(1),
+        requiresSession: SessionRequiredSubscriptions.Contains((topic, subscription)),
+        defaultMessageTimeToLive: TimeSpan.FromDays(14),
+        autoDeleteOnIdle: TimeSpan.FromDays(30),
+        maxDeliveryCount: 10,
+        userMetadata: string.Empty);
+    }
   }
 }

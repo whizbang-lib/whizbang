@@ -46,6 +46,19 @@ public sealed class DomainTopicOutboxStrategy(ITopicRoutingStrategy topicResolve
     // Routing key = type name (e.g., "tenantcreatedevent")
     var routingKey = messageType.Name.ToLowerInvariant();
 
+    if (kind == MessageKind.System) {
+      // DORMANT CAPABILITY (topology arc phase 3): no production call site passes System
+      // yet. This strategy routes every kind to the namespace topic with the type-name
+      // key, and System is handled explicitly to the SAME shape as command routing today
+      // — bit-identical by construction. A later phase (dedicated system broadcast inbox,
+      // shared-inbox retirement) redirects this branch to the broadcast inbox entity.
+      return new TransportDestination(
+        Address: ns,
+        RoutingKey: routingKey,
+        Metadata: null
+      );
+    }
+
     return new TransportDestination(
       Address: ns,
       RoutingKey: routingKey,

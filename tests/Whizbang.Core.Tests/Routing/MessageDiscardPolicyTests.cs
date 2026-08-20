@@ -224,6 +224,9 @@ public class MessageDiscardPolicyTests {
     using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.CompositeReceive");
     var policy = _newPolicyWithCatalog(meter);
 
+    // DELIBERATELY the pre-move (Whizbang.Core.Messaging) name: in-flight envelopes published
+    // by pre-move builds still carry it, and the catalog's formerNames must keep the composite
+    // exemption alive for them (see MintedTypeRenameCompatibilityTests for the full matrix).
     var decision = policy.EvaluateReceive(
       "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.RedeliveryComposite, Whizbang.Core]], Whizbang.Core",
       topic: "inbox",
@@ -239,6 +242,8 @@ public class MessageDiscardPolicyTests {
     using var meter = new Meter("Whizbang.Tests.MessageDiscardPolicyTests.CompositeInbox");
     var policy = _newPolicyWithCatalog(meter);
 
+    // DELIBERATELY the pre-move name — an inbox row WRITTEN before the namespace move resolves
+    // through the catalog's formerNames (see MintedTypeRenameCompatibilityTests).
     var decision = policy.EvaluateInbox("Whizbang.Core.Messaging.RedeliveryComposite, Whizbang.Core");
 
     await Assert.That(decision.ShouldDiscard).IsFalse()

@@ -29,7 +29,7 @@ public class MessageDeduplicationSchemaTests {
     var columns = MessageDeduplicationSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).Count().IsEqualTo(2);
+    await Assert.That(columns).Count().IsEqualTo(3);
 
     // Verify message_id column
     var messageId = columns[0];
@@ -43,6 +43,15 @@ public class MessageDeduplicationSchemaTests {
     await Assert.That(firstSeenAt.Name).IsEqualTo("first_seen_at");
     await Assert.That(firstSeenAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(firstSeenAt.Nullable).IsFalse();
+
+    // Verify observation_count column (topology arc phase 8.5, poison detection layer 2).
+    // Defaults to 1 — a row exists only because a delivery was recorded, so "seen zero times"
+    // is not a representable state.
+    var observationCount = columns[2];
+    await Assert.That(observationCount.Name).IsEqualTo("observation_count");
+    await Assert.That(observationCount.DataType).IsEqualTo(WhizbangDataType.INTEGER);
+    await Assert.That(observationCount.Nullable).IsFalse();
+    await Assert.That(observationCount.DefaultValue).IsEqualTo(DefaultValue.Integer(1));
   }
 
   [Test]
@@ -107,9 +116,12 @@ public class MessageDeduplicationSchemaTests {
     // Arrange & Act
     var columnCount = MessageDeduplicationSchema.Table.Columns.Length;
 
-    // Assert - Exactly 2 columns (message_id, first_seen_at)
-    // Rationale: This table grows forever, so extra columns waste space
-    await Assert.That(columnCount).IsEqualTo(2);
+    // Assert - Exactly 3 columns (message_id, first_seen_at, observation_count)
+    // Rationale: This table grows forever, so extra columns waste space. The third column is a
+    // 4-byte counter that earns its keep: it is the ONLY durable bound on a redelivery loop on a
+    // session-enabled broker entity, where the broker's own delivery counter never rises (topology
+    // arc phase 8.5). Any further addition needs the same standard.
+    await Assert.That(columnCount).IsEqualTo(3);
   }
 
   [Test]
