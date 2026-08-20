@@ -181,6 +181,14 @@ public class AzureServiceBusOptions {
   /// always processed one at a time, in order. This setting controls how many <em>different</em>
   /// sessions are handled in parallel. Only applies when <see cref="EnableSessions"/> is true.
   /// <para>
+  /// <b>With adaptive acceptors (the default), this value is the CEILING, not a standing pool.</b>
+  /// When <see cref="EnableAdaptiveAcceptors"/> is true the processor starts at
+  /// <see cref="AcceptorFloor"/> acceptor slots and grows toward this ceiling only under observed
+  /// session pressure, decaying back when demand subsides — so the idle accept churn of the
+  /// receive machinery follows the floor, not this number. Disable adaptive acceptors to make
+  /// this a fixed standing concurrency again.
+  /// </para>
+  /// <para>
   /// <b>Example:</b> With <c>MaxConcurrentSessions = 200</c> and 2,000 active streams, 200 sessions
   /// are processed in parallel. Each session processes its messages one at a time in order.
   /// The remaining 1,800 sessions wait until a slot opens.
@@ -262,6 +270,58 @@ public class AzureServiceBusOptions {
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#prefetch</docs>
   public int PrefetchCount { get; set; } = 50;
+
+  #endregion
+
+  #region Adaptive Session Acceptors
+
+  /// <summary>
+  /// When true (the default), session acceptors scale with observed active-session demand
+  /// instead of standing up <see cref="MaxConcurrentSessions"/> acceptors permanently: the
+  /// session processor starts at <see cref="AcceptorFloor"/> concurrent sessions, DOUBLES
+  /// (capped at <see cref="MaxConcurrentSessions"/> — the ceiling) when active sessions hold at
+  /// or above 80% of the current pool for one <see cref="AcceptorEvaluationInterval"/>, and
+  /// HALVES (floored) after a full interval below 25% occupancy. Concurrency changes apply to
+  /// the RUNNING processor (no stop/recreate) via the SDK's dynamic concurrency update.
+  /// <para>
+  /// <b>Why:</b> every idle acceptor slot re-issues a broker accept each
+  /// <see cref="SessionIdleTimeout"/> — a billable namespace request with zero messages flowing.
+  /// A standing army's idle cost scales with the ceiling; an adaptive pool's idle cost trends to
+  /// the floor by construction, so fleets stop spending a namespace's shared request quota on
+  /// receive machinery that is doing nothing.
+  /// </para>
+  /// <para>
+  /// Only applies when <see cref="EnableSessions"/> is true. When false, the processor is
+  /// created with a fixed <see cref="MaxConcurrentSessions"/> exactly as before.
+  /// </para>
+  /// Default: true
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableAdaptiveAcceptors_DefaultsToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
+  public bool EnableAdaptiveAcceptors { get; set; } = true;
+
+  /// <summary>
+  /// The minimum number of concurrent session acceptors when <see cref="EnableAdaptiveAcceptors"/>
+  /// is true — the pool starts here and never decays below it, so a quiet service still picks up
+  /// the first message of a burst instantly. Clamped to <see cref="MaxConcurrentSessions"/> when
+  /// configured above the ceiling.
+  /// Default: 4 (≈0.07 idle ops/sec per subscription at the default 60s idle timeout)
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:AcceptorFloor_DefaultsToFourAsync</tests>
+  public int AcceptorFloor { get; set; } = 4;
+
+  /// <summary>
+  /// How long a pressure (≥ 80% occupancy) or quiet (&lt; 25% occupancy) condition must hold
+  /// before the adaptive acceptor pool grows or decays, and the cadence of the periodic
+  /// evaluation tick. Shorter reacts faster to fan-out bursts but risks thrashing concurrency on
+  /// noisy occupancy; longer smooths at the cost of up to one extra interval of queued sessions.
+  /// Default: 30 seconds
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:AcceptorEvaluationInterval_DefaultsToThirtySecondsAsync</tests>
+  public TimeSpan AcceptorEvaluationInterval { get; set; } = TimeSpan.FromSeconds(30);
 
   #endregion
 

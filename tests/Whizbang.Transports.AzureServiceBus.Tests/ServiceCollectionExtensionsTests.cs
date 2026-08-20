@@ -240,7 +240,10 @@ public class ServiceCollectionExtensionsTests {
       ("BackoffMultiplier", "3.5"),
       ("RetryIndefinitely", "false"),
       ("EnableOpsRateSelfCheck", "false"),
-      ("OpsRateWarningThresholdPerSecond", "250.5")));
+      ("OpsRateWarningThresholdPerSecond", "250.5"),
+      ("EnableAdaptiveAcceptors", "false"),
+      ("AcceptorFloor", "6"),
+      ("AcceptorEvaluationInterval", "00:00:10")));
 
     // Act
     services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
@@ -269,6 +272,9 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(options.RetryIndefinitely).IsFalse();
     await Assert.That(options.EnableOpsRateSelfCheck).IsFalse();
     await Assert.That(options.OpsRateWarningThresholdPerSecond).IsEqualTo(250.5);
+    await Assert.That(options.EnableAdaptiveAcceptors).IsFalse();
+    await Assert.That(options.AcceptorFloor).IsEqualTo(6);
+    await Assert.That(options.AcceptorEvaluationInterval).IsEqualTo(TimeSpan.FromSeconds(10));
   }
 
   [Test]
@@ -306,6 +312,26 @@ public class ServiceCollectionExtensionsTests {
     // Assert
     await Assert.That(options.PrefetchCount).IsEqualTo(17);
     await Assert.That(options.MaxConcurrentSessions).IsEqualTo(200);
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_RegistersTheOpsRateHealthSourceAsync() {
+    // Arrange — a raisable client so resolving the transport never touches the network, and
+    // AutoProvisionInfrastructure=false so InitializeAsync skips admin-API verification.
+    var services = new ServiceCollection();
+    services.AddSingleton<ServiceBusClient>(new RaisableServiceBusClient());
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING, o => o.AutoProvisionInfrastructure = false);
+    await using var provider = services.BuildServiceProvider();
+    var sources = provider.GetServices<Whizbang.Core.Health.IWhizbangHealthSource>().ToList();
+
+    // Assert — the transport package contributes the ops-rate source to the managed-health
+    // aggregation so the idle-churn projection can DEGRADE the transport component.
+    var opsRateSource = sources.OfType<AsbOpsRateHealthSource>().SingleOrDefault();
+    await Assert.That(opsRateSource is not null).IsTrue()
+      .Because("registering the transport must also register the health source that closes the log-only Phase-1 delta");
+    await Assert.That(opsRateSource!.Component).IsEqualTo("transport");
   }
 
   [Test]

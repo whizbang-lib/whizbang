@@ -78,6 +78,17 @@ Spec: docs proposals `per-namespace-command-inboxes` (order 38) + `transport-tra
   budget hook for K-subscription services; ops-rate self-check degrades the managed-health
   component (closing the Phase-1 delta). ASB receive loop + RabbitMQ consumer-concurrency
   analogue.
+  **STATUS: implemented on this branch (uncommitted).** `AsbAcceptorGovernor` (floor 4 default,
+  double-on-pressure ≥80%/window, halve-on-quiet <25%/window, ceiling = MaxConcurrentSessions)
+  applied to RUNNING processors via SDK `UpdateConcurrency` (available in Azure.Messaging.ServiceBus
+  7.20.1 — no stop/recreate needed); options `EnableAdaptiveAcceptors`(true)/`AcceptorFloor`(4)/
+  `AcceptorEvaluationInterval`(30s) bound in the AOT post-configure; ops-rate projection now
+  floor/live-slot-based in adaptive mode and stored on the transport; `AsbOpsRateHealthSource`
+  degrades the `"transport"` managed-health component while the projection exceeds threshold
+  (recovers on re-projection, incl. adaptive decay); per-entity budget hook
+  `AsbOpsRateSelfCheck.AcceptorCeilingForIdleOpsBudget` (pure math, phase-5 consumer);
+  RabbitMQ = doc note on RabbitMQOptions (push consumers have no idle accept economics;
+  prefetch/DOP adaptation deferred to traffic classes).
 - **Phase 3 — routing-seam widening, zero behavior change.** Plural
   `GetSubscriptions(InboxSubscriptionContext)`; receptor-registry enumeration API + generator;
   `MessageKind.System`; kind-aware `GetDestination` incl. system branch;

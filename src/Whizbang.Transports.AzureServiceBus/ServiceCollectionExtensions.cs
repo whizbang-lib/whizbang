@@ -146,6 +146,14 @@ public static class ServiceCollectionExtensions {
       return transport;
     });
 
+    // Managed-resource health: the idle ops-rate self-check DEGRADES the "transport" component
+    // while the projected idle broker-op rate exceeds the warning threshold (it recovers when a
+    // re-projection lands back under it — adaptive acceptor decay can do that on its own). This
+    // aggregates alongside the core connectivity source for the same component; worst status
+    // wins, so connectivity faults and idle-churn degradation surface independently.
+    services.AddSingleton<Whizbang.Core.Health.IWhizbangHealthSource>(sp =>
+      new AsbOpsRateHealthSource(sp.GetRequiredService<ITransport>()));
+
     // Register transport readiness check
     services.AddSingleton<ITransportReadinessCheck>(sp => {
       var transport = sp.GetRequiredService<ITransport>();

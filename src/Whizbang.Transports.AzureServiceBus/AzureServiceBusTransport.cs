@@ -36,10 +36,30 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly bool _isEmulator;
   private readonly ReceiveLivenessWatchdog? _livenessWatchdog;
+  private readonly TimeProvider _timeProvider;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
   private int _sessionSubscriptionCount;
+
+  // ===== Adaptive session acceptors =====
+  // One governor per session subscription; the sweep loop is shared (one PeriodicTimer per
+  // transport, same idiom as the receive-liveness watchdog — no busy loops, no per-sub timers).
+  private readonly Lock _acceptorLock = new();
+  private readonly List<AcceptorGovernorRegistration> _acceptorGovernors = [];
+  private readonly CancellationTokenSource _acceptorLoopStopSource = new();
+  private Task? _acceptorLoopTask;
+
+  // Latest idle ops-rate projection — the managed-health surface reads this to decide whether
+  // the receive machinery's idle spend alone should degrade the transport component.
+  private readonly Lock _projectionLock = new();
+  private AsbOpsRateProjection? _idleOpsProjection;
+
+  private sealed record AcceptorGovernorRegistration(
+    AsbAcceptorGovernor Governor,
+    ServiceBusSessionProcessor Processor,
+    string TopicName,
+    string SubscriptionName);
 
   /// <summary>
   /// Initializes a new instance of AzureServiceBusTransport with a shared ServiceBusClient.
@@ -81,6 +101,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
     _jsonOptions = jsonOptions;
     _options = options ?? new AzureServiceBusOptions();
+    _timeProvider = timeProvider ?? TimeProvider.System;
     _sessionGovernor = new SessionOccupancyGovernor(_options.MaxAutoLockRenewalDuration);
     _receptorRegistry = receptorRegistry;
     _perspectiveRegistry = perspectiveRegistry;
@@ -108,7 +129,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           _options,
           (topic, sub, ct) => adminClientForProbe.GetSubscriptionActiveMessageCountAsync(topic, sub, ct),
           _ => _invokeRecoveryHandlerAsync(),
-          timeProvider ?? TimeProvider.System,
+          _timeProvider,
           _logger);
       } else {
         _logger.LogInformation(
@@ -754,32 +775,12 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     TransportDestination destination,
     CancellationToken cancellationToken
   ) {
-    var sessionProcessorOptions = new ServiceBusSessionProcessorOptions {
-      MaxConcurrentSessions = _options.MaxConcurrentSessions,
-      MaxConcurrentCallsPerSession = 1,
-      AutoCompleteMessages = false,
-      MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
-      PrefetchCount = _options.PrefetchCount,
-      SessionIdleTimeout = _options.SessionIdleTimeout
-    };
-
-    var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
+    var sessionProcessor = _createGovernedSessionProcessor(topicName, subscriptionName, destination);
     var subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
     sessionProcessor.ProcessMessageAsync += args => {
       _livenessWatchdog?.RecordActivity(topicName, subscriptionName);
       return _handleSessionBatchMessageAsync(args, batchHandler, destination, subscription);
-    };
-    // Occupancy clock: stamped at session ACCEPT (when the renewal window actually starts) and
-    // cleared on natural close, so an idle-closed session's next accept starts a fresh clock
-    // instead of inheriting a stale one and rotating immediately.
-    sessionProcessor.SessionInitializingAsync += args => {
-      OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
-      return Task.CompletedTask;
-    };
-    sessionProcessor.SessionClosingAsync += args => {
-      OnSessionClosing(destination, args.SessionId);
-      return Task.CompletedTask;
     };
     // CancellationToken.None is deliberate: the throttle pause runs detached and must complete
     // its stop/resume even after the error-handler scope (args.CancellationToken) has ended.
@@ -793,6 +794,160 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   }
 
   /// <summary>
+  /// Creates a session processor with the occupancy-clock lifecycle hooks attached and — when
+  /// <see cref="AzureServiceBusOptions.EnableAdaptiveAcceptors"/> is on — an acceptor governor:
+  /// the processor starts at the acceptor floor instead of the MaxConcurrentSessions ceiling,
+  /// the session initialize/close hooks feed observed demand into the governor and apply its
+  /// grow/decay decisions to the RUNNING processor, and the shared periodic sweep re-evaluates
+  /// pools whose occupancy is not generating session events. Both session subscribe paths
+  /// (batch and non-batch) create their processor here so neither keeps a standing army.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
+  private ServiceBusSessionProcessor _createGovernedSessionProcessor(
+    string topicName,
+    string subscriptionName,
+    TransportDestination destination
+  ) {
+    var adaptive = _options.EnableAdaptiveAcceptors;
+    AsbAcceptorGovernor? governor = adaptive
+      ? new AsbAcceptorGovernor(
+          _options.AcceptorFloor,
+          _options.MaxConcurrentSessions,
+          _options.AcceptorEvaluationInterval,
+          _timeProvider)
+      : null;
+
+    var sessionProcessorOptions = new ServiceBusSessionProcessorOptions {
+      MaxConcurrentSessions = governor?.CurrentConcurrency ?? _options.MaxConcurrentSessions,
+      MaxConcurrentCallsPerSession = 1, // Strict FIFO within each session
+      AutoCompleteMessages = false,
+      MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
+      PrefetchCount = _options.PrefetchCount,
+      SessionIdleTimeout = _options.SessionIdleTimeout
+    };
+
+    var sessionProcessor = _client.CreateSessionProcessor(topicName, subscriptionName, sessionProcessorOptions);
+
+    AcceptorGovernorRegistration? registration = null;
+    if (governor is not null) {
+      registration = new AcceptorGovernorRegistration(governor, sessionProcessor, topicName, subscriptionName);
+      lock (_acceptorLock) {
+        _acceptorGovernors.Add(registration);
+      }
+      _startAcceptorEvaluationLoop();
+    }
+
+    // Occupancy clock: stamped at session ACCEPT (when the renewal window actually starts) and
+    // cleared on natural close, so an idle-closed session's next accept starts a fresh clock
+    // instead of inheriting a stale one and rotating immediately. The same hooks are the
+    // governor's demand signal — every accept/close is an occupancy observation.
+    sessionProcessor.SessionInitializingAsync += args => {
+      OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
+      if (registration is not null) {
+        registration.Governor.OnSessionInitializing();
+        _applyAcceptorEvaluation(registration);
+      }
+      return Task.CompletedTask;
+    };
+    sessionProcessor.SessionClosingAsync += args => {
+      OnSessionClosing(destination, args.SessionId);
+      if (registration is not null) {
+        registration.Governor.OnSessionClosing();
+        _applyAcceptorEvaluation(registration);
+      }
+      return Task.CompletedTask;
+    };
+
+    return sessionProcessor;
+  }
+
+  /// <summary>
+  /// Applies one governor evaluation to its running processor: when the policy prescribes a new
+  /// pool size, the SDK's dynamic <c>UpdateConcurrency</c> resizes the live processor (no
+  /// stop/recreate) and the idle ops-rate projection is refreshed so the managed-health surface
+  /// tracks the pool it actually holds.
+  /// </summary>
+  private void _applyAcceptorEvaluation(AcceptorGovernorRegistration registration) {
+    if (!registration.Governor.Evaluate()) {
+      return;
+    }
+
+    var target = registration.Governor.CurrentConcurrency;
+    try {
+      registration.Processor.UpdateConcurrency(target, maxConcurrentCallsPerSession: 1);
+    } catch (Exception ex) {
+      // A disposed/closed processor cannot be resized — recovery re-subscribes with a fresh
+      // processor and governor, so this registration is stale, not fatal.
+      _logger.LogWarning(ex,
+        "Adaptive acceptors: failed to apply concurrency {TargetConcurrency} on {TopicName}/{SubscriptionName} — processor is likely closed",
+        target, registration.TopicName, registration.SubscriptionName);
+      return;
+    }
+
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      _logger.LogInformation(
+        "Adaptive acceptors: {TopicName}/{SubscriptionName} concurrency -> {TargetConcurrency} (active sessions {ActiveSessions}, floor {Floor}, ceiling {Ceiling})",
+        registration.TopicName,
+        registration.SubscriptionName,
+        target,
+        registration.Governor.ActiveSessions,
+        registration.Governor.Floor,
+        registration.Governor.Ceiling);
+    }
+
+    _reevaluateIdleOpsProjection(registration.TopicName, registration.SubscriptionName);
+  }
+
+  /// <summary>
+  /// One evaluation sweep over every adaptive acceptor governor. Invoked by the periodic loop;
+  /// internal so tests drive sweeps deterministically without the timer. Closed processors are
+  /// dropped from the registry — recovery re-subscribes with fresh processors and governors.
+  /// </summary>
+  internal void EvaluateAcceptorGovernors() {
+    AcceptorGovernorRegistration[] snapshot;
+    lock (_acceptorLock) {
+      _acceptorGovernors.RemoveAll(static r => r.Processor.IsClosed);
+      snapshot = [.. _acceptorGovernors];
+    }
+    foreach (var registration in snapshot) {
+      _applyAcceptorEvaluation(registration);
+    }
+  }
+
+  /// <summary>
+  /// Starts the shared periodic evaluation loop (one PeriodicTimer per transport — the
+  /// receive-liveness watchdog idiom). Idempotent; started on the first governed subscription.
+  /// Without the tick, a pool whose occupancy generates no session events (saturated and
+  /// steady, or drained and silent) would never re-evaluate.
+  /// </summary>
+  private void _startAcceptorEvaluationLoop() {
+    lock (_acceptorLock) {
+      if (_acceptorLoopTask is not null || _disposed) {
+        return;
+      }
+      _acceptorLoopTask = _runAcceptorEvaluationLoopAsync(_acceptorLoopStopSource.Token);
+    }
+  }
+
+  private async Task _runAcceptorEvaluationLoopAsync(CancellationToken stopToken) {
+    using var timer = new PeriodicTimer(_options.AcceptorEvaluationInterval, _timeProvider);
+    try {
+      while (await timer.WaitForNextTickAsync(stopToken)) {
+        try {
+          EvaluateAcceptorGovernors();
+        } catch (Exception ex) {
+          // The loop must survive any sweep failure — a dead loop silently freezes every pool
+          // at its last size, which is the standing army this feature exists to remove.
+          _logger.LogError(ex, "Adaptive acceptor evaluation sweep failed; will retry on the next interval");
+        }
+      }
+    } catch (OperationCanceledException) {
+      // Normal shutdown.
+    }
+  }
+
+  /// <summary>
   /// Idle ops-rate self-check: re-projects this instance's cumulative worst-case idle broker-op
   /// rate each time a session subscription starts, and warns when the projection crosses the
   /// configured threshold. Runs at subscribe time because that is when the configuration becomes
@@ -802,22 +957,66 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbOpsRateSelfCheckWiringTests.cs</tests>
   private void _runIdleOpsRateSelfCheck(string topicName, string subscriptionName) {
-    var sessionSubscriptions = Interlocked.Increment(ref _sessionSubscriptionCount);
+    Interlocked.Increment(ref _sessionSubscriptionCount);
+    _reevaluateIdleOpsProjection(topicName, subscriptionName);
+  }
+
+  /// <summary>
+  /// Re-projects this instance's idle broker-op rate — at subscribe time and whenever an
+  /// adaptive governor resizes a pool (the projection can SHRINK when acceptors decay). The
+  /// result is stored for the managed-health surface (<see cref="IdleOpsRateProjection"/>,
+  /// read by <see cref="AsbOpsRateHealthSource"/>) and a structured warning fires while the
+  /// projection exceeds the threshold. In adaptive mode the projection follows the governors'
+  /// live slot total; otherwise it is the classic standing-army worst case.
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbOpsRateHealthSourceTests.cs</tests>
+  private void _reevaluateIdleOpsProjection(string topicName, string subscriptionName) {
     if (!_options.EnableOpsRateSelfCheck) {
       return;
     }
 
-    var projection = AsbOpsRateSelfCheck.Evaluate(_options, sessionSubscriptions);
+    var sessionSubscriptions = Volatile.Read(ref _sessionSubscriptionCount);
+    AsbOpsRateProjection projection;
+    int totalAcceptorSlots;
+    if (_options.EnableAdaptiveAcceptors) {
+      lock (_acceptorLock) {
+        totalAcceptorSlots = _acceptorGovernors.Sum(static r => r.Governor.CurrentConcurrency);
+      }
+      projection = AsbOpsRateSelfCheck.EvaluateAcceptorSlots(_options, totalAcceptorSlots);
+    } else {
+      totalAcceptorSlots = sessionSubscriptions * _options.MaxConcurrentSessions;
+      projection = AsbOpsRateSelfCheck.Evaluate(_options, sessionSubscriptions);
+    }
+
+    lock (_projectionLock) {
+      _idleOpsProjection = projection;
+    }
+
     if (projection.ExceedsThreshold) {
       _logger.LogWarning(
-        "Transport idle ops-rate self-check: {SessionSubscriptions} session subscription(s) × MaxConcurrentSessions={MaxConcurrentSessions} / SessionIdleTimeout={SessionIdleTimeout} projects {ProjectedOpsPerSecond:F1} idle broker ops/sec for this instance (threshold {ThresholdPerSecond:F0}/sec; latest subscription {TopicName}/{SubscriptionName}). Every expiring accept is a billable namespace request even with zero messages flowing, and a fleet multiplies this per-instance spend — raise SessionIdleTimeout or lower MaxConcurrentSessions, or raise OpsRateWarningThresholdPerSecond / disable EnableOpsRateSelfCheck if the namespace tier has quota to burn.",
+        "Transport idle ops-rate self-check: {SessionSubscriptions} session subscription(s) holding {TotalAcceptorSlots} acceptor slot(s) / SessionIdleTimeout={SessionIdleTimeout} projects {ProjectedOpsPerSecond:F1} idle broker ops/sec for this instance (threshold {ThresholdPerSecond:F0}/sec; adaptive acceptors {AdaptiveAcceptors}; latest subscription {TopicName}/{SubscriptionName}). Every expiring accept is a billable namespace request even with zero messages flowing, and a fleet multiplies this per-instance spend — raise SessionIdleTimeout or lower the acceptor concurrency (MaxConcurrentSessions, or AcceptorFloor in adaptive mode), or raise OpsRateWarningThresholdPerSecond / disable EnableOpsRateSelfCheck if the namespace tier has quota to burn.",
         sessionSubscriptions,
-        _options.MaxConcurrentSessions,
+        totalAcceptorSlots,
         _options.SessionIdleTimeout,
         projection.ProjectedIdleOpsPerSecond,
         projection.ThresholdPerSecond,
+        _options.EnableAdaptiveAcceptors ? "enabled" : "disabled",
         topicName,
         subscriptionName);
+    }
+  }
+
+  /// <summary>
+  /// The most recent idle ops-rate projection (null before the first session subscription or
+  /// when the self-check is disabled). The managed-health source degrades the transport
+  /// component while this exceeds the threshold.
+  /// </summary>
+  internal AsbOpsRateProjection? IdleOpsRateProjection {
+    get {
+      lock (_projectionLock) {
+        return _idleOpsProjection;
+      }
     }
   }
 
@@ -1021,21 +1220,9 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       AzureServiceBusSubscription subscription;
 
       if (_options.EnableSessions) {
-        // Create session processor for FIFO ordering
-        var sessionProcessorOptions = new ServiceBusSessionProcessorOptions {
-          MaxConcurrentSessions = _options.MaxConcurrentSessions,
-          MaxConcurrentCallsPerSession = 1, // Strict FIFO within each session
-          AutoCompleteMessages = false,
-          MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration,
-          PrefetchCount = _options.PrefetchCount,
-          SessionIdleTimeout = _options.SessionIdleTimeout
-        };
-
-        var sessionProcessor = _client.CreateSessionProcessor(
-          topicName,
-          subscriptionName,
-          sessionProcessorOptions
-        );
+        // Create session processor for FIFO ordering (adaptive acceptors + occupancy hooks
+        // attached by the shared helper — both session subscribe paths go through it).
+        var sessionProcessor = _createGovernedSessionProcessor(topicName, subscriptionName, destination);
 
         subscription = new AzureServiceBusSubscription(sessionProcessor, _logger);
 
@@ -1055,15 +1242,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           await _processReceivedMessageAsync(args, handler, destination);
         };
 
-        // Occupancy clock — see the batch session-processor attach site for the rationale.
-        sessionProcessor.SessionInitializingAsync += args => {
-          OnSessionInitializing(destination, args.SessionId, DateTimeOffset.UtcNow);
-          return Task.CompletedTask;
-        };
-        sessionProcessor.SessionClosingAsync += args => {
-          OnSessionClosing(destination, args.SessionId);
-          return Task.CompletedTask;
-        };
+        // Occupancy clock + adaptive-acceptor hooks are attached by _createGovernedSessionProcessor.
 
         // CancellationToken.None is deliberate — see the batch session-processor attach site.
         sessionProcessor.ProcessErrorAsync += async args => await _handleProcessorErrorAsync(args, destination,
@@ -2076,6 +2255,18 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     if (_livenessWatchdog is not null) {
       await _livenessWatchdog.DisposeAsync();
     }
+
+    // Stop the adaptive acceptor evaluation loop (started lazily on the first governed
+    // session subscription; the task field is null when no session subscription ever started).
+    Task? acceptorLoopTask;
+    lock (_acceptorLock) {
+      acceptorLoopTask = _acceptorLoopTask;
+    }
+    await _acceptorLoopStopSource.CancelAsync();
+    if (acceptorLoopTask is not null) {
+      await acceptorLoopTask;
+    }
+    _acceptorLoopStopSource.Dispose();
 
     // Dispose all senders
     foreach (var sender in _senders.Values) {
