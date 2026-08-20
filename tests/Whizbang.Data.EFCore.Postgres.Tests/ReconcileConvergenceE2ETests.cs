@@ -15,6 +15,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;

@@ -37,6 +37,17 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   private const string CONTROL_PLANE_NAMESPACE = "whizbang.core.messaging";
 
   /// <summary>
+  /// The minted-family namespace (topology arc phase 4): redelivery bundles, coalesced batches and
+  /// audit composites live in <c>Whizbang.Core.Minting</c>, so their control-plane subjects are
+  /// <c>whizbang.core.minting.*</c> (<c>ControlPlaneDestination.For</c> synthesizes the subject
+  /// from the CLR namespace). Admitted ALONGSIDE <see cref="CONTROL_PLANE_NAMESPACE"/> for the
+  /// transition — in-flight envelopes published by pre-move builds still carry old subjects; the
+  /// old pattern retires with the shared inbox (phase 7). Deployed subscription rules reconcile on
+  /// redeploy.
+  /// </summary>
+  private const string MINTING_NAMESPACE = "whizbang.core.minting";
+
+  /// <summary>
   /// Gets the system command namespace that all services automatically subscribe to.
   /// </summary>
   public static string SystemCommandNamespace => SYSTEM_COMMAND_NAMESPACE;
@@ -104,7 +115,9 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
       // All services receive system commands
       $"{SYSTEM_COMMAND_NAMESPACE}.#",
       // …and the directed integrity control plane (manifest / redelivery / drill-down traffic).
-      $"{CONTROL_PLANE_NAMESPACE}.#"
+      $"{CONTROL_PLANE_NAMESPACE}.#",
+      // …and the minted composite families (their subjects moved to whizbang.core.minting.*).
+      $"{MINTING_NAMESPACE}.#"
     };
 
     // Add service-specific command namespace patterns

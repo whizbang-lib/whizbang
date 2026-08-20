@@ -54,4 +54,12 @@ internal static class WhizbangVersionInfo
     <!-- Reference source generators for build-time code generation -->
     <ProjectReference Include="../Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Pinned-type ledger as an AdditionalFile (mirrors what the NuGet .props does for consumers):
+         activates WHIZ120/WHIZ121 rename governance for Whizbang.Core's own pinned types, lets the
+         ledger generator MERGE with the committed history instead of regenerating from scratch, and
+         feeds formerNames into the JSON-context alias registrations + catalog entries so rows
+         persisted under a pre-rename CLR name keep resolving. -->
+    <AdditionalFiles Include=".whizbang/pinned-type-ledger.json" />
+  </ItemGroup>
 </Project>

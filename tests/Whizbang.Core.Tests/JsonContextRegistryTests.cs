@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
@@ -477,7 +478,7 @@ public partial class JsonContextRegistryTests {
   /// <summary>One-line consumer composite built on the turnkey <see cref="CompositeEventBase"/> helper.
   /// Public so the source generator discovers it and auto-registers its wire metadata — exactly as a
   /// real consumer's composite is registered (single generated context, no hand-written one).</summary>
-  public sealed class HelperRoundTripComposite : Whizbang.Core.Messaging.CompositeEventBase;
+  public sealed class HelperRoundTripComposite : Whizbang.Core.Minting.CompositeEventBase;
 
   /// <summary>Public inner event so it is auto-registered as an IEvent/IMessage wire type, like a real
   /// one. Carries its own [StreamId] (a public IEvent requires one); inside a composite the receiver

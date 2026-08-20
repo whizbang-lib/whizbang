@@ -99,6 +99,60 @@ public class InboxRoutingStrategyTests {
   }
 
   [Test]
+  public async Task SharedTopicInboxStrategy_GetSubscription_IncludesMintingNamespaceAsync() {
+    // Topology arc phase 4: the minted composite families (redelivery bundles, coalesced batches,
+    // audit composites) moved to Whizbang.Core.Minting, so their control-plane subjects are now
+    // whizbang.core.minting.* (ControlPlaneDestination synthesizes the subject from the CLR
+    // namespace). Every shared-inbox subscription must admit the new pattern or repair bundles are
+    // silently dropped by the broker rule (no logs, no dead-letter).
+    var strategy = new SharedTopicInboxStrategy();
+
+    var subscription = strategy.GetSubscription(
+      new HashSet<string> { "orders" }, "svc", MessageKind.Command);
+
+    await Assert.That(subscription.FilterExpression!).Contains("whizbang.core.minting.#")
+      .Because("minted composites publish under whizbang.core.minting.* subjects after the "
+             + "namespace move — the shared-inbox filter must admit them");
+    await Assert.That(subscription.FilterExpression!).Contains("whizbang.core.messaging.#")
+      .Because("the OLD control-plane pattern stays through the transition (mixed-fleet window: "
+             + "in-flight envelopes published by pre-move builds still carry old subjects); it "
+             + "retires with the shared inbox in phase 7");
+    var patterns = (List<string>)subscription.Metadata!["RoutingPatterns"];
+    await Assert.That(patterns).Contains("whizbang.core.minting.#")
+      .Because("transports build broker bindings from the RoutingPatterns metadata, not the "
+             + "display FilterExpression");
+  }
+
+  [Test]
+  public async Task SharedTopicInboxStrategy_MintingSubjects_MatchTheBuiltSubscriptionPatternsAsync() {
+    // Publish side ⇔ subscribe side: ControlPlaneDestination.For synthesizes the subject from the
+    // payload's CLR namespace; the subscription's routing patterns must admit every moved family's
+    // subject, or the redelivery pump publishes into a filter hole.
+    var strategy = new SharedTopicInboxStrategy();
+    var subscription = strategy.GetSubscription(new HashSet<string> { "orders" }, "svc", MessageKind.Command);
+    var patterns = (List<string>)subscription.Metadata!["RoutingPatterns"];
+    Type[] mintedFamilies = [
+      typeof(Whizbang.Core.Minting.RedeliveryComposite),
+      typeof(Whizbang.Core.Minting.CoalescedEventsComposite),
+      typeof(Whizbang.Core.Minting.AuditEventsComposite),
+    ];
+
+    foreach (var family in mintedFamilies) {
+      var destination = Whizbang.Core.Transports.ControlPlaneDestination.For("inbox", Guid.NewGuid(), family);
+
+      await Assert.That(destination.RoutingKey!).IsEqualTo(
+          $"whizbang.core.minting.{family.Name.ToLowerInvariant()}")
+        .Because("the subject is synthesized from the CLR namespace — the move changes it");
+      var admitted = patterns.Any(p =>
+        p.EndsWith(".#", StringComparison.Ordinal)
+        && destination.RoutingKey!.StartsWith(p[..^1], StringComparison.Ordinal));
+      await Assert.That(admitted).IsTrue()
+        .Because($"subject '{destination.RoutingKey}' must match a subscription routing pattern "
+               + "or the broker drops the publish silently");
+    }
+  }
+
+  [Test]
   public async Task SharedTopicInboxStrategy_GetSubscription_IncludesSystemCommandsInFilterAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();

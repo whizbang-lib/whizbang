@@ -214,7 +214,8 @@ public static class WorkerPipelineExtensions {
       sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
       sp.GetService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
       sp.GetService<TimeProvider>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>()));
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<Whizbang.Core.Minting.ICompositeFactory>()));
     // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
     // registration constructable (the F2-era lesson: extensions must be self-contained).
     services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();

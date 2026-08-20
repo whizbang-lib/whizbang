@@ -271,6 +271,15 @@ public static class ServiceCollectionExtensions {
 
     services.AddWhizbangMessageSecurity();
 
+    // The event mint (topology arc phase 4): the composite splitter + the family facade.
+    // Turnkey in the core pipeline — never a per-assembly generated registration, which
+    // multi-assembly hosts can strip (the silent worker-never-starts signature). TryAdd keeps
+    // repeat AddWhizbang() calls idempotent and lets a host substitute its own families first.
+    services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
+    services.TryAddSingleton<Minting.ICollectiveMint, Minting.CollectiveMint>();
+    services.TryAddSingleton<Minting.ICheckpointMint, Minting.CheckpointMint>();
+    services.TryAddSingleton<Minting.IEventMint, Minting.EventMint>();
+
     // Register lens infrastructure
     services.TryAddSingleton<LensOptions>();
     services.TryAddSingleton<SystemEvents.ISystemEventEmitter, SystemEvents.NullSystemEventEmitter>();

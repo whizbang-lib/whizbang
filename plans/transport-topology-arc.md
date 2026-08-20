@@ -127,6 +127,22 @@ PR #513 before this decision; it stays (no revert).
   direct construction (new WHIZ block 150+, EphemeralAnalyzer idiom). First consumers:
   CoalesceShipWorker (drop its Destination GroupBy) and RedeliveryPump (drop its chunking).
   Note: receive-side `MaxInnerEventsAllowed` guard STAYS receive-side.
+  **STATUS: implemented on feature/transport-topology (uncommitted).** Family moves landed
+  (ICompositeEvent/CompositeEventBase/carrier interfaces/RedeliveryComposite/
+  CoalescedEventsComposite/AuditEventsComposite/Fanout* → `Whizbang.Core.Minting`;
+  CompositeInboxFanout + EventFlags stay receive-side in Messaging). Migration mechanics:
+  ledger wired as AdditionalFiles into Whizbang.Core.csproj (WHIZ120 governance now ACTIVE
+  in-repo — it was inert before, and the extraction target was silently refreshing the ledger
+  on rename), formerNames recorded for all three moved pinned types (old-name deserialization
+  + EventMarkerResolver formerNames fallback RED→GREEN-locked in
+  MintedTypeRenameCompatibilityTests), `whizbang.core.minting.#` admitted alongside
+  `whizbang.core.messaging.#` on SharedTopicInboxStrategy (publish⇔subscribe lock incl.
+  ControlPlaneDestination subject synthesis). `IEventMint`/`ICompositeFactory`/
+  `CompositeMintRequest` (strategy-first `CompositeGroupKey.FromStrategy` + stamped-key
+  `FromKey`) registered turnkey in AddWhizbang; both producers refactored onto the factory
+  behavior-preserving (all pre-existing tests green unchanged). WHIZ150 (Warning) ships as
+  `MintedCompositeConstructionAnalyzer` (exempt: Minting namespace, Whizbang.Core assembly,
+  BuildComposite/CompositeFactory builder lambdas; tests NoWarn per the WHIZ110 idiom).
 - **Phase 5 — namespace inbox strategy + dark provisioning** (#427 migration 1). New
   registry-driven strategy (one subscription per handled contract-ns + system inbox);
   manifest-driven provisioning both transports (ASB topic+subscription; RMQ exchange+queue+

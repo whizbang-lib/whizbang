@@ -140,9 +140,9 @@ public enum MessageFailureReason {
   BodyClaimIntegrityFailure = 14,
 
   /// <summary>
-  /// A composite event (<see cref="Whizbang.Core.Messaging.ICompositeEvent"/>)
+  /// A composite event (<see cref="Whizbang.Core.Minting.ICompositeEvent"/>)
   /// yielded more inner events than its
-  /// <see cref="Whizbang.Core.Messaging.ICompositeEvent.MaxInnerEventsAllowed"/>
+  /// <see cref="Whizbang.Core.Minting.ICompositeEvent.MaxInnerEventsAllowed"/>
   /// cap. The receiver refuses to expand it — likely a producer bug
   /// (runaway enumerator, accidentally-nested composites).
   /// </summary>

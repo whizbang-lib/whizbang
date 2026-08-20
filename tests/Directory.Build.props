@@ -9,5 +9,8 @@
     <!-- Suppress [PinnedId] enforcement in tests: test-only message/perspective types -->
     <!-- (TestEvent, TestCommand, TestPerspective, etc.) are ephemeral fixtures, not stored data. -->
     <NoWarn>$(NoWarn);WHIZ110;WHIZ111</NoWarn>
+    <!-- Suppress the minted-composite construction rule in tests: fixtures construct composites -->
+    <!-- directly by design (seeding fan-out/serialization scenarios), never to publish them. -->
+    <NoWarn>$(NoWarn);WHIZ150</NoWarn>
   </PropertyGroup>
 </Project>

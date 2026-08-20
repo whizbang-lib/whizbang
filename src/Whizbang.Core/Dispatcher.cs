@@ -15,6 +15,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
@@ -25,7 +26,6 @@ using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
-
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core;
@@ -4076,7 +4076,7 @@ public abstract partial class Dispatcher(
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
       StreamId = streamId,
       IsEvent = eventData is IEvent,
-      Flags = (eventData is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
+      Flags = (eventData is Whizbang.Core.Minting.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
             | (eventData is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
@@ -5204,7 +5204,7 @@ public abstract partial class Dispatcher(
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
       IsEvent = payload is IEvent,
-      Flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
+      Flags = (payload is Whizbang.Core.Minting.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
             | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(payload, _ephemeralModeResolver),
       Scope = _extractScope(envelope),

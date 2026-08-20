@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace Whizbang.Core.Messaging;
+namespace Whizbang.Core.Minting;
 
 /// <summary>
 /// Marker for an event that fans out into multiple inner events at the receiver. A composite is a
@@ -62,14 +62,14 @@ public interface ICompositeEvent : IMessage {
   /// <remarks>
   /// The receiver enforces this by counting yielded inner events as it
   /// expands; reaching the cap raises a typed failure (
-  /// <see cref="MessageFailureReason.CompositeInnerEventLimitExceeded"/>)
+  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded"/>)
   /// without writing partial results.
   /// </remarks>
   int MaxInnerEventsAllowed => 10_000;
 
   /// <summary>
-  /// How fan-out is triggered. <see cref="Whizbang.Core.Messaging.FanoutMode.Auto"/> (default) fans out
-  /// <see cref="InnerEvents"/> automatically at the dispatch seam; <see cref="Whizbang.Core.Messaging.FanoutMode.Manual"/>
+  /// How fan-out is triggered. <see cref="Whizbang.Core.Minting.FanoutMode.Auto"/> (default) fans out
+  /// <see cref="InnerEvents"/> automatically at the dispatch seam; <see cref="Whizbang.Core.Minting.FanoutMode.Manual"/>
   /// defers to a pre-fanout receptor that drives fan-out via <see cref="DispatchFanoutControl"/>.
   /// </summary>
   /// <docs>fundamentals/messaging/composite-events#fanout-control</docs>

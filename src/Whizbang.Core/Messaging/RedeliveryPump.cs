@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -85,6 +86,7 @@ public sealed class RedeliveryPump {
   private readonly IServiceInstanceProvider? _instanceProvider;
   private readonly RedeliveryPumpOptions _options;
   private readonly TimeProvider _time;
+  private readonly ICompositeFactory _compositeFactory;
 
   /// <summary>
   /// Creates the pump over the transport. The envelope serializer is the same seam the outbox uses
@@ -96,12 +98,14 @@ public sealed class RedeliveryPump {
       IEnvelopeSerializer envelopeSerializer,
       IServiceInstanceProvider? instanceProvider = null,
       RedeliveryPumpOptions? options = null,
-      TimeProvider? timeProvider = null) {
+      TimeProvider? timeProvider = null,
+      ICompositeFactory? compositeFactory = null) {
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     _envelopeSerializer = envelopeSerializer ?? throw new ArgumentNullException(nameof(envelopeSerializer));
     _instanceProvider = instanceProvider;
     _options = options ?? new RedeliveryPumpOptions();
     _time = timeProvider ?? TimeProvider.System;
+    _compositeFactory = compositeFactory ?? new CompositeFactory();
   }
 
   /// <summary>
@@ -128,39 +132,30 @@ public sealed class RedeliveryPump {
       return 0;
     }
 
-    var published = 0;
+    // Input contract: (stream, version)-ordered — the mint groups per stream (identical to
+    // consecutive-run splitting for ordered input), chunked by count AND by raw body bytes: a
+    // count-only bound lets large-bodied histories build composites that exhaust memory during
+    // serialization or exceed the broker message-size limit and never deliver. The per-stream
+    // split is an ordering concern layered on routing (all chunks share the topic): the stream id
+    // rides as the broker session key, so redelivered bundles keep stream FIFO.
+    var plans = _compositeFactory.Create(new CompositeMintRequest<RedeliveryEvent> {
+      Constituents = events,
+      GroupKey = CompositeGroupKey.FromKey<RedeliveryEvent>(e => e.StreamId.ToString()),
+      MaxConstituentsPerComposite = _options.MaxInnerEventsPerComposite,
+      MaxBytesPerComposite = _options.MaxBytesPerComposite,
+      ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
+      BuildComposite = batch => _buildComposite(batch.Constituents, originServiceId),
+    });
 
-    // Input contract: (stream, version)-ordered — group CONSECUTIVE runs per stream, chunked by
-    // count AND by raw body bytes: a count-only bound lets large-bodied histories build
-    // composites that exhaust memory during serialization or exceed the broker message-size
-    // limit and never deliver.
-    var chunk = new List<RedeliveryEvent>(Math.Min(events.Count, _options.MaxInnerEventsPerComposite));
-    var chunkBytes = 0L;
-    for (var i = 0; i < events.Count; i++) {
-      chunk.Add(events[i]);
-      chunkBytes += events[i].EventData.Length + (events[i].Metadata?.Length ?? 0);
-      var boundary = i == events.Count - 1
-        || events[i + 1].StreamId != events[i].StreamId
-        || chunk.Count == _options.MaxInnerEventsPerComposite
-        || chunkBytes >= _options.MaxBytesPerComposite;
-      if (!boundary) {
-        continue;
-      }
-      await _publishChunkAsync(chunk, topic, target, originServiceId, stateOnly, cancellationToken).ConfigureAwait(false);
+    var published = 0;
+    foreach (var plan in plans) {
+      await _publishPlanAsync((RedeliveryComposite)plan.Composite, topic, target, stateOnly, cancellationToken).ConfigureAwait(false);
       published++;
-      chunk.Clear();
-      chunkBytes = 0;
     }
     return published;
   }
 
-  private async Task _publishChunkAsync(
-      List<RedeliveryEvent> chunk,
-      string topic,
-      string? target,
-      Guid originServiceId,
-      bool stateOnly,
-      CancellationToken cancellationToken) {
+  private static RedeliveryComposite _buildComposite(IReadOnlyList<RedeliveryEvent> chunk, Guid originServiceId) {
     // RAW carry: each child is the stored wire JSON verbatim + its stored wire type name. No typed
     // rehydration, no polymorphic serialization, no type knowledge required at the origin — the
     // payload bytes that were emitted are the payload bytes that repair.
@@ -169,7 +164,7 @@ public sealed class RedeliveryPump {
       using var doc = System.Text.Json.JsonDocument.Parse(evt.EventData);
       innerPayloads.Add(doc.RootElement.Clone());
     }
-    var composite = new RedeliveryComposite {
+    return new RedeliveryComposite {
       StreamId = chunk[0].StreamId,
       InnerPayloads = innerPayloads,
       InnerTypeNames = [.. chunk.Select(c => c.EventType)],
@@ -179,7 +174,14 @@ public sealed class RedeliveryPump {
       OriginServiceId = originServiceId,
       InnerCommitSequences = [.. chunk.Select(c => c.CommitSequence)],
     };
+  }
 
+  private async Task _publishPlanAsync(
+      RedeliveryComposite composite,
+      string topic,
+      string? target,
+      bool stateOnly,
+      CancellationToken cancellationToken) {
     var wireEnvelope = new MessageEnvelope<RedeliveryComposite> {
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = composite,
@@ -200,7 +202,7 @@ public sealed class RedeliveryPump {
     // Session-enabled subscriptions dead-letter sessionless deliveries; per-stream chunking makes
     // the chunk's stream id the natural session key — redelivered bundles keep stream FIFO.
     var serialized = _envelopeSerializer.SerializeEnvelope<RedeliveryComposite>(wireEnvelope);
-    var destination = Transports.ControlPlaneDestination.For(topic, chunk[0].StreamId, typeof(RedeliveryComposite));
+    var destination = Transports.ControlPlaneDestination.For(topic, composite.StreamId, typeof(RedeliveryComposite));
 
     // A broker under throttle fails sends transiently; without a bounded retry ONE failed send
     // aborts the whole serve — every later chunk dies with it and the requester's attempt burns

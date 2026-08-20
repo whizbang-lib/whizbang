@@ -35,7 +35,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string ISYNCRECEPTOR_PREFIX = "global::Whizbang.Core.ISyncReceptor";
   private const string IPERSPECTIVE_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string IPERSPECTIVE_WITH_ACTIONS_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
-  private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICompositeEvent";
+  private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Minting.ICompositeEvent";
   private const string ICOLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
   private const string FIREAT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";

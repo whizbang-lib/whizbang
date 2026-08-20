@@ -153,7 +153,7 @@ internal sealed class AsbReceiveDecisionMaker {
     var payloadType = envelope.Payload?.GetType();
     if (isHandledLocally != null && payloadType != null
         && envelope.Payload is not Whizbang.Core.Offloads.BodyClaimEnvelopePayload
-        && envelope.Payload is not Whizbang.Core.Messaging.ICompositeEvent
+        && envelope.Payload is not Whizbang.Core.Minting.ICompositeEvent
         && !isHandledLocally(payloadType)
         && !_isAbsorbedNamespace(payloadType, absorbedNamespaces)) {
       return new AsbReceiveDecision {

@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
@@ -152,7 +153,7 @@ public class CoalesceShipWorkerTests {
     // binding will supply AuditEventsComposite through exactly this seam.
     var (worker, coordinator, _) = _build(configureBinding: c => {
       c.SlideSeconds = 15;
-      c.CompositeFactory = batch => new Whizbang.Core.SystemEvents.AuditEventsComposite {
+      c.CompositeFactory = batch => new Whizbang.Core.Minting.AuditEventsComposite {
         StreamId = TrackedGuid.NewMedo(),
         Atomicity = batch.Atomicity,
         InnerPayloads = [.. batch.Singles.Select(s => s.Envelope.Payload)],

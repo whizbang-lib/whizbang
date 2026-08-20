@@ -179,6 +179,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 
 namespace MyApp;
@@ -214,6 +215,7 @@ public class TagNotificationHook : IReceptor<OrderUpdated> {
 using System.Collections.Generic;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 
 namespace MyApp;
 
@@ -242,6 +244,7 @@ public record BulkImportComposite : ICompositeEvent {
 using System.Collections.Generic;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 
 namespace MyApp;
 

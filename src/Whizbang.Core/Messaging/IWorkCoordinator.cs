@@ -2326,7 +2326,7 @@ public record OutboxMessage {
 
   /// <summary>
   /// Whether this message is a composite event (implements
-  /// <see cref="Whizbang.Core.Messaging.ICompositeEvent"/>) that the
+  /// <see cref="Whizbang.Core.Minting.ICompositeEvent"/>) that the
   /// receiver fans out into N inner events. Set at producer-side dispatch
   /// time; surfaces on the wire via destination metadata and on the
   /// receiving inbox row so observability dashboards can distinguish
