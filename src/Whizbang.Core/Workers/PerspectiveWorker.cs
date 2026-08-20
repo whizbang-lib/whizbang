@@ -4256,6 +4256,14 @@ public partial class PerspectiveWorker(
         skippedWork.Add(item);
         continue;
       }
+      // Guid.Empty is not an identity — it is the "no work id" sentinel, and the completion path
+      // skips it for the same reason. Reserving it would let the FIRST empty-id item claim the
+      // sentinel and every subsequent one dedup against it, silently dropping real work: exactly
+      // the message-loss failure mode the batch-scoped release exists to prevent.
+      if (item.WorkId == Guid.Empty) {
+        dedupedWork.Add(item);
+        continue;
+      }
       // Issue #520: admission and marking must be ONE atomic step. The durable cache is only
       // written after Apply, so a plain Contains() check leaves the claim→Apply span unguarded —
       // a redelivery arriving there sees "not processed", is admitted, and applies twice.
