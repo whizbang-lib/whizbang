@@ -41,10 +41,14 @@ public static class SharedRabbitMqFixtureSource {
     }
 
     var dbName = $"test_{Guid.NewGuid():N}";
+    // Sized for a HOST's concurrent workers plus the held-open LISTEN/NOTIFY connection, not for
+    // apparent frugality — a cap of 2 starved them and surfaced as OpenAsync timeouts and warm-up
+    // failures. Measured demand is ~18; see the RabbitMQ fixture's note and
+    // PerTestDatabasePoolCapacityTests.
     var builder = new NpgsqlConnectionStringBuilder(PostgresConnectionString) {
       Database = dbName,
       MinPoolSize = 0,
-      MaxPoolSize = 2,
+      MaxPoolSize = 32,
       ConnectionIdleLifetime = 5,
       ConnectionPruningInterval = 3
     };
