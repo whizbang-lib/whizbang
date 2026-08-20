@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration: 118_BrokerDeadLetterImport.sql
+-- Migration: 119_BrokerDeadLetterImport.sql
 -- Date: 2026-08-20
 -- Description: Broker DLQ import — one custody model for failed messages (proposal:
 --   proposals/broker-dlq-import). Adds wh_import_dead_letter so the transport dead-letter
@@ -171,7 +171,7 @@ BEGIN
     VALUES (v_source_id, v_stream_id, v_perspective, (v_envelope ->> 'event_id')::UUID, v_partition, 0, 0, NOW())
     ON CONFLICT (event_work_id) DO NOTHING;
   ELSIF v_source_table = 'broker' THEN
-    -- Broker-imported rows (wh_import_dead_letter, migration 118) re-enter through the inbox
+    -- Broker-imported rows (wh_import_dead_letter, migration 119) re-enter through the inbox
     -- front door: normal dispatch, composite fan-out, and the internal max-attempts ladder all
     -- apply unchanged. A row that still cannot be processed on the current build parks again in
     -- wh_dead_letters via move_to_dead_letters — visible, fingerprinted, attempt-accounted —
