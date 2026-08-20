@@ -355,4 +355,79 @@ public class StartupReadyCompositeTests {
     await Assert.That(logger.Entries.Any(e => e.Contains("no run has started"))).IsTrue()
       .Because("'not started' and 'started but stuck' are different diagnoses; the narration must distinguish them");
   }
+
+  // ── cancellation during startup is a graceful stop, not a crash ────────
+
+  /// <summary>
+  /// A host told to stop while startup is still waiting (SIGTERM mid-rollout, a liveness
+  /// restart, an operator cancelling a slow boot) must exit gracefully. StartedAsync runs on
+  /// IHostedLifecycleService, and Host.StartAsync aborts on the first exception and rethrows —
+  /// so propagating the cancellation out of the readiness wait turns an ordinary "we are
+  /// shutting down" into an UNHANDLED exception and a non-zero process exit. Under an
+  /// orchestrator that reads as a crash and restarts the pod, which cancels the next startup
+  /// the same way: a self-sustaining crash loop out of a routine rollout. Readiness must simply
+  /// not be signalled — the composite stays fail-closed, and the process leaves quietly.
+  /// </summary>
+  [Test]
+  public async Task ReadyService_CancelledWhileWaiting_ReturnsGracefullyWithoutSignallingAsync() {
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    // Never drained: the wait is still pending when cancellation arrives.
+    var service = new StartupReadyService(state, signal);
+
+    using var cts = new CancellationTokenSource();
+    var started = service.StartedAsync(cts.Token);
+    await cts.CancelAsync();
+
+    await started.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(started.IsCompletedSuccessfully).IsTrue()
+      .Because("cancellation during startup is a graceful stop — rethrowing it crashes the host "
+             + "(Host.StartAsync aborts on first exception) and turns a routine rollout into a crash loop");
+    await Assert.That(signal.IsReady).IsFalse()
+      .Because("the composite is fail-closed: a cancelled startup never became ready");
+  }
+
+  /// <summary>A contributor that never answers must cancel just as gracefully as the pipeline wait.</summary>
+  [Test]
+  public async Task ReadyService_CancelledWaitingOnContributor_ReturnsGracefullyAsync() {
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    var stuck = new _tcsContributor("subscriptions");
+    var service = new StartupReadyService(state, signal, [stuck]);
+
+    await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
+
+    using var cts = new CancellationTokenSource();
+    var started = service.StartedAsync(cts.Token);
+    await cts.CancelAsync();
+
+    await started.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(started.IsCompletedSuccessfully).IsTrue()
+      .Because("the contributor leg must fail closed and quiet, exactly like the pipeline leg");
+    await Assert.That(signal.IsReady).IsFalse();
+  }
+
+  /// <summary>Genuine faults must still surface — the graceful path is cancellation ONLY.</summary>
+  [Test]
+  public async Task ReadyService_ContributorFaults_StillPropagatesAsync() {
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    var faulting = new _faultingContributor("broken");
+    var service = new StartupReadyService(state, signal, [faulting]);
+
+    await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await Assert.ThrowsAsync<InvalidOperationException>(async () => await service.StartedAsync(cts.Token))
+      .Because("a broken contributor is a real failure — swallowing it would hide a fail-closed host");
+    await Assert.That(signal.IsReady).IsFalse();
+  }
+
+  private sealed class _faultingContributor(string name) : IStartupReadinessContributor {
+    public string ContributorName => name;
+    public Task WaitForContributorReadyAsync(CancellationToken cancellationToken) =>
+      Task.FromException(new InvalidOperationException("contributor is broken"));
+  }
 }
