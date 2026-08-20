@@ -254,6 +254,52 @@ PR #513 before this decision; it stays (no revert).
 - **Phase 8 — tag-bound TransportNamespace routing** (#424 incr 2): `TagOptions.RouteNamespace`,
   `Transport.Namespaces` map, per-namespace clients + provisioning, `sys-` validation,
   single-namespace no-op guarantee.
+- **Phase 8.5 — non-count-based poison detection (CLOSES A VALIDATED GAP, in-scope by owner
+  decision).** The spike (phase 6) established, and a live Standard-namespace probe CONFIRMED:
+  on SESSION-enabled entities, lock loss via connection death does NOT increment DeliveryCount
+  (explicit abandon and non-session lock loss both do). Command inboxes are session-enabled by
+  default, so the broker's MaxDeliveryCount valve — and the transport's MaxDeliveryAttempts
+  branch, which reads the same counter — can NEVER fire under consumer-death storms. Messages
+  are hostage, not poison, and nothing else bounds the loop. The arc must not ship a topology
+  whose per-namespace DLQs are unreachable by the exact failure that motivated it.
+  **Where it lives (design decision):** NOT on `ITransport` — that surface is publish/subscribe
+  capability, and every implementation (incl. InProcessTransport and test doubles) would be
+  forced to carry it. NOT transport-private either — the decision is identical everywhere and
+  would drift. Follows the existing `IMessageDiscardPolicy` shape exactly: **decision in Core,
+  execution in each transport.**
+  - **Core** owns `IPoisonMessageDetector` + default impl: pure
+    `PoisonVerdict Evaluate(PoisonEvaluationContext ctx)` over a transport-NEUTRAL context
+    `{ MessageId, FirstEnqueuedAt: DateTimeOffset?, BrokerDeliveryCount: int?,
+    DurableObservationCount: int?, Now }` → `Proceed` | `Quarantine(reason, detail)`. Threshold
+    derivation, killswitch, bindable options, metrics and the health signal all live here. One
+    decision, one place, both transports.
+  - **Each transport** adapts its native message into the context and executes the verdict with
+    its native mechanism: ASB reads `EnqueuedTime`/`DeliveryCount` and quarantines via
+    `DeadLetterMessageAsync(reason, description)` — slotting into the existing
+    `AsbReceiveDecisionMaker`/`AsbReceiveAction` seam rather than a parallel code path; RabbitMQ
+    reads its timestamp/first-seen + `redelivered` and quarantines via
+    `BasicNackAsync(requeue: false)` → DLX.
+  - **Capability honesty:** age-based detection needs a broker-supplied first-enqueue timestamp.
+    ASB always has one; RabbitMQ's is publisher-set and optional. The transport reports whether
+    it can supply a trustworthy age; when it cannot, layer 1 degrades to layer 2 (durable
+    counting) and says so in the health/log surface — it never goes silently inert.
+  - Custom/third-party transports: the detector is an optional injected policy (null ⇒ today's
+    behavior), same as the discard policy — no breaking change to `ITransport`.
+  Layers:
+  1. **Age-based quarantine at the receive boundary.** The broker's first-enqueue timestamp
+     survives every redelivery. When `now - FirstEnqueuedAt > PoisonMessageAgeThreshold` the
+     transport EXPLICITLY quarantines instead of waiting for a count that never rises. Default
+     derived, not guessed: `MaxAutoLockRenewalDuration × MaxDeliveryAttempts` with a documented
+     floor, so a legitimately slow-but-progressing message is never quarantined.
+  2. **Durable observation counting** for poison that dies mid-processing rather than mid-lock:
+     the inbox row already exists per message id (store-side idempotency) — increment a
+     delivery-observation counter and quarantine past a bound. Reuses the existing dead-letter
+     store + recovery flows; no new table if wh_inbox can carry it.
+  Locks: quarantine fires on an aged session message (both transports); does NOT fire on a
+  fresh message, on a slow-but-progressing one, or when disabled; the quarantined message lands
+  in the per-namespace DLQ and is replayable by the existing recovery flow; the age default is
+  derived from the lock/delivery options (property test, not a magic number).
+
 - **Phase 9 — control class semantics** (#424 incr 3): `sys-control` tag, TTL≈2×cadence
   minting via `mint.Checkpoints`, sessionless subscriptions, non-durable receive path.
   Decide the `whizbang.core.commands.system` vs `whizbang.core.messaging` split here.

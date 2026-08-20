@@ -20,8 +20,14 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 /// what the emulator does, so the phase-6 DLQ locks can be shaped against observed behavior
 /// rather than assumptions. Each doc comment states the production implication either way.
 /// The emulator's settlement fidelity is not guaranteed to match the Azure service; where
-/// behavior diverges from the documented service behavior the comment says so, and the
-/// production DLQ posture must be validated against a real namespace before relying on it.</para>
+/// behavior diverges from the documented service behavior the comment says so.</para>
+/// <para><b>VALIDATED AGAINST A REAL STANDARD-TIER NAMESPACE (2026-08):</b> an out-of-band
+/// probe re-ran cases 1-3 against a live Service Bus Standard namespace (throwaway topics,
+/// 5 s lock duration, ungraceful client disposal without settlement) and reproduced the
+/// emulator's results EXACTLY: session + connection death → DeliveryCount stays 1 (does not
+/// increment); session + explicit abandon → 2; non-session + connection death → 2. The
+/// findings below are therefore service behavior, not an emulator artifact, and the DLQ
+/// posture derived from them holds in production.</para>
 /// <para><b>RECORDED FINDINGS (2026-08, servicebus-emulator:latest):</b></para>
 /// <list type="bullet">
 ///   <item>SESSION lock loss via connection death: DeliveryCount does NOT increment (stays
@@ -118,7 +124,9 @@ public sealed class EmulatorLockLossDeliveryCountSpikeTests(ServiceBusEmulatorFi
       // rise. Messages are hostage, not poison. PRODUCTION IMPLICATION: per-namespace DLQ
       // locks must rely on EXPLICIT dead-letter paths only (handler failure → abandon →
       // count rises → dead-letter), never on storm-driven count exhaustion, for
-      // session-enabled command inboxes. EMULATOR FIDELITY CAVEAT: this is the emulator's
+      // session-enabled command inboxes. VALIDATED on a real Standard namespace (2026-08):
+      // identical result — this is service behavior, not an emulator artifact. Original
+      // caveat retained for context: this is the emulator's
       // settlement engine; validate against a real namespace before relying on the inverse.
       await Assert.That(redelivered.DeliveryCount).IsEqualTo(1)
         .Because("session lock loss is delivery-count-blind on the emulator — the DLQ safety valve cannot fire from lock-loss storms on session entities");
