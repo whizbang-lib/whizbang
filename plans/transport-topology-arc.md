@@ -70,7 +70,15 @@ Spec: docs proposals `per-namespace-command-inboxes` (order 38) + `transport-tra
    TransportNamespace→separate connection/vhost, control-class TTL→`x-message-ttl`,
    sessionless→plain queue. Documented as a docs-PR follow-up when phase 8 lands.
 
-## Phases (one PR each)
+## Delivery model (owner decision 2026-08-19): ONE PR for the whole arc
+
+The remaining phases (3-10) accumulate on the single branch `feature/transport-topology`
+(based on develop e9dec8417, post phase-2/#513) and ship as ONE PR whose acceptance gate is
+the transport-parity E2E suite + the O(3N) broker-op throughput lock. Phases below are the
+COMMIT organization within that branch, not PR boundaries. Phase 2 shipped separately as
+PR #513 before this decision; it stays (no revert).
+
+## Phases (commit groups on the arc branch)
 
 - **Phase 2 — adaptive acceptors + health degradation** (#424 incr 4a pulled forward;
   #427 declares it prerequisite). Session acceptors scale with observed active-session demand
