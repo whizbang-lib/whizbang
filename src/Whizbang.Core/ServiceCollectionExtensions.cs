@@ -126,6 +126,12 @@ public static class ServiceCollectionExtensions {
       foreach (var binding in coreOptions.Tags.CoalesceBindings) {
         existing.UseCoalesceBinding(binding.Key, binding.Value);
       }
+
+      // Same merge rule for the TransportNamespace routing bindings (topology arc phase 8):
+      // last-wins per tag across AddWhizbang calls.
+      foreach (var binding in coreOptions.Tags.RouteNamespaceBindings) {
+        existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
+      }
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);
@@ -149,6 +155,18 @@ public static class ServiceCollectionExtensions {
         tagOptions,
         sp.GetService<IOptions<SystemEvents.SystemEventOptions>>()?.Value);
       return new CoalesceGroupResolver(tagOptions, sp.GetService<TimeProvider>());
+    });
+
+    // TransportNamespace resolver (topology arc phase 8): the AOT tag lookup the transport
+    // boundary consults to map a message type to its broker namespace. Singleton for the same
+    // reason as CoalesceGroupResolver — it caches per-type-name resolution over the
+    // (post-startup immutable) registry and bindings. The configuration binder is applied at
+    // resolution time so `Whizbang:Tags:RouteNamespace:<tag>` wins over the code callback and
+    // an operator can re-class traffic without a redeploy.
+    services.TryAddSingleton(sp => {
+      var tagOptions = sp.GetRequiredService<TagOptions>();
+      TagRouteNamespaceConfigurationBinder.Apply(tagOptions, sp.GetService<IConfiguration>());
+      return new TransportNamespaceResolver(tagOptions);
     });
 
     // Register TracingOptions with IOptions pattern

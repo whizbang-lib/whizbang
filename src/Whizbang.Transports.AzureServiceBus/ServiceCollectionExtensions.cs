@@ -34,7 +34,75 @@ public static class ServiceCollectionExtensions {
     Action<AzureServiceBusOptions>? configureOptions = null
   ) {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    return _addTransport(services, connectionString, _noNonDefaultNamespaces, configureOptions);
+  }
 
+  /// <summary>
+  /// Registers Azure Service Bus transport across SEVERAL broker namespaces — one
+  /// <see cref="Azure.Messaging.ServiceBus.ServiceBusClient"/> per TransportNamespace (transport
+  /// traffic classes, topology arc phase 8 / #424 increment 2). A message whose type carries a
+  /// tag bound via <c>TagOptions.RouteNamespace</c> publishes through that namespace's client;
+  /// everything else rides <see cref="TransportNamespaces.DefaultKey"/>. The consume side
+  /// subscribes its normal entity set in <c>default</c> plus the SAME entity set in every
+  /// non-default namespace an actively handled type resolves to.
+  /// </summary>
+  /// <param name="services">The service collection to register with.</param>
+  /// <param name="namespaceConnectionStrings">
+  /// TransportNamespace key → Azure Service Bus connection string. The reserved
+  /// <see cref="TransportNamespaces.DefaultKey"/> key is REQUIRED: it is the namespace every
+  /// unrouted message — and every routing binding this host has no connection for — falls back
+  /// to. Additional keys are the traffic classes.
+  /// </param>
+  /// <param name="configureOptions">Optional configuration callback for transport options. The
+  /// options apply to EVERY namespace: one broker product, one set of knobs.</param>
+  /// <returns>The service collection for chaining.</returns>
+  /// <remarks>
+  /// <para>
+  /// <b>Single-namespace guarantee.</b> A map containing only <c>default</c> registers exactly
+  /// what <see cref="AddAzureServiceBusTransport(IServiceCollection, string, Action{AzureServiceBusOptions})"/>
+  /// registers — same services, same lifetimes, ONE client, and an
+  /// <see cref="AzureServiceBusTransport"/> rather than a routing composition. Multi-namespace
+  /// support costs a single-namespace deployment nothing.
+  /// </para>
+  /// <para>
+  /// <b>Configuration.</b> Non-default namespaces can also be added or re-pointed from
+  /// <c>Whizbang:Transports:AzureServiceBus:Namespaces:&lt;key&gt;</c> (values name a
+  /// <c>ConnectionStrings</c> entry) — configuration wins over the code map, per
+  /// <see cref="TransportNamespaceConnectionStrings"/>. The DEFAULT connection stays the one
+  /// this call was given, because the container's ambient <c>ServiceBusClient</c> (readiness
+  /// check, dead-letter drainer) is built from it.
+  /// </para>
+  /// </remarks>
+  /// <exception cref="ArgumentException"><paramref name="namespaceConnectionStrings"/> is empty, lacks the default key, or carries a blank connection string.</exception>
+  /// <docs>messaging/transports/azure-service-bus#transport-namespaces</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusNamespaceRoutingRegistrationTests.cs</tests>
+  public static IServiceCollection AddAzureServiceBusTransport(
+    this IServiceCollection services,
+    IReadOnlyDictionary<string, string> namespaceConnectionStrings,
+    Action<AzureServiceBusOptions>? configureOptions = null
+  ) {
+    ArgumentNullException.ThrowIfNull(namespaceConnectionStrings);
+
+    var validated = TransportNamespaceConnectionStrings.MergeAndValidate(
+      namespaceConnectionStrings, _noNonDefaultNamespaces, nameof(namespaceConnectionStrings));
+
+    var nonDefault = validated
+      .Where(entry => !TransportNamespaces.IsDefault(entry.Key))
+      .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+
+    return _addTransport(
+      services, validated[TransportNamespaces.DefaultKey], nonDefault, configureOptions);
+  }
+
+  private static readonly Dictionary<string, string> _noNonDefaultNamespaces = new(StringComparer.Ordinal);
+
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup initialization logging - infrequent calls during DI registration")]
+  private static IServiceCollection _addTransport(
+    IServiceCollection services,
+    string connectionString,
+    IReadOnlyDictionary<string, string> nonDefaultNamespaces,
+    Action<AzureServiceBusOptions>? configureOptions
+  ) {
     // Registration-time snapshot: DI-shape decisions (whether the admin client is registered)
     // must be made while the container is still mutable, so they see the code callback only.
     // Runtime knobs are resolved through the options pipeline below, where configuration
@@ -50,6 +118,12 @@ public static class ServiceCollectionExtensions {
 
     services.TryAddSingleton<Microsoft.Extensions.Options.IPostConfigureOptions<AzureServiceBusOptions>>(sp =>
       new AzureServiceBusOptionsPostConfigure(sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
+
+    // Client factory for the NON-default TransportNamespaces (topology arc phase 8). Registered
+    // unconditionally so both overloads share one container shape, and never RESOLVED unless a
+    // class namespace is actually configured — a single-namespace host opens exactly one client.
+    services.TryAddSingleton<IServiceBusNamespaceClientFactory>(sp =>
+      new ServiceBusNamespaceClientFactory(sp.GetService<ILogger<AzureServiceBusConnectionRetry>>()));
 
     // Get JSON options from registry (includes all registered contexts via ModuleInitializer)
     var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
@@ -90,46 +164,18 @@ public static class ServiceCollectionExtensions {
       }
     }
 
-    // Register transport as singleton, injecting shared client and optional admin client
+    // Register transport as singleton, injecting shared client and optional admin client.
+    // The NON-default TransportNamespaces (topology arc phase 8) resolve their own clients
+    // here too; with no extra namespaces configured this is EXACTLY today's single-client
+    // factory — _buildNamespaceRouter short-circuits to the default transport instance.
     services.AddSingleton<ITransport>(sp => {
-      var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AzureServiceBusOptions>>().Value;
       var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
       var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
 
       // Get admin client if available (for auto-provisioning)
       var adminClient = sp.GetService<IServiceBusAdminClient>();
 
-      // Slice 2 — receptor + perspective registries enable receive-time drop of messages
-      // this service has no consumer for. Both optional so non-Whizbang-host scenarios
-      // (test fakes, custom bootstraps) keep working without the filter.
-      var receptorRegistry = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistry>();
-      var perspectiveRegistry = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>();
-
-      // Slice 5 — opt-in raw receptor registry. When typed binder misses but a raw receptor
-      // is registered for the inner message type, dispatch routes there instead of dropping.
-      var rawReceptorRegistry = sp.GetService<Whizbang.Core.Messaging.IRawReceptorRegistry>();
-
-      // Slice 4 — multi-pass type binder fallback for envelope types not in the local
-      // JsonContextRegistry. Optional; transport instantiates a default when missing.
-      var typeBinder = sp.GetService<Whizbang.Core.Messaging.IMessageTypeBinder>();
-
-      // Shared discard policy — routes NoLocalConsumer drops through structured
-      // logging + the whizbang.message.skipped OTel counter (instead of WARN spam).
-      var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
-
-      // Absorbed namespaces — an unconsumed event on one of these is KEPT (persisted) at the
-      // ASB receive gate instead of dropped, mirroring the core MessageDiscardPolicy behavior.
-      var absorbedNamespaces = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()
-        ?.Value.AbsorbedNamespaces;
-
-      var transport = new AzureServiceBusTransport(
-        client, jsonOptions, options, logger, adminClient,
-        receptorRegistry: receptorRegistry,
-        perspectiveRegistry: perspectiveRegistry,
-        rawReceptorRegistry: rawReceptorRegistry,
-        typeBinder: typeBinder,
-        discardPolicy: discardPolicy,
-        absorbedNamespaces: absorbedNamespaces);
+      var transport = _createTransport(sp, jsonOptions, client, adminClient);
 
       // IMPORTANT: Initialize transport during registration to verify connectivity
       // This ensures the application won't start if Service Bus is unreachable
@@ -143,7 +189,7 @@ public static class ServiceCollectionExtensions {
       }
 #pragma warning restore S2139
 
-      return transport;
+      return _buildNamespaceRouter(sp, jsonOptions, transport, nonDefaultNamespaces);
     });
 
     // Managed-resource health: the idle ops-rate self-check DEGRADES the "transport" component
@@ -191,16 +237,149 @@ public static class ServiceCollectionExtensions {
       // live flip set, and a strategy outside the seam falls back to the default topic
       // with no flip hook — all three locked by registration tests.
       var commandInboxResolver = outboxStrategy as ICommandInboxAddressResolver;
+
+      // TransportNamespace seam (topology arc phase 8): the strategy resolves the message
+      // type's tag-bound broker namespace and stamps it on destination metadata; the transport
+      // maps the key to a client. Absent (no AddWhizbang, or no routing bindings) it is a
+      // no-op — the destination is byte-identical to today's.
+      var transportNamespaces = sp.GetService<Whizbang.Core.Tags.TransportNamespaceResolver>();
+
       return new TransportPublishStrategy(
         transport, readinessCheck,
         commandInboxResolver?.DefaultCommandInboxAddress ?? SharedTopicOutboxStrategy.DefaultInboxTopic,
         loggerFactory,
         throttleRetryOptions: null, metrics: null,
         postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
-        namespaceRouting: commandInboxResolver);
+        namespaceRouting: commandInboxResolver,
+        transportNamespaces: transportNamespaces);
     });
 
     return services;
+  }
+
+  /// <summary>
+  /// Builds one <see cref="AzureServiceBusTransport"/> over <paramref name="client"/> with every
+  /// optional collaborator the container offers. Shared by the default namespace and by each
+  /// non-default TransportNamespace, so a class namespace behaves exactly like the default one
+  /// (same discard policy, same registries, same binder) — only the broker differs.
+  /// </summary>
+  private static AzureServiceBusTransport _createTransport(
+    IServiceProvider sp,
+    System.Text.Json.JsonSerializerOptions jsonOptions,
+    Azure.Messaging.ServiceBus.ServiceBusClient client,
+    IServiceBusAdminClient? adminClient
+  ) {
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AzureServiceBusOptions>>().Value;
+    var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
+
+    // Slice 2 — receptor + perspective registries enable receive-time drop of messages
+    // this service has no consumer for. Both optional so non-Whizbang-host scenarios
+    // (test fakes, custom bootstraps) keep working without the filter.
+    var receptorRegistry = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistry>();
+    var perspectiveRegistry = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveRunnerRegistry>();
+
+    // Slice 5 — opt-in raw receptor registry. When typed binder misses but a raw receptor
+    // is registered for the inner message type, dispatch routes there instead of dropping.
+    var rawReceptorRegistry = sp.GetService<Whizbang.Core.Messaging.IRawReceptorRegistry>();
+
+    // Slice 4 — multi-pass type binder fallback for envelope types not in the local
+    // JsonContextRegistry. Optional; transport instantiates a default when missing.
+    var typeBinder = sp.GetService<Whizbang.Core.Messaging.IMessageTypeBinder>();
+
+    // Shared discard policy — routes NoLocalConsumer drops through structured
+    // logging + the whizbang.message.skipped OTel counter (instead of WARN spam).
+    var discardPolicy = sp.GetService<Whizbang.Core.Routing.IMessageDiscardPolicy>();
+
+    // Absorbed namespaces — an unconsumed event on one of these is KEPT (persisted) at the
+    // ASB receive gate instead of dropped, mirroring the core MessageDiscardPolicy behavior.
+    var absorbedNamespaces = sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()
+      ?.Value.AbsorbedNamespaces;
+
+    return new AzureServiceBusTransport(
+      client, jsonOptions, options, logger, adminClient,
+      receptorRegistry: receptorRegistry,
+      perspectiveRegistry: perspectiveRegistry,
+      rawReceptorRegistry: rawReceptorRegistry,
+      typeBinder: typeBinder,
+      discardPolicy: discardPolicy,
+      absorbedNamespaces: absorbedNamespaces);
+  }
+
+  /// <summary>
+  /// Composes the per-TransportNamespace clients behind one <see cref="ITransport"/>. Returns
+  /// <paramref name="defaultTransport"/> UNCHANGED when no non-default namespace is configured
+  /// — the locked single-namespace guarantee: no wrapper, no extra client, nothing to review
+  /// differently in a single-namespace deployment.
+  /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup initialization logging - infrequent calls during DI registration")]
+  private static ITransport _buildNamespaceRouter(
+    IServiceProvider sp,
+    System.Text.Json.JsonSerializerOptions jsonOptions,
+    AzureServiceBusTransport defaultTransport,
+    IReadOnlyDictionary<string, string> codeNamespaces
+  ) {
+    // Configuration merges OVER the code map (the post-configure idiom). The 'default' entry is
+    // deliberately ignored here: the default client is the container's ambient ServiceBusClient,
+    // which the readiness check and dead-letter drainer already share.
+    var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+    var configured = TransportNamespaceConnectionStrings.Read(
+      configuration, AzureServiceBusOptionsPostConfigure.CONFIGURATION_SECTION);
+
+    var merged = new Dictionary<string, string>(codeNamespaces, StringComparer.Ordinal);
+    foreach (var (key, value) in configured) {
+      if (!TransportNamespaces.IsDefault(key)) {
+        merged[key] = value;
+      }
+    }
+
+    if (merged.Count == 0) {
+      return defaultTransport;
+    }
+
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AzureServiceBusOptions>>().Value;
+    var clientFactory = sp.GetRequiredService<IServiceBusNamespaceClientFactory>();
+    var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
+
+    var peers = new Dictionary<string, ITransport>(StringComparer.Ordinal);
+    foreach (var (namespaceKey, namespaceConnectionString) in merged) {
+      var client = clientFactory.CreateClient(namespaceKey, namespaceConnectionString, options);
+      var adminClient = clientFactory.CreateAdminClient(namespaceKey, namespaceConnectionString, options);
+
+      var peer = _createTransport(sp, jsonOptions, client, adminClient);
+      peer.InitializeAsync().GetAwaiter().GetResult();
+      peers[namespaceKey] = peer;
+
+      if (logger?.IsEnabled(LogLevel.Information) == true) {
+        logger.LogInformation(
+          "Transport initialized for TransportNamespace '{NamespaceKey}'", namespaceKey);
+      }
+    }
+
+    // The consume-side rule: mirror the normal subscription set into every non-default
+    // namespace an actively HANDLED type resolves to. Deferred (a delegate, not a snapshot)
+    // because the receptor registry is only complete after every module initializer has run.
+    var resolver = sp.GetService<Whizbang.Core.Tags.TransportNamespaceResolver>();
+    var registryQuery = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistryQuery>();
+
+    return new NamespaceRoutingTransport(
+      defaultTransport, peers, () => _activeConsumeNamespaceKeys(resolver, registryQuery));
+  }
+
+  /// <summary>
+  /// The non-default TransportNamespaces this service consumes from: the distinct keys its
+  /// handled message types resolve to. A namespace this service only PUBLISHES to is never
+  /// subscribed, so it costs zero broker entities and zero acceptor slots.
+  /// </summary>
+  private static IReadOnlyList<string> _activeConsumeNamespaceKeys(
+    Whizbang.Core.Tags.TransportNamespaceResolver? resolver,
+    Whizbang.Core.Messaging.IReceptorRegistryQuery? registryQuery
+  ) {
+    if (resolver is not { HasBindings: true }) {
+      return [];
+    }
+
+    var handled = registryQuery?.GetHandledMessages() ?? [];
+    return resolver.ResolveConsumeNamespaceKeys(handled.Select(static h => h.MessageTypeName));
   }
 
   /// <summary>
@@ -220,7 +399,49 @@ public static class ServiceCollectionExtensions {
     string connectionString
   ) {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    return _addProvisioner(services, connectionString, _noNonDefaultNamespaces);
+  }
 
+  /// <summary>
+  /// Registers infrastructure provisioning across SEVERAL broker namespaces (transport traffic
+  /// classes, topology arc phase 8): the topology manifest is provisioned into EVERY configured
+  /// TransportNamespace, because the consume-side mirror needs the same entity set to exist in
+  /// each namespace it subscribes.
+  /// </summary>
+  /// <param name="services">The service collection to register with.</param>
+  /// <param name="namespaceConnectionStrings">
+  /// TransportNamespace key → connection string with Manage permissions. The reserved
+  /// <see cref="TransportNamespaces.DefaultKey"/> key is REQUIRED.
+  /// </param>
+  /// <returns>The service collection for chaining.</returns>
+  /// <remarks>
+  /// A <c>default</c>-only map registers exactly what the single-connection-string overload
+  /// registers — one admin client, one provisioner, no composition.
+  /// </remarks>
+  /// <exception cref="ArgumentException"><paramref name="namespaceConnectionStrings"/> is empty, lacks the default key, or carries a blank connection string.</exception>
+  /// <docs>messaging/transports/azure-service-bus#transport-namespaces</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusNamespaceRoutingRegistrationTests.cs:AddAzureServiceBusProvisioner_MultiNamespaceMap_ProvisionsEveryNamespaceAsync</tests>
+  public static IServiceCollection AddAzureServiceBusProvisioner(
+    this IServiceCollection services,
+    IReadOnlyDictionary<string, string> namespaceConnectionStrings
+  ) {
+    ArgumentNullException.ThrowIfNull(namespaceConnectionStrings);
+
+    var validated = TransportNamespaceConnectionStrings.MergeAndValidate(
+      namespaceConnectionStrings, _noNonDefaultNamespaces, nameof(namespaceConnectionStrings));
+
+    var nonDefault = validated
+      .Where(entry => !TransportNamespaces.IsDefault(entry.Key))
+      .ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+
+    return _addProvisioner(services, validated[TransportNamespaces.DefaultKey], nonDefault);
+  }
+
+  private static IServiceCollection _addProvisioner(
+    IServiceCollection services,
+    string connectionString,
+    IReadOnlyDictionary<string, string> nonDefaultNamespaces
+  ) {
     // Register admin client wrapper
     services.AddSingleton<IServiceBusAdminClient>(_ => {
       var adminClient = new ServiceBusAdministrationClient(connectionString);
@@ -242,7 +463,35 @@ public static class ServiceCollectionExtensions {
       // as subscribe-time auto-provision — resolve the transport options when configured.
       var options = sp.GetService<Microsoft.Extensions.Options.IOptions<AzureServiceBusOptions>>()?.Value;
       var driftState = sp.GetRequiredService<Whizbang.Core.Routing.TopologyDriftState>();
-      return new ServiceBusInfrastructureProvisioner(adminClient, logger, options, driftState);
+      var @default = new ServiceBusInfrastructureProvisioner(adminClient, logger, options, driftState);
+
+      // Configuration merges OVER the code map, same as the transport registration — an
+      // operator adding a traffic-class namespace gets its entities provisioned too.
+      var merged = new Dictionary<string, string>(nonDefaultNamespaces, StringComparer.Ordinal);
+      foreach (var (key, value) in TransportNamespaceConnectionStrings.Read(
+          sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(),
+          AzureServiceBusOptionsPostConfigure.CONFIGURATION_SECTION)) {
+        if (!TransportNamespaces.IsDefault(key)) {
+          merged[key] = value;
+        }
+      }
+
+      if (merged.Count == 0) {
+        return @default;
+      }
+
+      // The manifest is namespace-independent, so the SAME entity set is provisioned into each
+      // namespace — that is what makes the consume-side mirror land on real entities.
+      var provisioners = new List<IInfrastructureProvisioner>(merged.Count + 1) { @default };
+      foreach (var namespaceConnectionString in merged
+          .OrderBy(static entry => entry.Key, StringComparer.Ordinal)
+          .Select(static entry => entry.Value)) {
+        provisioners.Add(new ServiceBusInfrastructureProvisioner(
+          new ServiceBusAdminClientWrapper(new ServiceBusAdministrationClient(namespaceConnectionString)),
+          logger, options, driftState));
+      }
+
+      return new CompositeInfrastructureProvisioner(provisioners);
     });
 
     return services;

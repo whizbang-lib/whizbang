@@ -254,6 +254,21 @@ PR #513 before this decision; it stays (no revert).
 - **Phase 8 — tag-bound TransportNamespace routing** (#424 incr 2): `TagOptions.RouteNamespace`,
   `Transport.Namespaces` map, per-namespace clients + provisioning, `sys-` validation,
   single-namespace no-op guarantee.
+  STATUS 2026-08-20: DONE. Composed at the ITransport seam rather than making each transport
+  multi-client internally: one transport instance per TransportNamespace behind a
+  broker-agnostic `NamespaceRoutingTransport` in Core — so RabbitMQ got FULL parity (publish
+  routing + consume mirroring + per-namespace provisioning), not the publish-only fallback the
+  brief allowed. Each peer owns its senders/admin/acceptors, so per-namespace ops-rate
+  governors structurally cannot count each other's slots (health reports the WORST namespace,
+  never the sum — the threshold is a per-namespace budget). Single-namespace guarantee locked
+  at descriptor level; unknown namespace key degrades to default, never drops. Config:
+  Whizbang:Tags:RouteNamespace:<tag> and Whizbang:Transports:<T>:Namespaces:<key>, values
+  naming ConnectionStrings entries. Defect found+fixed en route: two connections per RabbitMQ
+  namespace (transport + provisioner) now share one. Known gaps (deliberate): readiness gates
+  the default namespace only (peer gating risked startup deadlock); no emulator-backed
+  multi-namespace integration test (the fixture exposes one namespace) — real two-namespace
+  validation belongs with phases 9/10.
+
 - **Phase 8.5 — non-count-based poison detection (CLOSES A VALIDATED GAP, in-scope by owner
   decision).** The spike (phase 6) established, and a live Standard-namespace probe CONFIRMED:
   on SESSION-enabled entities, lock loss via connection death does NOT increment DeliveryCount
