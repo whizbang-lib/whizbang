@@ -115,12 +115,26 @@ public static class SharedRabbitMqFixtureSource {
     // Generate unique database name using GUID
     var dbName = $"test_{Guid.NewGuid():N}";
 
-    // Build connection string with unique database name
-    // IMPORTANT: Use small pool sizes to avoid hitting PostgreSQL's max_connections limit
+    // Build connection string with unique database name.
+    // Pool size must cover what a HOST needs, not what looks frugal. Each fixture host runs
+    // PerspectiveWorker, OutboxDrainWorker, InboxDrainWorker, IntegrityCheckpointWorker and
+    // FailureFlushWorker concurrently against this database, plus the shared LISTEN/NOTIFY
+    // connection that is held for the host's lifetime and never returned to the pool. Npgsql keys
+    // pools by exact connection string, so everything sharing this string shares one MaxPoolSize.
+    //
+    // Measured: with the cap lifted, one host settles at ~18 concurrent connections. The cap used
+    // to be 2, so anything needing a third blocked in OpenAsync until the connection timeout and
+    // threw — surfacing in CI as CoordinatorConnectionScope timeouts, a signal-bus doorbell probe
+    // that could not round-trip (dropping every hop onto the polling fallback), and a fixture
+    // warm-up that then blew its 60s budget, failing an unrelated-looking sanity test in its
+    // [Before(Test)] hook. See PerTestDatabasePoolCapacityTests, which locks this floor.
+    //
+    // 32 leaves headroom over the measured 18 while staying far inside the container's
+    // max_connections=500 (two databases per fixture => 64 worst case).
     var builder = new NpgsqlConnectionStringBuilder(PostgresConnectionString) {
       Database = dbName,
       MinPoolSize = 0,
-      MaxPoolSize = 2,
+      MaxPoolSize = 32,
       ConnectionIdleLifetime = 5,
       ConnectionPruningInterval = 3
     };
