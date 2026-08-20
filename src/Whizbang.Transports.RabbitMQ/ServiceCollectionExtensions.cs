@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
@@ -74,11 +75,21 @@ public static class ServiceCollectionExtensions {
       options.MaxChannels
     ));
 
-    // Register infrastructure provisioner for domain topic auto-provisioning
+    // Topology ownership-drift surface (phase 5): the provisioner records findings, the
+    // health source degrades the "topology" component while any stand.
+    services.TryAddSingleton<Whizbang.Core.Routing.TopologyDriftState>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Health.IWhizbangHealthSource,
+      Whizbang.Core.Health.TopologyDriftHealthSource>());
+
+    // Register infrastructure provisioner for domain topic auto-provisioning + the
+    // manifest-driven DARK provisioning (phase 5) — queue args must mirror the transport's,
+    // so the SAME options instance flows in.
     services.AddSingleton<IInfrastructureProvisioner>(sp => {
       var pool = sp.GetRequiredService<RabbitMQChannelPool>();
       var logger = sp.GetRequiredService<ILogger<RabbitMQInfrastructureProvisioner>>();
-      return new RabbitMQInfrastructureProvisioner(pool, logger);
+      var driftState = sp.GetRequiredService<Whizbang.Core.Routing.TopologyDriftState>();
+      return new RabbitMQInfrastructureProvisioner(pool, logger, options, driftState);
     });
 
     // Register transport

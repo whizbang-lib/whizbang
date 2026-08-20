@@ -111,7 +111,12 @@ public sealed class TransportSubscriptionBuilder {
     var context = new InboxSubscriptionContext(
         _serviceName,
         _routingOptions.OwnedDomains,
-        _receptorRegistry?.GetHandledMessages() ?? []);
+        _receptorRegistry?.GetHandledMessages() ?? []) {
+      // Consumed event namespaces reuse EventSubscriptionDiscovery (perspectives + event
+      // receptors + manual subscriptions) — the composite/raw-carry surface for strategies
+      // computing "namespaces this service consumes ANY constituent from" (phase 5).
+      ConsumedEventNamespaces = _discovery.DiscoverEventNamespaces()
+    };
 
     var subscriptions = inboxStrategy.GetSubscriptions(context);
     var destinations = new List<TransportDestination>(subscriptions.Count);
@@ -216,6 +221,50 @@ public static class TransportSubscriptionBuilderExtensions {
         sp.GetService<IInboxRoutingStrategy>(),
         sp.GetService<Messaging.IReceptorRegistryQuery>()));
 
+    TryAddTopologyManifest(services, _ => serviceName);
+
     return services;
+  }
+
+  /// <summary>
+  /// TryAdds a <see cref="TopologyManifest"/> factory (topology arc phase 5): the manifest is
+  /// built from the registered strategies + receptor registry + message catalog at FIRST
+  /// resolve, so <c>TransportConsumerWorker</c> can run manifest-driven DARK provisioning
+  /// without any consumer opt-in. When routing is not configured the factory yields an empty
+  /// manifest — manifest provisioning then names nothing and provisions nothing.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="serviceNameResolver">Resolves the service name (broker subscription/queue
+  /// names derive from it).</param>
+  /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/TransportSubscriptionBuilderTests.cs:AddTransportSubscriptionBuilder_MakesTopologyManifestResolvableAsync</tests>
+  internal static void TryAddTopologyManifest(
+      IServiceCollection services,
+      Func<IServiceProvider, string> serviceNameResolver) {
+    Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions
+      .TryAddSingleton(services, sp => {
+        var serviceName = serviceNameResolver(sp);
+        var routingOptions = sp.GetService<IOptions<RoutingOptions>>()?.Value;
+        var inboxStrategy = sp.GetService<IInboxRoutingStrategy>() ?? routingOptions?.InboxStrategy;
+        var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>() ?? routingOptions?.OutboxStrategy;
+        if (routingOptions is null || inboxStrategy is null || outboxStrategy is null) {
+          // No routing configured — an empty manifest keeps manifest provisioning a no-op.
+          return new TopologyManifest(serviceName, [], []);
+        }
+
+        var registry = sp.GetService<Messaging.IReceptorRegistryQuery>();
+        var discovery = sp.GetService<EventSubscriptionDiscovery>();
+        var context = new InboxSubscriptionContext(
+            serviceName,
+            routingOptions.OwnedDomains,
+            registry?.GetHandledMessages() ?? []) {
+          ConsumedEventNamespaces = discovery?.DiscoverEventNamespaces()
+            ?? System.Collections.Frozen.FrozenSet<string>.Empty
+        };
+        var catalog = sp.GetService<IMessageTypeCatalog>()?.GetAll()
+          ?? (IReadOnlyList<MessageTypeCatalogEntry>)[];
+
+        return TopologyManifestBuilder.Build(outboxStrategy, inboxStrategy, context, catalog);
+      });
   }
 }

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -436,6 +437,56 @@ public class TransportSubscriptionBuilderTests {
     await Assert.That(capturing.LastContext!.HandledMessages.Count).IsEqualTo(1);
     await Assert.That(capturing.LastContext!.HandledMessages[0].MessageTypeName)
       .IsEqualTo("MyApp.Orders.Commands.CreateOrder");
+  }
+
+  [Test]
+  public async Task AddTransportSubscriptionBuilder_MakesTopologyManifestResolvableAsync() {
+    // Phase 5 wiring: registering the subscription builder TryAdds a TopologyManifest factory
+    // (strategies + registry + catalog at first resolve) so TransportConsumerWorker can run
+    // manifest-driven DARK provisioning without any consumer opt-in.
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("myapp.orders.commands");
+    var services = new ServiceCollection();
+    services.AddSingleton(Options.Create(routingOptions));
+    services.AddSingleton(new EventSubscriptionDiscovery(
+        Options.Create(routingOptions), TestEventNamespaceRegistry.Empty));
+    services.AddTransportSubscriptionBuilder("OrderService");
+    using var provider = services.BuildServiceProvider();
+
+    var manifest = provider.GetService<TopologyManifest>();
+
+    await Assert.That(manifest).IsNotNull();
+    await Assert.That(manifest!.ServiceName).IsEqualTo("OrderService");
+    await Assert.That(manifest.Subscriptions.Count).IsEqualTo(1)
+      .Because("the default shared strategy names exactly one subscription — zero new entities");
+    await Assert.That(manifest.Subscriptions[0].Topic).IsEqualTo("inbox");
+  }
+
+  [Test]
+  public async Task BuildInboxDestinations_ContextCarriesDiscoveredConsumedEventNamespacesAsync() {
+    // Phase 5: the subscription context's ConsumedEventNamespaces must be fed from
+    // EventSubscriptionDiscovery (perspective-consumed + manual namespaces) — the
+    // composite/raw-carry surface reuses the existing discovery, not a new enumeration.
+    var routingOptions = new RoutingOptions();
+    routingOptions.SubscribeTo("myapp.manual.events");
+    var capturing = new ContextCapturingStrategy();
+    routingOptions.Inbox.UseCustom(capturing);
+
+    var discovery = new EventSubscriptionDiscovery(
+        Options.Create(routingOptions),
+        new TestEventNamespaceRegistry(["myapp.payments.events"]));
+    var builder = new TransportSubscriptionBuilder(
+        Options.Create(routingOptions),
+        discovery,
+        "OrderService");
+
+    _ = builder.BuildInboxDestinations();
+
+    await Assert.That(capturing.LastContext).IsNotNull();
+    await Assert.That(capturing.LastContext!.ConsumedEventNamespaces).Contains("myapp.payments.events")
+      .Because("perspective-consumed event namespaces come from the generated registry via discovery");
+    await Assert.That(capturing.LastContext!.ConsumedEventNamespaces).Contains("myapp.manual.events")
+      .Because("manual SubscribeTo namespaces are consumed-constituent sources too");
   }
 
   [Test]

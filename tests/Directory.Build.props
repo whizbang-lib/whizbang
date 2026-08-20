@@ -12,5 +12,9 @@
     <!-- Suppress the minted-composite construction rule in tests: fixtures construct composites -->
     <!-- directly by design (seeding fan-out/serialization scenarios), never to publish them. -->
     <NoWarn>$(NoWarn);WHIZ150</NoWarn>
+    <!-- Suppress the command-ownership rule in tests: fixtures deliberately register multiple -->
+    <!-- receptors for one command (dispatcher fan-out, competing-consumer scenarios) inside a -->
+    <!-- single compilation that is not one service. -->
+    <NoWarn>$(NoWarn);WHIZ151</NoWarn>
   </PropertyGroup>
 </Project>

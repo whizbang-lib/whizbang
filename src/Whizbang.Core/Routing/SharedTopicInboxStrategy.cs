@@ -69,7 +69,7 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
     ArgumentNullException.ThrowIfNull(ownedDomains);
 
     // Build routing patterns from owned namespaces
-    var routingPatterns = _buildRoutingPatterns(ownedDomains);
+    var routingPatterns = BuildRoutingPatterns(ownedDomains);
 
     // Build filter expression - comma-separated list of routing patterns
     var filterExpression = string.Join(",", routingPatterns);
@@ -108,9 +108,15 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   /// Builds routing patterns for namespace-based filtering.
   /// Always includes system commands namespace.
   /// </summary>
+  /// <remarks>
+  /// Internal (topology arc phase 5): <see cref="NamespaceInboxStrategy"/> builds its system
+  /// broadcast inbox patterns from THIS builder with an empty owned set, so the broadcast inbox
+  /// carries exactly the system-command + control-plane + minting patterns the shared inbox
+  /// carries today — by construction, not by copy.
+  /// </remarks>
   /// <param name="ownedNamespaces">Namespaces owned by this service (e.g., "myapp.users.commands").</param>
   /// <returns>List of routing patterns for broker binding.</returns>
-  private static List<string> _buildRoutingPatterns(IReadOnlySet<string> ownedNamespaces) {
+  internal static List<string> BuildRoutingPatterns(IReadOnlySet<string> ownedNamespaces) {
     var patterns = new List<string> {
       // All services receive system commands
       $"{SYSTEM_COMMAND_NAMESPACE}.#",

@@ -226,11 +226,22 @@ public static class ServiceCollectionExtensions {
       return new ServiceBusAdminClientWrapper(adminClient);
     });
 
+    // Topology ownership-drift surface (phase 5): the provisioner records findings, the
+    // health source degrades the "topology" component while any stand.
+    services.TryAddSingleton<Whizbang.Core.Routing.TopologyDriftState>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Health.IWhizbangHealthSource,
+      Whizbang.Core.Health.TopologyDriftHealthSource>());
+
     // Register infrastructure provisioner
     services.AddSingleton<IInfrastructureProvisioner>(sp => {
       var adminClient = sp.GetRequiredService<IServiceBusAdminClient>();
       var logger = sp.GetRequiredService<ILogger<ServiceBusInfrastructureProvisioner>>();
-      return new ServiceBusInfrastructureProvisioner(adminClient, logger);
+      // Manifest-provisioned subscriptions must use the SAME session/lock/delivery settings
+      // as subscribe-time auto-provision — resolve the transport options when configured.
+      var options = sp.GetService<Microsoft.Extensions.Options.IOptions<AzureServiceBusOptions>>()?.Value;
+      var driftState = sp.GetRequiredService<Whizbang.Core.Routing.TopologyDriftState>();
+      return new ServiceBusInfrastructureProvisioner(adminClient, logger, options, driftState);
     });
 
     return services;

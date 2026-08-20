@@ -274,6 +274,23 @@ public sealed class InboxRoutingOptionsBuilder {
   }
 
   /// <summary>
+  /// Uses per-namespace command inboxes (topology arc phase 5): one <c>inbox.&lt;ns&gt;</c>
+  /// subscription per handled command contract namespace, plus the system broadcast inbox
+  /// (<c>inbox.whizbang</c>), plus — transitionally, until the shared-inbox retirement —
+  /// today's shared-inbox subscription unchanged. NOT the default; the default-flip decision
+  /// rides the publisher flip (phase 6/7).
+  /// </summary>
+  /// <param name="sharedInboxTopic">Topic for the transitional shared-inbox subscription.
+  /// Default: "inbox" (must match the publishers' shared inbox until the flip).</param>
+  /// <returns>The parent options for chaining.</returns>
+  /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:Inbox_UseNamespaceInboxes_SetsNamespaceStrategyAsync</tests>
+  public RoutingOptions UseNamespaceInboxes(string sharedInboxTopic = "inbox") {
+    _parent.SetInboxStrategy(new NamespaceInboxStrategy(sharedInboxTopic));
+    return _parent;
+  }
+
+  /// <summary>
   /// Uses domain-specific inbox topics (one inbox topic per domain).
   /// Each domain has its own inbox topic.
   /// </summary>

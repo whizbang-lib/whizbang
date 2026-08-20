@@ -2062,19 +2062,13 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     await _adminClient.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
   }
 
-  /// <summary>Creates the subscription — honoring EnableSessions for the RequiresSession flag —
-  /// and logs at Information when enabled.</summary>
-  private async Task _createSubscriptionAsync(
-      string topicName, string subscriptionName, CancellationToken cancellationToken) {
-    if (_logger.IsEnabled(LogLevel.Information)) {
-      _logger.LogInformation("Creating subscription {TopicName}/{SubscriptionName}", topicName, subscriptionName);
-    }
-    if (_options.EnableSessions) {
-      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, requiresSession: true, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
-    } else {
-      await _adminClient!.CreateSubscriptionAsync(topicName, subscriptionName, _options.MaxDeliveryAttempts, _options.SubscriptionLockDuration, cancellationToken);
-    }
-  }
+  /// <summary>Creates the subscription — honoring EnableSessions for the RequiresSession flag.
+  /// Delegates to <see cref="ServiceBusEntityProvisioning"/>, the ONE code path shared with the
+  /// manifest-driven DARK provisioning (phase 5) so settings can never drift.</summary>
+  private Task _createSubscriptionAsync(
+      string topicName, string subscriptionName, CancellationToken cancellationToken) =>
+    ServiceBusEntityProvisioning.CreateSubscriptionAsync(
+      _adminClient!, _options, topicName, subscriptionName, _logger, cancellationToken);
 
   /// <summary>
   /// Applies SqlFilter rules for routing pattern matching.
@@ -2089,78 +2083,20 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatterns_AppliesSqlFilterRuleAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternWithBareWildcard_TranslatesToPercentAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusProvisioningPathTests.cs:SubscribeAsync_RoutingPatternRuleCreationFails_ProceedsWithoutFilterAsync</tests>
-  private async Task _applyRoutingPatternFilterAsync(
+  private Task _applyRoutingPatternFilterAsync(
     string topicName,
     string subscriptionName,
     IEnumerable<string> routingPatterns,
     CancellationToken cancellationToken) {
 
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
-      return;
+      return Task.CompletedTask;
     }
 
-    // Build SQL filter expression
-    // "ns1.#,ns2.#" → "sys.Label LIKE 'ns1.%' OR sys.Label LIKE 'ns2.%'"
-    // NOTE: Azure Service Bus SqlFilter uses sys.Label for the Subject/Label property,
-    // NOT [Subject]. The [Subject] syntax doesn't work for SqlRuleFilter expressions.
-    // See: https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-messaging-sql-filter
-    var likePatterns = routingPatterns
-      .Select(p => p.Replace(".#", ".%").Replace(".*", ".%").Replace("#", "%").Replace("*", "%"))
-      .Select(p => $"sys.Label LIKE '{p}'");
-
-    var sqlExpression = string.Join(" OR ", likePatterns);
-
-    const string ruleName = "RoutingPatternFilter";
-
-    try {
-      // Idempotency: when the subscription's rules already converge on exactly the desired
-      // SqlFilter, leave them alone. Deleting-then-recreating opens a brief no-rule window in
-      // which published messages match nothing and are silently dropped — resubscribes (deploy,
-      // connection recovery, receive-liveness watchdog) must not reopen that window for a no-op.
-      var existingRules = new List<RuleProperties>();
-      await foreach (var rule in _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken)) {
-        existingRules.Add(rule);
-      }
-      if (existingRules.Count == 1
-          && existingRules[0].Name == ruleName
-          && existingRules[0].Filter is SqlRuleFilter existingFilter
-          && existingFilter.SqlExpression == sqlExpression) {
-        if (_logger.IsEnabled(LogLevel.Debug)) {
-          _logger.LogDebug(
-            "[SqlFilter] Rule already correct on {TopicName}/{SubscriptionName}; skipping re-application",
-            topicName,
-            subscriptionName);
-        }
-        return;
-      }
-
-      // Delete existing rules (including $Default)
-      var deletedRules = new List<string>();
-      foreach (var rule in existingRules) {
-        await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
-        deletedRules.Add(rule.Name);
-      }
-
-      // Create SqlFilter rule
-      var ruleOptions = new CreateRuleOptions(ruleName, new SqlRuleFilter(sqlExpression));
-      await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
-
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug(
-          "[SqlFilter] Deleted {RuleCount} existing rules and applied SqlFilter '{SqlExpression}' to {TopicName}/{SubscriptionName}",
-          deletedRules.Count,
-          sqlExpression,
-          topicName,
-          subscriptionName);
-      }
-    } catch (Exception ex) {
-      _logger.LogWarning(
-        ex,
-        "Failed to apply routing pattern filter to {TopicName}/{SubscriptionName}. Proceeding without filter.",
-        topicName,
-        subscriptionName
-      );
-    }
+    // Delegates to ServiceBusEntityProvisioning — the ONE code path shared with the
+    // manifest-driven DARK provisioning (phase 5) so filter shapes can never drift.
+    return ServiceBusEntityProvisioning.ApplyRoutingPatternFilterAsync(
+      _adminClient, topicName, subscriptionName, routingPatterns, _logger, cancellationToken);
   }
 
   #endregion
@@ -2192,24 +2128,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_EnsuresTopicExistsAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_TopicAlreadyExists_SkipsCreationAsync</tests>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithAdminClient_RaceCondition_HandlesGracefullyAsync</tests>
-  private async Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
+  private Task _ensureTopicExistsViaAdminAsync(string topicName, CancellationToken cancellationToken) {
     if (_adminClient == null || !_options.AutoProvisionInfrastructure) {
-      return;
+      return Task.CompletedTask;
     }
 
-    try {
-      if (!await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
-        await _adminClient.CreateTopicAsync(topicName, cancellationToken);
-        if (_logger.IsEnabled(LogLevel.Information)) {
-          _logger.LogInformation("Auto-created topic '{TopicName}'", topicName);
-        }
-      }
-    } catch (Azure.RequestFailedException ex) when (ex.Status == 409) {
-      // Race condition — another instance created it, safe to ignore
-      if (_logger.IsEnabled(LogLevel.Debug)) {
-        _logger.LogDebug(ex, "Topic '{TopicName}' already exists (race condition)", topicName);
-      }
-    }
+    // Delegates to ServiceBusEntityProvisioning — the ONE code path shared with the
+    // manifest-driven DARK provisioning (phase 5).
+    return ServiceBusEntityProvisioning.EnsureTopicExistsAsync(
+      _adminClient, topicName, _logger, cancellationToken);
   }
 
   private async Task<ServiceBusSender> _getOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {

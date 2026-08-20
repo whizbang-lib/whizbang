@@ -137,6 +137,31 @@ public interface IServiceBusAdminClient {
     string subscriptionName,
     CancellationToken cancellationToken = default);
 
+  /// <summary>
+  /// Enumerates every subscription on a topic. Used by the topology ownership-drift check
+  /// (topology arc phase 5): a second service's subscription on a command inbox entity this
+  /// service is about to own is a modeling error the provisioning path must surface.
+  /// </summary>
+  /// <remarks>
+  /// Default implementation yields nothing — pre-phase-5 custom implementations keep
+  /// compiling, at the cost of the drift check being silently inert for them until they
+  /// override. <see cref="ServiceBusAdminClientWrapper"/> overrides with the real enumeration.
+  /// </remarks>
+  /// <param name="topicName">The topic name.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Async enumerable of every subscription's properties on the topic.</returns>
+  /// <docs>fundamentals/dispatcher/routing#ownership-drift</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/ServiceBusInfrastructureProvisionerManifestTests.cs:ProvisionManifest_OwnedCommandInbox_ForeignSubscription_RecordsDriftAsync</tests>
+  IAsyncEnumerable<SubscriptionProperties> GetSubscriptionsAsync(
+    string topicName,
+    CancellationToken cancellationToken = default) => _emptySubscriptionsAsync();
+
+  /// <summary>Empty enumeration backing the <see cref="GetSubscriptionsAsync"/> default.</summary>
+  private static async IAsyncEnumerable<SubscriptionProperties> _emptySubscriptionsAsync() {
+    await Task.CompletedTask;
+    yield break;
+  }
+
   #endregion
 
   #region Rule Management

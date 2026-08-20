@@ -236,6 +236,68 @@ public class TopologyManifestTests {
 
   #endregion
 
+  #region Provisioning surface (topology arc phase 5)
+
+  [Test]
+  public async Task Build_StampsServiceNameFromContextAsync() {
+    // The provisioning path derives broker subscription/queue names from the service name
+    // (ASB: ServiceBusSubscriptionNameHelper, RabbitMQ: "{service}-{exchange}") — the manifest
+    // must carry it so ProvisionManifestAsync needs nothing beyond the manifest itself.
+    var manifest = TopologyManifestBuilder.Build(
+        new SharedTopicOutboxStrategy(), new SharedTopicInboxStrategy(), _context(), []);
+
+    await Assert.That(manifest.ServiceName).IsEqualTo("OrderService");
+  }
+
+  [Test]
+  public async Task DefaultSharedStrategy_Manifest_NamesExactlyTodaysEntitiesAsync() {
+    // DARK guarantee: with the DEFAULT SharedTopicInboxStrategy the manifest names exactly
+    // today's entities — one shared-inbox subscription and only strategy-named publish
+    // destinations. Zero new entities for existing consumers.
+    var outbox = new SharedTopicOutboxStrategy();
+    var inbox = new SharedTopicInboxStrategy();
+    var context = _context("outboxtesttypes.orders.commands");
+    var catalog = new[] {
+      _entry(typeof(OutboxTestTypes.Orders.Commands.CreateOrder), "command"),
+      _entry(typeof(OutboxTestTypes.Orders.Events.OrderCreated), "event")
+    };
+
+    var manifest = TopologyManifestBuilder.Build(outbox, inbox, context, catalog);
+
+    await Assert.That(manifest.Subscriptions.Count).IsEqualTo(1)
+      .Because("the default topology has exactly one inbox subscription — the shared inbox");
+    await Assert.That(manifest.Subscriptions[0].Topic).IsEqualTo("inbox");
+    var topics = manifest.PublishDestinations.Select(d => d.Address).Distinct().ToList();
+    await Assert.That(topics.Count).IsEqualTo(2);
+    await Assert.That(topics).Contains("inbox");
+    await Assert.That(topics).Contains("outboxtesttypes.orders.events");
+    foreach (var topic in topics) {
+      await Assert.That(topic.StartsWith("inbox.", StringComparison.Ordinal)).IsFalse()
+        .Because("no per-namespace inbox entity may appear for a default-strategy consumer");
+    }
+  }
+
+  [Test]
+  public async Task NamespaceStrategy_Manifest_ListsPerNamespaceEntitiesAsync() {
+    // Opt-in counterpart of the DARK guarantee: with NamespaceInboxStrategy the manifest lists
+    // the per-namespace entities (they sit idle until phase 6 flips publishers).
+    var inbox = new NamespaceInboxStrategy();
+    var context = new InboxSubscriptionContext(
+        "OrderService",
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.commands" },
+        [new Whizbang.Core.Messaging.HandledMessageInfo(
+            "OutboxTestTypes.Orders.Commands.CreateOrder", "outboxtesttypes.orders.commands", MessageKind.Command)]);
+
+    var manifest = TopologyManifestBuilder.Build(new SharedTopicOutboxStrategy(), inbox, context, []);
+
+    var topics = manifest.Subscriptions.Select(s => s.Topic).ToList();
+    await Assert.That(topics).Contains("inbox.outboxtesttypes.orders.commands");
+    await Assert.That(topics).Contains(NamespaceInboxStrategy.SystemBroadcastInboxTopic);
+    await Assert.That(topics).Contains("inbox");
+  }
+
+  #endregion
+
   #region Validation
 
   [Test]

@@ -290,6 +290,28 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
 
           _logger.LogDebug("Infrastructure provisioning completed");
         }
+
+        // Manifest-driven DARK provisioning (topology arc phase 5): when a TopologyManifest is
+        // resolvable, create every entity it names — publish destinations AND subscription
+        // entities — before subscribing, so new entities (per-namespace command inboxes) exist
+        // and sit idle until publishers flip to them. No manifest ⇒ no change for existing
+        // consumers; the default provisioner implementation is a no-op.
+        if (provisioner != null) {
+          var manifest = scope.ServiceProvider.GetService<TopologyManifest>();
+          if (manifest != null) {
+            if (_logger.IsEnabled(LogLevel.Debug)) {
+              _logger.LogDebug(
+                "Provisioning topology manifest for '{ServiceName}' ({PublishCount} publish destinations, {SubscriptionCount} subscriptions)",
+                manifest.ServiceName,
+                manifest.PublishDestinations.Count,
+                manifest.Subscriptions.Count);
+            }
+
+            await provisioner.ProvisionManifestAsync(manifest, stoppingToken);
+
+            _logger.LogDebug("Topology manifest provisioning completed");
+          }
+        }
       }
 
       // Subscribe to all destinations with retry

@@ -149,6 +149,30 @@ PR #513 before this decision; it stays (no revert).
   binding per (service, ns)); existence cache; boot management-op budget assert; ownership
   analyzer ships here (+ startup drift check — census says build-time visibility alone is NOT
   sufficient for composite/raw-carry envelope routing, the spec's flagged highest-risk mapping).
+  **STATUS: implemented on feature/transport-topology (uncommitted).**
+  `NamespaceInboxStrategy` (opt-in via `Inbox.UseNamespaceInboxes()`, NOT default): per
+  DISTINCT handled COMMAND contract-ns `inbox.<ns>` (dedup, lowercase, `OwnedCommandInbox`
+  metadata marker) + system broadcast inbox `inbox.whizbang` (patterns from
+  `SharedTopicInboxStrategy.BuildRoutingPatterns(∅)` — system/control/minting by construction;
+  whizbang.core.* subtree NEVER gets per-ns inboxes, minted-subject admit lock) + transitional
+  shared subscription bit-identical to today (retires phase 7). Composite/raw-carry surface:
+  `InboxSubscriptionContext.ConsumedEventNamespaces` (fed from EventSubscriptionDiscovery —
+  reused, not duplicated) + `ComputeConsumedNamespaces` union. DARK provisioning:
+  `TopologyManifest` gained `ServiceName`; `IInfrastructureProvisioner.ProvisionManifestAsync`
+  DIM (no-op default); manifest TryAdd factory (AddTransportConsumer both overloads +
+  AddTransportSubscriptionBuilder); worker calls it before subscribing. ASB: shared
+  `ServiceBusEntityProvisioning` (transport's ensure-topic/create-subscription/SqlFilter
+  internals extracted; both paths delegate — settings parity by construction), per-process
+  existence caches, boot op budget ≤2/topic+4/subscription+1/owned-inbox asserted, zero ops on
+  re-provision. RMQ: shared `RabbitMQEntityProvisioning` (exchange+DLX/DLQ+queue-args+bindings),
+  same cache/budget locks via FakeChannel declare-counters. Ownership: WHIZ151 (Error,
+  CompilationEnd) — duplicate command INBOX receptors (lifecycle-only/[FireAt] exempt,
+  System-kind exempt, kind detection shared with the registry generator via
+  `CompileTimeMessageClassification`); runtime cross-service check = provisioning drift
+  detection (ASB: `GetSubscriptionsAsync` enumeration on owned inboxes; RMQ: best-effort
+  exchange-exists-without-our-queue passive probe) → `TopologyDriftState` +
+  `TopologyDriftHealthSource` ("topology" component, Degraded) + structured error log.
+  DARK guarantee locked: default shared-strategy manifest names exactly today's entities.
 - **Phase 6 — publisher flip per contract namespace** (#427 migration 2). E2E locks ride
   along: dual-delivery idempotency, flip-in-flight, rollback, per-namespace DLQ + replay,
   cross-namespace interleave ordering lock (the deliberate semantic change), **O(3N) broker-op

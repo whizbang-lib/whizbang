@@ -991,105 +991,13 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       cancellationToken: cancellationToken
     );
 
-    await channel.ExchangeDeclareAsync(
-      exchange: exchangeName,
-      type: "topic",
-      durable: true,
-      autoDelete: false,
-      arguments: null,
-      passive: false,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
-
-    if (_options.AutoDeclareDeadLetterExchange) {
-      await _declareDeadLetterExchangeAsync(channel, exchangeName, queueName, cancellationToken);
-    }
-
-    var queueArgs = new Dictionary<string, object?>();
-    if (_options.AutoDeclareDeadLetterExchange) {
-      queueArgs["x-dead-letter-exchange"] = $"{exchangeName}.dlx";
-    }
-    if (_options.EnableSingleActiveConsumer) {
-      queueArgs["x-single-active-consumer"] = true;
-    }
-
-    await channel.QueueDeclareAsync(
-      queue: queueName,
-      durable: true,
-      exclusive: false,
-      autoDelete: false,
-      arguments: queueArgs,
-      passive: false,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
-
-    foreach (var pattern in routingPatterns) {
-      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-        _logger.LogDebug(
-          "Binding queue {QueueName} to exchange {ExchangeName} with routing pattern {Pattern}",
-          queueName,
-          exchangeName,
-          pattern
-        );
-      }
-
-      await channel.QueueBindAsync(
-        queue: queueName,
-        exchange: exchangeName,
-        routingKey: pattern,
-        arguments: null,
-        noWait: false,
-        cancellationToken: cancellationToken
-      );
-    }
+    // Delegates to RabbitMQEntityProvisioning — the ONE code path shared with the
+    // manifest-driven DARK provisioning (phase 5) so exchange/queue arguments and binding
+    // shapes can never drift between subscribe-time and boot-time provisioning.
+    await RabbitMQEntityProvisioning.DeclareSubscriptionInfrastructureAsync(
+      channel, _options, exchangeName, queueName, routingPatterns, _logger, cancellationToken);
 
     return channel;
-  }
-
-  /// <summary>
-  /// Declares dead letter exchange and queue for a given exchange/queue pair.
-  /// </summary>
-  private static async Task _declareDeadLetterExchangeAsync(
-    IChannel channel,
-    string exchangeName,
-    string queueName,
-    CancellationToken cancellationToken
-  ) {
-    var dlxName = $"{exchangeName}.dlx";
-    var dlqName = $"{queueName}.dlq";
-
-    await channel.ExchangeDeclareAsync(
-      exchange: dlxName,
-      type: "fanout",
-      durable: true,
-      autoDelete: false,
-      arguments: null,
-      passive: false,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
-
-    await channel.QueueDeclareAsync(
-      queue: dlqName,
-      durable: true,
-      exclusive: false,
-      autoDelete: false,
-      arguments: null,
-      passive: false,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
-
-    await channel.QueueBindAsync(
-      queue: dlqName,
-      exchange: dlxName,
-      routingKey: "",
-      arguments: null,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
   }
 
   /// <summary>

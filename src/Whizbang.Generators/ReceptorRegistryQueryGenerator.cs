@@ -37,17 +37,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string IPERSPECTIVE_WITH_ACTIONS_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
   private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Minting.ICompositeEvent";
   private const string ICOLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
-  private const string FIREAT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
   private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
-  private const string MESSAGE_KIND_ATTRIBUTE = "Whizbang.Core.Routing.MessageKindAttribute";
-  private const string ICOMMAND_INTERFACE = "global::Whizbang.Core.ICommand";
-  private const string IEVENT_INTERFACE = "global::Whizbang.Core.IEvent";
-  private const string IQUERY_INTERFACE = "global::Whizbang.Core.IQuery";
-
-  /// <summary>The framework system namespace subtree whose types classify as MessageKind.System.
-  /// Mirror of <c>Whizbang.Core.Routing.MessageKindDetector</c>'s framework-system tier.</summary>
-  private const string FRAMEWORK_SYSTEM_NAMESPACE = "Whizbang.Core.Commands.System";
 
   /// <summary>The lifecycle stages we expose lookups for. Mirror of <c>Whizbang.Core.Messaging.LifecycleStage</c> values
   /// that the receive boundary cares about (PreInbox + PostInbox).</summary>
@@ -155,132 +146,15 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     var messageType = messageTypeSymbol
       .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
       .Replace("global::", "");
-    var contractNamespace = _contractNamespaceOf(messageTypeSymbol);
-    var kind = _detectMessageKind(messageTypeSymbol);
+    // Classification is shared with the ownership analyzer (WHIZ151) via
+    // CompileTimeMessageClassification — one mirror, no drift.
+    var contractNamespace = CompileTimeMessageClassification.ContractNamespaceOf(messageTypeSymbol);
+    var kind = CompileTimeMessageClassification.DetectMessageKind(messageTypeSymbol);
 
-    var stages = ImmutableArray.CreateBuilder<string>();
-    foreach (var attr in classSymbol.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() != FIREAT_ATTRIBUTE) {
-        continue;
-      }
-      if (attr.ConstructorArguments.Length == 0) {
-        continue;
-      }
-      var arg = attr.ConstructorArguments[0];
-      if (arg.Type is INamedTypeSymbol enumType
-          && enumType.Name == "LifecycleStage"
-          && arg.Value is int v) {
-        var member = enumType.GetMembers().OfType<IFieldSymbol>()
-          .FirstOrDefault(f => f.HasConstantValue && System.Convert.ToInt32(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture) == v);
-        if (member is not null) {
-          stages.Add(member.Name);
-        }
-      }
-    }
+    var stages = CompileTimeMessageClassification.FireAtStagesOf(classSymbol);
+    var isInboxHandler = CompileTimeMessageClassification.IsInboxHandler(stages);
 
-    // A receptor with no [FireAt] is a direct inbox handler that fires at PostInboxDetached/
-    // PostInboxInline by default (transport path) or LocalImmediateDetached (local path).
-    // One with [FireAt(PreInboxInline)] is a lifecycle receptor at that stage.
-    // Receptors at PreInbox/PostInbox stages are NOT inbox handlers — they're lifecycle hooks.
-    // Receptors with no stages OR with stages unrelated to PreInbox/PostInbox count as inbox handlers.
-    var hasOnlyLifecycleStages = stages.Count > 0
-      && stages.All(s => s.StartsWith("PreInbox", System.StringComparison.Ordinal)
-                      || s.StartsWith("PostInbox", System.StringComparison.Ordinal)
-                      || s.StartsWith("PrePerspective", System.StringComparison.Ordinal)
-                      || s.StartsWith("PostPerspective", System.StringComparison.Ordinal)
-                      || s.StartsWith("PostAllPerspectives", System.StringComparison.Ordinal)
-                      || s.StartsWith("PostLifecycle", System.StringComparison.Ordinal));
-    var isInboxHandler = !hasOnlyLifecycleStages;
-
-    return new ReceptorRegistryEntry(messageType, stages.ToImmutable(), isInboxHandler, contractNamespace, kind);
-  }
-
-  /// <summary>
-  /// The message type's contract namespace, lowercase-invariant to match routing-key
-  /// conventions (OwnDomains patterns, broker routing keys). Empty for global-namespace types.
-  /// </summary>
-  private static string _contractNamespaceOf(ITypeSymbol messageType) {
-    var ns = messageType.ContainingNamespace;
-    return ns is null || ns.IsGlobalNamespace
-      ? string.Empty
-      : ns.ToDisplayString().ToLowerInvariant();
-  }
-
-  /// <summary>
-  /// Compile-time mirror of <c>Whizbang.Core.Routing.MessageKindDetector</c>'s priority
-  /// rules: [MessageKind] attribute, framework system namespace, marker interface,
-  /// namespace convention, type-name suffix. Returns the MessageKind member NAME.
-  /// </summary>
-  private static string _detectMessageKind(ITypeSymbol messageType) {
-    // Priority 1: [MessageKind] attribute (explicit override)
-    foreach (var attr in messageType.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() != MESSAGE_KIND_ATTRIBUTE
-          || attr.ConstructorArguments.Length == 0) {
-        continue;
-      }
-      var arg = attr.ConstructorArguments[0];
-      if (arg.Type is INamedTypeSymbol enumType && arg.Value is int v) {
-        var member = enumType.GetMembers().OfType<IFieldSymbol>()
-          .FirstOrDefault(f => f.HasConstantValue && System.Convert.ToInt32(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture) == v);
-        if (member is not null) {
-          return member.Name;
-        }
-      }
-    }
-
-    // Priority 2: framework system namespace subtree (outranks interfaces — framework
-    // system commands implement ICommand yet are broadcast/run-control traffic)
-    var ns = messageType.ContainingNamespace is { IsGlobalNamespace: false } containing
-      ? containing.ToDisplayString()
-      : string.Empty;
-    if (ns == FRAMEWORK_SYSTEM_NAMESPACE
-        || ns.StartsWith(FRAMEWORK_SYSTEM_NAMESPACE + ".", System.StringComparison.Ordinal)) {
-      return "System";
-    }
-
-    // Priority 3: marker interfaces
-    foreach (var iface in messageType.AllInterfaces) {
-      var display = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-      if (display == ICOMMAND_INTERFACE) {
-        return "Command";
-      }
-      if (display == IEVENT_INTERFACE) {
-        return "Event";
-      }
-      if (display == IQUERY_INTERFACE) {
-        return "Query";
-      }
-    }
-
-    // Priority 4: namespace convention segments
-    foreach (var segment in ns.Split('.')) {
-      if (string.Equals(segment, "Commands", System.StringComparison.OrdinalIgnoreCase)) {
-        return "Command";
-      }
-      if (string.Equals(segment, "Events", System.StringComparison.OrdinalIgnoreCase)) {
-        return "Event";
-      }
-      if (string.Equals(segment, "Queries", System.StringComparison.OrdinalIgnoreCase)) {
-        return "Query";
-      }
-    }
-
-    // Priority 5: type-name suffix
-    var name = messageType.Name;
-    if (name.EndsWith("Command", System.StringComparison.Ordinal)) {
-      return "Command";
-    }
-    if (name.EndsWith("Query", System.StringComparison.Ordinal)) {
-      return "Query";
-    }
-    if (name.EndsWith("Event", System.StringComparison.Ordinal)
-        || name.EndsWith("Created", System.StringComparison.Ordinal)
-        || name.EndsWith("Updated", System.StringComparison.Ordinal)
-        || name.EndsWith("Deleted", System.StringComparison.Ordinal)) {
-      return "Event";
-    }
-
-    return "Unknown";
+    return new ReceptorRegistryEntry(messageType, stages, isInboxHandler, contractNamespace, kind);
   }
 
   // ===== Discovery: perspectives =====

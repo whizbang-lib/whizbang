@@ -60,4 +60,28 @@ public interface IInfrastructureProvisioner {
   Task EnsureTopicExistsAsync(
     string topicName,
     CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+  /// <summary>
+  /// Provisions every entity named by a <see cref="Whizbang.Core.Routing.TopologyManifest"/> —
+  /// the manifest-driven DARK provisioning seam (topology arc phase 5): each publish
+  /// destination and each subscription entity is created at startup, before any subscription
+  /// is opened, so new entities (e.g. per-namespace command inboxes) exist and sit idle until
+  /// publishers flip to them.
+  /// </summary>
+  /// <param name="manifest">The service's topology manifest (publish destinations +
+  /// subscription set + service name for broker-name derivation).</param>
+  /// <param name="cancellationToken">Cancellation token to cancel the provisioning.</param>
+  /// <returns>Task that completes when provisioning is finished.</returns>
+  /// <remarks>
+  /// Default implementation is a NO-OP: custom provisioners written before the topology arc
+  /// implement only the owned-domains surface and keep their existing behavior; they opt into
+  /// manifest provisioning by overriding. Implementations must be idempotent and should cache
+  /// existence so a re-provision performs no management operations.
+  /// </remarks>
+  /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Transports/InfrastructureProvisionerTests.cs:ProvisionManifestAsync_DefaultImplementation_IsNoOpAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerProvisioningTests.cs:ExecuteAsync_WithManifestResolvable_CallsProvisionManifestBeforeSubscriptionsAsync</tests>
+  Task ProvisionManifestAsync(
+    Whizbang.Core.Routing.TopologyManifest manifest,
+    CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

@@ -34,6 +34,10 @@ public sealed record TopologyPublishDestination(
 /// no entity the strategies didn't name, and recomputing from the same inputs yields an
 /// identical manifest (deterministic ordering, deduplicated entries).
 /// </remarks>
+/// <param name="ServiceName">The service the manifest was computed for (phase 5): the
+/// provisioning path derives broker subscription/queue names from it (ASB:
+/// <c>ServiceBusSubscriptionNameHelper</c>, RabbitMQ: <c>{service}-{exchange}</c>), so
+/// <c>ProvisionManifestAsync</c> needs nothing beyond the manifest itself.</param>
 /// <param name="PublishDestinations">Publish projections, deduplicated by
 /// (type name, kind) and ordered ordinally by type name then kind.</param>
 /// <param name="Subscriptions">The subscription set exactly as the inbox strategy
@@ -41,7 +45,9 @@ public sealed record TopologyPublishDestination(
 /// <docs>fundamentals/dispatcher/routing#topology-manifest</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_RecomputedFromSameInputs_IsIdenticalAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_NamesNoEntityTheStrategiesDidntNameAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Routing/TopologyManifestTests.cs:Build_StampsServiceNameFromContextAsync</tests>
 public sealed record TopologyManifest(
+  string ServiceName,
   IReadOnlyList<TopologyPublishDestination> PublishDestinations,
   IReadOnlyList<InboxSubscription> Subscriptions
 );
@@ -112,7 +118,7 @@ public static class TopologyManifestBuilder {
 
     var subscriptions = inboxStrategy.GetSubscriptions(context);
 
-    return new TopologyManifest(published, subscriptions);
+    return new TopologyManifest(context.ServiceName, published, subscriptions);
   }
 
   /// <summary>

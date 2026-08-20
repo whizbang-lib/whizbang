@@ -181,6 +181,12 @@ public static class TransportConsumerBuilderExtensions {
       return options;
     });
 
+    // Manifest-driven DARK provisioning wiring (topology arc phase 5): make the
+    // TopologyManifest resolvable so TransportConsumerWorker can provision every entity the
+    // strategies name — built from the registered strategies + registry + catalog at first
+    // resolve. TryAdd: harmless when AddTransportSubscriptionBuilder already registered one.
+    TransportSubscriptionBuilderExtensions.TryAddTopologyManifest(builder.Services, _getServiceName);
+
     // Register OrderedStreamProcessor (required by TransportConsumerWorker)
     builder.Services.TryAddSingleton<OrderedStreamProcessor>();
 
@@ -324,6 +330,12 @@ public static class TransportConsumerBuilderExtensions {
 
       return options;
     });
+
+    // Manifest-driven DARK provisioning wiring (topology arc phase 5): make the
+    // TopologyManifest resolvable so TransportConsumerWorker can provision every entity the
+    // strategies name — built from the registered strategies + registry + catalog at first
+    // resolve. TryAdd: harmless when AddTransportSubscriptionBuilder already registered one.
+    TransportSubscriptionBuilderExtensions.TryAddTopologyManifest(builder.Services, _getServiceName);
 
     // Register OrderedStreamProcessor (required by TransportConsumerWorker)
     builder.Services.TryAddSingleton<OrderedStreamProcessor>();

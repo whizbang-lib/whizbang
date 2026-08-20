@@ -128,6 +128,15 @@ public sealed class ServiceBusAdminClientWrapper : IServiceBusAdminClient {
     return response.Value.ActiveMessageCount;
   }
 
+  /// <inheritdoc />
+  public async IAsyncEnumerable<SubscriptionProperties> GetSubscriptionsAsync(
+    string topicName,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+    await foreach (var subscription in _adminClient.GetSubscriptionsAsync(topicName, cancellationToken)) {
+      yield return subscription;
+    }
+  }
+
   #endregion
 
   #region Rule Management

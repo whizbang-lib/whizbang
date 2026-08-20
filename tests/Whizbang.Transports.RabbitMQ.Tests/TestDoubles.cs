@@ -1,5 +1,6 @@
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using RabbitMQ.Client.Exceptions;
 
 #pragma warning disable CS0067 // Event is never used (test doubles)
 #pragma warning disable CA1822 // Member does not access instance data (test doubles)
@@ -76,6 +77,23 @@ internal class FakeChannel : IChannel {
   // Track exchange declarations with parameters for provisioning tests
   public List<(string Exchange, string Type, bool Durable, bool AutoDelete)> DeclaredExchanges { get; } = [];
 
+  // Declare-counters (phase 5): boot management-op budget assertions for the manifest
+  // provisioning path — every declare/bind/passive-probe increments its counter.
+  public int ExchangeDeclareCount { get; private set; }
+  public int QueueDeclareCount { get; private set; }
+  public int QueueBindCount { get; private set; }
+  public int PassiveExchangeDeclareCount { get; private set; }
+  public int PassiveQueueDeclareCount { get; private set; }
+  public int TotalDeclareOpCount =>
+    ExchangeDeclareCount + QueueDeclareCount + QueueBindCount
+    + PassiveExchangeDeclareCount + PassiveQueueDeclareCount;
+
+  // Broker-state simulation for passive declares (phase-5 ownership drift probe): passive
+  // declares succeed only for entities in these sets; a missing entity throws
+  // OperationInterruptedException, exactly like a real broker (which also closes the channel).
+  public HashSet<string> ExistingExchanges { get; init; } = [];
+  public HashSet<string> ExistingQueues { get; init; } = [];
+
   // Track method calls for SubscribeAsync tests
   public bool QueueDeclareAsyncCalled { get; private set; }
   public bool QueueBindAsyncCalled { get; private set; }
@@ -133,7 +151,9 @@ internal class FakeChannel : IChannel {
   public Task ExchangeDeclareAsync(string exchange, string type, bool durable, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
     cancellationToken.ThrowIfCancellationRequested();
     ExchangeDeclareAsyncCalled = true;
+    ExchangeDeclareCount++;
     DeclaredExchanges.Add((exchange, type, durable, autoDelete));
+    ExistingExchanges.Add(exchange);
     return Task.CompletedTask;
   }
 
@@ -158,14 +178,18 @@ internal class FakeChannel : IChannel {
   // Implement subscription methods for SubscribeAsync tests
   public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
     QueueDeclareAsyncCalled = true;
+    QueueDeclareCount++;
     LastDeclaredQueueName = queue;
     LastQueueDeclareArguments = arguments;
+    QueueDeclareArgumentsByQueue[queue] = arguments;
+    ExistingQueues.Add(queue);
     // Return a fake QueueDeclareOk
     return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
   }
 
   public virtual Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
     QueueBindAsyncCalled = true;
+    QueueBindCount++;
     QueueBindings.Add((queue, exchange, routingKey));
     return Task.CompletedTask;
   }
@@ -199,6 +223,10 @@ internal class FakeChannel : IChannel {
 
   // Track queue arguments for dead letter exchange verification
   public IDictionary<string, object?>? LastQueueDeclareArguments { get; private set; }
+
+  // Per-queue declare arguments (phase 5): the manifest provisioner declares several queues in
+  // one pass — args parity with the transport must be assertable per queue, not just "last".
+  public Dictionary<string, IDictionary<string, object?>?> QueueDeclareArgumentsByQueue { get; } = [];
 
   // Optional: throw specific exceptions from methods
   public Exception? ExceptionToThrowOnPublish { get; set; }
@@ -242,11 +270,28 @@ internal class FakeChannel : IChannel {
   public ValueTask ConfirmSelectAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> ConsumerCountAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task ExchangeBindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task ExchangeDeclarePassiveAsync(string exchange, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+
+  public Task ExchangeDeclarePassiveAsync(string exchange, CancellationToken cancellationToken = default) {
+    PassiveExchangeDeclareCount++;
+    if (!ExistingExchanges.Contains(exchange)) {
+      throw new OperationInterruptedException(
+        new ShutdownEventArgs(ShutdownInitiator.Peer, 404, $"NOT_FOUND - no exchange '{exchange}'"));
+    }
+    return Task.CompletedTask;
+  }
+
   public Task ExchangeDeleteAsync(string exchange, bool ifUnused, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task ExchangeUnbindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> MessageCountAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task<QueueDeclareOk> QueueDeclarePassiveAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+
+  public Task<QueueDeclareOk> QueueDeclarePassiveAsync(string queue, CancellationToken cancellationToken = default) {
+    PassiveQueueDeclareCount++;
+    if (!ExistingQueues.Contains(queue)) {
+      throw new OperationInterruptedException(
+        new ShutdownEventArgs(ShutdownInitiator.Peer, 404, $"NOT_FOUND - no queue '{queue}'"));
+    }
+    return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
+  }
   public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueuePurgeAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task QueueUnbindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, CancellationToken cancellationToken = default) => throw new NotImplementedException();
