@@ -445,6 +445,54 @@ public sealed class NamespaceInboxFlipE2ELockTests(ServiceBusEmulatorFixtureSour
     }
   }
 
+  // ---------- §shared-inbox retirement (phase 7) ----------
+
+  [Test]
+  public async Task Retirement_FullFlip_CommandRidesNamespaceInbox_SystemBroadcasts_NothingRequiresTheSharedTopicAsync(CancellationToken ct) {
+    // THE PHASE-7 RETIREMENT SHAPE against the real broker protocol: full flip + retirement.
+    // The emulator namespace deliberately contains NO legacy shared "inbox" entity at all
+    // (Config.json never provisioned one), so this test passing IS the proof that the
+    // retirement topology neither lands anything on nor REQUIRES the shared topic — any
+    // publish, receive, or management touch on it would fail loudly with entity-not-found.
+    // The strict zero-broker-op count lives in the recording-double lock
+    // (AsbSharedInboxRetirementE2ELockTests).
+    await _drainAsync(ORDERS_ENTITY, "svc-orders");
+    await _drainAsync(CommandInboxNaming.SystemBroadcastTopic, "svc-broadcast");
+
+    var transport = _createTransport();
+    await transport.InitializeAsync(ct);
+    var routingOptions = new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+    var publish = new TransportPublishStrategy(
+      transport, new DefaultTransportReadinessCheck(), "inbox",
+      jsonOptions: null, namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+
+    var commandWork = _commandWork(new WbTopo.Orders.Commands.PlaceOrder($"retire-{Guid.CreateVersion7():N}"));
+    var systemWork = _commandWork(new Whizbang.Core.Commands.System.RebuildPerspectiveCommand(
+      PerspectiveNames: ["retirement-probe"]));
+
+    var commandAwaiter = new Whizbang.Testing.Transport.MessageIdAwaiter(commandWork.MessageId.ToString());
+    var systemAwaiter = new Whizbang.Testing.Transport.MessageIdAwaiter(systemWork.MessageId.ToString());
+    using var handlerSubscription = await transport.SubscribeAsync(
+      commandAwaiter.Handler, new TransportDestination(ORDERS_ENTITY, "svc-orders"), ct);
+    var broadcastTransport = _createTransport();
+    await broadcastTransport.InitializeAsync(ct);
+    using var broadcastSubscription = await broadcastTransport.SubscribeAsync(
+      systemAwaiter.Handler,
+      new TransportDestination(CommandInboxNaming.SystemBroadcastTopic, "svc-broadcast"), ct);
+
+    var commandResult = await publish.PublishAsync(commandWork, ct);
+    var systemResult = await publish.PublishAsync(systemWork, ct);
+    await Assert.That(commandResult.Success).IsTrue();
+    await Assert.That(systemResult.Success).IsTrue();
+
+    await Assert.That(await commandAwaiter.WaitAsync(TimeSpan.FromSeconds(30), ct))
+      .IsEqualTo(commandWork.MessageId.ToString())
+      .Because("under retirement a domain command rides its per-namespace inbox");
+    await Assert.That(await systemAwaiter.WaitAsync(TimeSpan.FromSeconds(30), ct))
+      .IsEqualTo(systemWork.MessageId.ToString())
+      .Because("a framework-reserved system command broadcasts on inbox.whizbang — the sole carve-out");
+  }
+
   // ---------- §DLQ & recovery ----------
 
   [Test]

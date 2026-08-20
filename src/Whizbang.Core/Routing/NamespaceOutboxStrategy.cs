@@ -37,7 +37,7 @@ namespace Whizbang.Core.Routing;
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs</tests>
-public sealed class NamespaceOutboxStrategy : IOutboxRoutingStrategy {
+public sealed class NamespaceOutboxStrategy : IOutboxRoutingStrategy, ICommandInboxAddressResolver {
   private readonly RoutingOptions _routingOptions;
   private readonly SharedTopicOutboxStrategy _legacyShared;
   private readonly DomainTopicOutboxStrategy _domainTopics = new();
@@ -48,6 +48,15 @@ public sealed class NamespaceOutboxStrategy : IOutboxRoutingStrategy {
   /// to <see cref="SharedTopicOutboxStrategy"/> output until their namespace flips).
   /// </summary>
   public string SharedInboxTopic { get; }
+
+  /// <summary>
+  /// The command-inbox seam (topology arc phase 7): unflipped commands default to the legacy
+  /// shared inbox topic. Same value as <see cref="SharedInboxTopic"/>, exposed through the
+  /// strategy-agnostic interface the transports' DI factories consume.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxAddressResolverTests.cs:NamespaceOutboxStrategy_ImplementsTheSeam_DefaultIsSharedInboxTopicAsync</tests>
+  public string DefaultCommandInboxAddress => SharedInboxTopic;
 
   /// <summary>
   /// Creates the strategy.

@@ -165,6 +165,40 @@ namespace Whizbang.Core.Tests.MultiService {
     }
 
     [Test]
+    public async Task Retirement_SharedInboxDropped_NamespaceAndBroadcastCarryEverythingAsync() {
+      // THE PHASE-7 RETIREMENT SHAPE on the harness: full flip + RetireSharedInbox — the
+      // service subscribes to its per-namespace inbox and the system broadcast inbox ONLY.
+      // A probe published to the legacy shared topic is delivered to NOBODY (the wire has no
+      // subscriber there), while the namespace-inbox and broadcast probes land. Wire delivery
+      // is synchronous with publish, so "not delivered" is deterministic — no timing.
+      _ensureJsonContext();
+      await using var harness = await MultiServiceHarness.Create()
+        .AddService(SERVICE, svc => svc
+          .WithCatalog<FlipProbeCatalog>()
+          .Configure(services => Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions
+            .AddSingleton<IReceptorRegistryQuery>(services, new HandlesFlipProbeRegistry()))
+          .WithRouting(r => {
+            r.Inbox.UseNamespaceInboxes();
+            r.Outbox.UseNamespaceRouting();
+            r.RouteAllCommandNamespacesToInbox();
+            r.RetireSharedInbox();
+          }))
+        .StartAsync();
+
+      var sharedProbeId = Guid.CreateVersion7();
+      await _publishProbeAsync(harness, SHARED_INBOX, "via-shared-must-drop", sharedProbeId);
+      await _publishProbeAsync(harness, NAMESPACE_INBOX, "via-owned-inbox");
+      await _publishProbeAsync(harness, CommandInboxNaming.SystemBroadcastTopic, "via-broadcast-inbox");
+
+      var stored = await harness.GetService(SERVICE).Inbox.WaitForInboxAsync(2, TimeSpan.FromSeconds(10));
+      await Assert.That(stored.Count).IsEqualTo(2)
+        .Because("exactly the namespace-inbox and broadcast probes land — no catch-all remnant");
+      await Assert.That(stored.Select(m => m.MessageId)).DoesNotContain(sharedProbeId)
+        .Because("the shared-inbox probe was published FIRST and synchronously delivered to nobody — "
+               + "the retirement consumer holds no subscription on the legacy shared topic");
+    }
+
+    [Test]
     public async Task NamespaceInboxConsumer_ListensOnOwnedInbox_SystemBroadcast_AndTransitionalSharedAsync() {
       _ensureJsonContext();
       await using var harness = await _startNamespaceInboxServiceAsync();

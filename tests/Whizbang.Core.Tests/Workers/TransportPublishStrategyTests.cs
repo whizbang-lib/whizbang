@@ -1434,6 +1434,31 @@ public class TransportPublishStrategyTests {
   }
 
   [Test]
+  public async Task PublishAsync_SharedTopicStrategyOnTheResolverSeam_ByteIdenticalToNoSeamAsync() {
+    // Phase 7 seam unification: the DI factories hand ANY ICommandInboxAddressResolver
+    // through — including SharedTopicOutboxStrategy, whose resolver never flips. The wire
+    // shape must be byte-identical to passing no seam at all.
+    var viaSeam = new TestTransport();
+    var noSeam = new TestTransport();
+    var readiness = new DefaultTransportReadinessCheck();
+    var viaSeamStrategy = new TransportPublishStrategy(
+      viaSeam, readiness, "inbox",
+      namespaceRouting: new Whizbang.Core.Routing.SharedTopicOutboxStrategy("inbox"));
+    var noSeamStrategy = new TransportPublishStrategy(noSeam, readiness, "inbox");
+
+    var messageType = "MyApp.Orders.Commands.PlaceOrderCommand, MyApp";
+    await viaSeamStrategy.PublishAsync(_createCommandOutboxWork(messageType), CancellationToken.None);
+    await noSeamStrategy.PublishAsync(_createCommandOutboxWork(messageType), CancellationToken.None);
+
+    var actual = viaSeam.LastPublishedDestination!;
+    var expected = noSeam.LastPublishedDestination!;
+    await Assert.That(actual.Address).IsEqualTo(expected.Address);
+    await Assert.That(actual.RoutingKey).IsEqualTo(expected.RoutingKey);
+    await Assert.That(actual.Metadata!.Count).IsEqualTo(expected.Metadata!.Count)
+      .Because("the shared-topic strategy on the seam must not grow wire metadata — byte-identical wiring");
+  }
+
+  [Test]
   public async Task PublishAsync_WithoutNamespaceRouting_FlipNeverEngagesAsync() {
     // DEFAULT LOCK: no seam, no flip — commands to the shared inbox exactly as today.
     var transport = new TestTransport();

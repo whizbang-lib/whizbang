@@ -261,6 +261,34 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
   }
 
   [Test]
+  public async Task ProvisionManifest_RetirementManifest_SharedInboxReceivesZeroManagementOpsAsync() {
+    // Phase 7: under full flip + retirement the manifest carries zero shared-inbox
+    // references, so the provisioner never touches the legacy entity — no creates, no
+    // subscription writes, no rules, not even an existence probe. The per-namespace inbox
+    // and the system broadcast inbox still provision exactly as phase 5 shipped them.
+    var adminClient = new RecordingProvisioningAdminClient();
+    var provisioner = _provisioner(adminClient);
+    var options = new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+    var context = new InboxSubscriptionContext(
+      SERVICE_NAME,
+      new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+      [new HandledMessageInfo("MyApp.Orders.Commands.CreateOrder", "myapp.orders.commands", MessageKind.Command)]);
+    var manifest = TopologyManifestBuilder.Build(
+      new NamespaceOutboxStrategy(options), new NamespaceInboxStrategy(options), context, []);
+
+    await provisioner.ProvisionManifestAsync(manifest);
+
+    await Assert.That(adminClient.CreatedTopics).Contains("inbox.myapp.orders.commands");
+    await Assert.That(adminClient.CreatedTopics).Contains("inbox.whizbang");
+    await Assert.That(adminClient.CreatedTopics).DoesNotContain("inbox");
+    await Assert.That(adminClient.TopicExistenceChecks).DoesNotContain("inbox")
+      .Because("retirement means ZERO management operations on the legacy shared topic — probes included");
+    await Assert.That(adminClient.CreatedSubscriptions.Select(s => s.Topic)).DoesNotContain("inbox")
+      .Because("no subscription may recreate the catch-all after retirement");
+    await Assert.That(adminClient.CreatedRules.Select(r => r.Topic)).DoesNotContain("inbox");
+  }
+
+  [Test]
   public async Task ProvisionManifest_NullManifest_ThrowsArgumentNullExceptionAsync() {
     var provisioner = _provisioner(new RecordingProvisioningAdminClient());
 

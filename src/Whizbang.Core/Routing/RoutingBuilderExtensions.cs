@@ -95,6 +95,10 @@ public static class RoutingBuilderExtensions {
     builder.Services.AddSingleton<IOptions<RoutingOptions>>(sp => {
       RoutingOptionsConfigurationBinder.Apply(
         sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(), options);
+      // Startup validation (topology arc phase 7): retiring the shared inbox is valid ONLY
+      // once every command namespace is flipped — runs AFTER configuration binding so
+      // code-callback and configuration-driven retirement are guarded identically.
+      options.ThrowIfRetirementIncomplete();
       return Options.Create(options);
     });
 

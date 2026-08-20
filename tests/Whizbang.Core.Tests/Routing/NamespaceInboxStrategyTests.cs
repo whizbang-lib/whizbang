@@ -295,6 +295,125 @@ public class NamespaceInboxStrategyTests {
 
   #endregion
 
+  #region Shared-inbox retirement (topology arc phase 7)
+
+  private static RoutingOptions _retiredOptions() =>
+    new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+
+  [Test]
+  public async Task GetSubscriptions_UnderRetirement_ExactlyPerNamespaceInboxesPlusBroadcastAsync() {
+    // THE RETIREMENT SHAPE: the transitional shared-inbox subscription is DROPPED — the set
+    // is exactly one inbox per handled command namespace + the system broadcast inbox.
+    // No catch-all remnant.
+    var strategy = new NamespaceInboxStrategy(_retiredOptions());
+    var context = _context(handled: [
+      _command("MyApp.Orders.Commands.CreateOrder", "myapp.orders.commands"),
+      _command("MyApp.Billing.Commands.IssueInvoice", "myapp.billing.commands"),
+    ]);
+
+    var subscriptions = strategy.GetSubscriptions(context);
+
+    var topics = subscriptions.Select(s => s.Topic).ToList();
+    await Assert.That(topics.Count).IsEqualTo(3);
+    await Assert.That(topics).Contains("inbox.myapp.orders.commands");
+    await Assert.That(topics).Contains("inbox.myapp.billing.commands");
+    await Assert.That(topics).Contains(NamespaceInboxStrategy.SystemBroadcastInboxTopic);
+    await Assert.That(topics).DoesNotContain("inbox")
+      .Because("retirement drops the transitional shared-inbox subscription — the migration is complete");
+  }
+
+  [Test]
+  public async Task GetSubscriptions_UnderRetirement_NoReceptors_BroadcastInboxOnlyAsync() {
+    // A pure event consumer under retirement holds exactly ONE inbox subscription: the
+    // system broadcast inbox (the sole carve-out).
+    var strategy = new NamespaceInboxStrategy(_retiredOptions());
+
+    var subscriptions = strategy.GetSubscriptions(_context());
+
+    await Assert.That(subscriptions.Count).IsEqualTo(1);
+    await Assert.That(subscriptions[0].Topic).IsEqualTo(NamespaceInboxStrategy.SystemBroadcastInboxTopic);
+  }
+
+  [Test]
+  public async Task GetSubscriptions_UnderRetirement_FrameworkReservedStillNeverGetsPerNamespaceInboxesAsync() {
+    // The phase-5 lock, extended to the retirement shape: broadcast/control/minted types
+    // ride the system broadcast inbox and NOWHERE else — with the shared inbox gone there
+    // is no other admissible path.
+    var strategy = new NamespaceInboxStrategy(_retiredOptions());
+    var context = _context(handled: [
+      _command("Whizbang.Core.Commands.System.RebuildPerspective", "whizbang.core.commands.system"),
+      new("Whizbang.Core.Minting.RedeliveryComposite", "whizbang.core.minting", MessageKind.Command),
+      _command("MyApp.Orders.Commands.CreateOrder", "myapp.orders.commands"),
+    ]);
+
+    var subscriptions = strategy.GetSubscriptions(context);
+
+    foreach (var topic in subscriptions.Select(s => s.Topic)) {
+      await Assert.That(topic.StartsWith("inbox.whizbang.core", StringComparison.Ordinal)).IsFalse();
+    }
+    var system = subscriptions.Single(s => s.Topic == NamespaceInboxStrategy.SystemBroadcastInboxTopic);
+    var patterns = (IReadOnlyList<string>)system.Metadata!["RoutingPatterns"];
+    await Assert.That(patterns).Contains("whizbang.core.commands.system.#");
+    await Assert.That(patterns).Contains("whizbang.core.minting.#")
+      .Because("under retirement the broadcast inbox is the ONLY path for system/minted subjects");
+  }
+
+  [Test]
+  public async Task GetSubscriptions_RetirementWithoutFullFlip_ThrowsTheRetirementGuardAsync() {
+    // Defense in depth for manually constructed options: the same guard WithRouting enforces
+    // at startup fires here — dropping the shared subscription while any namespace still
+    // publishes to the shared inbox would be silent loss.
+    var options = new RoutingOptions()
+      .RouteCommandNamespaceToInbox("myapp.orders.commands")
+      .RetireSharedInbox();
+    var strategy = new NamespaceInboxStrategy(options);
+
+    var exception = Assert.Throws<InvalidOperationException>(
+      () => strategy.GetSubscriptions(_context()));
+    await Assert.That(exception!.Message).Contains("RouteAllCommandNamespacesToInbox");
+  }
+
+  [Test]
+  public async Task GetSubscription_Singular_UnderRetirement_ThrowsAsync() {
+    // The singular surface can only answer with the transitional shared subscription — under
+    // retirement that entity no longer exists for this service, so answering would recreate
+    // the catch-all. Loud failure instead; consumers use the plural seam.
+    var strategy = new NamespaceInboxStrategy(_retiredOptions());
+
+    var exception = Assert.Throws<InvalidOperationException>(
+      () => strategy.GetSubscription(
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase), "OrderService", MessageKind.Command));
+    await Assert.That(exception!.Message).Contains("GetSubscriptions");
+  }
+
+  [Test]
+  public async Task Inbox_UseNamespaceInboxes_BindsParentOptionsSoRetirementIsConsultedLiveAsync() {
+    // The builder hands the strategy its parent RoutingOptions — a configuration-bound
+    // retirement (applied on options resolution) is visible without re-registration.
+    var options = new RoutingOptions();
+    options.Inbox.UseNamespaceInboxes();
+    options.RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+
+    var subscriptions = options.InboxStrategy.GetSubscriptions(_context());
+
+    await Assert.That(subscriptions.Select(s => s.Topic)).DoesNotContain("inbox")
+      .Because("the strategy consults the SAME options instance the config binder mutates");
+  }
+
+  [Test]
+  public async Task GetSubscriptions_OptionsBoundButNotRetired_TransitionalSharedStillPresentAsync() {
+    // Regression guard: binding options alone changes nothing — the transitional shared
+    // subscription stays until retirement is explicitly opted into.
+    var options = new RoutingOptions().RouteAllCommandNamespacesToInbox();
+    var strategy = new NamespaceInboxStrategy(options);
+
+    var subscriptions = strategy.GetSubscriptions(_context());
+
+    await Assert.That(subscriptions.Select(s => s.Topic)).Contains("inbox");
+  }
+
+  #endregion
+
   #region Validation and registration
 
   [Test]

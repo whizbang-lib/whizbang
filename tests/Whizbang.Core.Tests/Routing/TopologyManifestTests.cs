@@ -298,6 +298,50 @@ public class TopologyManifestTests {
 
   #endregion
 
+  #region Shared-inbox retirement (topology arc phase 7)
+
+  [Test]
+  public async Task Build_RetirementShape_ContainsZeroReferencesToTheLegacySharedTopicAsync() {
+    // THE RETIREMENT MANIFEST LOCK: full flip + retirement through the REAL strategies —
+    // the manifest (the provisioning/drift/budget authority) contains ZERO references to
+    // the legacy shared topic. Both provisioners provision only what the manifest names,
+    // so the shared inbox is excluded everywhere by this one projection.
+    var options = new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+    var outbox = new NamespaceOutboxStrategy(options);
+    var inbox = new NamespaceInboxStrategy(options);
+    var context = new InboxSubscriptionContext(
+      "OrderService",
+      new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+      [new Whizbang.Core.Messaging.HandledMessageInfo(
+        "OutboxTestTypes.Orders.Commands.CreateOrder", "outboxtesttypes.orders.commands", MessageKind.Command)]);
+    var catalog = new[] {
+      _entry(typeof(OutboxTestTypes.Orders.Commands.CreateOrder), "command"),
+      _entry(typeof(OutboxTestTypes.Orders.Events.OrderCreated), "event")
+    };
+
+    var manifest = TopologyManifestBuilder.Build(outbox, inbox, context, catalog);
+
+    foreach (var address in manifest.PublishDestinations.Select(d => d.Address)
+        .Concat(manifest.Subscriptions.Select(s => s.Topic))) {
+      await Assert.That(address).IsNotEqualTo("inbox")
+        .Because("the retirement manifest must carry no catch-all remnant — per-namespace inboxes "
+               + "+ the system broadcast inbox are the whole command topology");
+    }
+
+    // ...and the retirement topology itself is complete: per-namespace inbox (publish +
+    // subscribe), the broadcast inbox, and the untouched event domain topic.
+    await Assert.That(manifest.PublishDestinations.Select(d => d.Address))
+      .Contains("inbox.outboxtesttypes.orders.commands");
+    await Assert.That(manifest.Subscriptions.Select(s => s.Topic))
+      .Contains("inbox.outboxtesttypes.orders.commands");
+    await Assert.That(manifest.Subscriptions.Select(s => s.Topic))
+      .Contains(CommandInboxNaming.SystemBroadcastTopic);
+    await Assert.That(manifest.PublishDestinations.Select(d => d.Address))
+      .Contains("outboxtesttypes.orders.events");
+  }
+
+  #endregion
+
   #region Validation
 
   [Test]

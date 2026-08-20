@@ -19,8 +19,9 @@ namespace Whizbang.Core.Routing;
 ///   system-command + integrity control-plane + minted-composite patterns the shared inbox
 ///   carries today. Broadcast/control/minted envelope types NEVER route to per-namespace
 ///   inboxes — the whole <c>whizbang.core</c> contract subtree is reserved for it.</item>
-///   <item><b>Transitional shared-inbox subscription</b> — retires with the shared-inbox
-///   deletion (phase 7); until then it keeps every command flowing exactly as today.</item>
+///   <item><b>Transitional shared-inbox subscription</b> — retires via
+///   <see cref="RoutingOptions.RetireSharedInbox"/> (phase 7, valid only after the full
+///   publisher flip); until then it keeps every command flowing exactly as today.</item>
 /// </list>
 /// <para>NOT the default strategy — opt in via
 /// <see cref="InboxRoutingOptionsBuilder.UseNamespaceInboxes"/>; the default flip decision is
@@ -44,41 +45,82 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
   public static string SystemBroadcastInboxTopic => CommandInboxNaming.SystemBroadcastTopic;
 
   private readonly SharedTopicInboxStrategy _transitionalShared;
+  private readonly RoutingOptions? _routingOptions;
 
   /// <summary>
   /// Creates the strategy. The transitional shared-inbox subscription (superset guarantee,
-  /// retires phase 7) uses <paramref name="sharedInboxTopic"/>.
+  /// retires with <see cref="RoutingOptions.RetireSharedInbox"/>) uses
+  /// <paramref name="sharedInboxTopic"/>. Without bound options the strategy can never see a
+  /// retirement flag — prefer the options-bound overload (what
+  /// <see cref="InboxRoutingOptionsBuilder.UseNamespaceInboxes"/> wires).
   /// </summary>
   /// <param name="sharedInboxTopic">Today's shared inbox topic. Default: "inbox".</param>
-  public NamespaceInboxStrategy(string sharedInboxTopic = "inbox") {
+  public NamespaceInboxStrategy(string sharedInboxTopic = "inbox")
+      : this(null, sharedInboxTopic) { }
+
+  /// <summary>
+  /// Creates the strategy bound to its service's <see cref="RoutingOptions"/> (topology arc
+  /// phase 7): <see cref="RoutingOptions.SharedInboxRetired"/> is consulted LIVE on every
+  /// subscription computation — a configuration-bound retirement (applied on options
+  /// resolution) needs no strategy re-registration, mirroring the outbox flip set.
+  /// </summary>
+  /// <param name="routingOptions">The service's routing options; null behaves like the
+  /// unbound overload (retirement can never engage).</param>
+  /// <param name="sharedInboxTopic">Today's shared inbox topic. Default: "inbox".</param>
+  public NamespaceInboxStrategy(RoutingOptions? routingOptions, string sharedInboxTopic = "inbox") {
     _transitionalShared = new SharedTopicInboxStrategy(sharedInboxTopic);
+    _routingOptions = routingOptions;
   }
 
   /// <summary>
   /// Legacy singular surface — returns today's shared-inbox subscription (the transitional
   /// part), because a single subscription cannot express the per-namespace set. Consumers of
-  /// this strategy must use the plural <see cref="GetSubscriptions"/> seam.
+  /// this strategy must use the plural <see cref="GetSubscriptions"/> seam. Under
+  /// shared-inbox retirement (phase 7) this surface THROWS: the only subscription it can
+  /// express is the retired one, and answering with it would silently recreate the catch-all.
   /// </summary>
   /// <inheritdoc />
+  /// <exception cref="InvalidOperationException">Thrown when
+  /// <see cref="RoutingOptions.SharedInboxRetired"/> is set on the bound options.</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscription_Singular_UnderRetirement_ThrowsAsync</tests>
   public InboxSubscription GetSubscription(
     IReadOnlySet<string> ownedDomains,
     string serviceName,
     MessageKind kind
-  ) => _transitionalShared.GetSubscription(ownedDomains, serviceName, kind);
+  ) {
+    if (_routingOptions?.SharedInboxRetired == true) {
+      throw new InvalidOperationException(
+        "The shared inbox is retired (RetireSharedInbox): the singular GetSubscription surface "
+        + "can only express the retired shared-inbox subscription, and answering with it would "
+        + "recreate the catch-all. Consume the plural GetSubscriptions seam instead.");
+    }
+    return _transitionalShared.GetSubscription(ownedDomains, serviceName, kind);
+  }
 
   /// <summary>
   /// The full subscription set: per-namespace command inboxes (from the handled-message
-  /// enumeration), the system broadcast inbox, and the transitional shared-inbox subscription.
+  /// enumeration), the system broadcast inbox, and — until
+  /// <see cref="RoutingOptions.SharedInboxRetired"/> — the transitional shared-inbox
+  /// subscription. Under retirement the set is exactly per-namespace inboxes + the broadcast
+  /// inbox: no catch-all remnant.
   /// </summary>
   /// <param name="context">Service identity, owned domains, handled-message enumeration, and
   /// consumed event namespaces.</param>
-  /// <returns>The subscription set; never empty (system + shared parts are unconditional).</returns>
+  /// <returns>The subscription set; never empty (the system broadcast part is unconditional).</returns>
   /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
+  /// <exception cref="InvalidOperationException">Thrown when retirement is enabled while the
+  /// command-namespace flip is incomplete (the retirement guard).</exception>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_UnderRetirement_ExactlyPerNamespaceInboxesPlusBroadcastAsync</tests>
   /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
   /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_HandledCommandNamespaces_OnePerDistinctNamespaceAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs:GetSubscriptions_ContainsTodaysSharedSubscriptionUnchangedAsync</tests>
   public IReadOnlyList<InboxSubscription> GetSubscriptions(InboxSubscriptionContext context) {
     ArgumentNullException.ThrowIfNull(context);
+
+    // Retirement guard (phase 7), defense in depth for manually constructed options — the
+    // WithRouting options factory enforces the same invariant at startup: dropping the shared
+    // subscription while any namespace still publishes to the shared inbox is silent loss.
+    _routingOptions?.ThrowIfRetirementIncomplete();
 
     var subscriptions = new List<InboxSubscription>();
 
@@ -117,10 +159,15 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
         ["RoutingPatterns"] = systemPatterns
       }));
 
-    // Part 3 (transitional, retires phase 7) — today's shared-inbox subscription UNCHANGED, so
-    // the set is a strict superset of the shared strategy while publishers still target it.
-    subscriptions.Add(_transitionalShared.GetSubscription(
-      context.OwnedDomains, context.ServiceName, MessageKind.Command));
+    // Part 3 (transitional) — today's shared-inbox subscription UNCHANGED, so the set is a
+    // strict superset of the shared strategy while publishers still target it. Under
+    // RETIREMENT (phase 7, the migration end-state) this part is DROPPED: the subscription
+    // set becomes exactly per-namespace inboxes + the system broadcast inbox — no catch-all
+    // remnant. Rollback = clear RetireSharedInbox; the transitional subscription returns.
+    if (_routingOptions?.SharedInboxRetired != true) {
+      subscriptions.Add(_transitionalShared.GetSubscription(
+        context.OwnedDomains, context.ServiceName, MessageKind.Command));
+    }
 
     return subscriptions;
   }

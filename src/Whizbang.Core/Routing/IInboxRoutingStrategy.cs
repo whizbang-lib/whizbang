@@ -11,12 +11,15 @@ public interface IInboxRoutingStrategy {
   /// Gets the subscription configuration for receiving commands.
   /// </summary>
   /// <remarks>
-  /// DEPRECATION NOTE (topology arc phase 3): prefer <see cref="GetSubscriptions"/> — the
-  /// plural, context-driven surface that supports strategies with more than one
-  /// subscription (e.g. one inbox per handled contract namespace). This singular method
-  /// remains for compatibility (no <c>[Obsolete]</c>: the repository escalates CS0618 to
-  /// error, so the attribute would break consumers building with warnings-as-errors) and
-  /// is scheduled for removal with the shared-inbox retirement phase.
+  /// DEPRECATION NOTE (topology arc phase 7): scheduled for removal in v1.0, superseded by
+  /// <see cref="NamespaceInboxStrategy"/> / <see cref="GetSubscriptions"/> — the plural,
+  /// context-driven surface that supports strategies with more than one subscription (e.g.
+  /// one inbox per handled contract namespace + the system broadcast inbox). This singular
+  /// method remains for compatibility through the migration window (no <c>[Obsolete]</c>:
+  /// the repository escalates CS0618 to error, so the attribute would break consumers
+  /// building with warnings-as-errors); under
+  /// <see cref="RoutingOptions.RetireSharedInbox"/> the namespace-inbox strategy's
+  /// implementation throws rather than answer with the retired shared subscription.
   /// </remarks>
   /// <param name="ownedDomains">Domains this service owns (from OwnDomains() registration).</param>
   /// <param name="serviceName">Name of this service.</param>

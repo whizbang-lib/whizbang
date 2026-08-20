@@ -112,6 +112,100 @@ public class CommandInboxNamingTests {
 
   #endregion
 
+  #region Phase-8 naming forward-compat (tag→namespace routability)
+
+  // The traffic-classes arc (phase 8) maps tag→TransportNamespace as a post-process over the
+  // entity names the strategies emit, using a "{namespaceKey}" prefix/suffix scheme. These
+  // locks assert — NOW, before traffic classes ship — that every entity name the manifest can
+  // emit is routable under those rules: ASB-legal characters only, lowercase, dot-separated
+  // segments, and enough length headroom under ASB's 260-char entity limit for class
+  // prefixes/suffixes.
+
+  /// <summary>Headroom reserved under ASB's 260-char entity-name limit for a future
+  /// "{namespaceKey}" class prefix/suffix (e.g. a "sys-control" style decoration).</summary>
+  private const int CLASS_DECORATION_HEADROOM = 64;
+
+  /// <summary>ASB entity-name limit (topics/queues): 260 characters.</summary>
+  private const int ASB_ENTITY_NAME_LIMIT = 260;
+
+  private static async Task _assertRoutableEntityNameAsync(string name) {
+    await Assert.That(name).IsEqualTo(name.ToLowerInvariant())
+      .Because($"'{name}': entity names are lowercase-invariant — casing variants would split broker entities");
+    await Assert.That(name.Length).IsLessThanOrEqualTo(ASB_ENTITY_NAME_LIMIT - CLASS_DECORATION_HEADROOM)
+      .Because($"'{name}': the name must leave {CLASS_DECORATION_HEADROOM} chars of headroom under "
+             + $"ASB's {ASB_ENTITY_NAME_LIMIT}-char limit for a phase-8 class prefix/suffix");
+
+    var segments = name.Split('.');
+    foreach (var segment in segments) {
+      await Assert.That(segment.Length).IsGreaterThan(0)
+        .Because($"'{name}': dot-separated with non-empty segments — no leading/trailing/double dots "
+               + "(a '{namespaceKey}' prefix scheme joins on '.')");
+      foreach (var c in segment) {
+        var legal = char.IsAsciiLetterLower(c) || char.IsAsciiDigit(c) || c == '_' || c == '-';
+        await Assert.That(legal).IsTrue()
+          .Because($"'{name}': '{c}' is outside [a-z0-9_-] — ASB forbids most punctuation, '/' creates "
+                 + "entity hierarchy, and exotic characters would break tag→namespace name rewriting");
+      }
+    }
+  }
+
+  [Test]
+  public async Task RetirementManifest_EveryEmittedEntityName_IsRoutableUnderTagNamespaceRulesAsync() {
+    // The manifest is the provisioning authority — every name it can emit (per-namespace
+    // inboxes, the broadcast inbox, domain topics) must satisfy the routability rules.
+    var options = new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+    var context = new InboxSubscriptionContext(
+      "order-service",
+      new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+      [
+        new Whizbang.Core.Messaging.HandledMessageInfo(
+          "OutboxTestTypes.Orders.Commands.CreateOrder", "outboxtesttypes.orders.commands", MessageKind.Command),
+        new Whizbang.Core.Messaging.HandledMessageInfo(
+          "OutboxTestTypes.Users.Commands.CreateUser", "outboxtesttypes.users.commands", MessageKind.Command),
+      ]);
+    var manifest = TopologyManifestBuilder.Build(
+      new NamespaceOutboxStrategy(options),
+      new NamespaceInboxStrategy(options),
+      context,
+      [
+        new MessageTypeCatalogEntry(
+          typeof(OutboxTestTypes.Orders.Commands.CreateOrder),
+          typeof(OutboxTestTypes.Orders.Commands.CreateOrder).FullName!, "command", null),
+        new MessageTypeCatalogEntry(
+          typeof(OutboxTestTypes.Orders.Events.OrderCreated),
+          typeof(OutboxTestTypes.Orders.Events.OrderCreated).FullName!, "event", null)
+      ]);
+
+    var entityNames = manifest.PublishDestinations.Select(d => d.Address)
+      .Concat(manifest.Subscriptions.Select(s => s.Topic))
+      .Distinct(StringComparer.Ordinal)
+      .ToList();
+
+    await Assert.That(entityNames.Count).IsGreaterThanOrEqualTo(4)
+      .Because("precondition: the manifest names per-namespace inboxes, the broadcast inbox, and a domain topic");
+    foreach (var name in entityNames) {
+      await _assertRoutableEntityNameAsync(name);
+    }
+  }
+
+  [Test]
+  public async Task TopicFor_AddsOnlyThePrefixLength_LengthBoundHoldsForDeepNamespacesAsync() {
+    // The derivation adds exactly the "inbox." prefix — so a contract namespace stays within
+    // the headroom bound as long as the namespace itself does. Locked at the boundary.
+    var deepNamespace = string.Join(".", Enumerable.Repeat("segment0", 20)); // 179 chars
+    var name = CommandInboxNaming.TopicFor(deepNamespace);
+
+    await Assert.That(name.Length).IsEqualTo(CommandInboxNaming.TopicPrefix.Length + deepNamespace.Length);
+    await _assertRoutableEntityNameAsync(name);
+  }
+
+  [Test]
+  public async Task SystemBroadcastTopic_IsRoutableUnderTagNamespaceRulesAsync() {
+    await _assertRoutableEntityNameAsync(CommandInboxNaming.SystemBroadcastTopic);
+  }
+
+  #endregion
+
   #region RequiresProvisionedEntity marker
 
   [Test]

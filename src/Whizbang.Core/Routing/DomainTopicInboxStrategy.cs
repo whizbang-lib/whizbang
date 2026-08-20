@@ -6,7 +6,14 @@ namespace Whizbang.Core.Routing;
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-inbox</docs>
 /// <remarks>
-/// Creates a domain topic inbox strategy with custom suffix.
+/// <para>
+/// DEPRECATION NOTE (topology arc phase 7): scheduled for removal in v1.0, superseded by
+/// <see cref="NamespaceInboxStrategy"/> — which subscribes one inbox per HANDLED contract
+/// namespace (registry-derived, not just the primary owned domain) plus the system broadcast
+/// inbox. No <c>[Obsolete]</c>: the repository escalates CS0618 to error, which would break
+/// consumers building with warnings-as-errors.
+/// </para>
+/// <para>Creates a domain topic inbox strategy with custom suffix.</para>
 /// </remarks>
 /// <param name="suffix">The suffix to append to domain names (e.g., ".inbox", ".in").</param>
 public sealed class DomainTopicInboxStrategy(string suffix) : IInboxRoutingStrategy {

@@ -275,6 +275,42 @@ public class NamespaceOutboxStrategyTests {
       .Because("the broadcast inbox subscription patterns match on '{namespace}.{typename}' subjects");
   }
 
+  [Test]
+  public async Task Retirement_SystemKindAndFrameworkReservedCommands_RouteToBroadcastAndNowhereElseAsync() {
+    // Phase-7 broadcast publish-side lock: under full flip + retirement, MessageKind.System
+    // and framework-reserved command namespaces route to the system broadcast inbox — the
+    // sole carve-out — and NEVER to the retired shared topic or a per-namespace inbox.
+    var strategy = _strategy(out var options);
+    options.RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+
+    var system = strategy.GetDestination(
+      typeof(OutboxTestTypes.Orders.Commands.CreateOrder), _noDomains, MessageKind.System);
+    var reserved = strategy.GetDestination(
+      typeof(Whizbang.Core.Commands.System.RebuildPerspectiveCommand), _noDomains, MessageKind.Command);
+
+    await Assert.That(system.Address).IsEqualTo(CommandInboxNaming.SystemBroadcastTopic);
+    await Assert.That(reserved.Address).IsEqualTo(CommandInboxNaming.SystemBroadcastTopic);
+  }
+
+  [Test]
+  public async Task Retirement_DomainCommands_RouteToPerNamespaceInbox_NeverTheSharedTopicAsync() {
+    // Under retirement every domain command has a per-namespace destination — nothing may
+    // resolve to the legacy shared topic (there is nobody left subscribed to it).
+    var strategy = _strategy(out var options);
+    options.RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+
+    foreach (var type in new[] {
+      typeof(OutboxTestTypes.Orders.Commands.CreateOrder),
+      typeof(OutboxTestTypes.Users.Commands.CreateUser)
+    }) {
+      var destination = strategy.GetDestination(type, _noDomains, MessageKind.Command);
+      await Assert.That(destination.Address).IsNotEqualTo(strategy.SharedInboxTopic)
+        .Because("a retirement-mode publish to the shared topic would be delivered to nobody");
+      await Assert.That(destination.Address).IsEqualTo(
+        CommandInboxNaming.TopicFor(type.Namespace!));
+    }
+  }
+
   #endregion
 
   #region Registration and validation

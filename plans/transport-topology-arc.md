@@ -217,6 +217,40 @@ PR #513 before this decision; it stays (no revert).
 - **Phase 7 — shared-inbox deletion + system broadcast inbox** (#427 migration 3). Retire
   `SharedTopicInboxStrategy`/`DomainTopicInboxStrategy`; broadcast/control types never route
   to per-namespace inboxes (analyzer + runtime test).
+  **STATUS: implemented on feature/transport-topology (uncommitted).** As LIBRARY code
+  retirement is an explicit OPT-IN completing the migration, not type deletion (unflipped
+  delegation still needs SharedTopicOutboxStrategy; mid-migration consumers need the legacy
+  strategies): `RoutingOptions.RetireSharedInbox()` + config binding
+  (`Whizbang:Routing:RetireSharedInbox`), valid ONLY under the full flip
+  (RouteAllCommandNamespacesToInbox / `"*"`) — the retirement guard throws at startup (the
+  WithRouting options factory, post-binding) AND in NamespaceInboxStrategy.GetSubscriptions
+  (defense in depth), naming the unflipped state. Under retirement the subscription set is
+  EXACTLY per-namespace inboxes + `inbox.whizbang` (transitional shared part dropped;
+  singular GetSubscription throws rather than resurrect the catch-all);
+  UseNamespaceInboxes now binds the parent options so retirement is consulted LIVE. Locks:
+  retirement manifest carries ZERO legacy-shared-topic references (TopologyManifestTests) and
+  both provisioners perform ZERO management ops/declares on it (existence probes recorded and
+  asserted); publish side: System kind + framework-reserved namespaces → `inbox.whizbang`
+  even under retirement. Seam cleanup: `ICommandInboxAddressResolver`
+  (DefaultCommandInboxAddress + ResolveFlippedCommandInboxAddress) implemented by BOTH
+  SharedTopicOutboxStrategy (never flips) and NamespaceOutboxStrategy; TransportPublishStrategy's
+  `namespaceRouting` seam retyped to the interface; both transports' SCE publish factories are
+  strategy-agnostic (no `is` type tests) — three wiring cases (Shared/Namespace/neither)
+  locked byte-identical by registration tests + a publish-shape byte-identity lock.
+  Retirement E2Es: recording-double locks on BOTH transports
+  (Asb/RabbitMQSharedInboxRetirementE2ELockTests: command → per-ns inbox, system command →
+  broadcast, shared topic = ZERO sender/processor/publish/declare/binding/delivery ops),
+  broker-tier shapes in both integration suites (ASB emulator has NO `inbox` entity — success
+  proves nothing REQUIRES it; RMQ binds a match-all probe queue to a declared legacy `inbox`
+  exchange and asserts depth 0), and the harness retirement test
+  (PublisherFlipMigrationE2ETests: shared-inbox probe delivered to NOBODY, ns+broadcast land).
+  Deprecation doc-notes (NOT `[Obsolete]` — CS0618 escalates): SharedTopicInboxStrategy,
+  DomainTopicInboxStrategy, singular GetSubscription unified to "removal in v1.0, superseded
+  by NamespaceInboxStrategy/GetSubscriptions". Phase-8 naming forward-compat locked in
+  CommandInboxNamingTests: every manifest-emitted entity name is lowercase, dot-separated,
+  `[a-z0-9_-]` per segment, ≤ 260−64 chars (class-decoration headroom) — tag→namespace
+  routability asserted before traffic classes ship. Legacy shared-inbox test infra
+  (MultiServiceHarness.SHARED_TOPIC default) left functional by design.
 - **Phase 8 — tag-bound TransportNamespace routing** (#424 incr 2): `TagOptions.RouteNamespace`,
   `Transport.Namespaces` map, per-namespace clients + provisioning, `sys-` validation,
   single-namespace no-op guarantee.

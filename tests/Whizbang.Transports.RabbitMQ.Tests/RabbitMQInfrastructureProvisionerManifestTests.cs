@@ -241,6 +241,35 @@ public class RabbitMQInfrastructureProvisionerManifestTests {
   }
 
   [Test]
+  public async Task ProvisionManifest_RetirementManifest_SharedInboxReceivesZeroDeclaresAsync() {
+    // Phase 7: under full flip + retirement the manifest carries zero shared-inbox
+    // references, so the provisioner never touches the legacy entity — no exchange declare
+    // (not even its DLX), no queue, no binding. The per-namespace inbox and the system
+    // broadcast inbox still provision exactly as phase 5 shipped them.
+    var (provisioner, channel, _) = _fixture();
+    var options = new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+    var context = new InboxSubscriptionContext(
+      SERVICE_NAME,
+      new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+      [new HandledMessageInfo("MyApp.Orders.Commands.CreateOrder", "myapp.orders.commands", MessageKind.Command)]);
+    var manifest = TopologyManifestBuilder.Build(
+      new NamespaceOutboxStrategy(options), new NamespaceInboxStrategy(options), context, []);
+
+    await provisioner.ProvisionManifestAsync(manifest);
+
+    var exchanges = channel.DeclaredExchanges.Select(e => e.Exchange).Distinct().ToList();
+    await Assert.That(exchanges).Contains("inbox.myapp.orders.commands");
+    await Assert.That(exchanges).Contains("inbox.whizbang");
+    await Assert.That(exchanges).DoesNotContain("inbox")
+      .Because("retirement means ZERO broker declares on the legacy shared exchange");
+    await Assert.That(exchanges).DoesNotContain("inbox.dlx")
+      .Because("no dead-letter shadow of the retired entity either");
+    await Assert.That(channel.ExistingQueues).DoesNotContain($"{SERVICE_NAME}-inbox")
+      .Because("no queue may recreate the catch-all after retirement");
+    await Assert.That(channel.QueueBindings.Select(b => b.Exchange)).DoesNotContain("inbox");
+  }
+
+  [Test]
   public async Task ProvisionManifest_NullManifest_ThrowsArgumentNullExceptionAsync() {
     var (provisioner, _, _) = _fixture();
 

@@ -78,8 +78,28 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
   }
 
   [Test]
+  public async Task AddRabbitMQTransport_WithSharedTopicOutboxStrategy_ResolverSeamWiredAndNeverFlipsAsync() {
+    // Phase 7 seam unification: the DI factory consumes ICommandInboxAddressResolver — no
+    // concrete-strategy type tests. The shared-topic strategy rides the SAME wiring as the
+    // namespace strategy; byte-identical behavior holds because its resolver never flips.
+    var services = _createServicesWithFakeConnection();
+    var sharedStrategy = new SharedTopicOutboxStrategy("custom-inbox", PassthroughRoutingStrategy.Instance);
+    services.AddSingleton<IOutboxRoutingStrategy>(sharedStrategy);
+
+    services.AddRabbitMQTransport(CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+    var strategy = provider.GetRequiredService<IMessagePublishStrategy>();
+
+    var seam = _getNamespaceRouting(strategy);
+    await Assert.That(seam).IsSameReferenceAs(sharedStrategy)
+      .Because("one interface seam serves every command-routing strategy — no type tests in the factory");
+    await Assert.That(seam!.ResolveFlippedCommandInboxAddress("myapp.orders.commands")).IsNull()
+      .Because("the shared strategy never flips, so the wiring stays byte-identical to phase 6");
+  }
+
+  [Test]
   public async Task AddRabbitMQTransport_WithNonSharedTopicOutboxStrategy_FallsBackToDefaultInboxTopicAsync() {
-    // Arrange - a registered strategy that is NOT SharedTopicOutboxStrategy must not match the branch
+    // Arrange - a registered strategy OUTSIDE the command-inbox seam falls back to defaults
     var services = _createServicesWithFakeConnection();
     services.AddSingleton<IOutboxRoutingStrategy>(
       new DomainTopicOutboxStrategy(PassthroughRoutingStrategy.Instance));
@@ -91,6 +111,8 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
 
     // Assert
     await Assert.That(_getInboxTopic(strategy)).IsEqualTo(SharedTopicOutboxStrategy.DefaultInboxTopic);
+    await Assert.That(_getNamespaceRouting(strategy)).IsNull()
+      .Because("a strategy outside the seam wires no flip hook — commands ride the default inbox topic");
   }
 
   // --- _wireUpConnectionStateMonitoring ---
@@ -271,14 +293,14 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
   /// Reads the private publish-time flip seam captured by TransportPublishStrategy so tests
   /// can assert the NamespaceOutboxStrategy branch handed the strategy through.
   /// </summary>
-  private static NamespaceOutboxStrategy? _getNamespaceRouting(IMessagePublishStrategy strategy) {
+  private static ICommandInboxAddressResolver? _getNamespaceRouting(IMessagePublishStrategy strategy) {
     var field = typeof(TransportPublishStrategy).GetField(
       "_namespaceRouting",
       BindingFlags.NonPublic | BindingFlags.Instance)
       ?? throw new InvalidOperationException(
         "_namespaceRouting field not found on TransportPublishStrategy - was it renamed?");
 
-    return (NamespaceOutboxStrategy?)field.GetValue(strategy);
+    return (ICommandInboxAddressResolver?)field.GetValue(strategy);
   }
 
   /// <summary>

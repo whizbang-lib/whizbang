@@ -183,33 +183,21 @@ public static class ServiceCollectionExtensions {
       // WithRouting() registers IOutboxRoutingStrategy directly
       var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
 
-      // Publisher flip (topology arc phase 6): namespace routing hands the strategy itself
-      // to the publish strategy so FLIPPED command namespaces resolve to their per-namespace
-      // inbox at publish time; unflipped namespaces keep the shared inbox topic below.
-      if (outboxStrategy is NamespaceOutboxStrategy namespaceStrategy) {
-        return new TransportPublishStrategy(
-          transport, readinessCheck, namespaceStrategy.SharedInboxTopic,
-          loggerFactory,
-          throttleRetryOptions: null, metrics: null,
-          postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
-          namespaceRouting: namespaceStrategy);
-      }
-
-      if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
-        // Use the configured inbox topic from outbox strategy
-        return new TransportPublishStrategy(
-          transport, readinessCheck, sharedStrategy.InboxTopic,
-          loggerFactory,
-          throttleRetryOptions: null, metrics: null,
-          postSerializeHookChain: hookChain, jsonOptions: jsonOptions);
-      }
-
-      // Fall back to default inbox topic
+      // Strategy-agnostic command-inbox seam (topology arc phase 7): both built-in
+      // command-routing strategies implement ICommandInboxAddressResolver — the default
+      // (shared) inbox address plus the publish-time flip hook (phase 6). The factory
+      // consumes the interface, never concrete strategy types: SharedTopic rides the seam
+      // with a resolver that never flips (byte-identical wiring), Namespace consults its
+      // live flip set, and a strategy outside the seam falls back to the default topic
+      // with no flip hook — all three locked by registration tests.
+      var commandInboxResolver = outboxStrategy as ICommandInboxAddressResolver;
       return new TransportPublishStrategy(
-        transport, readinessCheck, SharedTopicOutboxStrategy.DefaultInboxTopic,
+        transport, readinessCheck,
+        commandInboxResolver?.DefaultCommandInboxAddress ?? SharedTopicOutboxStrategy.DefaultInboxTopic,
         loggerFactory,
         throttleRetryOptions: null, metrics: null,
-        postSerializeHookChain: hookChain, jsonOptions: jsonOptions);
+        postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
+        namespaceRouting: commandInboxResolver);
     });
 
     return services;

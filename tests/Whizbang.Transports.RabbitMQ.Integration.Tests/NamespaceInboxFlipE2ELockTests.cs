@@ -430,6 +430,75 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
     }
   }
 
+  // ---------- §shared-inbox retirement (phase 7) ----------
+
+  [Test]
+  [Timeout(90000)]
+  public async Task Retirement_FullFlip_CommandRidesNamespaceInbox_SystemBroadcasts_SharedExchangeStaysSilentAsync(CancellationToken ct) {
+    // THE PHASE-7 RETIREMENT SHAPE against a real broker: full flip + retirement. The legacy
+    // shared exchange still EXISTS broker-side (retirement removes traffic; the operator
+    // deletes the entity later) — a match-all probe queue bound to it is the observable: if
+    // anything still landed on the shared exchange, the probe queue would receive it. The
+    // strict zero-broker-op count lives in the recording-double lock
+    // (RabbitMQSharedInboxRetirementE2ELockTests).
+    var transport = await _createTransportAsync();
+    var handlerService = _uniqueService("svc-orders");
+    var broadcastService = _uniqueService("svc-broadcast");
+    var probeQueue = $"{_uniqueService("legacy-probe")}-inbox";
+
+    await using (var legacyChannel = await _connection!.CreateChannelAsync(cancellationToken: ct)) {
+      await legacyChannel.ExchangeDeclareAsync("inbox", "topic", durable: true, autoDelete: false, cancellationToken: ct);
+      await legacyChannel.QueueDeclareAsync(probeQueue, durable: true, exclusive: false, autoDelete: false, arguments: null, cancellationToken: ct);
+      await legacyChannel.QueueBindAsync(probeQueue, "inbox", "#", cancellationToken: ct);
+    }
+
+    var routingOptions = new RoutingOptions().RouteAllCommandNamespacesToInbox().RetireSharedInbox();
+    var commandWork = _commandWork(new WbTopo.Orders.Commands.PlaceOrder($"retire-{Guid.CreateVersion7():N}"));
+    var systemWork = _commandWork(new Whizbang.Core.Commands.System.RebuildPerspectiveCommand(
+      PerspectiveNames: ["retirement-probe"]));
+
+    var commandAwaiter = new Whizbang.Testing.Transport.MessageIdAwaiter(commandWork.MessageId.ToString());
+    var systemAwaiter = new Whizbang.Testing.Transport.MessageIdAwaiter(systemWork.MessageId.ToString());
+    var handlerSubscription = await transport.SubscribeAsync(
+      commandAwaiter.Handler, _subscribeDestination(ORDERS_ENTITY, handlerService), ct);
+    var broadcastSubscription = await transport.SubscribeAsync(
+      systemAwaiter.Handler,
+      _subscribeDestination(CommandInboxNaming.SystemBroadcastTopic, broadcastService), ct);
+
+    try {
+      var publish = new TransportPublishStrategy(
+        transport, new DefaultTransportReadinessCheck(), "inbox",
+        namespaceRouting: new NamespaceOutboxStrategy(routingOptions));
+      var commandResult = await publish.PublishAsync(commandWork, ct);
+      var systemResult = await publish.PublishAsync(systemWork, ct);
+      await Assert.That(commandResult.Success).IsTrue();
+      await Assert.That(systemResult.Success).IsTrue();
+
+      await Assert.That(await commandAwaiter.WaitAsync(TimeSpan.FromSeconds(15), ct))
+        .IsEqualTo(commandWork.MessageId.ToString())
+        .Because("under retirement a domain command rides its per-namespace inbox");
+      await Assert.That(await systemAwaiter.WaitAsync(TimeSpan.FromSeconds(15), ct))
+        .IsEqualTo(systemWork.MessageId.ToString())
+        .Because("a framework-reserved system command broadcasts on inbox.whizbang — the sole carve-out");
+
+      // Both arrivals fence the publishes as fully routed broker-side; the legacy probe
+      // queue must have received NOTHING.
+      await using var probeChannel = await _connection!.CreateChannelAsync(cancellationToken: ct);
+      var depth = await probeChannel.MessageCountAsync(probeQueue, ct);
+      await Assert.That(depth).IsEqualTo(0u)
+        .Because("NOTHING lands on the legacy shared exchange under retirement — the end-state has no catch-all");
+    } finally {
+      handlerSubscription.Dispose();
+      broadcastSubscription.Dispose();
+      try {
+        await using var cleanup = await _connection!.CreateChannelAsync(cancellationToken: ct);
+        await cleanup.QueueDeleteAsync(probeQueue, ifUnused: false, ifEmpty: false, cancellationToken: ct);
+      } catch (OperationInterruptedException) {
+        // Best-effort probe-queue cleanup — a torn-down channel must not fail the test.
+      }
+    }
+  }
+
   // ---------- §DLQ & recovery ----------
 
   [Test]

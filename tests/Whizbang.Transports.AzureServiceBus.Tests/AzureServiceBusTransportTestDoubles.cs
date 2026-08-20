@@ -128,6 +128,12 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   /// sender-link. The O(3N) throughput lock asserts a burst reuses ONE sender.</summary>
   public List<string> CreatedSenderTopics { get; } = [];
 
+  /// <summary>Every (topic, subscription) a NON-session processor was created for, in order,
+  /// paired with its processor — the phase-7 retirement lock asserts the legacy shared topic
+  /// gets ZERO receive-side operations, and delivers per-entity through the matching
+  /// processor. <see cref="LastProcessor"/> stays the last entry for existing tests.</summary>
+  public List<(string Topic, string Subscription, RaisableProcessor Processor)> CreatedProcessors { get; } = [];
+
   /// <summary>Injected into every created sender's single-message send path.</summary>
   public Exception? SendException { get; set; }
 
@@ -146,6 +152,7 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   public override ServiceBusProcessor CreateProcessor(
     string topicName, string subscriptionName, ServiceBusProcessorOptions options) {
     LastProcessor = new RaisableProcessor();
+    CreatedProcessors.Add((topicName, subscriptionName, LastProcessor));
     return LastProcessor;
   }
 
@@ -492,8 +499,14 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     return Task.FromResult<NamespaceProperties>(null!);
   }
 
+  /// <summary>Every topic name an existence check was issued for — the phase-7 retirement
+  /// lock asserts the legacy shared inbox receives ZERO management operations, existence
+  /// probes included.</summary>
+  public List<string> TopicExistenceChecks { get; } = [];
+
   public Task<bool> TopicExistsAsync(string topicName, CancellationToken cancellationToken = default) {
     ManagementOpCount++;
+    TopicExistenceChecks.Add(topicName);
     return Task.FromResult(ExistingTopics.Contains(topicName));
   }
 

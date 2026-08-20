@@ -24,7 +24,8 @@ namespace Whizbang.Core.Routing;
 /// </remarks>
 /// <param name="inboxTopic">The shared inbox topic name for commands.</param>
 /// <param name="topicResolver">Strategy for resolving namespace from message type.</param>
-public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingStrategy topicResolver) : IOutboxRoutingStrategy {
+public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingStrategy topicResolver)
+    : IOutboxRoutingStrategy, ICommandInboxAddressResolver {
   /// <summary>
   /// The default inbox topic name for commands.
   /// </summary>
@@ -40,6 +41,22 @@ public sealed class SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingSt
   /// </summary>
   public string InboxTopic { get; } = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
   private readonly ITopicRoutingStrategy _topicResolver = topicResolver ?? throw new ArgumentNullException(nameof(topicResolver));
+
+  /// <summary>
+  /// The command-inbox seam (topology arc phase 7): the shared-topic strategy's default is
+  /// its configured inbox topic — the one address every command rides.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/CommandInboxAddressResolverTests.cs:SharedTopicOutboxStrategy_ImplementsTheSeam_DefaultIsInboxTopic_NeverFlipsAsync</tests>
+  public string DefaultCommandInboxAddress => InboxTopic;
+
+  /// <summary>
+  /// The shared-topic strategy never flips a namespace: always null, so the publish-time
+  /// caller keeps today's shared-inbox wire shape byte-identically for every command.
+  /// </summary>
+  /// <param name="contractNamespace">Ignored.</param>
+  /// <returns>Always null.</returns>
+  public string? ResolveFlippedCommandInboxAddress(string? contractNamespace) => null;
 
   /// <summary>
   /// Creates a shared topic outbox strategy with defaults.

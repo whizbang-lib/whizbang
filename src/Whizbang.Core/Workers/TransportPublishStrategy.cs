@@ -40,11 +40,13 @@ namespace Whizbang.Core.Workers;
 /// <param name="transport">The transport to publish messages to</param>
 /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
 /// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
-/// <param name="namespaceRouting">The publisher-flip seam (topology arc phase 6): when the
-/// consumer opted into <see cref="NamespaceOutboxStrategy"/>, commands whose contract
-/// namespace is FLIPPED route to their per-namespace inbox entity at publish time (resolved
-/// name-based — the outbox row carries the type-name string, not the CLR type). Null keeps
-/// today's behavior byte-identical: every command to <paramref name="inboxTopic"/>.</param>
+/// <param name="namespaceRouting">The publisher-flip seam (topology arc phase 6, widened to
+/// the strategy-agnostic <see cref="ICommandInboxAddressResolver"/> interface in phase 7):
+/// commands whose contract namespace the resolver FLIPS route to their per-namespace inbox
+/// entity at publish time (resolved name-based — the outbox row carries the type-name
+/// string, not the CLR type). Both built-in command-routing strategies implement the seam;
+/// <see cref="SharedTopicOutboxStrategy"/> never flips, so wiring it here is byte-identical
+/// to null. Null keeps today's behavior: every command to <paramref name="inboxTopic"/>.</param>
 public partial class TransportPublishStrategy(
   ITransport transport,
   ITransportReadinessCheck readinessCheck,
@@ -54,7 +56,7 @@ public partial class TransportPublishStrategy(
   TransportMetrics? metrics = null,
   Whizbang.Core.Offloads.PostSerializeHookChain? postSerializeHookChain = null,
   System.Text.Json.JsonSerializerOptions? jsonOptions = null,
-  NamespaceOutboxStrategy? namespaceRouting = null
+  ICommandInboxAddressResolver? namespaceRouting = null
 ) : IMessagePublishStrategy {
   private const string LOG_CATEGORY = "Whizbang.Core.Transport";
 
@@ -66,7 +68,7 @@ public partial class TransportPublishStrategy(
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
-  private readonly NamespaceOutboxStrategy? _namespaceRouting = namespaceRouting;
+  private readonly ICommandInboxAddressResolver? _namespaceRouting = namespaceRouting;
   private readonly Whizbang.Core.Offloads.PostSerializeHookChain? _hookChain = postSerializeHookChain;
   private readonly System.Text.Json.JsonSerializerOptions? _jsonOptions = jsonOptions;
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
