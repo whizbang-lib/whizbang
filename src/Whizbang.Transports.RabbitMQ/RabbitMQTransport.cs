@@ -31,6 +31,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private readonly RabbitMQOptions _options;
   private readonly ILogger<RabbitMQTransport>? _logger;
   private readonly ConcurrentDictionary<string, bool> _declaredExchanges = new();
+  private readonly ConcurrentDictionary<string, byte> _declaredDeadLetterQueues = new();
+
+  /// <summary>
+  /// Snapshot of the dead-letter queue names this transport has declared — the fleet
+  /// dead-letter drainer enumerates these on every drain pass so queues declared after
+  /// container build still get their broker DLQs drained.
+  /// </summary>
+  internal IReadOnlyCollection<string> ActiveDeadLetterQueues => [.. _declaredDeadLetterQueues.Keys];
   private readonly IMessageDiscardPolicy? _discardPolicy;
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
@@ -1004,6 +1012,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     if (_options.AutoDeclareDeadLetterExchange) {
       await _declareDeadLetterExchangeAsync(channel, exchangeName, queueName, cancellationToken);
+      _declaredDeadLetterQueues.TryAdd($"{queueName}.dlq", 0);
     }
 
     var queueArgs = new Dictionary<string, object?>();

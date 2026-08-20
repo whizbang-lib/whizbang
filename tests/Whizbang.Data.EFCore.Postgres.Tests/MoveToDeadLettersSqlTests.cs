@@ -254,4 +254,50 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("att", attempts);
     await ins.ExecuteNonQueryAsync();
   }
+
+  [Test]
+  public async Task MoveToDeadLetters_PerspectiveRowWithStoredError_CapturesTerminalErrorInErrorTextAsync() {
+    // Forensic gap observed live: thousands of perspective dead-letters carried ONLY the
+    // "attempts=N > max=M" wrapper; the terminal apply exception (stored on
+    // wh_perspective_events.error) was discarded, and once pod logs rotated the root cause was
+    // unrecoverable. The move must preserve the source row's stored error.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.NewMedo();
+    await _insertPerspectiveEventWithErrorAsync(conn, workId, (Guid)TrackedGuid.NewMedo(),
+      "Test.Projection", (Guid)TrackedGuid.NewMedo(), attempts: 12,
+      error: "System.InvalidOperationException: the actual root cause");
+
+    _ = await _callMoveAsync(conn, dlqId, "wh_perspective_events", workId,
+      failureReason: 5, errorText: "PerspectiveWorker dead-lettered perspective event: attempts=12 > max=10",
+      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "g3");
+
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT error_text FROM wh_dead_letters WHERE dead_letter_id = @id";
+    cmd.Parameters.AddWithValue("id", dlqId);
+    var errorText = (string)(await cmd.ExecuteScalarAsync())!;
+    await Assert.That(errorText).Contains("the actual root cause")
+      .Because("the stored terminal apply error must survive into the DLQ row");
+    await Assert.That(errorText).Contains("attempts=12 > max=10")
+      .Because("the promotion wrapper stays too — it carries the attempts context");
+  }
+
+  private static async Task _insertPerspectiveEventWithErrorAsync(
+      NpgsqlConnection conn, Guid eventWorkId, Guid streamId, string perspectiveName, Guid eventId,
+      int attempts, string error) {
+    await using var ins = conn.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_perspective_events
+        (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at, error)
+      VALUES (@work, @stream, @persp, @event, 0, 0, @att, NOW(), @err)";
+    ins.Parameters.AddWithValue("work", eventWorkId);
+    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.AddWithValue("persp", perspectiveName);
+    ins.Parameters.AddWithValue("event", eventId);
+    ins.Parameters.AddWithValue("att", attempts);
+    ins.Parameters.AddWithValue("err", error);
+    await ins.ExecuteNonQueryAsync();
+  }
 }
+

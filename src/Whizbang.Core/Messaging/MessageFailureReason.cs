@@ -154,5 +154,13 @@ public enum MessageFailureReason {
   /// event-store append rolled back. The whole composite is rejected
   /// (no partial inner events recorded).
   /// </summary>
-  CompositeExpansionFailure = 16
+  CompositeExpansionFailure = 16,
+
+  /// <summary>
+  /// The message was dead-lettered at the BROKER (delivery-attempt exhaustion, session churn,
+  /// a build that could not deserialize it) and imported into <c>wh_dead_letters</c> by the
+  /// transport dead-letter drain — custody transferred from the broker's opaque bucket to the
+  /// recovery flow. The broker's own reason/description are preserved in <c>error_text</c>.
+  /// </summary>
+  BrokerDeadLetter = 17
 }

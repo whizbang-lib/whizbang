@@ -82,6 +82,29 @@ public static class ServiceCollectionExtensions {
     });
 
     // Register transport
+    // Broker DLQ import (issue #514 / broker-dlq-import proposal): the ONE
+    // ITransportDeadLetterDrainer this hosting registration contributes. Everything resolves
+    // LAZILY — constructing the fleet drainer never dials the broker; the import seam resolves
+    // IWorkCoordinator per call from a fresh scope, and the absence of a capable coordinator
+    // THROWS so the message stays on the broker DLQ instead of being silently lost.
+    services.AddSingleton<Whizbang.Core.Transports.ITransportDeadLetterDrainer>(sp => {
+      var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+      return new RabbitMqFleetDeadLetterDrainer(
+        connectionFactory: () => sp.GetRequiredService<global::RabbitMQ.Client.IConnection>(),
+        activeDeadLetterQueues: () =>
+          sp.GetRequiredService<ITransport>() is RabbitMQTransport rmq
+            ? rmq.ActiveDeadLetterQueues
+            : [],
+        importAsync: async (import, ct) => {
+          using var scope = scopeFactory.CreateScope();
+          var coordinator = scope.ServiceProvider.GetService<Whizbang.Core.Messaging.IWorkCoordinator>()
+            ?? throw new InvalidOperationException(
+              "Broker DLQ import requires an IWorkCoordinator; none is registered — message stays on the broker DLQ.");
+          return await coordinator.ImportBrokerDeadLetterAsync(import, ct).ConfigureAwait(false);
+        },
+        loggerFactory: sp.GetRequiredService<ILoggerFactory>());
+    });
+
     services.AddSingleton<ITransport>(sp => {
       var connection = sp.GetRequiredService<IConnection>();
       var pool = sp.GetRequiredService<RabbitMQChannelPool>();
