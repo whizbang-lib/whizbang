@@ -38,6 +38,12 @@ public static class ControlPlaneTypeRegistry {
     Register(typeof(IntegrityDivergenceDetected));
     Register(typeof(PerspectiveCoverageGapDetected));
     Register(typeof(RequestRedeliveryCommand));
+    // The BUNDLE the redelivery control plane ships back, not just the request for it. Missing it
+    // meant a failed repair bundle was dead-lettered like domain traffic instead of dropped —
+    // which fed the recovery ladder and produced unbounded churn.
+    Register(typeof(RedeliveryComposite));
+    Register(typeof(Whizbang.Core.SystemEvents.AuditEventsComposite));
+    Register(typeof(CoalescedEventsComposite));
     Register(typeof(Whizbang.Core.Commands.System.RebuildPerspectiveCommand));
   }
 

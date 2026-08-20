@@ -35,7 +35,8 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_DefaultFactory_BuildsRawCarryCompositeFromSinglesAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_CoalescedEventsComposite_DeliversEachInnerAsync</tests>
 [PinnedId("4cdff50e-b094-4bb8-b6ef-acc86ce2469e")]
-public sealed class CoalescedEventsComposite : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite {
+public sealed class CoalescedEventsComposite
+  : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite, IControlPlaneMessage {
   /// <summary>
   /// Each folded single's raw stored payload JSON, verbatim from its outbox row — never
   /// rehydrated (see <see cref="IRawInnerComposite"/>).
