@@ -124,6 +124,10 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   public ServiceBusSessionProcessorOptions? LastSessionProcessorOptions { get; private set; }
   public RecordingBatchSender? LastSender { get; private set; }
 
+  /// <summary>Every topic a sender was created for, in order — one entry per broker
+  /// sender-link. The O(3N) throughput lock asserts a burst reuses ONE sender.</summary>
+  public List<string> CreatedSenderTopics { get; } = [];
+
   /// <summary>Injected into every created sender's single-message send path.</summary>
   public Exception? SendException { get; set; }
 
@@ -153,6 +157,7 @@ internal sealed class RaisableServiceBusClient(string fullyQualifiedNamespace = 
   }
 
   public override ServiceBusSender CreateSender(string queueOrTopicName) {
+    CreatedSenderTopics.Add(queueOrTopicName);
     LastSender = new RecordingBatchSender {
       SendException = SendException,
       SendBatchException = SendBatchException,

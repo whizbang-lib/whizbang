@@ -29,22 +29,6 @@ namespace Whizbang.Core.Routing;
 /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs</tests>
 public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
-  /// <summary>Prefix for per-namespace command inbox topics.</summary>
-  private const string PER_NAMESPACE_TOPIC_PREFIX = "inbox.";
-
-  /// <summary>
-  /// The system broadcast inbox every service subscribes to — carries the system-command,
-  /// integrity control-plane, and minted-composite patterns that the shared inbox carries today.
-  /// </summary>
-  private const string SYSTEM_BROADCAST_INBOX_TOPIC = "inbox.whizbang";
-
-  /// <summary>
-  /// The framework-reserved contract-namespace subtree (system commands, integrity control
-  /// plane, minted composites). Handled messages under it ride the system broadcast inbox and
-  /// never produce a per-namespace inbox.
-  /// </summary>
-  private const string FRAMEWORK_RESERVED_NAMESPACE = "whizbang.core";
-
   /// <summary>Backing constant for <see cref="OwnedCommandInboxMetadataKey"/>.</summary>
   private const string OWNED_COMMAND_INBOX_METADATA_KEY = "OwnedCommandInbox";
 
@@ -55,8 +39,9 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
   /// </summary>
   public static string OwnedCommandInboxMetadataKey => OWNED_COMMAND_INBOX_METADATA_KEY;
 
-  /// <summary>Gets the system broadcast inbox topic (<c>inbox.whizbang</c>).</summary>
-  public static string SystemBroadcastInboxTopic => SYSTEM_BROADCAST_INBOX_TOPIC;
+  /// <summary>Gets the system broadcast inbox topic (<c>inbox.whizbang</c>). Naming shared
+  /// with the publish side through <see cref="CommandInboxNaming"/> (phase 6).</summary>
+  public static string SystemBroadcastInboxTopic => CommandInboxNaming.SystemBroadcastTopic;
 
   private readonly SharedTopicInboxStrategy _transitionalShared;
 
@@ -105,7 +90,7 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
         continue;
       }
       var contractNamespace = handled.ContractNamespace.ToLowerInvariant();
-      if (_isFrameworkReserved(contractNamespace)) {
+      if (CommandInboxNaming.IsFrameworkReserved(contractNamespace)) {
         continue;
       }
       commandNamespaces.Add(contractNamespace);
@@ -113,7 +98,7 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
 
     foreach (var contractNamespace in commandNamespaces) {
       subscriptions.Add(new InboxSubscription(
-        Topic: PER_NAMESPACE_TOPIC_PREFIX + contractNamespace,
+        Topic: CommandInboxNaming.TopicFor(contractNamespace),
         FilterExpression: null, // the topic IS the filter — the entity carries one namespace
         Metadata: new Dictionary<string, object> {
           [OWNED_COMMAND_INBOX_METADATA_KEY] = true,
@@ -126,7 +111,7 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
     // system-command + control-plane + minting patterns — locked by tests.
     var systemPatterns = SharedTopicInboxStrategy.BuildRoutingPatterns(FrozenSet<string>.Empty);
     subscriptions.Add(new InboxSubscription(
-      Topic: SYSTEM_BROADCAST_INBOX_TOPIC,
+      Topic: CommandInboxNaming.SystemBroadcastTopic,
       FilterExpression: string.Join(",", systemPatterns),
       Metadata: new Dictionary<string, object> {
         ["RoutingPatterns"] = systemPatterns
@@ -170,10 +155,4 @@ public sealed class NamespaceInboxStrategy : IInboxRoutingStrategy {
     return namespaces;
   }
 
-  /// <summary>True when the namespace sits in the framework-reserved subtree
-  /// (<c>whizbang.core</c> and below) — broadcast/control/minted traffic that rides the system
-  /// broadcast inbox, never a per-namespace inbox.</summary>
-  private static bool _isFrameworkReserved(string contractNamespace) =>
-    contractNamespace == FRAMEWORK_RESERVED_NAMESPACE
-    || contractNamespace.StartsWith(FRAMEWORK_RESERVED_NAMESPACE + ".", StringComparison.Ordinal);
 }

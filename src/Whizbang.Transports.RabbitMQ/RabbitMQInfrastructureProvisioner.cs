@@ -141,6 +141,17 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
 
     foreach (var address in manifest.PublishDestinations.Select(d => d.Address).Distinct(StringComparer.OrdinalIgnoreCase)) {
       cancellationToken.ThrowIfCancellationRequested();
+
+      // Publish-side consumer-provisioned inbox entities (inbox.*, phase 6) are SKIPPED:
+      // only the handling service declares its command inbox — a publisher-declared,
+      // bindingless inbox exchange would turn "no subscriber provisioned" into a silent
+      // broker-side drop instead of the loud UnroutableDestinationException the flip
+      // guarantees. (Subscription entities below keep declaring them — that IS the handling
+      // service's dark provisioning.)
+      if (CommandInboxNaming.IsConsumerProvisionedInboxEntity(address)) {
+        continue;
+      }
+
       var exchangeName = address.ToLowerInvariant();
       if (_declaredExchanges.ContainsKey(exchangeName)) {
         continue;

@@ -59,6 +59,25 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
   }
 
   [Test]
+  public async Task AddRabbitMQTransport_WithNamespaceOutboxStrategy_WiresPublishTimeFlipSeamAsync() {
+    // Phase 6: the DI factory must recognize NamespaceOutboxStrategy, propagate its shared
+    // inbox topic, AND hand the strategy itself to TransportPublishStrategy so the
+    // publish-time command resolution consults the flip set.
+    var services = _createServicesWithFakeConnection();
+    var namespaceStrategy = new NamespaceOutboxStrategy(new RoutingOptions(), "custom-inbox");
+    services.AddSingleton<IOutboxRoutingStrategy>(namespaceStrategy);
+
+    services.AddRabbitMQTransport(CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+    var strategy = provider.GetRequiredService<IMessagePublishStrategy>();
+
+    await Assert.That(strategy).IsTypeOf<TransportPublishStrategy>();
+    await Assert.That(_getInboxTopic(strategy)).IsEqualTo("custom-inbox");
+    await Assert.That(_getNamespaceRouting(strategy)).IsSameReferenceAs(namespaceStrategy)
+      .Because("without the seam, flips would silently never reach the wire");
+  }
+
+  [Test]
   public async Task AddRabbitMQTransport_WithNonSharedTopicOutboxStrategy_FallsBackToDefaultInboxTopicAsync() {
     // Arrange - a registered strategy that is NOT SharedTopicOutboxStrategy must not match the branch
     var services = _createServicesWithFakeConnection();
@@ -246,6 +265,20 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
         "_inboxTopic field not found on TransportPublishStrategy - was it renamed?");
 
     return (string?)field.GetValue(strategy);
+  }
+
+  /// <summary>
+  /// Reads the private publish-time flip seam captured by TransportPublishStrategy so tests
+  /// can assert the NamespaceOutboxStrategy branch handed the strategy through.
+  /// </summary>
+  private static NamespaceOutboxStrategy? _getNamespaceRouting(IMessagePublishStrategy strategy) {
+    var field = typeof(TransportPublishStrategy).GetField(
+      "_namespaceRouting",
+      BindingFlags.NonPublic | BindingFlags.Instance)
+      ?? throw new InvalidOperationException(
+        "_namespaceRouting field not found on TransportPublishStrategy - was it renamed?");
+
+    return (NamespaceOutboxStrategy?)field.GetValue(strategy);
   }
 
   /// <summary>

@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
 
@@ -48,6 +49,39 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
         NullLogger<ServiceBusInfrastructureProvisioner>.Instance,
         options,
         driftState);
+
+  [Test]
+  public async Task ProvisionManifest_PublishOnlyCommandInboxEntities_AreNeverCreatedByThePublisherAsync() {
+    // Phase 6: a publisher whose manifest names a FLIPPED command inbox as a publish
+    // destination must NOT create the entity — only the handling service does (dark
+    // provisioning). A publisher-created, subscription-less inbox topic would turn
+    // "no subscriber provisioned" into a silent broker-side drop instead of the loud
+    // UnroutableDestinationException the flip guarantees.
+    var adminClient = new RecordingProvisioningAdminClient();
+    var provisioner = _provisioner(adminClient);
+    var routingOptions = new RoutingOptions()
+      .RouteCommandNamespaceToInbox(typeof(TestMessage).Namespace!);
+    var context = new InboxSubscriptionContext(
+      SERVICE_NAME, new HashSet<string>(StringComparer.OrdinalIgnoreCase), []);
+    var manifest = TopologyManifestBuilder.Build(
+      new NamespaceOutboxStrategy(routingOptions),
+      new SharedTopicInboxStrategy(),
+      context,
+      [
+        new MessageTypeCatalogEntry(typeof(TestMessage), typeof(TestMessage).FullName!, "command", null),
+        new MessageTypeCatalogEntry(typeof(TestMessage), typeof(TestMessage).FullName!, "event", null)
+      ]);
+    var flippedEntity = CommandInboxNaming.TopicFor(typeof(TestMessage).Namespace!);
+
+    await provisioner.ProvisionManifestAsync(manifest);
+
+    await Assert.That(manifest.PublishDestinations.Select(d => d.Address)).Contains(flippedEntity)
+      .Because("precondition: the manifest really does name the flipped entity as a publish destination");
+    await Assert.That(adminClient.CreatedTopics).DoesNotContain(flippedEntity);
+    // Everything else still provisions exactly as before (event topic + subscription topic).
+    await Assert.That(adminClient.CreatedTopics).Contains(typeof(TestMessage).Namespace!.ToLowerInvariant());
+    await Assert.That(adminClient.CreatedTopics).Contains("inbox");
+  }
 
   [Test]
   public async Task ProvisionManifest_CreatesEveryManifestTopicAsync() {

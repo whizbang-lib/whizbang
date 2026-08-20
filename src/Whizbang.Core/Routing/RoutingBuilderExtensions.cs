@@ -87,12 +87,25 @@ public static class RoutingBuilderExtensions {
     var options = new RoutingOptions();
     configure(options);
 
-    // Register as IOptions<RoutingOptions> using Options.Create (AOT-safe, no reflection)
-    builder.Services.AddSingleton(Options.Create(options));
+    // Register as IOptions<RoutingOptions> (AOT-safe, no reflection). The factory defers to
+    // first resolution so the configuration flip set (Whizbang:Routing, topology arc phase 6)
+    // can be applied on top of the code callback — Options.Create bypasses the options
+    // pipeline entirely, so binding happens HERE, not via IPostConfigureOptions. Explicit
+    // per-key reads only (house binder idiom).
+    builder.Services.AddSingleton<IOptions<RoutingOptions>>(sp => {
+      RoutingOptionsConfigurationBinder.Apply(
+        sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>(), options);
+      return Options.Create(options);
+    });
 
     // Register routing strategies from options for use by TransportPublishStrategy
-    // These transform outbox destinations (e.g., "createtenant" → "inbox")
-    builder.Services.AddSingleton<IOutboxRoutingStrategy>(options.OutboxStrategy);
+    // These transform outbox destinations (e.g., "createtenant" → "inbox").
+    // The outbox factory resolves IOptions<RoutingOptions> first so the configuration flip
+    // set is guaranteed applied before any strategy consumer routes a message.
+    builder.Services.AddSingleton<IOutboxRoutingStrategy>(sp => {
+      _ = sp.GetRequiredService<IOptions<RoutingOptions>>().Value;
+      return options.OutboxStrategy;
+    });
     builder.Services.AddSingleton<IInboxRoutingStrategy>(options.InboxStrategy);
 
     // Register EventSubscriptionDiscovery for event namespace discovery

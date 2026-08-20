@@ -20,6 +20,8 @@ public sealed class RoutingOptions {
   private readonly HashSet<string> _ownedDomains = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _subscribedNamespaces = new(StringComparer.OrdinalIgnoreCase);
   private readonly HashSet<string> _absorbedNamespaces = new(StringComparer.OrdinalIgnoreCase);
+  private readonly HashSet<string> _commandNamespacesToInbox = new(StringComparer.OrdinalIgnoreCase);
+  private bool _routeAllCommandNamespacesToInbox;
 
   /// <summary>
   /// Gets the command namespaces owned by this service.
@@ -208,6 +210,72 @@ public sealed class RoutingOptions {
   }
 
   /// <summary>
+  /// Gets the contract namespaces whose COMMANDS are flipped to their per-namespace inbox
+  /// entity (<c>inbox.&lt;ns&gt;</c>) by <see cref="NamespaceOutboxStrategy"/> — the topology
+  /// arc phase-6 publisher flip, migrated namespace-at-a-time. Lowercase-invariant.
+  /// Empty (and <see cref="AllCommandNamespacesRouteToInbox"/> false) = no namespace flipped.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  public IReadOnlySet<string> CommandNamespacesToInbox => _commandNamespacesToInbox;
+
+  /// <summary>
+  /// Gets whether EVERY command contract namespace routes to its per-namespace inbox —
+  /// set by <see cref="RouteAllCommandNamespacesToInbox"/>, the end-state of the
+  /// namespace-at-a-time migration.
+  /// </summary>
+  public bool AllCommandNamespacesRouteToInbox => _routeAllCommandNamespacesToInbox;
+
+  /// <summary>
+  /// FLIPS one command contract namespace to its per-namespace inbox entity
+  /// (<c>inbox.&lt;ns&gt;</c>): once flipped, <see cref="NamespaceOutboxStrategy"/> (and the
+  /// publish-time seam in <c>TransportPublishStrategy</c>) route that namespace's commands to
+  /// the entity the handling service dark-provisioned in phase 5, instead of the legacy
+  /// shared inbox. Repeatable — flip one namespace per call, migrate namespace-at-a-time.
+  /// ROLLBACK = remove the call (or the configuration entry
+  /// <c>Whizbang:Routing:CommandNamespacesToInbox</c>): unflipped namespaces route
+  /// byte-identically to the legacy shared inbox.
+  /// </summary>
+  /// <param name="contractNamespace">The command contract namespace to flip
+  /// (case-insensitive; stored lowercase-invariant).</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="ArgumentException">Thrown when the namespace is null or whitespace.</exception>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:RouteCommandNamespaceToInbox_IsRepeatableAndLowercasesAsync</tests>
+  public RoutingOptions RouteCommandNamespaceToInbox(string contractNamespace) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(contractNamespace);
+    _commandNamespacesToInbox.Add(contractNamespace.ToLowerInvariant());
+    return this;
+  }
+
+  /// <summary>
+  /// Flips EVERY command contract namespace to its per-namespace inbox — the end-state of
+  /// the migration (also bindable from configuration as the <c>"*"</c> entry in
+  /// <c>Whizbang:Routing:CommandNamespacesToInbox</c>). Framework-reserved namespaces
+  /// (<c>whizbang.core.*</c>) are never given per-namespace inboxes — under a full flip they
+  /// route to the system broadcast inbox instead (see <see cref="NamespaceOutboxStrategy"/>).
+  /// </summary>
+  /// <returns>This options instance for chaining.</returns>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:RouteAllCommandNamespacesToInbox_FlipsEveryNamespaceAsync</tests>
+  public RoutingOptions RouteAllCommandNamespacesToInbox() {
+    _routeAllCommandNamespacesToInbox = true;
+    return this;
+  }
+
+  /// <summary>
+  /// True when commands in <paramref name="contractNamespace"/> are flipped to their
+  /// per-namespace inbox (explicitly or via <see cref="RouteAllCommandNamespacesToInbox"/>).
+  /// Consulted LIVE by <see cref="NamespaceOutboxStrategy"/> on every routing decision, so
+  /// configuration-bound flips and rollbacks need no strategy re-registration.
+  /// </summary>
+  /// <param name="contractNamespace">The contract namespace (case-insensitive).</param>
+  /// <returns>True when flipped.</returns>
+  public bool IsCommandNamespaceRoutedToInbox(string contractNamespace) {
+    return _routeAllCommandNamespacesToInbox
+      || (!string.IsNullOrWhiteSpace(contractNamespace) && _commandNamespacesToInbox.Contains(contractNamespace));
+  }
+
+  /// <summary>
   /// Configures inbox routing using an action.
   /// </summary>
   /// <param name="configure">Action to configure inbox options.</param>
@@ -352,6 +420,28 @@ public sealed class OutboxRoutingOptionsBuilder {
   /// </remarks>
   public RoutingOptions UseSharedTopic(string inboxTopic = "inbox") {
     _parent.SetOutboxStrategy(new SharedTopicOutboxStrategy(inboxTopic));
+    return _parent;
+  }
+
+  /// <summary>
+  /// Uses namespace routing (topology arc phase 6, opt-in): events publish to domain topics
+  /// exactly as <see cref="DomainTopicOutboxStrategy"/> (today's default); commands publish
+  /// to their per-namespace inbox (<c>inbox.&lt;contract-namespace&gt;</c>) once their
+  /// namespace is FLIPPED via <see cref="RoutingOptions.RouteCommandNamespaceToInbox"/> /
+  /// <see cref="RoutingOptions.RouteAllCommandNamespacesToInbox"/> (or configuration
+  /// <c>Whizbang:Routing:CommandNamespacesToInbox</c>) — unflipped namespaces keep routing
+  /// byte-identically to the legacy shared inbox; System traffic publishes to the system
+  /// broadcast inbox. NOT the default; pair with
+  /// <see cref="InboxRoutingOptionsBuilder.UseNamespaceInboxes"/> on the consuming services
+  /// (the flip requires phase-5 dark-provisioned entities to exist).
+  /// </summary>
+  /// <param name="sharedInboxTopic">The legacy shared inbox topic unflipped commands keep
+  /// using. Default: "inbox".</param>
+  /// <returns>The parent options for chaining.</returns>
+  /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceOutboxStrategyTests.cs:Outbox_UseNamespaceRouting_SetsNamespaceStrategyAsync</tests>
+  public RoutingOptions UseNamespaceRouting(string sharedInboxTopic = "inbox") {
+    _parent.SetOutboxStrategy(new NamespaceOutboxStrategy(_parent, sharedInboxTopic));
     return _parent;
   }
 

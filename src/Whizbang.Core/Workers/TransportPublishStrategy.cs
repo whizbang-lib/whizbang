@@ -40,6 +40,11 @@ namespace Whizbang.Core.Workers;
 /// <param name="transport">The transport to publish messages to</param>
 /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
 /// <param name="inboxTopic">The inbox topic name for commands (e.g., "whizbang" or "inbox")</param>
+/// <param name="namespaceRouting">The publisher-flip seam (topology arc phase 6): when the
+/// consumer opted into <see cref="NamespaceOutboxStrategy"/>, commands whose contract
+/// namespace is FLIPPED route to their per-namespace inbox entity at publish time (resolved
+/// name-based — the outbox row carries the type-name string, not the CLR type). Null keeps
+/// today's behavior byte-identical: every command to <paramref name="inboxTopic"/>.</param>
 public partial class TransportPublishStrategy(
   ITransport transport,
   ITransportReadinessCheck readinessCheck,
@@ -48,7 +53,8 @@ public partial class TransportPublishStrategy(
   ThrottleRetryOptions? throttleRetryOptions = null,
   TransportMetrics? metrics = null,
   Whizbang.Core.Offloads.PostSerializeHookChain? postSerializeHookChain = null,
-  System.Text.Json.JsonSerializerOptions? jsonOptions = null
+  System.Text.Json.JsonSerializerOptions? jsonOptions = null,
+  NamespaceOutboxStrategy? namespaceRouting = null
 ) : IMessagePublishStrategy {
   private const string LOG_CATEGORY = "Whizbang.Core.Transport";
 
@@ -60,6 +66,7 @@ public partial class TransportPublishStrategy(
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ITransportReadinessCheck _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
+  private readonly NamespaceOutboxStrategy? _namespaceRouting = namespaceRouting;
   private readonly Whizbang.Core.Offloads.PostSerializeHookChain? _hookChain = postSerializeHookChain;
   private readonly System.Text.Json.JsonSerializerOptions? _jsonOptions = jsonOptions;
 #pragma warning disable S4487 // Used by generated [LoggerMessage] partial methods
@@ -432,6 +439,24 @@ public partial class TransportPublishStrategy(
       var typeName = _extractTypeName(work.MessageType)?.ToLowerInvariant() ?? work.Destination;
       var ns = _extractNamespace(work.MessageType)?.ToLowerInvariant() ?? "";
       var routingKey = string.IsNullOrEmpty(ns) ? typeName : $"{ns}.{typeName}";
+
+      // Publisher flip (topology arc phase 6): a FLIPPED command namespace routes to its
+      // per-namespace inbox entity instead of the shared inbox. Name-based on purpose —
+      // the outbox row carries the type-name string, not the CLR type (AOT holds). The
+      // destination is marked RequireProvisionedEntity so the transport fails LOUDLY
+      // (UnroutableDestinationException) instead of silently dropping when the handling
+      // service never dark-provisioned the entity. Unflipped namespaces keep TODAY'S wire
+      // shape byte-identical (no metadata) — rollback is removing the flip.
+      var flippedAddress = _namespaceRouting?.ResolveFlippedCommandInboxAddress(ns);
+      if (flippedAddress is not null) {
+        return new TransportDestination(
+          Address: flippedAddress,
+          RoutingKey: routingKey,
+          Metadata: new Dictionary<string, JsonElement> {
+            [CommandInboxNaming.RequireProvisionedEntityMetadataKey] = JsonDocument.Parse("true").RootElement
+          }
+        );
+      }
 
       return new TransportDestination(
         Address: _inboxTopic,

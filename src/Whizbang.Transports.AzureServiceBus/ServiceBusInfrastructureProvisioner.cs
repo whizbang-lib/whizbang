@@ -120,8 +120,14 @@ public sealed class ServiceBusInfrastructureProvisioner : IInfrastructureProvisi
       CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(manifest);
 
-    // Topics: the union of publish destinations and subscription entities.
+    // Topics: the union of publish destinations and subscription entities. Publish-side
+    // consumer-provisioned inbox entities (inbox.*, phase 6) are SKIPPED: only the handling
+    // service creates its command inbox — a publisher-created, subscription-less inbox topic
+    // would turn "no subscriber provisioned" into a silent broker-side drop instead of the
+    // loud UnroutableDestinationException the flip guarantees. (Subscription topics keep
+    // provisioning them — that IS the handling service's dark provisioning.)
     var topics = manifest.PublishDestinations.Select(d => d.Address)
+      .Where(address => !CommandInboxNaming.IsConsumerProvisionedInboxEntity(address))
       .Concat(manifest.Subscriptions.Select(s => s.Topic))
       .Select(t => t.ToLowerInvariant())
       .Distinct(StringComparer.OrdinalIgnoreCase);

@@ -212,6 +212,11 @@ internal class FakeChannel : IChannel {
   public bool BasicNackAsyncCalled { get; private set; }
   public ulong LastNackedDeliveryTag { get; private set; }
   public bool LastNackRequeue { get; private set; }
+
+  // Settle-op counters (phase 6): the O(3N) broker-op throughput lock counts every
+  // successful ack/nack, not just the last one — deliveries × settles must scale 1:1.
+  public int BasicAckCount { get; private set; }
+  public int BasicNackCount { get; private set; }
   public IAsyncBasicConsumer? LastRegisteredConsumer { get; private set; }
 
   // Track published messages for verification
@@ -242,6 +247,7 @@ internal class FakeChannel : IChannel {
       throw ExceptionToThrowOnAck;
     }
     BasicAckAsyncCalled = true;
+    BasicAckCount++;
     LastAckedDeliveryTag = deliveryTag;
     return ValueTask.CompletedTask;
   }
@@ -253,6 +259,7 @@ internal class FakeChannel : IChannel {
       throw ExceptionToThrowOnNack;
     }
     BasicNackAsyncCalled = true;
+    BasicNackCount++;
     LastNackedDeliveryTag = deliveryTag;
     LastNackRequeue = requeue;
     return ValueTask.CompletedTask;

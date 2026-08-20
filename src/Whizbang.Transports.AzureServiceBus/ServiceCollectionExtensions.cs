@@ -182,6 +182,19 @@ public static class ServiceCollectionExtensions {
       // Try to get inbox topic from registered outbox routing strategy
       // WithRouting() registers IOutboxRoutingStrategy directly
       var outboxStrategy = sp.GetService<IOutboxRoutingStrategy>();
+
+      // Publisher flip (topology arc phase 6): namespace routing hands the strategy itself
+      // to the publish strategy so FLIPPED command namespaces resolve to their per-namespace
+      // inbox at publish time; unflipped namespaces keep the shared inbox topic below.
+      if (outboxStrategy is NamespaceOutboxStrategy namespaceStrategy) {
+        return new TransportPublishStrategy(
+          transport, readinessCheck, namespaceStrategy.SharedInboxTopic,
+          loggerFactory,
+          throttleRetryOptions: null, metrics: null,
+          postSerializeHookChain: hookChain, jsonOptions: jsonOptions,
+          namespaceRouting: namespaceStrategy);
+      }
+
       if (outboxStrategy is SharedTopicOutboxStrategy sharedStrategy) {
         // Use the configured inbox topic from outbox strategy
         return new TransportPublishStrategy(

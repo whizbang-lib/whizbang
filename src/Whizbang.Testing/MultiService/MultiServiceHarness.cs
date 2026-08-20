@@ -137,6 +137,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
     internal string Name { get; }
     internal List<Action<IServiceCollection>> CatalogRegistrations { get; } = [];
     internal Action<IServiceCollection>? ConfigureServices { get; set; }
+    internal Action<Whizbang.Core.Routing.RoutingOptions>? RoutingOverride { get; set; }
 
     /// <summary>
     /// Adds a catalog exactly as a generated module initializer would — the registration flows
@@ -151,6 +152,19 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
     /// <summary>Extra registrations applied before the AddWhizbang chain (overrides harness defaults).</summary>
     public ServiceDefinition Configure(Action<IServiceCollection> configure) {
       ConfigureServices = configure;
+      return this;
+    }
+
+    /// <summary>
+    /// Overrides this service's routing configuration (topology arc phase 6). Default —
+    /// when never called — remains the shared-inbox topology
+    /// (<c>Inbox.UseSharedTopic("inbox")</c> + <c>Outbox.UseSharedTopic("inbox")</c>),
+    /// byte-identical to every pre-phase-6 harness test. Use it to run a service on the
+    /// namespace-inbox topology (<c>UseNamespaceInboxes()</c> / <c>UseNamespaceRouting()</c>)
+    /// for flip-migration locks.
+    /// </summary>
+    public ServiceDefinition WithRouting(Action<Whizbang.Core.Routing.RoutingOptions> configure) {
+      RoutingOverride = configure;
       return this;
     }
   }
@@ -220,10 +234,10 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
           definition.ConfigureServices?.Invoke(services);
 
           services.AddWhizbang()
-            .WithRouting(r => {
+            .WithRouting(definition.RoutingOverride ?? (static r => {
               r.Inbox.UseSharedTopic(MultiServiceHarnessDefaults.SHARED_TOPIC);
               r.Outbox.UseSharedTopic(MultiServiceHarnessDefaults.SHARED_TOPIC);
-            })
+            }))
             .AddTransportConsumer();
 
           provider = services.BuildServiceProvider();

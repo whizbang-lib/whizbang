@@ -11,6 +11,7 @@ using TUnit.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -1338,4 +1339,176 @@ public class TransportPublishStrategyTests {
       Flags = WorkBatchOptions.None
     };
   }
+
+  #region Publisher flip seam (topology arc phase 6)
+
+  // The publish-time authority for command destinations is THIS strategy, not the outbox
+  // row (the Dispatcher stamps .Address, but _resolveDestination re-resolves). The flip
+  // therefore rides an optional NamespaceOutboxStrategy seam: flipped namespaces route to
+  // their per-namespace inbox entity at publish time; everything else keeps today's wire
+  // shape byte-identical.
+
+  private static NamespaceOutboxStrategy _namespaceRouting(params string[] flippedNamespaces) {
+    var options = new Whizbang.Core.Routing.RoutingOptions();
+    foreach (var ns in flippedNamespaces) {
+      options.RouteCommandNamespaceToInbox(ns);
+    }
+    return new NamespaceOutboxStrategy(options);
+  }
+
+  [Test]
+  public async Task PublishAsync_FlippedNamespace_CommandRoutedToPerNamespaceInboxAsync() {
+    var transport = new TestTransport();
+    var strategy = new TransportPublishStrategy(
+      transport, new DefaultTransportReadinessCheck(), "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
+
+    var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
+    var result = await strategy.PublishAsync(work, CancellationToken.None);
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(transport.LastPublishedDestination!.Address)
+      .IsEqualTo("inbox.myapp.orders.commands");
+    await Assert.That(transport.LastPublishedDestination!.RoutingKey)
+      .IsEqualTo("myapp.orders.commands.placeordercommand")
+      .Because("the routing key keeps the shared-inbox '{namespace}.{typename}' shape");
+  }
+
+  [Test]
+  public async Task PublishAsync_FlippedNamespace_DestinationMarkedRequireProvisionedEntityAsync() {
+    var transport = new TestTransport();
+    var strategy = new TransportPublishStrategy(
+      transport, new DefaultTransportReadinessCheck(), "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
+
+    var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
+    await strategy.PublishAsync(work, CancellationToken.None);
+
+    await Assert.That(
+      Whizbang.Core.Routing.CommandInboxNaming.RequiresProvisionedEntity(transport.LastPublishedDestination))
+      .IsTrue()
+      .Because("the transport must fail LOUDLY when no subscriber provisioned the entity — never silently drop");
+  }
+
+  [Test]
+  public async Task PublishAsync_FlippedNamespaceWithStreamId_MarkerSurvivesStreamIdMetadataMergeAsync() {
+    var transport = new TestTransport();
+    var strategy = new TransportPublishStrategy(
+      transport, new DefaultTransportReadinessCheck(), "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
+
+    var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
+    // _createCommandOutboxWork sets a StreamId, so _addStreamIdToMetadata runs.
+    await strategy.PublishAsync(work, CancellationToken.None);
+
+    var destination = transport.LastPublishedDestination!;
+    await Assert.That(destination.Metadata!.ContainsKey("StreamId")).IsTrue();
+    await Assert.That(
+      Whizbang.Core.Routing.CommandInboxNaming.RequiresProvisionedEntity(destination)).IsTrue();
+  }
+
+  [Test]
+  public async Task PublishAsync_UnflippedNamespace_KeepsTodaysWireShapeByteIdenticalAsync() {
+    // Namespace routing is wired, but THIS namespace is not flipped — the wire shape must
+    // be byte-identical to today's: shared inbox address, same routing key, NO metadata
+    // beyond the StreamId the strategy always adds.
+    var flipAware = new TestTransport();
+    var legacy = new TestTransport();
+    var readiness = new DefaultTransportReadinessCheck();
+    var flipAwareStrategy = new TransportPublishStrategy(
+      flipAware, readiness, "inbox", namespaceRouting: _namespaceRouting("MyApp.Billing.Commands"));
+    var legacyStrategy = new TransportPublishStrategy(legacy, readiness, "inbox");
+
+    var messageType = "MyApp.Orders.Commands.PlaceOrderCommand, MyApp";
+    var flipAwareWork = _createCommandOutboxWork(messageType);
+    var legacyWork = _createCommandOutboxWork(messageType);
+    await flipAwareStrategy.PublishAsync(flipAwareWork, CancellationToken.None);
+    await legacyStrategy.PublishAsync(legacyWork, CancellationToken.None);
+
+    var actual = flipAware.LastPublishedDestination!;
+    var expected = legacy.LastPublishedDestination!;
+    await Assert.That(actual.Address).IsEqualTo(expected.Address);
+    await Assert.That(actual.RoutingKey).IsEqualTo(expected.RoutingKey);
+    await Assert.That(actual.Metadata!.Count).IsEqualTo(expected.Metadata!.Count)
+      .Because("unflipped commands must not grow new wire metadata — rollback means bit-for-bit today");
+  }
+
+  [Test]
+  public async Task PublishAsync_WithoutNamespaceRouting_FlipNeverEngagesAsync() {
+    // DEFAULT LOCK: no seam, no flip — commands to the shared inbox exactly as today.
+    var transport = new TestTransport();
+    var strategy = new TransportPublishStrategy(transport, new DefaultTransportReadinessCheck(), "inbox");
+
+    var work = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp");
+    await strategy.PublishAsync(work, CancellationToken.None);
+
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox");
+  }
+
+  [Test]
+  public async Task PublishAsync_FrameworkReservedCommand_FullFlip_RoutesToBroadcastInboxAsync() {
+    var options = new Whizbang.Core.Routing.RoutingOptions().RouteAllCommandNamespacesToInbox();
+    var transport = new TestTransport();
+    var strategy = new TransportPublishStrategy(
+      transport, new DefaultTransportReadinessCheck(), "inbox",
+      namespaceRouting: new NamespaceOutboxStrategy(options));
+
+    // Framework system commands ride the Command kind at every production call site;
+    // the strategy-internal classification must send them to the broadcast inbox — a
+    // per-namespace inbox for whizbang.core.* would have no subscriber, ever.
+    var work = _createCommandOutboxWork(
+      "Whizbang.Core.Commands.System.RebuildPerspectiveCommand, Whizbang.Core");
+    await strategy.PublishAsync(work, CancellationToken.None);
+
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("inbox.whizbang");
+  }
+
+  [Test]
+  public async Task PublishAsync_EventWithNamespaceRouting_DestinationUnchangedAsync() {
+    var transport = new TestTransport();
+    var options = new Whizbang.Core.Routing.RoutingOptions().RouteAllCommandNamespacesToInbox();
+    var strategy = new TransportPublishStrategy(
+      transport, new DefaultTransportReadinessCheck(), "inbox",
+      namespaceRouting: new NamespaceOutboxStrategy(options));
+
+    var messageId = Guid.CreateVersion7();
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "myapp.orders.events",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Orders.Events.OrderCreatedEvent, MyApp]], Whizbang.Core",
+      MessageType = "MyApp.Orders.Events.OrderCreatedEvent, MyApp",
+      StreamId = null,
+      PartitionNumber = 1,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchOptions.None
+    };
+    await strategy.PublishAsync(work, CancellationToken.None);
+
+    await Assert.That(transport.LastPublishedDestination!.Address).IsEqualTo("myapp.orders.events")
+      .Because("the flip is command-only; events keep their stamped domain-topic destination");
+  }
+
+  [Test]
+  public async Task PublishBatchAsync_MixedFlipStates_GroupsByResolvedAddressAsync() {
+    // A batch containing a flipped-namespace command and an unflipped one must split into
+    // two transport groups — one per resolved address.
+    var transport = new BulkPublishCapableTestTransport();
+    var strategy = new TransportPublishStrategy(
+      transport, new DefaultTransportReadinessCheck(), "inbox",
+      namespaceRouting: _namespaceRouting("MyApp.Orders.Commands"));
+
+    var streamId = Guid.CreateVersion7();
+    var flippedWork = _createCommandOutboxWork("MyApp.Orders.Commands.PlaceOrderCommand, MyApp") with { StreamId = streamId };
+    var legacyWork = _createCommandOutboxWork("MyApp.Billing.Commands.ChargeCardCommand, MyApp") with { StreamId = streamId };
+
+    await strategy.PublishBatchAsync([flippedWork, legacyWork], CancellationToken.None);
+
+    var addresses = transport.PublishBatchCalls.Select(c => c.Destination.Address).ToList();
+    await Assert.That(addresses).Contains("inbox.myapp.orders.commands");
+    await Assert.That(addresses).Contains("inbox");
+  }
+
+  #endregion
 }

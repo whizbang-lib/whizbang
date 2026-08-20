@@ -178,6 +178,42 @@ PR #513 before this decision; it stays (no revert).
   cross-namespace interleave ordering lock (the deliberate semantic change), **O(3N) broker-op
   throughput lock on both transports** (ASB: RecordingBatchSender/Receiver counters; RMQ:
   FakeChannel needs Ack/Nack recorders added).
+  **STATUS: implemented on feature/transport-topology (uncommitted).**
+  SPIKE FIRST (EmulatorLockLossDeliveryCountSpikeTests, recorded reality on the emulator):
+  connection-death SESSION lock loss does NOT increment DeliveryCount (stays 1) — the open
+  question CONFIRMED for session entities; explicit abandon DOES (2); NON-session
+  message-lock loss DOES (2) and the plain-subscription DLQ valve fires end-to-end.
+  DLQ posture: rely on explicit dead-letter paths (handler failure → abandon) only, never
+  storm-driven count exhaustion, on session-enabled inboxes; validate against a real
+  namespace before relying on the inverse (emulator fidelity caveat documented in-test).
+  The flip: `NamespaceOutboxStrategy` (opt-in `Outbox.UseNamespaceRouting()`): events
+  byte-identical to DomainTopicOutboxStrategy; UNflipped commands byte-identical to
+  SharedTopicOutboxStrategy; FLIPPED namespaces → `inbox.<ns>` via the shared
+  `CommandInboxNaming` helper (NamespaceInboxStrategy refactored onto it — publisher and
+  subscriber naming agree by construction); framework-reserved (whizbang.core.*) flips to
+  the broadcast inbox, never a per-ns inbox; System kind → broadcast inbox unconditionally.
+  Flip set on RoutingOptions (`RouteCommandNamespaceToInbox` repeatable /
+  `RouteAllCommandNamespacesToInbox`), consulted LIVE, configuration-bindable
+  (`Whizbang:Routing:CommandNamespacesToInbox`, `"*"` = all; explicit-key AOT binder in
+  WithRouting's deferred IOptions factory — rollback = remove the entry, no redeploy).
+  Publish-time authority: TransportPublishStrategy gained the name-based
+  `namespaceRouting` seam (the outbox row carries type-name strings; both transports' DI
+  factories wire it via the `is NamespaceOutboxStrategy` branch). Flipped destinations are
+  marked `RequireProvisionedEntity`: transports NEVER auto-create consumer-provisioned
+  inbox entities (manifest provisioning also skips publish-side `inbox.*`), verify
+  existence (ASB admin pre-check / EntityNotFound wrap; RMQ passive probe on a dedicated
+  channel), and throw the new `UnroutableDestinationException` carrying the entity name —
+  loud, never a silent broker drop; negative answers uncached so outbox retries succeed
+  after provisioning. E2E locks: NamespaceInboxFlipE2ELockTests on BOTH transports
+  (derivation, single-handler + zero non-handler ops, multi-handler, unroutable, discard
+  boundary, same-ns strict order, cross-ns interleave completeness), DLQ + replay per
+  namespace, PublisherFlipMigrationE2ETests (harness gained per-service WithRouting):
+  flip-in-flight / rollback / dual-delivery-identity. O(3N) throughput locks
+  (Asb/RabbitMQBrokerOpsThroughputLockTests): 25 commands = 75 broker ops exactly
+  (send+deliver+settle), ops/command 3 ≤ 6 bound, topology-derived fan-out, FakeChannel
+  gained BasicAck/BasicNack counters. Emulator fixture: Config.json gained spike + wbtopo
+  entities; container reuse now hash-checks the config via a compose label (stale-topology
+  containers recreate automatically).
 - **Phase 7 — shared-inbox deletion + system broadcast inbox** (#427 migration 3). Retire
   `SharedTopicInboxStrategy`/`DomainTopicInboxStrategy`; broadcast/control types never route
   to per-namespace inboxes (analyzer + runtime test).

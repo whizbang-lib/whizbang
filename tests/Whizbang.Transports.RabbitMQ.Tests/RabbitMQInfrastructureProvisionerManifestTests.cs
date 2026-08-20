@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using RabbitMQ.Client;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Routing;
 
@@ -49,6 +50,39 @@ public class RabbitMQInfrastructureProvisionerManifestTests {
       options,
       driftState);
     return (provisioner, fakeChannel, driftState);
+  }
+
+  [Test]
+  public async Task ProvisionManifest_PublishOnlyCommandInboxEntities_AreNeverDeclaredByThePublisherAsync() {
+    // Phase 6: a publisher whose manifest names a FLIPPED command inbox as a publish
+    // destination must NOT declare the exchange — only the handling service does (dark
+    // provisioning). A publisher-declared, bindingless inbox exchange would turn
+    // "no subscriber provisioned" into a silent broker-side drop instead of the loud
+    // UnroutableDestinationException the flip guarantees.
+    var (provisioner, channel, _) = _fixture();
+    var routingOptions = new RoutingOptions()
+      .RouteCommandNamespaceToInbox(typeof(TestMessage).Namespace!);
+    var context = new InboxSubscriptionContext(
+      SERVICE_NAME, new HashSet<string>(StringComparer.OrdinalIgnoreCase), []);
+    var manifest = TopologyManifestBuilder.Build(
+      new NamespaceOutboxStrategy(routingOptions),
+      new SharedTopicInboxStrategy(),
+      context,
+      [
+        new MessageTypeCatalogEntry(typeof(TestMessage), typeof(TestMessage).FullName!, "command", null),
+        new MessageTypeCatalogEntry(typeof(TestMessage), typeof(TestMessage).FullName!, "event", null)
+      ]);
+    var flippedEntity = CommandInboxNaming.TopicFor(typeof(TestMessage).Namespace!);
+
+    await provisioner.ProvisionManifestAsync(manifest);
+
+    await Assert.That(manifest.PublishDestinations.Select(d => d.Address)).Contains(flippedEntity)
+      .Because("precondition: the manifest really does name the flipped entity as a publish destination");
+    await Assert.That(channel.DeclaredExchanges.Select(e => e.Exchange)).DoesNotContain(flippedEntity);
+    // Everything else still provisions exactly as before (event exchange + subscription exchange).
+    await Assert.That(channel.DeclaredExchanges.Select(e => e.Exchange))
+      .Contains(typeof(TestMessage).Namespace!.ToLowerInvariant());
+    await Assert.That(channel.DeclaredExchanges.Select(e => e.Exchange)).Contains("inbox");
   }
 
   [Test]

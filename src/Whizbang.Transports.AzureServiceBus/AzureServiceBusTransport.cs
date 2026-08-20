@@ -397,8 +397,15 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
     ReadOnlyMemory<byte>? preSerializedBytes,
     CancellationToken cancellationToken
   ) {
+    // Consumer-provisioned entities (per-namespace command inboxes / the system broadcast
+    // inbox, topology arc phase 6): the publisher must never create them — entity existence
+    // is the proof the handling service dark-provisioned its subscription. Missing entity =
+    // LOUD typed failure, never a silent broker-side drop.
+    var requiresProvisionedEntity = CommandInboxNaming.RequiresProvisionedEntity(destination);
+
     try {
-      var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
+      var sender = await _getOrCreateSenderAsync(
+        destination.Address, cancellationToken, requireExistingEntity: requiresProvisionedEntity);
 
       // Use provided envelope type name if available, otherwise get it from runtime type
       // IMPORTANT: The envelope object is already correctly typed (MessageEnvelope<JsonElement>), so we serialize using envelope.GetType()
@@ -520,6 +527,17 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
           subject
         );
       }
+    } catch (ServiceBusException sbEx)
+        when (requiresProvisionedEntity && sbEx.Reason == ServiceBusFailureReason.MessagingEntityNotFound) {
+      // No-admin-plane deployments (e.g. the emulator) cannot pre-check existence — the
+      // SDK's entity-not-found send failure becomes the same LOUD typed failure the admin
+      // pre-check produces, carrying the entity name for the operator.
+      _logger.LogError(
+        sbEx,
+        "Unroutable command: consumer-provisioned entity {Destination} does not exist (send failed)",
+        destination.Address
+      );
+      throw new UnroutableDestinationException(destination.Address, sbEx);
 #pragma warning disable S2139 // Intentional log-and-rethrow: transport errors cross async/DI boundaries where the original exception context may be lost.
     } catch (Exception ex) {
       _logger.LogError(
@@ -547,7 +565,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       return [];
     }
 
-    var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
+    // Consumer-provisioned entities are never auto-created on the batch path either (phase
+    // 6); the typed failure surfaces through the caller's per-item failure mapping.
+    var sender = await _getOrCreateSenderAsync(
+      destination.Address, cancellationToken,
+      requireExistingEntity: CommandInboxNaming.RequiresProvisionedEntity(destination));
 
     // Group items by StreamId to ensure messages in the same session go into the same batch.
     // ASB requires all messages in a ServiceBusMessageBatch to have the same SessionId
@@ -2139,7 +2161,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       _adminClient, topicName, _logger, cancellationToken);
   }
 
-  private async Task<ServiceBusSender> _getOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
+  private async Task<ServiceBusSender> _getOrCreateSenderAsync(
+      string topicName, CancellationToken cancellationToken, bool requireExistingEntity = false) {
     if (_senders.TryGetValue(topicName, out var existingSender)) {
       return existingSender;
     }
@@ -2151,9 +2174,22 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         return existingSender;
       }
 
-      // Ensure topic exists before creating sender (on-demand provisioning)
-      // This matches RabbitMQ's idempotent ExchangeDeclareAsync behavior
-      await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
+      if (requireExistingEntity) {
+        // Consumer-provisioned entity (phase 6): NEVER auto-create — verify it exists and
+        // fail LOUDLY when it doesn't. The negative answer is deliberately NOT cached so an
+        // outbox retry succeeds the moment the handling service provisions the entity. The
+        // positive answer is cached implicitly (the sender lands in _senders). Without an
+        // admin client the send itself surfaces MessagingEntityNotFound, which the publish
+        // path wraps into the same typed failure.
+        if (_adminClient is not null
+            && !await _adminClient.TopicExistsAsync(topicName, cancellationToken)) {
+          throw new UnroutableDestinationException(topicName);
+        }
+      } else {
+        // Ensure topic exists before creating sender (on-demand provisioning)
+        // This matches RabbitMQ's idempotent ExchangeDeclareAsync behavior
+        await _ensureTopicExistsViaAdminAsync(topicName, cancellationToken);
+      }
 
       var sender = _client.CreateSender(topicName);
       _senders[topicName] = sender;

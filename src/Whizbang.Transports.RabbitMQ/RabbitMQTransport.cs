@@ -113,6 +113,32 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     _declaredExchanges.TryAdd(exchangeName, true);
   }
 
+  /// <summary>
+  /// Verifies a CONSUMER-provisioned exchange exists (per-namespace command inbox / system
+  /// broadcast inbox — the <c>RequireProvisionedEntity</c> destination marker, topology arc
+  /// phase 6) WITHOUT creating it: an active declare would create a bindingless exchange and
+  /// the broker would silently drop every message. Probes passively on a DEDICATED rented
+  /// channel (a failed passive declare closes the channel; the pool discards closed channels
+  /// on return), caches the positive answer per process, never caches the negative one — an
+  /// outbox retry succeeds the moment the handling service provisions the entity.
+  /// </summary>
+  /// <exception cref="UnroutableDestinationException">Thrown when the exchange does not
+  /// exist — the LOUD publish-time failure the flip guarantees, carrying the entity name.</exception>
+  private async ValueTask _ensureRequiredExchangeExistsAsync(string exchangeName, CancellationToken cancellationToken) {
+    if (_declaredExchanges.ContainsKey(exchangeName)) {
+      return;
+    }
+
+    using var probe = await _channelPool.RentAsync(cancellationToken);
+    try {
+      await probe.Channel.ExchangeDeclarePassiveAsync(exchangeName, cancellationToken);
+    } catch (OperationInterruptedException ex) {
+      throw new UnroutableDestinationException(exchangeName, ex);
+    }
+
+    _declaredExchanges.TryAdd(exchangeName, true);
+  }
+
   /// <inheritdoc />
   public bool IsInitialized => _isInitialized;
 
@@ -191,13 +217,23 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       );
     }
 
+    // Consumer-provisioned entities (phase 6) are verified — never created — BEFORE the
+    // publish channel is rented; a missing entity throws UnroutableDestinationException.
+    var requiresProvisionedEntity = CommandInboxNaming.RequiresProvisionedEntity(destination);
+    if (requiresProvisionedEntity) {
+      await _ensureRequiredExchangeExistsAsync(exchangeName, cancellationToken);
+    }
+
     try {
       // Rent channel from pool (RAII pattern - automatically returned on dispose)
       using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
       var channel = pooledChannel.Channel;
 
-      // Declare exchange (cached — only first call per exchange hits the broker)
-      await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
+      // Declare exchange (cached — only first call per exchange hits the broker; marked
+      // destinations were already verified passively above and sit in the same cache)
+      if (!requiresProvisionedEntity) {
+        await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
+      }
 
       // Get envelope type name - prefer provided envelopeType to preserve correct generic type
       // (envelope.GetType() may be MessageEnvelope<object> when loaded from outbox)
@@ -312,12 +348,22 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     var exchangeName = destination.Address;
     var results = new List<BulkPublishItemResult>(items.Count);
 
+    // Consumer-provisioned entities (phase 6) are verified — never created — up front; a
+    // missing entity throws UnroutableDestinationException before anything is published.
+    var requiresProvisionedEntity = CommandInboxNaming.RequiresProvisionedEntity(destination);
+    if (requiresProvisionedEntity) {
+      await _ensureRequiredExchangeExistsAsync(exchangeName, cancellationToken);
+    }
+
     try {
       using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
       var channel = pooledChannel.Channel;
 
-      // Declare exchange (cached — only first call per exchange hits the broker)
-      await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
+      // Declare exchange (cached — only first call per exchange hits the broker; marked
+      // destinations were already verified passively above and sit in the same cache)
+      if (!requiresProvisionedEntity) {
+        await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
+      }
 
       // Pipeline publishes: issue all calls on the channel sequentially without awaiting each,
       // then await completions in a second pass. RabbitMQ channels are not thread-safe, so

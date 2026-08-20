@@ -359,10 +359,18 @@ public class OutboxRoutingStrategyTests {
 
   [Test]
   public async Task GetCompositeGroupKey_SameKeyIffSameDestination_AcrossStrategiesTypesAndKindsAsync() {
-    // Arrange - both built-in strategies × several message types × all message kinds
+    // Arrange - every built-in strategy × several message types × all message kinds.
+    // NamespaceOutboxStrategy (phase 6) appears in all three flip states — unflipped,
+    // one namespace flipped, everything flipped — because the invariant must hold across
+    // the whole migration, not just at the endpoints.
+    var partialFlip = new RoutingOptions().RouteCommandNamespaceToInbox("outboxtesttypes.orders.commands");
+    var fullFlip = new RoutingOptions().RouteAllCommandNamespacesToInbox();
     var strategies = new IOutboxRoutingStrategy[] {
       new SharedTopicOutboxStrategy(),
-      new DomainTopicOutboxStrategy()
+      new DomainTopicOutboxStrategy(),
+      new NamespaceOutboxStrategy(new RoutingOptions()),
+      new NamespaceOutboxStrategy(partialFlip),
+      new NamespaceOutboxStrategy(fullFlip)
     };
     var types = new[] {
       typeof(OutboxTestTypes.Orders.Events.OrderCreated),
