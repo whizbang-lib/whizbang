@@ -254,4 +254,191 @@ public class MoveToDeadLettersSqlTests : EFCoreTestBase {
     ins.Parameters.AddWithValue("att", attempts);
     await ins.ExecuteNonQueryAsync();
   }
+
+  [Test]
+  public async Task MoveToDeadLetters_PerspectiveRowWithStoredError_CapturesTerminalErrorInErrorTextAsync() {
+    // Forensic gap observed live: thousands of perspective dead-letters carried ONLY the
+    // "attempts=N > max=M" wrapper; the terminal apply exception (stored on
+    // wh_perspective_events.error) was discarded, and once pod logs rotated the root cause was
+    // unrecoverable. The move must preserve the source row's stored error.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var dlqId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.NewMedo();
+    await _insertPerspectiveEventWithErrorAsync(conn, workId, (Guid)TrackedGuid.NewMedo(),
+      "Test.Projection", (Guid)TrackedGuid.NewMedo(), attempts: 12,
+      error: "System.InvalidOperationException: the actual root cause");
+
+    _ = await _callMoveAsync(conn, dlqId, "wh_perspective_events", workId,
+      failureReason: 5, errorText: "PerspectiveWorker dead-lettered perspective event: attempts=12 > max=10",
+      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "g3");
+
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT error_text FROM wh_dead_letters WHERE dead_letter_id = @id";
+    cmd.Parameters.AddWithValue("id", dlqId);
+    var errorText = (string)(await cmd.ExecuteScalarAsync())!;
+    await Assert.That(errorText).Contains("the actual root cause")
+      .Because("the stored terminal apply error must survive into the DLQ row");
+    await Assert.That(errorText).Contains("attempts=12 > max=10")
+      .Because("the promotion wrapper stays too — it carries the attempts context");
+  }
+
+  private static async Task _insertPerspectiveEventWithErrorAsync(
+      NpgsqlConnection conn, Guid eventWorkId, Guid streamId, string perspectiveName, Guid eventId,
+      int attempts, string error) {
+    await using var ins = conn.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_perspective_events
+        (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at, error)
+      VALUES (@work, @stream, @persp, @event, 0, 0, @att, NOW(), @err)";
+    ins.Parameters.AddWithValue("work", eventWorkId);
+    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.AddWithValue("persp", perspectiveName);
+    ins.Parameters.AddWithValue("event", eventId);
+    ins.Parameters.AddWithValue("att", attempts);
+    ins.Parameters.AddWithValue("err", error);
+    await ins.ExecuteNonQueryAsync();
+  }
+
+  // ============================================================================
+  // Issue #518 — the retry budget must survive re-dead-lettering.
+  //
+  // move_to_dead_letters mints a NEW dead_letter_id every time a message fails, and the
+  // recovery worker's exhaustion check reads recovery_attempts off THAT row. So a message
+  // that fails again after recovery starts from zero, HoldForReview can never engage, and
+  // one poison message cycles forever (observed: 257 dead-letters of a single message in
+  // 15 minutes, 46k rows from 7.6k distinct messages). The budget must key on the MESSAGE.
+  // ============================================================================
+
+  [Test]
+  public async Task MoveToDeadLetters_SameMessageDeadLetteredTwice_CarriesRecoveryBudgetForwardAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    // First failure → row A, then recovery spends one attempt on it.
+    await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
+    var firstDlqId = (Guid)TrackedGuid.NewMedo();
+    _ = await _callMoveAsync(conn, firstDlqId, "wh_inbox", messageId,
+      failureReason: 5, errorText: "attempts=11 > max=10",
+      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "gen-1");
+    await using (var spend = conn.CreateCommand()) {
+      spend.CommandText = "UPDATE wh_dead_letters SET recovery_attempts = 1, recovery_status = 3, recovered_at = NOW() WHERE dead_letter_id = @id";
+      spend.Parameters.AddWithValue("id", firstDlqId);
+      await spend.ExecuteNonQueryAsync();
+    }
+
+    // Recovery re-emitted it; it fails AGAIN → row B.
+    await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
+    var secondDlqId = (Guid)TrackedGuid.NewMedo();
+    _ = await _callMoveAsync(conn, secondDlqId, "wh_inbox", messageId,
+      failureReason: 5, errorText: "attempts=11 > max=10",
+      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "gen-1");
+
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT recovery_attempts FROM wh_dead_letters WHERE dead_letter_id = @id";
+    read.Parameters.AddWithValue("id", secondDlqId);
+    var carried = (int)(await read.ExecuteScalarAsync())!;
+
+    await Assert.That(carried).IsGreaterThanOrEqualTo(1)
+      .Because("the retry budget belongs to the MESSAGE, not to one dead-letter row — a fresh "
+             + "row starting at zero makes HoldForReviewAfterExhaustion unreachable and lets a "
+             + "poison message cycle forever (issue #518)");
+  }
+
+  [Test]
+  public async Task MoveToDeadLetters_FirstFailureOfAMessage_StartsBudgetAtZeroAsync() {
+    // Guard: carrying history forward must not penalise a message failing for the first time.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    await _insertInboxRowAsync(conn, messageId, (Guid)TrackedGuid.NewMedo(), attempts: 11);
+    var dlqId = (Guid)TrackedGuid.NewMedo();
+
+    _ = await _callMoveAsync(conn, dlqId, "wh_inbox", messageId,
+      failureReason: 5, errorText: "first failure",
+      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "gen-1");
+
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT recovery_attempts FROM wh_dead_letters WHERE dead_letter_id = @id";
+    read.Parameters.AddWithValue("id", dlqId);
+    await Assert.That((int)(await read.ExecuteScalarAsync())!).IsEqualTo(0)
+      .Because("a message with no prior dead-letter history gets its full retry budget");
+  }
+
+  [Test]
+  public async Task MoveToDeadLetters_InboxRowWithStoredError_CapturesItInErrorTextAsync() {
+    // Symmetric to the perspective-branch capture: when the inbox row carries the terminal
+    // error, it must survive into the DLQ row instead of being replaced by the attempts wrapper.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    await _insertInboxRowWithErrorAsync(conn, messageId, (Guid)TrackedGuid.NewMedo(),
+      attempts: 11, error: "System.InvalidOperationException: the real inbox cause");
+    var dlqId = (Guid)TrackedGuid.NewMedo();
+
+    _ = await _callMoveAsync(conn, dlqId, "wh_inbox", messageId,
+      failureReason: 5, errorText: "InboxDispatchWorker dead-lettered: attempts=11 > max=10",
+      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "gen-1");
+
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT error_text FROM wh_dead_letters WHERE dead_letter_id = @id";
+    read.Parameters.AddWithValue("id", dlqId);
+    var errorText = (string)(await read.ExecuteScalarAsync())!;
+    await Assert.That(errorText).Contains("the real inbox cause")
+      .Because("losing the terminal exception makes root cause unrecoverable once pod logs rotate");
+    await Assert.That(errorText).Contains("attempts=11 > max=10");
+  }
+
+  private static async Task _insertInboxRowWithErrorAsync(
+      NpgsqlConnection conn, Guid messageId, Guid streamId, int attempts, string error) {
+    await using var ins = conn.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_inbox
+        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number, error)
+      VALUES (@msg, 'h', 'Test.Event', '{}'::jsonb, '{}'::jsonb, 0, @att, NOW(), @stream, 0, @err)";
+    ins.Parameters.AddWithValue("msg", messageId);
+    ins.Parameters.AddWithValue("att", attempts);
+    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.AddWithValue("err", error);
+    await ins.ExecuteNonQueryAsync();
+  }
+
+  [Test]
+  public async Task MoveToDeadLetters_NewGeneration_RestoresRetryBudgetAsync() {
+    // The budget is cumulative WITHIN a generation but resets on a new one — generation-tagged
+    // auto-replay ("we shipped a fix, replay the casualties") depends on a previously-exhausted
+    // message getting a fresh chance after a deploy.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
+    var oldGenDlq = (Guid)TrackedGuid.NewMedo();
+    _ = await _callMoveAsync(conn, oldGenDlq, "wh_inbox", messageId,
+      failureReason: 5, errorText: "exhausted on the old build",
+      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "whizbang/1.0.0");
+    await using (var spend = conn.CreateCommand()) {
+      spend.CommandText = "UPDATE wh_dead_letters SET recovery_attempts = 5 WHERE dead_letter_id = @id";
+      spend.Parameters.AddWithValue("id", oldGenDlq);
+      await spend.ExecuteNonQueryAsync();
+    }
+
+    // A NEW build deploys and the message fails again.
+    await _insertInboxRowAsync(conn, messageId, streamId, attempts: 11);
+    var newGenDlq = (Guid)TrackedGuid.NewMedo();
+    _ = await _callMoveAsync(conn, newGenDlq, "wh_inbox", messageId,
+      failureReason: 5, errorText: "first failure on the new build",
+      instanceId: (Guid)TrackedGuid.NewMedo(), generation: "whizbang/2.0.0");
+
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT recovery_attempts FROM wh_dead_letters WHERE dead_letter_id = @id";
+    read.Parameters.AddWithValue("id", newGenDlq);
+    await Assert.That((int)(await read.ExecuteScalarAsync())!).IsEqualTo(0)
+      .Because("a new build generation is a new chance — carrying the old build's exhausted "
+             + "budget forward would silently disable generation-tagged auto-replay");
+  }
 }
+

@@ -1719,6 +1719,24 @@ public interface IWorkCoordinator {
     Task.FromResult(Guid.Empty);
 
   /// <summary>
+  /// Gives a broker-dead-lettered message durable custody as a <c>wh_dead_letters</c> row
+  /// (<c>source_table='broker'</c>, <see cref="MessageFailureReason.BrokerDeadLetter"/>), storing
+  /// the RAW wire body verbatim — no deserialization. Idempotent on the wire message id:
+  /// <c>true</c> = custody row created; <c>false</c> = duplicate (custody already exists — the
+  /// caller may settle the broker message). A FAILED import throws instead of returning
+  /// <c>false</c>, so callers can distinguish "safe to settle" from "leave it for the next pass".
+  /// The default implementation THROWS <see cref="NotSupportedException"/> — a legacy/in-memory
+  /// coordinator cannot give custody, and returning <c>false</c> here would read as "duplicate,
+  /// settle at the broker" and silently lose the message.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  Task<bool> ImportBrokerDeadLetterAsync(
+      Whizbang.Core.Transports.BrokerDeadLetterImport import,
+      CancellationToken cancellationToken = default) =>
+    throw new NotSupportedException(
+      "This IWorkCoordinator does not support broker dead-letter import; messages stay on the broker DLQ.");
+
+  /// <summary>
   /// Per-stream-id payload fetch for the OutboxDrainWorker. Given stream_ids that
   /// <see cref="ClaimWorkAsync"/> emitted as <see cref="WorkBatch.OutboxStreamIds"/>, returns the
   /// actual leased outbox rows for those streams in stream-FIFO order. Caps at

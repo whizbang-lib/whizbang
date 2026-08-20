@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Minting;
 
@@ -36,7 +37,8 @@ namespace Whizbang.Core.Minting;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:TryExpand_AuditEventsComposite_DeliversEachInnerEventAuditedAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs:AuditEventsComposite_IsNonAtomic_OneBadRecordMustNotSinkSiblingsAsync</tests>
 [PinnedId("d7a2b7c4-8e15-4f4a-9c3e-5b1a2f9e6d01")]
-public sealed class AuditEventsComposite : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite {
+public sealed class AuditEventsComposite
+  : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite, Whizbang.Core.Messaging.IControlPlaneMessage {
   /// <summary>
   /// Each folded single's raw stored payload JSON (the serialized
   /// <see cref="Whizbang.Core.SystemEvents.EventAudited"/>), verbatim from its outbox row — never

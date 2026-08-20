@@ -34,6 +34,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private readonly RabbitMQOptions _options;
   private readonly ILogger<RabbitMQTransport>? _logger;
   private readonly ConcurrentDictionary<string, bool> _declaredExchanges = new();
+  private readonly ConcurrentDictionary<string, byte> _declaredDeadLetterQueues = new();
+
+  /// <summary>
+  /// Snapshot of the dead-letter queue names this transport has declared — the fleet
+  /// dead-letter drainer enumerates these on every drain pass so queues declared after
+  /// container build still get their broker DLQs drained.
+  /// </summary>
+  internal IReadOnlyCollection<string> ActiveDeadLetterQueues => [.. _declaredDeadLetterQueues.Keys];
   private readonly IMessageDiscardPolicy? _discardPolicy;
   private readonly IPoisonMessageDetector? _poisonDetector;
   private readonly TimeProvider _timeProvider;
@@ -1192,6 +1200,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     // shapes can never drift between subscribe-time and boot-time provisioning.
     await RabbitMQEntityProvisioning.DeclareSubscriptionInfrastructureAsync(
       channel, _options, exchangeName, queueName, routingPatterns, _logger, cancellationToken);
+
+    // The helper declares the DLQ under this same option; the transport still has to REMEMBER
+    // the name, because ActiveDeadLetterQueues is what the fleet dead-letter drainer enumerates
+    // on every pass. Extracting the declaration must not take the bookkeeping with it —
+    // otherwise queues declared at subscribe time never get their broker DLQ drained.
+    if (_options.AutoDeclareDeadLetterExchange) {
+      _declaredDeadLetterQueues.TryAdd($"{queueName}.dlq", 0);
+    }
 
     return channel;
   }

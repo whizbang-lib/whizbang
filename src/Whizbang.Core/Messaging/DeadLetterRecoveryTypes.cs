@@ -165,6 +165,10 @@ public sealed class DeadLetterRecoveryOptions {
     [MessageFailureReason.SerializationError] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
     [MessageFailureReason.TransportNotReady] = new("MediumRetry", 3, TimeSpan.FromMinutes(30), HoldForReviewAfterExhaustion: false),
     [MessageFailureReason.Unknown] = new("OneShotThenHold", 1, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: true),
+    // A broker dead-letter usually means "this build could not process the message" — retry on a
+    // sane cadence (generation replay additionally re-offers after every deploy), don't park on
+    // arrival, and hold for review once the budget is spent so poison stays visible.
+    [MessageFailureReason.BrokerDeadLetter] = new("MediumRetry", 3, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: true),
   };
 }
 

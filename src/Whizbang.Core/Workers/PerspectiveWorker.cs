@@ -922,8 +922,14 @@ public partial class PerspectiveWorker(
       PerspectiveStreamIds = drainStreamIds,
     };
 
+    // Issue #520: reservations taken by the dedup filter below are owned by THIS batch and are
+    // released when the batch scope exits, whatever the outcome (see _claimWindowScope).
+    var claimWindowReservations = new List<Guid>();
+    using var claimWindowScope = new _claimWindowScope(_claimWindowWorkIds, claimWindowReservations);
+
     var groupedWork = _reconcileAcknowledgementsAndPrepareWork(
-      workBatch, sentCompletionCount: sentCompletionCount, sentFailureCount: sentFailureCount);
+      workBatch, sentCompletionCount: sentCompletionCount, sentFailureCount: sentFailureCount,
+      claimWindowReservations);
 
     _recordBatchMetrics(batchActivity, workBatch, groupedWork, [], []);
     _logBatchComposition(workBatch, groupedWork);
@@ -2470,11 +2476,41 @@ public partial class PerspectiveWorker(
   /// jsonb_array_length(p_perspective_completions), so it always equals
   /// what we sent — the round-trip is redundant.</para>
   /// </summary>
+  /// <summary>
+  /// WorkIds admitted by the dedup filter but not yet recorded in <see cref="_processedEventCache"/>
+  /// — i.e. currently between CLAIM and APPLY (issue #520). The durable cache is only written after
+  /// Apply, so without this the claim→Apply span is unguarded and a redelivery arriving inside it
+  /// passes the filter and applies a second time. Entries live for exactly one batch: the batch
+  /// releases them in a finally, after which either the completion path has recorded the WorkId in
+  /// the durable cache (still deduped) or the work failed and must be retried (correctly admitted
+  /// again). In-memory by design — a process restart clears it, which is the safe direction.
+  /// </summary>
+  private readonly ConcurrentDictionary<Guid, byte> _claimWindowWorkIds = new();
+
+  /// <summary>
+  /// Releases a batch's claim-window reservations when the batch scope exits — on the success
+  /// path, on an exception, and on cancellation alike (a <c>using</c> declaration compiles to
+  /// try/finally). Releasing unconditionally is deliberate: work that COMPLETED was already
+  /// recorded in the durable <see cref="_processedEventCache"/> by the completion path and stays
+  /// deduped, while work that did NOT complete must become claimable again or it would be
+  /// silently un-retryable until process restart. Trading a duplicate-apply bug for a
+  /// message-loss bug would be the worse outcome, so the release is never conditional.
+  /// </summary>
+  private readonly struct _claimWindowScope(ConcurrentDictionary<Guid, byte> reservations, List<Guid> owned)
+    : IDisposable {
+    public void Dispose() {
+      foreach (var workId in owned) {
+        reservations.TryRemove(workId, out _);
+      }
+    }
+  }
+
   private List<IGrouping<(Guid StreamId, string PerspectiveName), PerspectiveWork>>
     _reconcileAcknowledgementsAndPrepareWork(
       WorkBatch workBatch,
       int sentCompletionCount,
-      int sentFailureCount) {
+      int sentFailureCount,
+      List<Guid> claimWindowReservations) {
 
     // 5-6. Acknowledge the local sent-count (not the SQL-returned metadata).
     _completionStrategy.MarkAsAcknowledged(sentCompletionCount, sentFailureCount);
@@ -2489,7 +2525,7 @@ public partial class PerspectiveWorker(
     _completionStrategy.ResetStale(DateTimeOffset.UtcNow);
 
     // 9. Dedup: filter out work items already processed within retention window
-    var dedupedWork = _filterDuplicateWorkItems(workBatch.PerspectiveWork);
+    var dedupedWork = _filterDuplicateWorkItems(workBatch.PerspectiveWork, claimWindowReservations);
 
     // Group perspective work items by (StreamId, PerspectiveName)
     // Each work item represents a single event, but the runner processes ALL events for a stream
@@ -4206,7 +4242,8 @@ public partial class PerspectiveWorker(
   /// Filters out work items whose WorkIds are already in the processed event cache.
   /// Notifies the observer for each group of deduped items.
   /// </summary>
-  private List<PerspectiveWork> _filterDuplicateWorkItems(List<PerspectiveWork> workItems) {
+  private List<PerspectiveWork> _filterDuplicateWorkItems(
+      List<PerspectiveWork> workItems, List<Guid> claimWindowReservations) {
     if (workItems.Count == 0) {
       return workItems;
     }
@@ -4217,9 +4254,27 @@ public partial class PerspectiveWorker(
     foreach (var item in workItems) {
       if (_processedEventCache.Contains(item.WorkId)) {
         skippedWork.Add(item);
-      } else {
-        dedupedWork.Add(item);
+        continue;
       }
+      // Guid.Empty is not an identity — it is the "no work id" sentinel, and the completion path
+      // skips it for the same reason. Reserving it would let the FIRST empty-id item claim the
+      // sentinel and every subsequent one dedup against it, silently dropping real work: exactly
+      // the message-loss failure mode the batch-scoped release exists to prevent.
+      if (item.WorkId == Guid.Empty) {
+        dedupedWork.Add(item);
+        continue;
+      }
+      // Issue #520: admission and marking must be ONE atomic step. The durable cache is only
+      // written after Apply, so a plain Contains() check leaves the claim→Apply span unguarded —
+      // a redelivery arriving there sees "not processed", is admitted, and applies twice.
+      // TryAdd is the test-and-set: whoever wins admits the work, everyone else dedups. This also
+      // covers two batches racing concurrently, which a check-then-act cannot.
+      if (!_claimWindowWorkIds.TryAdd(item.WorkId, 0)) {
+        skippedWork.Add(item);
+        continue;
+      }
+      claimWindowReservations.Add(item.WorkId);
+      dedupedWork.Add(item);
     }
 
     // Notify observer for each group of deduped items

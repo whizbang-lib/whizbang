@@ -1,9 +1,12 @@
+using System.Linq;
 using TUnit.Core;
 using Whizbang.Core.Commands.System;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
+using Whizbang.Core.SystemEvents;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Security;
@@ -87,4 +90,65 @@ public class ControlPlaneSecurityExemptionTests {
     [Whizbang.Core.StreamId]
     public Guid Sid { get; init; }
   }
+
+  /// <summary>
+  /// The redelivery control plane ships its payload as a <see cref="RedeliveryComposite"/> bundle,
+  /// and <see cref="RequestRedeliveryCommand"/> — the message that ASKS for it — already carries the
+  /// control-plane marker. The bundle did not, so every served repair bundle threw
+  /// SecurityContextRequiredException on arrival: it is machine-minted and carries no user identity
+  /// by construction. Because that failure feeds the inbox attempt ladder, it did not merely fail —
+  /// it dead-lettered, was replayed by recovery, failed again, and flooded a fleet's logs badly
+  /// enough that an operator shut the environment down.
+  /// </summary>
+  [Test]
+  public async Task StrictPolicy_RedeliveryComposite_NoScope_EstablishesNoContextWithoutThrowingAsync() {
+    var provider = _strictProvider();
+    var envelope = _unscopedEnvelope(new RedeliveryComposite {
+      StreamId = TrackedGuid.NewMedo().Value,
+      OriginServiceId = TrackedGuid.NewMedo().Value,
+    });
+
+    var result = await provider.EstablishContextAsync(envelope, new _emptyServiceProvider());
+
+    await Assert.That(result).IsNull()
+      .Because("a repair bundle is a machine-minted control-plane container with no user identity — "
+             + "the security context that matters belongs to its INNER events, which are established "
+             + "individually after fan-out");
+  }
+
+  /// <summary>
+  /// Structural guard for the opt-in model. Control-plane status is deliberately marked per type so
+  /// security fails CLOSED — auto-deriving it (by namespace, base type, or publisher) risks silently
+  /// exempting a domain message, which is a hole nobody would notice. The cost of that choice is
+  /// that FORGETTING is silent too: RequestRedeliveryCommand carried the marker, the bundle it ships
+  /// did not, and the omission only surfaced as an exception flood that took an environment down.
+  /// This test keeps the opt-in model but makes forgetting fail here instead of in production: every
+  /// concrete composite the FRAMEWORK itself mints is wire-only, carries no user identity, and must
+  /// be marked. A new framework composite fails this until someone makes that call consciously.
+  /// </summary>
+  [Test]
+  public async Task EveryFrameworkMintedComposite_CarriesTheControlPlaneMarkerAsync() {
+    var frameworkComposites = typeof(IControlPlaneMessage).Assembly
+      .GetTypes()
+      .Where(t => !t.IsAbstract && !t.IsInterface)
+      .Where(t => typeof(ICompositeEvent).IsAssignableFrom(t))
+      .ToList();
+
+    await Assert.That(frameworkComposites).IsNotEmpty()
+      .Because("if this finds nothing the reflection query has drifted and the guard is vacuous");
+
+    var unmarked = frameworkComposites
+      .Where(t => !typeof(IControlPlaneMessage).IsAssignableFrom(t))
+      .Select(t => t.Name)
+      .OrderBy(n => n)
+      .ToList();
+
+    await Assert.That(unmarked).IsEmpty()
+      .Because("a framework-minted composite is machine-generated and has no user security context "
+             + "to establish; without the marker a strict consumer throws "
+             + "SecurityContextRequiredException on every one, and (because the same gate guards "
+             + "receptor invocation) the feature silently never runs. Unmarked: "
+             + string.Join(", ", unmarked));
+  }
 }
+

@@ -1022,4 +1022,136 @@ public class PerspectiveDedupIntegrationTests {
 
     public IReadOnlySet<LifecycleStage> LifecycleStagesWithReceptors { get; } = new HashSet<LifecycleStage>();
   }
+
+  // ==================== CONTRACT: a FAILED apply stays retryable ====================
+
+  /// <summary>
+  /// Companion lock-in to <see cref="Contract_SameWorkIdRedelivered_RunnerCalledExactlyOnce_Async"/>.
+  /// The claim-window guard (issue #520) reserves a WorkId at admission so a redelivery arriving
+  /// before Apply completes cannot double-apply. That reservation MUST be released when the batch
+  /// ends regardless of outcome — if it leaked on the failure path, a transiently failing apply
+  /// would become permanently un-retryable until process restart, trading a duplicate-apply bug
+  /// for silent message loss. This test fails if the release is ever made conditional on success.
+  /// </summary>
+  [Test]
+  public async Task Contract_ApplyFails_WorkIsStillRetried_Async() {
+    var runner = new ThrowOnceApplyRunner();
+    var observer = new AssertingDedupObserver();
+    var coordinator = new RedeliveryWorkCoordinator();
+
+    coordinator.WorkToRedeliverOnEveryCycle = new PerspectiveWork {
+      WorkId = Guid.CreateVersion7(),
+      StreamId = Guid.CreateVersion7(),
+      PerspectiveName = "Test.FailThenSucceedPerspective",
+      LastProcessedEventId = null,
+      PartitionNumber = 1
+    };
+
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    // Wait for the SECOND call — the retry after the failed first apply.
+    await runner.WaitForCallCountAsync(2, TimeSpan.FromSeconds(15));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    await Assert.That(runner.CallCount).IsGreaterThanOrEqualTo(2)
+      .Because("a failed apply must leave the work claimable again — if the claim-window "
+             + "reservation leaked on the failure path the work would be silently dropped");
+  }
+
+  /// <summary>Throws on the first apply, succeeds afterwards — models a transient apply failure.</summary>
+  private sealed class ThrowOnceApplyRunner : IPerspectiveRunner {
+    private int _callCount;
+    private readonly ConcurrentDictionary<int, TaskCompletionSource> _callCountWaiters = new();
+    public Type PerspectiveType => typeof(object);
+    public int CallCount => Volatile.Read(ref _callCount);
+
+    public async Task WaitForCallCountAsync(int count, TimeSpan timeout) {
+      var waiter = _callCountWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      if (Volatile.Read(ref _callCount) >= count) { waiter.TrySetResult(); }
+      await waiter.Task.WaitAsync(timeout);
+    }
+
+    public Task<PerspectiveCursorCompletion> RunAsync(
+        Guid streamId, string perspectiveName, Guid? lastProcessedEventId, CancellationToken cancellationToken) {
+      var current = Interlocked.Increment(ref _callCount);
+      foreach (var kvp in _callCountWaiters) {
+        if (current >= kvp.Key) { kvp.Value.TrySetResult(); }
+      }
+      if (current == 1) {
+        throw new InvalidOperationException("transient apply failure");
+      }
+      return Task.FromResult(new PerspectiveCursorCompletion {
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = Guid.CreateVersion7(),
+        Status = PerspectiveProcessingStatus.Completed
+      });
+    }
+
+    public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default)
+      => RunAsync(streamId, perspectiveName, null, cancellationToken);
+
+    public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
+      Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// <summary>
+  /// Guard for the sentinel case in the #520 claim-window reservation. Guid.Empty is the "no work
+  /// id" marker, not an identity — the completion path skips it for the same reason. If the filter
+  /// reserves it, the FIRST empty-id item in a batch claims the sentinel and every SUBSEQUENT one
+  /// dedups against it, silently dropping real work on unrelated streams.
+  ///
+  /// That regression shipped once: the guard was written, then lost to a cherry-pick of a
+  /// pre-amend commit, and merged unnoticed because it only surfaced as a distant sample test
+  /// timing out. It is locked here, next to the dedup contract it qualifies, rather than left to
+  /// be re-derived from a timeout.
+  /// </summary>
+  [Test]
+  public async Task Contract_EmptyWorkIds_AreNotDedupedAgainstEachOther_Async() {
+    var runner = new ApplyTrackingRunner();
+    var observer = new AssertingDedupObserver();
+    var coordinator = new SequentialThenRedeliveryCoordinator();
+
+    // Five items carrying the no-work-id sentinel, on five DISTINCT streams. Delivered once.
+    const int sentinelItemCount = 5;
+    var streamIds = new List<Guid>();
+    for (var i = 0; i < sentinelItemCount; i++) {
+      var streamId = Guid.CreateVersion7();
+      streamIds.Add(streamId);
+      coordinator.InitialWork.Add(new PerspectiveWork {
+        WorkId = Guid.Empty,
+        StreamId = streamId,
+        PerspectiveName = "Test.SentinelWorkIdPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      });
+    }
+    coordinator.RedeliverAfterInitial = false;
+
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    // Let the assertion below report the shortfall rather than surfacing this as a bare timeout:
+    // when the sentinel is reserved, four of the five items never arrive and the diagnostic that
+    // matters is WHICH streams went missing, not that a wait expired.
+    try {
+      await runner.WaitForCallCountAsync(sentinelItemCount, TimeSpan.FromSeconds(30));
+    } catch (TimeoutException) { }
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(30));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // LOCK-IN: every stream must be reached. Reserving the sentinel caps this at ONE — the first
+    // item claims Guid.Empty and the other four are silently discarded as "duplicates".
+    await Assert.That(runner.UniqueStreamIds).IsEquivalentTo(streamIds)
+      .Because("LOCK-IN: Guid.Empty is a sentinel, not an identity. Reserving it would let the "
+             + "first empty-id item claim it and silently drop work on every other stream.");
+  }
 }

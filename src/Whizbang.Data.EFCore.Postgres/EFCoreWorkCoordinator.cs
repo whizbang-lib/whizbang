@@ -4173,6 +4173,65 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return [];
   }
 
+  /// <summary>
+  /// Broker DLQ import (migration 118): gives a broker-dead-lettered message durable custody as a
+  /// wh_dead_letters row via <c>wh_import_dead_letter</c>. The RAW wire body travels as TEXT —
+  /// the SQL side parses defensively (non-JSON bodies become JSON strings), so this path never
+  /// deserializes and never loses a message to a parse failure. Idempotent on the wire message id.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+  public async Task<bool> ImportBrokerDeadLetterAsync(
+      Whizbang.Core.Transports.BrokerDeadLetterImport import,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(import);
+    try {
+      using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+      var schema = GetSchemaWithFallback(
+        _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), DEFAULT_SCHEMA, _logger);
+      var qualified = BuildSchemaQualifiedName(schema, "wh_import_dead_letter");
+      await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await using var cmd = __scope.Connection.CreateCommand();
+      cmd.Parameters.AddWithValue("p_dead_letter_id", (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo());
+      cmd.Parameters.AddWithValue("p_message_id", import.MessageId);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_stream_id", NpgsqlTypes.NpgsqlDbType.Uuid) {
+        Value = (object?)import.StreamId ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_message_type", NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = (object?)import.MessageType ?? DBNull.Value
+      });
+      cmd.Parameters.AddWithValue("p_destination", import.Destination);
+      cmd.Parameters.AddWithValue("p_envelope_json", import.EnvelopeJson);
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_broker_reason", NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = (object?)import.BrokerReason ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_broker_description", NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = (object?)import.BrokerDescription ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_enqueued_at", NpgsqlTypes.NpgsqlDbType.TimestampTz) {
+        Value = (object?)import.EnqueuedAt ?? DBNull.Value
+      });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_delivery_count", NpgsqlTypes.NpgsqlDbType.Integer) {
+        Value = (object?)import.DeliveryCount ?? DBNull.Value
+      });
+      cmd.Parameters.AddWithValue("p_instance_id", _instanceId());
+      cmd.Parameters.AddWithValue("p_generation", new Whizbang.Core.Messaging.DefaultGenerationProvider().GetGeneration());
+#pragma warning disable S2077 // Function name is a compile-time constant; every argument is bound.
+      cmd.CommandText = $"SELECT {qualified}(@p_dead_letter_id,@p_message_id,@p_stream_id,@p_message_type,@p_destination,@p_envelope_json,@p_broker_reason,@p_broker_description,@p_enqueued_at,@p_delivery_count,@p_instance_id,@p_generation)";
+#pragma warning restore S2077
+      var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      return result is bool imported && imported;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger?.LogError(ex,
+        "ImportBrokerDeadLetterAsync failed for message {MessageId} from {Destination} — message stays on the broker DLQ for the next drain pass",
+        import.MessageId, import.Destination);
+      // Rethrow: FALSE means "duplicate — custody already exists, safe to settle at the broker".
+      // A failed import must NOT look like a duplicate, or the drainer would complete the broker
+      // message and lose it. Throwing makes the drainer abandon, so the broker re-offers it.
+      throw;
+    }
+  }
+
   private static Guid _instanceId() {
     // Fallback to a new GUID — the actual instance ID is set by the PerspectiveWorker
     // which resolves IServiceInstanceProvider from DI

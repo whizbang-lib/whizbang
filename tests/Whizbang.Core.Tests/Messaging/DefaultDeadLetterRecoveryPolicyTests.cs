@@ -157,4 +157,18 @@ public class DefaultDeadLetterRecoveryPolicyTests {
     var should = policy.ShouldRecover(_entry(MessageFailureReason.Throttled, status: DeadLetterRecoveryStatus.PermanentlyFailed));
     await Assert.That(should).IsFalse();
   }
+
+  [Test]
+  public async Task GetPolicy_BrokerDeadLetter_ReturnsMediumRetryAsync() {
+    var policy = _newPolicy();
+
+    var result = policy.GetPolicy(_entry(MessageFailureReason.BrokerDeadLetter));
+
+    await Assert.That(result.Name).IsEqualTo("MediumRetry")
+      .Because("a broker dead-letter usually means 'this build could not process the message' — "
+             + "worth retrying on a sane cadence (and generation replay re-offers it after each "
+             + "deploy), not aggressively and not parked-on-arrival");
+    await Assert.That(result.MaxRecoveryAttempts).IsEqualTo(3);
+  }
 }
+

@@ -157,6 +157,14 @@ public enum MessageFailureReason {
   CompositeExpansionFailure = 16,
 
   /// <summary>
+  /// The message was dead-lettered at the BROKER (delivery-attempt exhaustion, session churn,
+  /// a build that could not deserialize it) and imported into <c>wh_dead_letters</c> by the
+  /// transport dead-letter drain — custody transferred from the broker's opaque bucket to the
+  /// recovery flow. The broker's own reason/description are preserved in <c>error_text</c>.
+  /// </summary>
+  BrokerDeadLetter = 17,
+
+  /// <summary>
   /// The poison detector (topology arc phase 8.5) quarantined the message: this service has
   /// durably observed the same message id past the configured bound without ever settling it.
   /// <para>
@@ -166,5 +174,5 @@ public enum MessageFailureReason {
   /// broker counter at all, so nothing else bounds it.
   /// </para>
   /// </summary>
-  PoisonRedeliveryLoop = 17
+  PoisonRedeliveryLoop = 18
 }
