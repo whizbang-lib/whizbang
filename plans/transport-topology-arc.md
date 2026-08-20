@@ -37,11 +37,24 @@ Spec: docs proposals `per-namespace-command-inboxes` (order 38) + `transport-tra
    classification lives inside the strategy keyed on kind, per spec. `MessageKindDetector`
    stays out of the routing hot path (dispatcher call sites keep literal kinds; the System
    branch is reached via strategy-internal classification of framework namespaces).
-2. **Do NOT move existing event families' CLR namespaces** into `Whizbang.Core.Minting`
-   initially. The factories/facade live in Minting; `RedeliveryComposite`/`CoalescedEventsComposite`/
-   `AuditEventsComposite` keep their namespaces. Moving them is a pinned-ledger rename
-   (WHIZ120 + formerNames), a wire-format change for persisted rows, AND breaks the deployed
-   `whizbang.core.messaging.#` broker filters — separable follow-up with its own migration.
+2. **Minted event families MOVE into `Whizbang.Core.Minting`** (owner decision 2026-08-19:
+   pre-v1 is the window to get namespacing and types right; the consuming side corrects when
+   the new package lands). Scope: the minted family types (RedeliveryComposite,
+   CoalescedEventsComposite, AuditEventsComposite, CompositeEventBase, ICompositeEvent +
+   carrier interfaces, and the checkpoint/collective/snapshot family types as each factory
+   lands) plus the factories/facade. Migration mechanics, all in Phase 4:
+   - Pinned-type ledger: populate `formerNames` for every moved type (WHIZ120 enforces);
+     ADD A LOCK TEST that deserialization/type resolution honors formerNames for persisted
+     rows written under the old names (wh_outbox/wh_inbox/wh_event_store EnvelopeType strings).
+   - Broker filters: `SharedTopicInboxStrategy.CONTROL_PLANE_NAMESPACE` gains the
+     `whizbang.core.minting.#` pattern ALONGSIDE `whizbang.core.messaging.#` for the
+     transition (deployed subscription rules reconcile on redeploy); old pattern retires with
+     the shared inbox in Phase 7.
+   - Mixed-fleet window: old builds drop new-name envelopes at the receive gate — acceptable
+     pre-v1 on dev slots; deploy consuming services as one wave after the package bump.
+   - JsonContextRegistry discriminators + ControlPlaneTypeRegistry regenerate from the new
+     namespaces automatically; grep for remaining string-literal namespace references
+     (ControlPlaneDestination.For synthesizes from CLR namespace - follows automatically).
 3. **`GetSubscriptions(context)` context type**: `InboxSubscriptionContext` (sealed record) —
    carries serviceName, owned domains, and the handled-message enumeration. Requires a NEW
    enumeration API on the receptor registry (today `IReceptorRegistryQuery` is predicates-only);
