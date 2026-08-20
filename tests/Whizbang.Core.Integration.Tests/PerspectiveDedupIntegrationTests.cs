@@ -1098,4 +1098,60 @@ public class PerspectiveDedupIntegrationTests {
     public Task BootstrapSnapshotAsync(Guid streamId, string perspectiveName, Guid lastProcessedEventId, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
   }
+
+  /// <summary>
+  /// <summary>
+  /// Guard for the sentinel case in the #520 claim-window reservation. Guid.Empty is the "no work
+  /// id" marker, not an identity — the completion path skips it for the same reason. If the filter
+  /// reserves it, the FIRST empty-id item in a batch claims the sentinel and every SUBSEQUENT one
+  /// dedups against it, silently dropping real work on unrelated streams.
+  ///
+  /// That regression shipped once: the guard was written, then lost to a cherry-pick of a
+  /// pre-amend commit, and merged unnoticed because it only surfaced as a distant sample test
+  /// timing out. It is locked here, next to the dedup contract it qualifies, rather than left to
+  /// be re-derived from a timeout.
+  /// </summary>
+  [Test]
+  public async Task Contract_EmptyWorkIds_AreNotDedupedAgainstEachOther_Async() {
+    var runner = new ApplyTrackingRunner();
+    var observer = new AssertingDedupObserver();
+    var coordinator = new SequentialThenRedeliveryCoordinator();
+
+    // Five items carrying the no-work-id sentinel, on five DISTINCT streams. Delivered once.
+    const int sentinelItemCount = 5;
+    var streamIds = new List<Guid>();
+    for (var i = 0; i < sentinelItemCount; i++) {
+      var streamId = Guid.CreateVersion7();
+      streamIds.Add(streamId);
+      coordinator.InitialWork.Add(new PerspectiveWork {
+        WorkId = Guid.Empty,
+        StreamId = streamId,
+        PerspectiveName = "Test.SentinelWorkIdPerspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      });
+    }
+    coordinator.RedeliverAfterInitial = false;
+
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    // Let the assertion below report the shortfall rather than surfacing this as a bare timeout:
+    // when the sentinel is reserved, four of the five items never arrive and the diagnostic that
+    // matters is WHICH streams went missing, not that a wait expired.
+    try {
+      await runner.WaitForCallCountAsync(sentinelItemCount, TimeSpan.FromSeconds(30));
+    } catch (TimeoutException) { }
+    await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(30));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    // LOCK-IN: every stream must be reached. Reserving the sentinel caps this at ONE — the first
+    // item claims Guid.Empty and the other four are silently discarded as "duplicates".
+    await Assert.That(runner.UniqueStreamIds).IsEquivalentTo(streamIds)
+      .Because("LOCK-IN: Guid.Empty is a sentinel, not an identity. Reserving it would let the "
+             + "first empty-id item claim it and silently drop work on every other stream.");
+  }
 }
