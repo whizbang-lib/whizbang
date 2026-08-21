@@ -2100,6 +2100,41 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
+  /// Hands back inbox rows claimed but never dispatched, refunding the optimistic claim attempt
+  /// (see <see cref="IWorkCoordinator.ReleaseUnprocessedInboxAsync"/>).
+  /// </summary>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxGracefulReleaseSqlTests.cs</tests>
+  public async Task<int> ReleaseUnprocessedInboxAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> messageIds,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messageIds);
+    if (messageIds.Count == 0) {
+      return 0;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "release_unprocessed_inbox");
+
+    var idArray = messageIds is Guid[] arr ? arr : [.. messageIds];
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {functionName}(@p_instance, @p_ids)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_instance", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
+    cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
+    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <summary>
   /// Stream-integrity R1a selection (see <see cref="IWorkCoordinator.SelectRedeliveryEventsAsync"/>).
   /// Joins the event body so reaped ephemeral events are excluded structurally, filters
   /// at-most-once occurrences by their envelope-metadata delivery guarantee, and returns rows
