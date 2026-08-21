@@ -55,7 +55,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
 
     try {
       // Wait for response or cancellation
-      using (cancellationToken.Register(() => record.CompletionSource.TrySetCanceled())) {
+      using (cancellationToken.Register(() => record.CompletionSource.TrySetCanceled(cancellationToken))) {
         var response = await record.CompletionSource.Task;
         return response; // May be null if timed out
       }
@@ -75,7 +75,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
 
     try {
       // Wait for response or cancellation
-      using (cancellationToken.Register(() => record.CompletionSource.TrySetCanceled())) {
+      using (cancellationToken.Register(() => record.CompletionSource.TrySetCanceled(cancellationToken))) {
         var response = await record.CompletionSource.Task;
         return response as MessageEnvelope<TMessage>; // Cast to strongly-typed envelope
       }
