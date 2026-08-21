@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 [Category("Integration")]
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
