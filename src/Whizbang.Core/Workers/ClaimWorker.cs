@@ -32,6 +32,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IOutboxDrainChannel? _outboxDrainChannel;
   private readonly IInboxDrainChannel? _inboxDrainChannel;
   private readonly ClaimWorkerOptions _options;
+  private readonly AdaptiveClaimWindow _claimWindow;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
   private readonly ISignalBus? _signalBus;
@@ -84,6 +85,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     _signalingGate = signalingGate;
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    _claimWindow = new AdaptiveClaimWindow(
+      ceiling: _options.MaxStreamsPerBatch,
+      floor: _options.MinStreamsPerBatch,
+      additiveStep: _options.ClaimWindowGrowthStep);
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _outboxChannel = outboxChannel;
     _inboxChannel = inboxChannel;
@@ -424,8 +429,22 @@ public sealed partial class ClaimWorker : BackgroundService {
       }
     }
     if (_inboxChannel is not null) {
-      foreach (var iw in batch.InboxWork.OrderByMessageId()) {
-        await _inboxChannel.WriteAsync(iw, ct);
+      // The claim already charged an attempt against every row here. If this loop is cut short —
+      // shutdown, a full channel, a faulting writer — the rows never handed off have spent an
+      // attempt for a dispatch that never happened, and will spend another on every future claim
+      // until they dead-letter as MaxAttemptsExceeded having never reached a receptor. Hand them
+      // back instead: the refund is only ever taken by a worker that KNOWS it did not dispatch,
+      // so a process that dies here still (correctly) leaves its charge standing.
+      var ordered = batch.InboxWork.OrderByMessageId().ToList();
+      var handedOff = 0;
+      try {
+        for (; handedOff < ordered.Count; handedOff++) {
+          await _inboxChannel.WriteAsync(ordered[handedOff], ct);
+        }
+      } finally {
+        if (handedOff < ordered.Count) {
+          await _releaseUndispatchedAsync(ordered.Skip(handedOff).Select(w => w.MessageId).ToList());
+        }
       }
     }
     if (_perspectiveChannel is not null) {
@@ -463,19 +482,65 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
   }
 
+  /// <summary>
+  /// Hands claimed-but-undispatched inbox rows back, refunding the attempt the claim charged.
+  /// </summary>
+  /// <remarks>
+  /// Deliberately does NOT take the caller's cancellation token: this runs on the shutdown path,
+  /// where that token is already cancelled. Using it would skip the release precisely when it
+  /// matters most and leave the rows to burn their budget. Failures are swallowed and logged — a
+  /// release that does not happen costs an attempt, which is strictly better than a shutdown that
+  /// throws.
+  /// </remarks>
+  private async Task _releaseUndispatchedAsync(List<Guid> messageIds) {
+    // No empty-guard here: the sole call site only fires when rows were left undelivered, and
+    // ReleaseUnprocessedInboxAsync already returns 0 without opening a connection for an empty list
+    // (locked by Coordinator_ReleaseUnprocessedInbox_EmptyList_IsANoOpAsync).
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var released = await coordinator.ReleaseUnprocessedInboxAsync(
+        _instanceProvider.InstanceId, messageIds, CancellationToken.None);
+      LogReleasedUndispatched(_logger, released, messageIds.Count);
+    } catch (Exception ex) {
+      LogReleaseUndispatchedFailed(_logger, ex, messageIds.Count);
+    }
+  }
+
   private async Task<WorkBatch> _claimOnceAsync(CancellationToken ct) {
     await using var pin = await _pinnedPool.TryPinForAsync(typeof(ClaimWorker), ct);
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    return await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
+    var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId,
-      MaxStreams: _options.MaxStreamsPerBatch,
+      MaxStreams: _claimWindow.Current,
       PartitionCount: _options.PartitionCount,
       LeaseSeconds: _options.LeaseSeconds), ct);
+
+    // Feed the claim back into the window. A row arriving with attempts > 1 is work already claimed
+    // and not finished, so a high share means the batch outruns what this instance can dispatch
+    // inside its lease — and every one of those rows has silently spent a retry attempt it never
+    // used. Narrowing here is what stops a backlog consuming its own budget and dead-lettering
+    // healthy messages as MaxAttemptsExceeded.
+    if (_options.AdaptiveClaimWindow) {
+      var reclaimed = 0;
+      for (var i = 0; i < batch.InboxWork.Count; i++) {
+        if (batch.InboxWork[i].Attempts > 1) {
+          reclaimed++;
+        }
+      }
+      var previous = _claimWindow.Current;
+      _claimWindow.Observe(batch.InboxWork.Count, reclaimed);
+      if (_claimWindow.Current != previous) {
+        LogClaimWindowResized(_logger, previous, _claimWindow.Current, reclaimed, batch.InboxWork.Count);
+      }
+    }
+
+    return batch;
   }
 
   private async Task _initialHeartbeatAsync(CancellationToken ct) {
@@ -555,6 +620,22 @@ public sealed partial class ClaimWorker : BackgroundService {
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "ClaimWorker stopped")]
   static partial void LogStopped(ILogger logger);
+
+  [LoggerMessage(EventId = 8, Level = LogLevel.Information,
+    Message = "ClaimWorker resized its claim window {Previous} -> {Current} "
+            + "(re-claimed {Reclaimed} of {Claimed} inbox rows last cycle)")]
+  static partial void LogClaimWindowResized(
+    ILogger logger, int previous, int current, int reclaimed, int claimed);
+
+  [LoggerMessage(EventId = 9, Level = LogLevel.Information,
+    Message = "ClaimWorker handed back {Released} of {Attempted} undispatched inbox rows, "
+            + "refunding the attempt each claim charged")]
+  static partial void LogReleasedUndispatched(ILogger logger, int released, int attempted);
+
+  [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
+    Message = "ClaimWorker could not hand back {Attempted} undispatched inbox rows; "
+            + "they keep the attempt their claim charged and will be re-claimed")]
+  static partial void LogReleaseUndispatchedFailed(ILogger logger, Exception ex, int attempted);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "ClaimWorker disabled via options — claim loop skipped")]
   static partial void LogDisabled(ILogger logger);
@@ -648,6 +729,31 @@ public sealed class ClaimWorkerOptions {
   public int? NotifyHealthyPollingIntervalMilliseconds { get; set; } = 5_000;
   /// <summary>Cap on rows returned per claim_work call. Default 1000.</summary>
   public int MaxStreamsPerBatch { get; set; } = 1000;
+
+  /// <summary>
+  /// Narrows the claim batch when work is being re-claimed rather than finished. Default true.
+  /// </summary>
+  /// <remarks>
+  /// A claim charges an attempt per row, so rows claimed but never reached inside the lease window
+  /// are re-claimed at another attempt each cycle and eventually dead-lettered as
+  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded"/> having never
+  /// reached a receptor. Without this, a backlog larger than one instance's throughput consumes its
+  /// own retry budget and destroys healthy messages. Set false to pin the batch at
+  /// <see cref="MaxStreamsPerBatch"/> — appropriate only where throughput is known to exceed
+  /// arrival rate.
+  /// </remarks>
+  public bool AdaptiveClaimWindow { get; set; } = true;
+
+  /// <summary>
+  /// Floor for the adaptive claim window, so a struggling instance still makes progress. Default 25.
+  /// </summary>
+  public int MinStreamsPerBatch { get; set; } = 25;
+
+  /// <summary>
+  /// Streams added back per fully clean cycle. Default 25 — additive on purpose, since recovering
+  /// multiplicatively would re-enter the overload that caused the shrink.
+  /// </summary>
+  public int ClaimWindowGrowthStep { get; set; } = 25;
 
   /// <summary>
   /// When true, ClaimWorker only distributes perspective stream IDs to the drain channel

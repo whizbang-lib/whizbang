@@ -163,12 +163,43 @@ public sealed class DefaultMessageSecurityContextProvider(
     const int MAX_UNWRAP_DEPTH = 8;
     var current = payload;
     for (var depth = 0; depth < MAX_UNWRAP_DEPTH; depth++) {
-      if (current is not IMessageEnvelope nested || nested.Payload is null) {
+      if (current is not IMessageEnvelope nested) {
         break;
+      }
+      if (nested.Payload is null) {
+        // The wrapper arrived as a SHELL — typed, but with no hydrated body. Walking instances can
+        // go no further, and IMessageEnvelope carries nothing else naming the inner message, so an
+        // instance-only walk reports the WRAPPER here and reinstates the very bug this resolves.
+        // The generic argument still names the message, whether or not a payload was ever
+        // materialised, so fall back to the type. (Reading arguments off an already-materialised
+        // type is AOT-safe — unlike MakeGenericType/Activator, nothing is constructed.)
+        return _innerTypeOfEnvelope(current.GetType()) ?? current.GetType();
       }
       current = nested.Payload;
     }
     return current.GetType();
+  }
+
+  /// <summary>
+  /// The message type a <c>MessageEnvelope&lt;T&gt;</c> / <c>IMessageEnvelope&lt;T&gt;</c> wraps, or
+  /// null when <paramref name="envelopeType"/> is not a constructed envelope.
+  /// </summary>
+  private static Type? _innerTypeOfEnvelope(Type envelopeType) {
+    if (envelopeType.IsGenericType && envelopeType.GetGenericArguments() is { Length: 1 } direct) {
+      // MessageEnvelope<T> and IMessageEnvelope<T> both carry exactly one argument: the message.
+      if (typeof(IMessageEnvelope).IsAssignableFrom(envelopeType)) {
+        return direct[0];
+      }
+    }
+    // A subclass of a constructed envelope keeps the argument on a base type rather than itself.
+    for (var baseType = envelopeType.BaseType; baseType is not null; baseType = baseType.BaseType) {
+      if (baseType.IsGenericType
+          && typeof(IMessageEnvelope).IsAssignableFrom(baseType)
+          && baseType.GetGenericArguments() is { Length: 1 } inherited) {
+        return inherited[0];
+      }
+    }
+    return null;
   }
 
   /// <summary>

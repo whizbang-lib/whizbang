@@ -167,6 +167,45 @@ public interface IWorkCoordinator {
       $"{GetType().Name} does not implement RenewLeasesAsync.");
 
   /// <summary>
+  /// Hands back inbox rows this instance claimed but never dispatched, refunding the attempt the
+  /// claim optimistically charged and clearing the lease.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>claim_orphaned_inbox</c> charges an attempt on every claim, which must stay: it is the only
+  /// fail-safe that survives a process vanishing mid-dispatch, because a dead process reports
+  /// nothing. The cost is that a worker claiming more rows than it can dispatch inside the lease
+  /// window pays an attempt for every untouched row, every cycle — so a backlog larger than one
+  /// worker's throughput burns its own retry budget and dead-letters healthy messages as
+  /// <see cref="MessageFailureReason.MaxAttemptsExceeded"/> having never reached a receptor, with no
+  /// failure recorded anywhere because none occurred.
+  /// </para>
+  /// <para>
+  /// The resolution is a refund rather than a smaller charge. A worker that ends a cycle still
+  /// holding rows it never touched calls this; an UNGRACEFUL exit calls nothing, so its charge
+  /// correctly stands. The store cannot distinguish "never dispatched" from "dispatched and died" —
+  /// only the worker can, which is why this is an explicit call rather than store-side inference.
+  /// </para>
+  /// <para>
+  /// Idempotent, and scoped to the caller's own claim: releasing a row held by another instance is a
+  /// no-op, so a late or duplicated release can neither refund twice nor unlock work another worker
+  /// is actively dispatching.
+  /// </para>
+  /// </remarks>
+  /// <param name="instanceId">The instance that holds the claim. Rows held by anyone else are skipped.</param>
+  /// <param name="messageIds">Inbox message ids being handed back undispatched.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Number of rows actually released.</returns>
+  /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InboxGracefulReleaseSqlTests.cs</tests>
+  Task<int> ReleaseUnprocessedInboxAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> messageIds,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ReleaseUnprocessedInboxAsync.");
+
+  /// <summary>
   /// Reports failures for the supplied category. Increments retry counters and sets
   /// error/failure_reason on the affected rows. Coalesced flush from C# FailureFlushWorker.
   /// Phase B of work-pump decomposition.
