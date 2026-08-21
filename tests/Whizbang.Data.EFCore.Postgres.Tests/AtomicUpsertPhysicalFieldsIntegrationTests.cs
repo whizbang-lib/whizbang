@@ -27,7 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// shadow-property routing but doesn't exercise the raw-SQL atomic UPSERT path.
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class AtomicUpsertPhysicalFieldsIntegrationTests : IAsyncDisposable {
   static AtomicUpsertPhysicalFieldsIntegrationTests() {
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);

@@ -27,7 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///   WHERE price >= 20.00  // Uses indexed physical column</para>
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class UnifiedQuerySyntaxTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
