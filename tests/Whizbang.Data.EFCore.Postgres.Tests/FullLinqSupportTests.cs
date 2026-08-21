@@ -25,7 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// They ensure pure LINQ queries work without raw SQL or EF.Functions calls.
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class FullLinqSupportTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
