@@ -42,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Integration")]
 [Category("CollectiveEvents")]
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
   static CollectiveDispatcherEFCoreIntegrationTests() {
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);

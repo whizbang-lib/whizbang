@@ -16,7 +16,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// guards, the ON CONFLICT update (which clears error / rewind columns), the debug-log
 /// branch, and the transaction rollback-on-failure path.
 /// </summary>
-[NotInParallel("DapperPerspectiveCheckpointCompleterTests")]
+[NotInParallel("PostgreSQL")]
 public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBase {
 
   private const string PERSPECTIVE_NAME =

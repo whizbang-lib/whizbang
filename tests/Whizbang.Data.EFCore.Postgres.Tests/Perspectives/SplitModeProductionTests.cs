@@ -22,7 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// These tests reproduce the exact bugs seen in a consumer's production deployment.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class SplitModeProductionTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 

@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// scope is written correctly, and LINQ queries work transparently.
 /// </summary>
 [Category("Integration")]
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class SplitModeIntegrationTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 
