@@ -121,6 +121,36 @@ public class ClaimWorkerAttemptAccountingTests {
              + "row another worker is actively dispatching");
   }
 
+  /// <summary>
+  /// A release that fails must not take the worker down with it. This path runs during shutdown,
+  /// where throwing would turn a clean stop into a crash — and the orchestrator reads a non-zero
+  /// exit as a failed pod, restarts it, and the next shutdown does the same thing. The cost of
+  /// swallowing is one attempt per row; the cost of throwing is a crash loop.
+  /// </summary>
+  [Test]
+  public async Task ReleaseFailure_IsSwallowedSoShutdownStaysCleanAsync() {
+    var coord = new RecordingCoordinator {
+      BatchToReturn = _batchOf(rows: 2, attempts: 1),
+      ThrowOnRelease = true,
+    };
+    var refusing = new RefusingInboxChannel();
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+    }, inboxChannel: refusing);
+
+    // The worker must keep claiming after a release blew up — a faulting hand-back is recoverable,
+    // a dead poller is not.
+    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
+
+    await Assert.That(coord.ReleaseAttempts).IsGreaterThan(0)
+      .Because("the release must actually have been attempted — a test that passes because nothing "
+             + "was tried would prove nothing");
+    await Assert.That(coord.CallCount).IsGreaterThanOrEqualTo(3)
+      .Because("a failing release must not stop the claim loop; the rows keep their attempt and are "
+             + "re-claimed later, which is strictly better than a worker that stops polling");
+  }
+
   // ==================== helpers ====================
 
   private static WorkBatch _batchOf(int rows, int attempts) {
@@ -204,6 +234,8 @@ public class ClaimWorkerAttemptAccountingTests {
     public int LastMaxStreams { get; private set; }
     public List<Guid> ReleasedIds { get; } = [];
     public Guid ReleasedInstanceId { get; private set; }
+    public int ReleaseAttempts { get; private set; }
+    public bool ThrowOnRelease { get; set; }
     public WorkBatch BatchToReturn { get; set; } = new() { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
@@ -218,6 +250,11 @@ public class ClaimWorkerAttemptAccountingTests {
     public Task<int> ReleaseUnprocessedInboxAsync(
         Guid instanceId, IReadOnlyList<Guid> messageIds, CancellationToken cancellationToken = default) {
       lock (_lock) {
+        ReleaseAttempts++;
+        if (ThrowOnRelease) {
+          _released.TrySetResult();
+          throw new InvalidOperationException("release failed");
+        }
         ReleasedInstanceId = instanceId;
         ReleasedIds.AddRange(messageIds);
       }
