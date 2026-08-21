@@ -100,6 +100,13 @@ public class RewindScenarioTests {
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForRewindAsync(TimeSpan.FromSeconds(5));
+    // Synchronise on the ASSERTED outcome, not on a claim-cycle proxy: PostPerspectiveInline fires
+    // asynchronously after the rewind's apply, so waiting on cycles and then cancelling could tear
+    // the worker down before the stage ran — the assertion then read an empty list under parallel
+    // load while passing in isolation.
+    await spy.WaitForInvocationAsync(LifecycleStage.PostPerspectiveInline, event3Id, TimeSpan.FromSeconds(10));
+    // Then let a further cycle run, so the "must NOT double-fire" assertions below are made against
+    // a worker that had another opportunity to fire, rather than one merely cancelled early.
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -293,6 +300,14 @@ public class RewindScenarioTests {
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await coordinator.WaitForAllArrivalsProcessedAsync(TimeSpan.FromSeconds(20));
+    // De-flake: arrivals-processed is the coordinator's bookkeeping signal, not the handler
+    // signal the asserts below count — under host load the final rewind-driven inline fires
+    // trail it, and cancelling in that window cuts the worker mid-rewind (reads as a missed
+    // fire). Wait on the asserted signal itself, bounded; a genuine miss still fails below.
+    await Whizbang.Testing.Async.AsyncTestHelpers.WaitForConditionAsync(
+      () => spy.Invocations.Count(i => i.Stage == LifecycleStage.PostPerspectiveInline) >= total,
+      TimeSpan.FromSeconds(10),
+      timeoutMessage: "expected all 30 PostPerspectiveInline fires before shutdown");
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -965,6 +980,24 @@ public class RewindScenarioTests {
 
     public IReadOnlyCollection<InvocationRecord> Invocations => [.. _invocations];
 
+    private readonly ConcurrentDictionary<(LifecycleStage Stage, Guid EventId), TaskCompletionSource> _waiters = new();
+
+    /// <summary>
+    /// Completes once the given stage has been invoked for the given event — a deterministic signal
+    /// for the ASSERTED outcome. Lifecycle stages fire asynchronously after the apply/rewind that
+    /// triggers them, so synchronising on a rewind signal or a claim-cycle count and then cancelling
+    /// can tear the worker down before the stage ever runs (the assertion then reads an empty list
+    /// under parallel load, while passing in isolation).
+    /// </summary>
+    public async Task WaitForInvocationAsync(LifecycleStage stage, Guid eventId, TimeSpan timeout) {
+      var waiter = _waiters.GetOrAdd((stage, eventId),
+        _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+      if (_invocations.Any(i => i.Stage == stage && i.EventId == eventId)) {
+        waiter.TrySetResult();
+      }
+      await waiter.Task.WaitAsync(timeout);
+    }
+
     public ValueTask InvokeAsync(
       IMessageEnvelope envelope,
       LifecycleStage stage,
@@ -981,6 +1014,9 @@ public class RewindScenarioTests {
         stage,
         context?.ProcessingMode,
         context?.IsNewEvent ?? true));
+      if (_waiters.TryGetValue((stage, envelope.MessageId.Value), out var waiter)) {
+        waiter.TrySetResult();
+      }
       return ValueTask.CompletedTask;
     }
 

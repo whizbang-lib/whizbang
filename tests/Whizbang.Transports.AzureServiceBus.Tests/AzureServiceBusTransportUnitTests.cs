@@ -216,13 +216,63 @@ public class AzureServiceBusTransportUnitTests {
   }
 
   [Test]
-  public async Task SessionIdleTimeout_DefaultsToOneSecondAsync() {
+  public async Task SessionIdleTimeout_DefaultsToSixtySecondsAsync() {
     // Arrange & Act
     var options = new AzureServiceBusOptions();
 
     // Assert
-    await Assert.That(options.SessionIdleTimeout).IsEqualTo(TimeSpan.FromSeconds(1))
-      .Because("Azure SDK default is 60s, which produces 60s plateaus on fan-out workloads (each session holds its concurrency slot idle for the full timeout waiting for a second message that never arrives). 1s releases sessions almost immediately while still keeping multi-message bursts within a stream alive.");
+    await Assert.That(options.SessionIdleTimeout).IsEqualTo(TimeSpan.FromSeconds(60))
+      .Because("A waiting AcceptNextSession is push-completed by the broker the moment a message arrives, so a long idle timeout adds NO pickup latency — it only removes empty re-accept churn. A short timeout makes every idle concurrency slot spin accept cycles (MaxConcurrentSessions / SessionIdleTimeout ops/sec per subscription, per instance); at the old 1s default a modest fleet saturated an ASB Standard namespace's shared request quota AT IDLE, starving keepalives and session locks until live traffic redelivered indefinitely. 60s matches the Azure SDK default and bounds idle churn at 200/60 ≈ 3.3 ops/sec per subscription.");
+  }
+
+  [Test]
+  public async Task EnableAdaptiveAcceptors_DefaultsToTrueAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.EnableAdaptiveAcceptors).IsTrue()
+      .Because("the spec's stated intent replaces the standing acceptor army: session acceptors scale with observed demand and the idle cost of the receive machinery trends to zero by construction");
+  }
+
+  [Test]
+  public async Task AcceptorFloor_DefaultsToFourAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.AcceptorFloor).IsEqualTo(4)
+      .Because("a small always-on acceptor pool keeps first-message pickup instant while costing ≈0.07 idle ops/sec per subscription at the 60s idle timeout");
+  }
+
+  [Test]
+  public async Task AcceptorEvaluationInterval_DefaultsToThirtySecondsAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.AcceptorEvaluationInterval).IsEqualTo(TimeSpan.FromSeconds(30))
+      .Because("one growth/decay decision per half-minute reacts to a fan-out burst within one window without thrashing UpdateConcurrency on every session event");
+  }
+
+  [Test]
+  public async Task EnableOpsRateSelfCheck_DefaultsToTrueAsync() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.EnableOpsRateSelfCheck).IsTrue()
+      .Because("the idle ops-rate failure mode is invisible to message metrics and logs nothing when healthy — the self-check must be on by default to be worth anything");
+  }
+
+  [Test]
+  public async Task OpsRateWarningThreshold_DefaultsTo100Async() {
+    // Arrange & Act
+    var options = new AzureServiceBusOptions();
+
+    // Assert
+    await Assert.That(options.OpsRateWarningThresholdPerSecond).IsEqualTo(100d)
+      .Because("an ASB Standard namespace shares ~1,000 ops/sec across the whole fleet; one instance projecting >100 ops/sec of idle churn burns over a tenth of it doing nothing");
   }
 
   [Test]

@@ -99,6 +99,60 @@ public class InboxRoutingStrategyTests {
   }
 
   [Test]
+  public async Task SharedTopicInboxStrategy_GetSubscription_IncludesMintingNamespaceAsync() {
+    // Topology arc phase 4: the minted composite families (redelivery bundles, coalesced batches,
+    // audit composites) moved to Whizbang.Core.Minting, so their control-plane subjects are now
+    // whizbang.core.minting.* (ControlPlaneDestination synthesizes the subject from the CLR
+    // namespace). Every shared-inbox subscription must admit the new pattern or repair bundles are
+    // silently dropped by the broker rule (no logs, no dead-letter).
+    var strategy = new SharedTopicInboxStrategy();
+
+    var subscription = strategy.GetSubscription(
+      new HashSet<string> { "orders" }, "svc", MessageKind.Command);
+
+    await Assert.That(subscription.FilterExpression!).Contains("whizbang.core.minting.#")
+      .Because("minted composites publish under whizbang.core.minting.* subjects after the "
+             + "namespace move — the shared-inbox filter must admit them");
+    await Assert.That(subscription.FilterExpression!).Contains("whizbang.core.messaging.#")
+      .Because("the OLD control-plane pattern stays through the transition (mixed-fleet window: "
+             + "in-flight envelopes published by pre-move builds still carry old subjects); it "
+             + "retires with the shared inbox in phase 7");
+    var patterns = (List<string>)subscription.Metadata!["RoutingPatterns"];
+    await Assert.That(patterns).Contains("whizbang.core.minting.#")
+      .Because("transports build broker bindings from the RoutingPatterns metadata, not the "
+             + "display FilterExpression");
+  }
+
+  [Test]
+  public async Task SharedTopicInboxStrategy_MintingSubjects_MatchTheBuiltSubscriptionPatternsAsync() {
+    // Publish side ⇔ subscribe side: ControlPlaneDestination.For synthesizes the subject from the
+    // payload's CLR namespace; the subscription's routing patterns must admit every moved family's
+    // subject, or the redelivery pump publishes into a filter hole.
+    var strategy = new SharedTopicInboxStrategy();
+    var subscription = strategy.GetSubscription(new HashSet<string> { "orders" }, "svc", MessageKind.Command);
+    var patterns = (List<string>)subscription.Metadata!["RoutingPatterns"];
+    Type[] mintedFamilies = [
+      typeof(Whizbang.Core.Minting.RedeliveryComposite),
+      typeof(Whizbang.Core.Minting.CoalescedEventsComposite),
+      typeof(Whizbang.Core.Minting.AuditEventsComposite),
+    ];
+
+    foreach (var family in mintedFamilies) {
+      var destination = Whizbang.Core.Transports.ControlPlaneDestination.For("inbox", Guid.NewGuid(), family);
+
+      await Assert.That(destination.RoutingKey!).IsEqualTo(
+          $"whizbang.core.minting.{family.Name.ToLowerInvariant()}")
+        .Because("the subject is synthesized from the CLR namespace — the move changes it");
+      var admitted = patterns.Any(p =>
+        p.EndsWith(".#", StringComparison.Ordinal)
+        && destination.RoutingKey!.StartsWith(p[..^1], StringComparison.Ordinal));
+      await Assert.That(admitted).IsTrue()
+        .Because($"subject '{destination.RoutingKey}' must match a subscription routing pattern "
+               + "or the broker drops the publish silently");
+    }
+  }
+
+  [Test]
   public async Task SharedTopicInboxStrategy_GetSubscription_IncludesSystemCommandsInFilterAsync() {
     // Arrange
     var strategy = new SharedTopicInboxStrategy();
@@ -283,6 +337,99 @@ public class InboxRoutingStrategyTests {
     // Act & Assert
     await Assert.That(() => strategy.GetSubscription(null!, "OrderService", MessageKind.Command))
       .Throws<ArgumentNullException>();
+  }
+
+  #endregion
+
+  #region GetSubscriptions (plural seam - topology arc phase 3)
+
+  // Zero-behavior-change contract: the plural surface must produce EXACTLY the same
+  // single subscription as today's singular GetSubscription for both built-in strategies.
+
+  [Test]
+  public async Task SharedTopicInboxStrategy_GetSubscriptions_BitIdenticalToSingularAsync() {
+    // Arrange
+    var strategy = new SharedTopicInboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
+    var context = new InboxSubscriptionContext("OrderService", ownedDomains, []);
+
+    // Act
+    var singular = strategy.GetSubscription(ownedDomains, "OrderService", MessageKind.Command);
+    var plural = strategy.GetSubscriptions(context);
+
+    // Assert - exactly one subscription, identical in every observable dimension
+    await Assert.That(plural.Count).IsEqualTo(1);
+    await Assert.That(plural[0].Topic).IsEqualTo(singular.Topic);
+    await Assert.That(plural[0].FilterExpression).IsEqualTo(singular.FilterExpression);
+    var singularPatterns = (IReadOnlyList<string>)singular.Metadata!["RoutingPatterns"];
+    var pluralPatterns = (IReadOnlyList<string>)plural[0].Metadata!["RoutingPatterns"];
+    await Assert.That(pluralPatterns.SequenceEqual(singularPatterns)).IsTrue();
+  }
+
+  [Test]
+  public async Task SharedTopicInboxStrategy_GetSubscriptions_NullContext_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var strategy = new SharedTopicInboxStrategy();
+
+    // Act & Assert
+    await Assert.That(() => strategy.GetSubscriptions(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task CustomSingularOnlyStrategy_GetSubscriptions_DefaultWrapsSingularAsCommandAsync() {
+    // Arrange - a strategy implementing ONLY the singular method (pre-phase-3 shape) gets
+    // the plural surface for free via the default interface member, which must wrap
+    // GetSubscription(ownedDomains, serviceName, MessageKind.Command) in a one-element list.
+    var strategy = new RecordingSingularOnlyStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
+    var context = new InboxSubscriptionContext("OrderService", ownedDomains, []);
+
+    // Act
+    var plural = ((IInboxRoutingStrategy)strategy).GetSubscriptions(context);
+
+    // Assert
+    await Assert.That(plural.Count).IsEqualTo(1);
+    await Assert.That(plural[0].Topic).IsEqualTo("custom-topic");
+    await Assert.That(strategy.LastKind).IsEqualTo(MessageKind.Command);
+    await Assert.That(strategy.LastServiceName).IsEqualTo("OrderService");
+    await Assert.That(strategy.LastOwnedDomains).IsSameReferenceAs(ownedDomains);
+  }
+
+  [Test]
+  public async Task InboxSubscriptionContext_CarriesAllComponentsAsync() {
+    // Arrange
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "myapp.orders.commands" };
+    var handled = new List<Whizbang.Core.Messaging.HandledMessageInfo> {
+      new("MyApp.Orders.Commands.CreateOrder", "myapp.orders.commands", MessageKind.Command)
+    };
+
+    // Act
+    var context = new InboxSubscriptionContext("OrderService", ownedDomains, handled);
+
+    // Assert
+    await Assert.That(context.ServiceName).IsEqualTo("OrderService");
+    await Assert.That(context.OwnedDomains).IsSameReferenceAs(ownedDomains);
+    await Assert.That(context.HandledMessages.Count).IsEqualTo(1);
+    await Assert.That(context.HandledMessages[0].MessageTypeName).IsEqualTo("MyApp.Orders.Commands.CreateOrder");
+    await Assert.That(context.HandledMessages[0].ContractNamespace).IsEqualTo("myapp.orders.commands");
+    await Assert.That(context.HandledMessages[0].Kind).IsEqualTo(MessageKind.Command);
+  }
+
+  /// <summary>Singular-only strategy proving pre-phase-3 implementations keep working and
+  /// recording what the plural default interface member passes through.</summary>
+  private sealed class RecordingSingularOnlyStrategy : IInboxRoutingStrategy {
+    public IReadOnlySet<string>? LastOwnedDomains { get; private set; }
+    public string? LastServiceName { get; private set; }
+    public MessageKind? LastKind { get; private set; }
+
+    public InboxSubscription GetSubscription(
+        IReadOnlySet<string> ownedDomains, string serviceName, MessageKind kind) {
+      LastOwnedDomains = ownedDomains;
+      LastServiceName = serviceName;
+      LastKind = kind;
+      return new InboxSubscription("custom-topic");
+    }
   }
 
   #endregion

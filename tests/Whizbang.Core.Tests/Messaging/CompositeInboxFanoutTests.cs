@@ -12,6 +12,7 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -350,6 +351,96 @@ public class CompositeInboxFanoutTests {
                "serializer would have produced from a typed payload.");
     await Assert.That(result.Children[1].MessageType).IsEqualTo("Contracts.RepairedB, Contracts");
     await Assert.That(result.Children[0].Flags.HasFlag(EventFlags.NoRebroadcast)).IsTrue();
+  }
+
+  [Test]
+  public async Task TryExpand_AuditEventsComposite_DeliversEachInnerEventAuditedAsync() {
+    // The batched audit shipper folds pending EventAudited singles into one AuditEventsComposite
+    // (raw carry + identity preservation — the singles' payloads are already wire JSON, and their
+    // original message ids make a fold/deadline race dedup at the consumer's inbox instead of
+    // double-recording). The fan-out must deliver each inner as its own child inbox message: an
+    // ISystemEvent inner expands exactly like a domain-event inner.
+    var streamId = Guid.NewGuid();
+    var auditWireType = typeof(Whizbang.Core.SystemEvents.EventAudited).AssemblyQualifiedName!;
+    var idA = Guid.NewGuid();
+    var idB = Guid.NewGuid();
+    var composite = new Whizbang.Core.Minting.AuditEventsComposite {
+      StreamId = streamId,
+      InnerPayloads = [
+        _raw("{\"Id\":\"" + idA + "\",\"OriginalEventType\":\"Contracts.SomethingHappened\"}"),
+        _raw("{\"Id\":\"" + idB + "\",\"OriginalEventType\":\"Contracts.SomethingElseHappened\"}"),
+      ],
+      InnerTypeNames = [auditWireType, auditWireType],
+      InnerEventIds = [idA, idB],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    await Assert.That(result.Children[0].MessageType).IsEqualTo(auditWireType)
+      .Because("each child must be a first-class EventAudited delivery — same wire type the " +
+               "per-event singles would have carried.");
+    await Assert.That(result.Children[0].MessageId).IsEqualTo(idA)
+      .Because("identity preservation: a single that also shipped individually at the deadline " +
+               "must dedup at the consumer's inbox, not double-record.");
+    await Assert.That(result.Children[1].MessageId).IsEqualTo(idB);
+    await Assert.That(result.Children[0].Envelope.Payload.GetProperty("OriginalEventType").GetString())
+      .IsEqualTo("Contracts.SomethingHappened")
+      .Because("raw carry: the audit record's stored wire JSON rides verbatim — no rehydration.");
+  }
+
+  [Test]
+  public async Task AuditEventsComposite_IsNonAtomic_OneBadRecordMustNotSinkSiblingsAsync() {
+    // Audit records are independent facts; a poison record must dead-letter alone, never take its
+    // siblings with it. Lock the carrier's atomicity so a future refactor cannot flip it.
+    var composite = new Whizbang.Core.Minting.AuditEventsComposite();
+
+    await Assert.That(composite.Atomicity).IsEqualTo(FanoutAtomicity.Independent);
+  }
+
+  [Test]
+  public async Task TryExpand_CoalescedEventsComposite_DeliversEachInnerAsync() {
+    // The GENERIC coalesce carrier (the default a coalesce binding ships with) must expand
+    // exactly like the audit-specific one: raw carry, identity preservation, one first-class
+    // child per folded single.
+    var streamId = Guid.NewGuid();
+    var wireType = "Contracts.RecordCaptured, Contracts";
+    var idA = Guid.NewGuid();
+    var idB = Guid.NewGuid();
+    var composite = new CoalescedEventsComposite {
+      StreamId = streamId,
+      InnerPayloads = [
+        _raw("{\"Name\":\"first\"}"),
+        _raw("{\"Name\":\"second\"}"),
+      ],
+      InnerTypeNames = [wireType, wireType],
+      InnerEventIds = [idA, idB],
+    };
+    var source = _sourceEnvelope(streamId);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    await Assert.That(result.Children[0].MessageType).IsEqualTo(wireType);
+    await Assert.That(result.Children[0].MessageId).IsEqualTo(idA)
+      .Because("identity preservation: a single that raced its floor dedups at the consumer's inbox");
+    await Assert.That(result.Children[1].MessageId).IsEqualTo(idB);
+    await Assert.That(result.Children[0].Envelope.Payload.GetProperty("Name").GetString()).IsEqualTo("first")
+      .Because("raw carry: the folded single's stored wire JSON rides verbatim — no rehydration");
+  }
+
+  [Test]
+  public async Task CoalescedEventsComposite_DefaultsToIndependentAtomicityAsync() {
+    // Coalesce groups bundle self-contained records; the binding may opt into Atomic, but the
+    // carrier's default must stay Independent so one poison inner dead-letters alone.
+    var composite = new CoalescedEventsComposite();
+
+    await Assert.That(composite.Atomicity).IsEqualTo(FanoutAtomicity.Independent);
   }
 
   [Test]

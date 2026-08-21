@@ -2,8 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using Whizbang.Core.Attributes;
+using Whizbang.Core.Messaging;
 
-namespace Whizbang.Core.Messaging;
+namespace Whizbang.Core.Minting;
 
 /// <summary>
 /// A composite whose children ride as <b>raw stored wire JSON</b> plus wire type names instead of
@@ -80,7 +81,8 @@ public interface IIdentityPreservingComposite : ICompositeEvent {
 /// <docs>resilience/stream-integrity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/CompositeInboxFanoutTests.cs</tests>
 [PinnedId("b3d9f2a1-6c47-4e0d-9a58-1f2e3c4d5b6a")]
-public sealed class RedeliveryComposite : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite {
+public sealed class RedeliveryComposite
+  : CompositeEventBase, IIdentityPreservingComposite, IRawInnerComposite, IControlPlaneMessage {
   /// <summary>
   /// Each child's raw stored payload JSON, verbatim from the origin's <c>event_data</c> — the
   /// origin never rehydrates typed payloads (see <see cref="IRawInnerComposite"/>).

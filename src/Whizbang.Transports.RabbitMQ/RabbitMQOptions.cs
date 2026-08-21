@@ -3,6 +3,16 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <summary>
 /// Configuration options for RabbitMQ transport.
 /// </summary>
+/// <remarks>
+/// <b>No adaptive-acceptor analogue by design:</b> the Azure Service Bus transport scales its
+/// session acceptors with observed demand because ASB session receive is pull-shaped — every
+/// idle acceptor slot re-issues a billable accept operation each session-idle-timeout, so a
+/// standing acceptor pool has a real idle cost that scales with its size. RabbitMQ consumers
+/// are push-based: an idle consumer holds a channel and waits, costing effectively zero broker
+/// operations, so there is no idle-churn economics to govern. The RabbitMQ analogue —
+/// adaptive prefetch / degree-of-parallelism tuning for throughput (not idle cost) — is
+/// deferred to the transport-traffic-classes phase.
+/// </remarks>
 /// <docs>messaging/transports/rabbitmq</docs>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportFailurePathTests.cs:HandleMessageFailure_RedeliveredWithMaxTwoAttempts_NacksToDeadLetterAsync</tests>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQConnectionRetryTests.cs:CreateConnectionWithRetryAsync_WithRetryIndefinitelyFalse_TriesInitialAttemptsAndThrowsAsync</tests>

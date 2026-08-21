@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
@@ -201,11 +202,105 @@ public class IntegrityCheckpointWorkerTests {
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
+  // ========================================
+  // Control class — TTL minted through mint.Checkpoints (topology arc phase 9)
+  // ========================================
+
+  [Test]
+  public async Task RunCheckpointOnce_StampsTheMintedTtlOnEveryDestinationAsync() {
+    // The checkpoint is THE supersedable control signal: the next cycle re-derives it from the
+    // same watermarks, so a copy that outlives its successor is pure backlog. The worker does not
+    // compute a lifetime — it asks mint.Checkpoints, whose derivation is TTL = 2 x cadence.
+    var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
+    var coordinator = new _checkpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 5, ToCommitSequence = 9 },
+      OwnAuditedEventTypes = [TypeNameFormatter.Format(ordersType)],
+    };
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), serviceName: "origin-svc",
+      transport: transport, catalog: new _catalog(ordersType),
+      integrityOptions: new StreamIntegrityOptions { CheckpointIntervalSeconds = 60 });
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    await Assert.That(transport.Published).IsNotEmpty();
+    foreach (var published in transport.Published) {
+      await Assert.That(ControlMessageTtl.FromMetadata(published.Destination.Metadata))
+        .IsEqualTo(TimeSpan.FromSeconds(120))
+        .Because("60s cadence x the shipped 2x multiplier — derived from the worker's OWN "
+               + "interval, so retuning the cadence retunes the lifetime with it");
+    }
+  }
+
+  [Test]
+  public async Task RunCheckpointOnce_TtlTracksTheConfiguredCadenceAsync() {
+    // The derivation is relative, not a constant: a host that slows its checkpoints must not end
+    // up expiring them before the next one is even emitted.
+    var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
+    var coordinator = new _checkpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 1, ToCommitSequence = 2 },
+      OwnAuditedEventTypes = [TypeNameFormatter.Format(ordersType)],
+    };
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), serviceName: "origin-svc",
+      transport: transport, catalog: new _catalog(ordersType),
+      integrityOptions: new StreamIntegrityOptions { CheckpointIntervalSeconds = 600 });
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    await Assert.That(ControlMessageTtl.FromMetadata(transport.Published[0].Destination.Metadata))
+      .IsEqualTo(TimeSpan.FromMinutes(20));
+  }
+
+  [Test]
+  public async Task RunCheckpointOnce_ControlClassDisabled_StampsNoTtlAsync() {
+    // Killswitch parity with the transports: the pre-phase-9 destination shape exactly.
+    var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
+    var coordinator = new _checkpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 1, ToCommitSequence = 2 },
+      OwnAuditedEventTypes = [TypeNameFormatter.Format(ordersType)],
+    };
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), serviceName: "origin-svc",
+      transport: transport, catalog: new _catalog(ordersType),
+      controlClass: new ControlClassOptions { Enabled = false });
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    await Assert.That(transport.Published).IsNotEmpty();
+    await Assert.That(ControlMessageTtl.FromMetadata(transport.Published[0].Destination.Metadata)).IsNull();
+  }
+
+  [Test]
+  public async Task RunCheckpointOnce_TtlStampDoesNotDisturbTheSessionKeyAsync() {
+    // ControlPlaneDestination.WithSession REPLACES the metadata bag wholesale; stamping a TTL
+    // after it must not become the thing that loses the session key (a sessionless delivery to a
+    // session-enabled subscription is dead-lettered, silently).
+    var ordersType = typeof(CheckpointTopicProbes.Orders.OrdersProbeEvent);
+    var coordinator = new _checkpointCoordinator {
+      Window = new IntegrityCheckpointWindow { FromCommitSequence = 1, ToCommitSequence = 2 },
+      OwnAuditedEventTypes = [TypeNameFormatter.Format(ordersType)],
+    };
+    var transport = new _captureTransport();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), serviceName: "origin-svc",
+      transport: transport, catalog: new _catalog(ordersType));
+
+    await worker.RunCheckpointOnceAsync(CancellationToken.None);
+
+    await Assert.That(transport.Published[0].Destination.Metadata!["StreamId"].GetString())
+      .IsEqualTo(coordinator.LocalServiceId.ToString());
+    await Assert.That(ControlMessageTtl.FromMetadata(transport.Published[0].Destination.Metadata))
+      .IsEqualTo(TimeSpan.FromSeconds(120));
+  }
+
   private static IntegrityCheckpointWorker _buildWorker(
       _checkpointCoordinator coordinator, _captureDispatcher dispatcher, string serviceName,
       _captureTransport? transport = null, IMessageTypeCatalog? catalog = null,
-      bool outboxRouting = true, ITopicRegistry? topicRegistry = null) {
+      bool outboxRouting = true, ITopicRegistry? topicRegistry = null,
+      ControlClassOptions? controlClass = null, StreamIntegrityOptions? integrityOptions = null) {
     var services = new ServiceCollection();
+    services.AddSingleton<ICheckpointMint>(new CheckpointMint(
+      Options.Create(controlClass ?? new ControlClassOptions())));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(dispatcher);
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider(serviceName));
@@ -229,7 +324,7 @@ public class IntegrityCheckpointWorkerTests {
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new SchemaReadyGate(),
-      Options.Create(new StreamIntegrityOptions()),
+      Options.Create(integrityOptions ?? new StreamIntegrityOptions()),
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }
 

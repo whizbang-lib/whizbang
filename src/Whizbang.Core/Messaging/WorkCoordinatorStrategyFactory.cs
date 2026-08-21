@@ -53,9 +53,17 @@ public static class WorkCoordinatorStrategyFactory {
     ArgumentNullException.ThrowIfNull(inner);
     ArgumentNullException.ThrowIfNull(sp);
     var outboxBatch = sp.GetService<IOutboxBatchStrategy>();
-    return outboxBatch is null
-      ? inner
-      : new StreamAffinityWorkCoordinatorStrategy(inner, outboxBatch);
+    if (outboxBatch is null) {
+      return inner;
+    }
+    // Audit generation lives in the inner strategies' AddOutboxMessage path, which this
+    // wrapper's outbox route bypasses — so the wrapper must build audit messages itself
+    // (see QueueOutboxMessageAsync). Resolve the same options the inner strategies use.
+    var systemEventOptions = sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value;
+    var logger = sp.GetService<ILogger<StreamAffinityWorkCoordinatorStrategy>>();
+    return new StreamAffinityWorkCoordinatorStrategy(
+      inner, outboxBatch, systemEventOptions, logger,
+      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>());
   }
 
   private static ScopedWorkCoordinatorStrategy _createScoped(IServiceProvider sp) {
@@ -68,7 +76,8 @@ public static class WorkCoordinatorStrategyFactory {
       ScopeFactory = sp.GetService<IServiceScopeFactory>(),
       LifecycleMessageDeserializer = sp.GetService<ILifecycleMessageDeserializer>(),
       TracingOptions = sp.GetService<IOptionsMonitor<TracingOptions>>(),
-      SystemEventOptions = sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value
+      SystemEventOptions = sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>()?.Value,
+      CoalesceResolver = sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
     };
     return new ScopedWorkCoordinatorStrategy(
       coordinator,
@@ -97,7 +106,8 @@ public static class WorkCoordinatorStrategyFactory {
       tracingOptions: sp.GetService<IOptionsMonitor<TracingOptions>>(),
       deferredChannel: sp.GetService<IDeferredOutboxChannel>(),
       systemEventOptions: sp.GetService<IOptions<Whizbang.Core.SystemEvents.SystemEventOptions>>(),
-      workChannelWriter: channelWriter
+      workChannelWriter: channelWriter,
+      coalesceResolver: sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>()
     );
   }
 

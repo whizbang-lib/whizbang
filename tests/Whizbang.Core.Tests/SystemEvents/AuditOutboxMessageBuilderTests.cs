@@ -543,6 +543,15 @@ public class AuditOutboxMessageBuilderTests {
 
   #endregion
 
+  // The sliding-ship floor tests moved to AuditCoalesceRebaseTests with intent preserved:
+  // the floor + group now stamp via the GENERIC coalesce mint path (EnableAudit's built-in
+  // binding + CoalesceGroupResolver), not in this builder —
+  //   SlidingShipEnabled_StampsScheduledForAtMaxDelayFloor -> AuditSingle_GainsGroupAndFloor_ViaTheGenericMintPathAsync
+  //   SlideZero_KeepsImmediatePerEventShipping            -> SlideZero_AuditSingle_ShipsImmediatelyWithNoGroupAndNoFloorAsync
+  //   CustomMaxDelay_FloorTracksTheKnob                   -> Apply_AuditEnabled_RegistersTheBuiltInBindingFromTheKnobsAsync
+  //                                                          + HostOverrideBinding_ChangesTheAuditCadenceAsync
+  // Builder_NoLongerStampsItsOwnFloorAsync locks that this builder never stamps again.
+
   #region ResolveEventType - Null Return on Failure
 
   [Test]

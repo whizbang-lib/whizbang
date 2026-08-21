@@ -1,3 +1,6 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Transports;
@@ -5,36 +8,30 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Transports.AzureServiceBus;
 
 /// <summary>
-/// v0.502 slice C.8 — drains the Azure Service Bus broker-side
-/// <c>$DeadLetterQueue</c> sub-queue for a single (topic, subscription) pair by re-sending
-/// each DLQ message back onto the topic. Symmetric with
-/// <see cref="Whizbang.Transports.RabbitMQ.RabbitMqDeadLetterDrainer"/>.
+/// Drains one ASB subscription's dead-letter queue by IMPORTING each message into Whizbang's
+/// durable dead-letter custody (<c>wh_dead_letters</c>, via
+/// <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>) and then completing it at the broker.
+/// One hop, no topic re-broadcast, and no broker carousel: once imported, retry belongs to the
+/// dead-letter recovery flow (per-reason policies, operator disposition, generation-tagged
+/// auto-replay), and a message the current build still cannot process re-parks VISIBLY instead
+/// of orbiting the broker's opaque DLQ.
 /// </summary>
 /// <remarks>
-/// <para>
-/// One instance per subscription. Registered in DI alongside
-/// <see cref="AzureServiceBusTransport"/>. The
-/// <see cref="Whizbang.Core.Workers.TransportDeadLetterDrainWorker"/> resolves all registered
-/// drainers on every backstop tick (default 10 min) and invokes
-/// <see cref="DrainDeadLetterQueueAsync"/> on each.
-/// </para>
-/// <para>
-/// Re-send semantics: each DLQ message becomes a fresh outbound
-/// <see cref="ServiceBusMessage"/> with body, application properties, and routing fields
-/// (subject/correlation/messageId) copied. The DeliveryCount resets on the new message — the
-/// next attempt at the receiver starts fresh. If the underlying defect is permanent (bad
-/// envelope type, missing receptor) the new message lands in DLQ again; the worker's
-/// re-attempt rate is capped by <see cref="Whizbang.Core.Workers.TransportDeadLetterDrainWorkerOptions.IntervalMinutes"/>.
-/// </para>
+/// The import is raw-JSON custody: the wire body travels verbatim and nothing here deserializes
+/// it — a message that cannot be deserialized is precisely the one that needs custody. Only
+/// messages whose broker <c>MessageId</c> parses as a GUID are imported (Whizbang publishes
+/// envelope ids as the broker MessageId); foreign messages are abandoned and stay on the broker
+/// DLQ for their owner's tooling.
 /// </remarks>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusDeadLetterDrainerTests.cs</tests>
 public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrainer, IAsyncDisposable {
   private readonly ServiceBusClient _client;
   private readonly string _topicName;
   private readonly string _subscriptionName;
+  private readonly Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _importAsync;
   private readonly ILogger<AzureServiceBusDeadLetterDrainer> _logger;
   private ServiceBusReceiver? _receiver;
-  private ServiceBusSender? _sender;
   private readonly SemaphoreSlim _lock = new(1, 1);
   private bool _disposed;
 
@@ -44,17 +41,23 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
   /// <param name="client">Shared ServiceBusClient. Lifetime owned by DI; not disposed here.</param>
   /// <param name="topicName">Topic that owns the subscription.</param>
   /// <param name="subscriptionName">Subscription whose DLQ to drain.</param>
+  /// <param name="importAsync">Custody seam — typically wraps
+  ///   <c>IWorkCoordinator.ImportBrokerDeadLetterAsync</c>. Returns <c>true</c> when a custody row
+  ///   was created, <c>false</c> for a duplicate (already imported — still safe to settle), and
+  ///   THROWS on failure so the message is abandoned and re-offered next pass.</param>
   /// <param name="logger">Logger.</param>
   public AzureServiceBusDeadLetterDrainer(
     ServiceBusClient client,
     string topicName,
     string subscriptionName,
+    Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> importAsync,
     ILogger<AzureServiceBusDeadLetterDrainer> logger) {
     _client = client ?? throw new ArgumentNullException(nameof(client));
     _topicName = !string.IsNullOrWhiteSpace(topicName) ? topicName
       : throw new ArgumentException("Topic name required", nameof(topicName));
     _subscriptionName = !string.IsNullOrWhiteSpace(subscriptionName) ? subscriptionName
       : throw new ArgumentException("Subscription name required", nameof(subscriptionName));
+    _importAsync = importAsync ?? throw new ArgumentNullException(nameof(importAsync));
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusDeadLetterDrainer>.Instance;
   }
 
@@ -68,7 +71,7 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
       return 0;
     }
 
-    var (receiver, sender) = await _getOrCreateReceiverAndSenderAsync(ct).ConfigureAwait(false);
+    var receiver = await _getOrCreateReceiverAsync(ct).ConfigureAwait(false);
 
     int drained = 0;
     while (drained < maxCount && !ct.IsCancellationRequested) {
@@ -86,27 +89,37 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
 
       foreach (var msg in batch) {
         ct.ThrowIfCancellationRequested();
+
+        if (!TryBuildImport(msg, _topicName, _subscriptionName, out var import)) {
+#pragma warning disable CA1848, CA1873
+          _logger.LogWarning(
+            "ASB DLQ drain skipped message {MessageId} from topic={Topic}/sub={Sub}: MessageId is not a Whizbang wire id (GUID) — abandoning, message stays on the broker DLQ",
+            msg.MessageId, _topicName, _subscriptionName);
+#pragma warning restore CA1848, CA1873
+          await _abandonGuardedAsync(receiver, msg, ct).ConfigureAwait(false);
+          continue;
+        }
+
         try {
-          var resend = CloneForResend(msg);
-          await sender.SendMessageAsync(resend, ct).ConfigureAwait(false);
+          // FALSE = duplicate custody (already imported) — still settle so the broker copy
+          // stops occupying the DLQ. Failures THROW and route to the abandon arm.
+          var imported = await _importAsync(import, ct).ConfigureAwait(false);
           await receiver.CompleteMessageAsync(msg, ct).ConfigureAwait(false);
           drained++;
 #pragma warning disable CA1848, CA1873
           _logger.LogInformation(
-            "ASB DLQ drained message {MessageId} from topic={Topic}/sub={Sub} (deadLetterReason={Reason})",
-            msg.MessageId, _topicName, _subscriptionName, msg.DeadLetterReason);
+            "ASB DLQ imported message {MessageId} from topic={Topic}/sub={Sub} into wh_dead_letters (duplicate={Duplicate}, brokerReason={Reason})",
+            msg.MessageId, _topicName, _subscriptionName, !imported, msg.DeadLetterReason);
 #pragma warning restore CA1848, CA1873
+        } catch (OperationCanceledException) {
+          throw;
         } catch (Exception ex) {
 #pragma warning disable CA1848, CA1873
           _logger.LogWarning(ex,
-            "ASB DLQ drain failed for message {MessageId} from topic={Topic}/sub={Sub} — abandoning",
+            "ASB DLQ import failed for message {MessageId} from topic={Topic}/sub={Sub} — abandoning, re-offered next pass",
             msg.MessageId, _topicName, _subscriptionName);
 #pragma warning restore CA1848, CA1873
-          try {
-            await receiver.AbandonMessageAsync(msg, cancellationToken: ct).ConfigureAwait(false);
-          } catch (Exception abandonEx) when (abandonEx is ServiceBusException or ObjectDisposedException) {
-            // Abandon failures on a lost lock are expected — broker will re-deliver naturally.
-          }
+          await _abandonGuardedAsync(receiver, msg, ct).ConfigureAwait(false);
         }
       }
     }
@@ -115,31 +128,45 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
   }
 
   /// <summary>
-  /// Builds the outbound message that re-enters the topic. Internal for direct
-  /// regression testing — ServiceBusReceivedMessage is opaque enough that asserting
-  /// the clone shape on the public DrainDeadLetterQueueAsync flow would need a real broker.
+  /// Maps a broker message to the import record — pure metadata + raw body, no deserialization.
+  /// Returns false when the broker MessageId is not a GUID (not a Whizbang wire message).
+  /// Internal for direct regression testing of the mapping.
   /// </summary>
-  internal static ServiceBusMessage CloneForResend(ServiceBusReceivedMessage msg) {
-    var resend = new ServiceBusMessage(msg.Body) {
-      MessageId = msg.MessageId,
-      ContentType = msg.ContentType,
-      CorrelationId = msg.CorrelationId,
-      Subject = msg.Subject,
-      To = msg.To,
-      ReplyTo = msg.ReplyTo,
-      ReplyToSessionId = msg.ReplyToSessionId,
-      SessionId = msg.SessionId,
-      PartitionKey = msg.PartitionKey,
-    };
-    foreach (var kv in msg.ApplicationProperties) {
-      resend.ApplicationProperties[kv.Key] = kv.Value;
+  internal static bool TryBuildImport(
+      ServiceBusReceivedMessage msg, string topicName, string subscriptionName,
+      out BrokerDeadLetterImport import) {
+    if (!Guid.TryParse(msg.MessageId, out var messageId)) {
+      import = null!;
+      return false;
     }
-    return resend;
+    Guid? streamId = Guid.TryParse(msg.SessionId, out var sid) ? sid : null;
+    string? messageType =
+      msg.ApplicationProperties.TryGetValue("EnvelopeType", out var et) ? et as string : null;
+    import = new BrokerDeadLetterImport(
+      MessageId: messageId,
+      StreamId: streamId,
+      MessageType: messageType,
+      Destination: $"{topicName}/{subscriptionName}",
+      EnvelopeJson: msg.Body.ToString(),
+      BrokerReason: msg.DeadLetterReason,
+      BrokerDescription: msg.DeadLetterErrorDescription,
+      EnqueuedAt: msg.EnqueuedTime == default ? null : msg.EnqueuedTime,
+      DeliveryCount: msg.DeliveryCount);
+    return true;
   }
 
-  private async Task<(ServiceBusReceiver Receiver, ServiceBusSender Sender)> _getOrCreateReceiverAndSenderAsync(CancellationToken ct) {
-    if (_receiver is not null && _sender is not null) {
-      return (_receiver, _sender);
+  private static async Task _abandonGuardedAsync(
+      ServiceBusReceiver receiver, ServiceBusReceivedMessage msg, CancellationToken ct) {
+    try {
+      await receiver.AbandonMessageAsync(msg, cancellationToken: ct).ConfigureAwait(false);
+    } catch (Exception abandonEx) when (abandonEx is ServiceBusException or ObjectDisposedException) {
+      // Abandon failures on a lost lock are expected — broker will re-deliver naturally.
+    }
+  }
+
+  private async Task<ServiceBusReceiver> _getOrCreateReceiverAsync(CancellationToken ct) {
+    if (_receiver is not null) {
+      return _receiver;
     }
     await _lock.WaitAsync(ct).ConfigureAwait(false);
     try {
@@ -147,11 +174,10 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
         SubQueue = SubQueue.DeadLetter,
         ReceiveMode = ServiceBusReceiveMode.PeekLock,
       });
-      _sender ??= _client.CreateSender(_topicName);
+      return _receiver;
     } finally {
       _lock.Release();
     }
-    return (_receiver, _sender);
   }
 
   /// <inheritdoc />
@@ -162,9 +188,7 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
     _disposed = true;
     if (_receiver is not null) {
       await _receiver.DisposeAsync().ConfigureAwait(false);
-    }
-    if (_sender is not null) {
-      await _sender.DisposeAsync().ConfigureAwait(false);
+      _receiver = null;
     }
     _lock.Dispose();
   }

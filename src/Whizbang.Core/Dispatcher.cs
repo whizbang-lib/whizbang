@@ -15,6 +15,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Sync;
@@ -25,7 +26,6 @@ using Whizbang.Core.Tracing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
-
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core;
@@ -129,6 +129,123 @@ public abstract partial class Dispatcher(
       throw new WhizbangNotReadyException(
         "dispatch refused: the schema is not ready (Migrate has not completed). Writes need the "
         + "event store and outbox the migration provides; they resume when it does.");
+    }
+  }
+
+  // Issue #491: receptor discovery is source-only, so this dispatcher's generated tables cover
+  // ONLY the assembly that generated it — and every Whizbang-compiled assembly registers a
+  // dispatcher, of which DI resolves the last. Each assembly's tables are therefore ALSO
+  // registered as an IReceptorLookup; when the own tables answer null, the FOREIGN lookups are
+  // consulted — first match for send-style invocations, fan-out to all for publishes, because an
+  // event's receptors may live in several assemblies at once. Lazily resolved for the same
+  // reasons as the schema gate above. Instances of this dispatcher's own generated type are
+  // excluded so a publish never double-delivers to its own receptors.
+  private IReceptorLookup[]? _foreignLookupsCache;
+  private bool _foreignLookupsResolved;
+
+  private IReceptorLookup[] _foreignLookups() {
+    if (!_foreignLookupsResolved) {
+      try {
+        var own = GetType();
+        var all = (System.Collections.Generic.IEnumerable<IReceptorLookup>?)
+          serviceProvider.GetService(typeof(System.Collections.Generic.IEnumerable<IReceptorLookup>));
+        _foreignLookupsCache = all is null
+          ? []
+          : [.. all.Where(lookup => lookup.GetType() != own)];
+        _foreignLookupsResolved = true;
+      } catch (ObjectDisposedException) {
+        return [];
+      }
+    }
+    return _foreignLookupsCache ?? [];
+  }
+
+  private ReceptorInvoker<TResult>? _lookupReceptorInvoker<TResult>(object message, Type messageType) {
+    var own = GetReceptorInvoker<TResult>(message, messageType);
+    if (own is not null) {
+      return own;
+    }
+    foreach (var lookup in _foreignLookups()) {
+      if (lookup.LookupReceptorInvoker<TResult>(message, messageType) is { } foreign) {
+        return foreign;
+      }
+    }
+    return null;
+  }
+
+  private VoidReceptorInvoker? _lookupVoidReceptorInvoker(object message, Type messageType) {
+    var own = GetVoidReceptorInvoker(message, messageType);
+    if (own is not null) {
+      return own;
+    }
+    foreach (var lookup in _foreignLookups()) {
+      if (lookup.LookupVoidReceptorInvoker(message, messageType) is { } foreign) {
+        return foreign;
+      }
+    }
+    return null;
+  }
+
+  private SyncReceptorInvoker<TResult>? _lookupSyncReceptorInvoker<TResult>(object message, Type messageType) {
+    var own = GetSyncReceptorInvoker<TResult>(message, messageType);
+    if (own is not null) {
+      return own;
+    }
+    foreach (var lookup in _foreignLookups()) {
+      if (lookup.LookupSyncReceptorInvoker<TResult>(message, messageType) is { } foreign) {
+        return foreign;
+      }
+    }
+    return null;
+  }
+
+  private VoidSyncReceptorInvoker? _lookupVoidSyncReceptorInvoker(object message, Type messageType) {
+    var own = GetVoidSyncReceptorInvoker(message, messageType);
+    if (own is not null) {
+      return own;
+    }
+    foreach (var lookup in _foreignLookups()) {
+      if (lookup.LookupVoidSyncReceptorInvoker(message, messageType) is { } foreign) {
+        return foreign;
+      }
+    }
+    return null;
+  }
+
+  private Func<object, ValueTask<object?>>? _lookupReceptorInvokerAny(object message, Type messageType) {
+    var own = GetReceptorInvokerAny(message, messageType);
+    if (own is not null) {
+      return own;
+    }
+    foreach (var lookup in _foreignLookups()) {
+      if (lookup.LookupReceptorInvokerAny(message, messageType) is { } foreign) {
+        return foreign;
+      }
+    }
+    return null;
+  }
+
+  private Dispatch.DispatchModes? _lookupReceptorDefaultRouting(Type messageType) {
+    var own = GetReceptorDefaultRouting(messageType);
+    if (own is not null) {
+      return own;
+    }
+    foreach (var lookup in _foreignLookups()) {
+      if (lookup.LookupReceptorDefaultRouting(messageType) is { } foreign) {
+        return foreign;
+      }
+    }
+    return null;
+  }
+
+  /// <summary>Publish fan-out to every FOREIGN assembly's receptors for the event type — a
+  /// broadcast, not a first-match: receptors for one event may live in several assemblies.</summary>
+  private async Task _publishToForeignLookupsAsync(
+      object eventData, Type eventType, IMessageEnvelope? envelope, CancellationToken cancellationToken) {
+    foreach (var lookup in _foreignLookups()) {
+      if (lookup.LookupUntypedReceptorPublisher(eventType) is { } publisher) {
+        await publisher(eventData, envelope, cancellationToken).ConfigureAwait(false);
+      }
     }
   }
 
@@ -517,7 +634,7 @@ public abstract partial class Dispatcher(
       messageTypeName = messageType.Name;
 
       // Get strongly-typed delegate from generated code
-      var invoker = GetReceptorInvoker<object>(message, messageType);
+      var invoker = _lookupReceptorInvoker<object>(message, messageType);
 
       // If no local receptor exists, check for work coordinator strategy
       if (invoker == null) {
@@ -660,7 +777,7 @@ public abstract partial class Dispatcher(
 
       var messageType = message.GetType();
       messageTypeName = messageType.Name;
-      var invoker = GetReceptorInvoker<object>(message, messageType);
+      var invoker = _lookupReceptorInvoker<object>(message, messageType);
 
       if (invoker == null) {
         return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
@@ -747,7 +864,7 @@ public abstract partial class Dispatcher(
     var messageTypeName = messageType.Name;
     try {
       // Get strongly-typed delegate from generated code
-      var invoker = GetReceptorInvoker<object>(message, messageType);
+      var invoker = _lookupReceptorInvoker<object>(message, messageType);
 
       // If no local receptor exists, check for work coordinator strategy
       if (invoker == null) {
@@ -857,7 +974,7 @@ public abstract partial class Dispatcher(
     var messageType = typeof(TMessage);
     var messageTypeName = messageType.Name;
     try {
-      var invoker = GetReceptorInvoker<object>(message, messageType);
+      var invoker = _lookupReceptorInvoker<object>(message, messageType);
 
       if (invoker == null) {
         return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
@@ -1014,7 +1131,7 @@ public abstract partial class Dispatcher(
     var messageType = message.GetType();
 
     // Try async receptor first (async takes precedence)
-    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+    var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
     if (asyncInvoker != null) {
       // Use wrapper that catches InvalidCastException and falls back to RPC extraction
       // This handles the case where receptor returns a complex type (tuple, etc.)
@@ -1023,7 +1140,7 @@ public abstract partial class Dispatcher(
     }
 
     // Fallback to sync receptor - wrap as async and route through tracing path
-    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+    var syncInvoker = _lookupSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
       ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
       return _localInvokeWithCastFallbackAsync(wrappedInvoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
@@ -1031,7 +1148,7 @@ public abstract partial class Dispatcher(
 
     // RPC extraction fallback: receptor returns complex type containing TResult
     // Extract TResult from the result and cascade remaining values
-    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    var anyInvoker = _lookupReceptorInvokerAny(message, messageType);
     if (anyInvoker != null) {
       return _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
     }
@@ -1137,7 +1254,7 @@ public abstract partial class Dispatcher(
     var hasPostLifecycle = _hasPostLifecycleReceptors(messageType);
 
     // Try async receptor first (async takes precedence)
-    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    var asyncInvoker = _lookupVoidReceptorInvoker(message, messageType);
     if (asyncInvoker != null) {
       // If sync attributes, tracing, ImmediateDetached, or PostLifecycle exist, go through async path
       if (_traceStore != null || hasSyncAttributes || hasImmediateDetached || hasPostLifecycle) {
@@ -1151,7 +1268,7 @@ public abstract partial class Dispatcher(
     }
 
     // Fallback to void sync receptor
-    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    var syncInvoker = _lookupVoidSyncReceptorInvoker(message, messageType);
     if (syncInvoker != null) {
       // If sync attributes, ImmediateDetached, or PostLifecycle exist, must go through async path
       if (hasSyncAttributes || hasImmediateDetached || hasPostLifecycle) {
@@ -1164,7 +1281,7 @@ public abstract partial class Dispatcher(
 
     // Fallback to any receptor (void or non-void) for cascade support
     // This enables void LocalInvokeAsync to cascade events from non-void receptors
-    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    var anyInvoker = _lookupReceptorInvokerAny(message, messageType);
     if (anyInvoker != null) {
       return _localInvokeVoidWithAnyInvokerAndTracingAsync(anyInvoker, message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
@@ -1249,7 +1366,7 @@ public abstract partial class Dispatcher(
       }
 #pragma warning restore CA1848
 
-      var anyInvoker = GetReceptorInvokerAny(message, messageType);
+      var anyInvoker = _lookupReceptorInvokerAny(message, messageType);
       if (anyInvoker != null) {
         return await _localInvokeWithRpcExtractionAsync<TResult>(anyInvoker, message, messageType);
       }
@@ -1353,7 +1470,7 @@ public abstract partial class Dispatcher(
     }
 
     Dispatch.DispatchModes? receptorDefault = originalMessageType is not null
-        ? GetReceptorDefaultRouting(originalMessageType)
+        ? _lookupReceptorDefaultRouting(originalMessageType)
         : null;
 
     var extractedCount = 0;
@@ -1387,6 +1504,7 @@ public abstract partial class Dispatcher(
       if (publisher != null) {
         await publisher(msg, null, default);
       }
+      await _publishToForeignLookupsAsync(msg, msgType, null, CancellationToken.None).ConfigureAwait(false);
     }
 
     if (mode.HasFlag(Dispatch.DispatchModes.Outbox)) {
@@ -1552,7 +1670,7 @@ public abstract partial class Dispatcher(
     var messageType = actualMessage.GetType();
 
     // Get strongly-typed delegate from generated code
-    var invoker = GetReceptorInvoker<TResult>(actualMessage, messageType) ?? throw new ReceptorNotFoundException(messageType);
+    var invoker = _lookupReceptorInvoker<TResult>(actualMessage, messageType) ?? throw new ReceptorNotFoundException(messageType);
 
     return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, actualMessage, messageType, context, invoker, new CallerLocation(callerMemberName, callerFilePath, callerLineNumber));
   }
@@ -1894,12 +2012,12 @@ public abstract partial class Dispatcher(
     TResult result;
     var caller = new CallerLocation(callerMemberName, callerFilePath, callerLineNumber);
 
-    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+    var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
 
     if (asyncInvoker != null) {
       result = await _localInvokeWithTracingAndOptionsAsync(message, messageType, context, asyncInvoker, options, caller);
     } else {
-      var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+      var syncInvoker = _lookupSyncReceptorInvoker<TResult>(message, messageType);
       if (syncInvoker != null) {
         // Wrap sync invoker as async and route through tracing path
         ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
@@ -1938,7 +2056,7 @@ public abstract partial class Dispatcher(
     }
 
     var messageType = message.GetType();
-    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    var asyncInvoker = _lookupVoidReceptorInvoker(message, messageType);
     var caller = new CallerLocation(callerMemberName, callerFilePath, callerLineNumber);
 
     if (asyncInvoker != null) {
@@ -1983,7 +2101,7 @@ public abstract partial class Dispatcher(
     DispatchOptions options,
     CallerLocation caller
   ) {
-    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    var syncInvoker = _lookupVoidSyncReceptorInvoker(message, messageType);
     if (syncInvoker != null) {
       options.CancellationToken.ThrowIfCancellationRequested();
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
@@ -1993,7 +2111,7 @@ public abstract partial class Dispatcher(
     }
 
     // Fallback: Try to find any receptor (including those that return values)
-    var anyInvoker = GetReceptorInvokerAny(message, messageType);
+    var anyInvoker = _lookupReceptorInvokerAny(message, messageType);
     if (anyInvoker != null) {
       options.CancellationToken.ThrowIfCancellationRequested();
       // Await perspective sync if receptor has [AwaitPerspectiveSync] attributes
@@ -2181,13 +2299,13 @@ public abstract partial class Dispatcher(
     var messageType = message.GetType();
 
     // Try async receptor first
-    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+    var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
     if (asyncInvoker != null) {
       return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // Fallback to sync receptor
-    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+    var syncInvoker = _lookupSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
       ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
       return _localInvokeWithTracingAndReceiptAsync(message, messageType, context, wrappedInvoker, callerMemberName, callerFilePath, callerLineNumber);
@@ -2221,14 +2339,14 @@ public abstract partial class Dispatcher(
 
     var messageType = message.GetType();
 
-    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+    var asyncInvoker = _lookupReceptorInvoker<TResult>(message, messageType);
     if (asyncInvoker != null) {
       var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, asyncInvoker, options);
       await _waitForPerspectivesIfNeededAsync(options);
       return invokeResult;
     }
 
-    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+    var syncInvoker = _lookupSyncReceptorInvoker<TResult>(message, messageType);
     if (syncInvoker != null) {
       ValueTask<TResult> wrappedInvoker(object msg) => new(syncInvoker(msg));
       var invokeResult = await _localInvokeWithTracingAndReceiptAndOptionsAsync(message, messageType, context, wrappedInvoker, options);
@@ -2533,7 +2651,7 @@ public abstract partial class Dispatcher(
     // Look up receptor default routing from [DefaultRouting] attribute on the receptor
     // This is done via the generated GetReceptorDefaultRouting method
     Dispatch.DispatchModes? receptorDefault = originalMessageType is not null
-        ? GetReceptorDefaultRouting(originalMessageType)
+        ? _lookupReceptorDefaultRouting(originalMessageType)
         : null;
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: ReceptorDefaultRouting={ReceptorDefault}", receptorDefault);
@@ -2747,6 +2865,7 @@ public abstract partial class Dispatcher(
         // No need for EstablishMessageContextForCascade here
         await publisher(msg, null, default);
       }
+      await _publishToForeignLookupsAsync(msg, messageType, null, CancellationToken.None).ConfigureAwait(false);
     }
 
     // Event store only: Store to event store without transport (for Local, EventStoreOnly)
@@ -3080,6 +3199,9 @@ public abstract partial class Dispatcher(
 
       try {
         await publisher(eventData);
+        // CancellationToken.None: this PublishAsync overload takes no token, and the local
+        // receptor invocation above is likewise uncancellable — explicit opt-out, not an oversight.
+        await _publishToForeignLookupsAsync(eventData!, eventType, null, CancellationToken.None).ConfigureAwait(false);
       } catch {
         // Ensure outbox task is observed before re-throwing to avoid UnobservedTaskException
         try { await outboxTask; } catch { /* outbox exception is secondary */ }
@@ -3178,6 +3300,7 @@ public abstract partial class Dispatcher(
         var publisher = GetReceptorPublisher(eventData, eventType);
         try {
           await publisher(eventData);
+          await _publishToForeignLookupsAsync(eventData!, eventType, null, options.CancellationToken).ConfigureAwait(false);
         } catch {
           try { await outboxTask; } catch { /* outbox exception is secondary */ }
           throw;
@@ -3314,17 +3437,18 @@ public abstract partial class Dispatcher(
       }
 #pragma warning restore CA1848
       var publisher = GetUntypedReceptorPublisher(messageType);
+      // Wrap the source envelope so IsDefaultDispatch=true — cascade local-dispatch fires only default-stage
+      // receptors. When no source envelope was threaded, capture the ambient establishing context so a
+      // locally-dispatched detached-stage receptor still sees a hop carrying identity (co+ca+scope); only a
+      // genuine root emit (no source hop AND no ambient) falls back to the identity-less default. The wrapper
+      // forces IsDefaultDispatch=true regardless of what it wraps, preserving default-stage-only fan-out.
+      var cascadeEnvelope = (sourceEnvelope ?? _captureAmbientSourceEnvelope()) is { } cascadeSource
+        ? (IMessageEnvelope)new CascadeEnvelopeWrapper(cascadeSource)
+        : _cascadeDefaultEnvelope;
       if (publisher != null) {
-        // Wrap the source envelope so IsDefaultDispatch=true — cascade local-dispatch fires only default-stage
-        // receptors. When no source envelope was threaded, capture the ambient establishing context so a
-        // locally-dispatched detached-stage receptor still sees a hop carrying identity (co+ca+scope); only a
-        // genuine root emit (no source hop AND no ambient) falls back to the identity-less default. The wrapper
-        // forces IsDefaultDispatch=true regardless of what it wraps, preserving default-stage-only fan-out.
-        var cascadeEnvelope = (sourceEnvelope ?? _captureAmbientSourceEnvelope()) is { } cascadeSource
-          ? (IMessageEnvelope)new CascadeEnvelopeWrapper(cascadeSource)
-          : _cascadeDefaultEnvelope;
         await publisher(message, cascadeEnvelope, cancellationToken);
       }
+      await _publishToForeignLookupsAsync(message, messageType, cascadeEnvelope, cancellationToken).ConfigureAwait(false);
     }
 
     // Event store only: Store to event store without transport (for Local, EventStoreOnly)
@@ -3952,7 +4076,7 @@ public abstract partial class Dispatcher(
       EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
       StreamId = streamId,
       IsEvent = eventData is IEvent,
-      Flags = (eventData is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
+      Flags = (eventData is Whizbang.Core.Minting.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
             | (eventData is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
@@ -4686,7 +4810,7 @@ public abstract partial class Dispatcher(
       var messageType = typeof(TMessage);
       foreach (var message in messageList) {
         // Use <object> to find ANY receptor (result-returning or void)
-        var invoker = GetReceptorInvoker<object>(message, messageType);
+        var invoker = _lookupReceptorInvoker<object>(message, messageType);
         var isLocal = invoker != null;
         hasLocalReceptor.Add(isLocal);
 
@@ -4738,7 +4862,7 @@ public abstract partial class Dispatcher(
 
       foreach (var message in messageList) {
         var messageType = message.GetType();
-        var invoker = GetReceptorInvoker<object>(message, messageType);
+        var invoker = _lookupReceptorInvoker<object>(message, messageType);
         var isLocal = invoker != null;
         hasLocalReceptor.Add(isLocal);
 
@@ -4928,7 +5052,7 @@ public abstract partial class Dispatcher(
   }
 
   private void _ensureReceptorExists(object message, Type messageType) {
-    _ = GetReceptorInvoker<object>(message, messageType)
+    _ = _lookupReceptorInvoker<object>(message, messageType)
       ?? throw new ReceptorNotFoundException(messageType);
   }
 
@@ -5080,7 +5204,7 @@ public abstract partial class Dispatcher(
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
       IsEvent = payload is IEvent,
-      Flags = (payload is Whizbang.Core.Messaging.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
+      Flags = (payload is Whizbang.Core.Minting.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
             | (payload is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(payload, _ephemeralModeResolver),
       Scope = _extractScope(envelope),

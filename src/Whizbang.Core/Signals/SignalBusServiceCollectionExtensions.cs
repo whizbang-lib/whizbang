@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace Whizbang.Core.Signals;
 
@@ -25,6 +26,13 @@ public static class SignalBusServiceCollectionExtensions {
     // alongside this via TryAddEnumerable, so single-process hosts still work. Pull sources
     // register separately as ISignalSource (see IPollSignalSource<T>).
     services.TryAddEnumerable(ServiceDescriptor.Singleton<ISignalTransport, InMemorySignalTransport>());
+    // The host — not any consumer — starts the bus. Without this hosted service the transports
+    // never subscribe and every wire doorbell is silently dropped (issue #505). TryAddEnumerable
+    // keys on the implementation type, so repeated AddWhizbangSignalBus calls stay idempotent.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, SignalBusHostedService>());
+    // Shared state behind the signal-bus health component: probe verdicts, last wire arrival,
+    // doorbell-liveness accounting. Written by the probe loop / transports / claim loop.
+    services.TryAddSingleton<SignalBusLivenessState>();
     return services;
   }
 }

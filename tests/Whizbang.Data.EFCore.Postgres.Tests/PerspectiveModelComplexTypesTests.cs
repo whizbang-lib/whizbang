@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Use List&lt;AttributeEntry&gt; or List&lt;KeyValuePair&lt;string, string&gt;&gt; for key-value metadata instead.
 /// </remarks>
 [Category("Integration")]
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class PerspectiveModelComplexTypesTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 

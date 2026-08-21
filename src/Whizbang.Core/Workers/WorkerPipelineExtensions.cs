@@ -18,6 +18,8 @@ namespace Whizbang.Core.Workers;
 /// just the worker pipeline (e.g., to host workers in a separate process).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+/// <tests>tests/Whizbang.Core.Tests/Startup/StartupWiringAuditTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public static class WorkerPipelineExtensions {
   /// <summary>
   /// Registers the new work-pump worker pipeline (HeartbeatWorker, ClaimWorker, InboxHandlerWorker,
@@ -80,12 +82,16 @@ public static class WorkerPipelineExtensions {
             "offload", store.CheckConnectivityAsync, lifecycle, "offload store unreachable");
     });
 
-    // signal-bus: ASSUMED-HEALTHY placeholder. Its real dependency is the same Postgres the event-store/DB
-    // source already probes (wh_signals + LISTEN/NOTIFY), so a DB outage that breaks the signal bus already
-    // surfaces there. TODO: a dedicated notify-connection liveness probe if finer signal is wanted.
+    // signal-bus: a REAL source over SignalBusLivenessState — the wire-route self-test verdict plus
+    // the doorbell-liveness accounting. A failed loopback probe or a streak of work discovered by
+    // poll with no doorbell reports Degraded (still serves, but every hop pays the poll interval).
+    // Replaces the assumed-healthy placeholder that could never degrade (issue #505). The state is
+    // TryAdd'd here too so this wiring works regardless of registration order with AddWhizbangSignalBus.
+    services.TryAddSingleton<Signals.SignalBusLivenessState>();
     services.AddSingleton<Health.IWhizbangHealthSource>(sp =>
-      Health.ConnectivityHealthSource.AssumedHealthy(
-        "signal-bus", sp.GetRequiredService<IWhizbangLifecycleState>()));
+      new Health.SignalBusHealthSource(
+        sp.GetRequiredService<Signals.SignalBusLivenessState>(),
+        sp.GetRequiredService<IWhizbangLifecycleState>()));
 
     // Run-control (killswitch) plane + the driver that advances the lifecycle phase from the schema
     // gate (Migrating at startup, Ready once migrations complete), so any registered run-control
@@ -183,12 +189,33 @@ public static class WorkerPipelineExtensions {
     // a channel surface, IHostedService resolution would recurse on itself.
     services.TryAddSingleton<HeartbeatWorker>();
     services.TryAddSingleton<ClaimWorker>();
+    // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
+    // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both
+    // sides dedupe: TryAddSingleton by service type, AddHostedService by implementation type
+    // via TryAddEnumerable), but the core registration is the one that survives multi-assembly
+    // hosts whose generated registration callbacks get stripped — the silent
+    // worker-never-starts signature. Without a runner registry the worker parks with a
+    // structured warning, so perspective-less services host it harmlessly.
+    services.TryAddSingleton<PerspectiveWorker>();
     services.TryAddSingleton<OutboxCompletionFlushWorker>();
     services.TryAddSingleton<PerspectiveCompletionFlushWorker>();
     services.TryAddSingleton<FailureFlushWorker>();
     services.TryAddSingleton<LeaseRenewalWorker>();
     services.TryAddSingleton<InboxHandlerWorker>();
     services.TryAddSingleton<MaintenanceWorker>();
+    // Tag-bound coalescing shipper. Registered unconditionally like every worker — bindings
+    // finalize after AddWhizbang (e.g. EnableAudit registers the built-in audit binding later
+    // in composition), so the "no coalesce binding" decision lives in ExecuteAsync, which
+    // parks without ever touching the coordinator. Explicit factory: the resolver and
+    // TimeProvider are optional dependencies.
+    services.TryAddSingleton(sp => new CoalesceShipWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      sp.GetRequiredService<ISchemaReadyGate>(),
+      sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
+      sp.GetService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
+      sp.GetService<TimeProvider>(),
+      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetService<Whizbang.Core.Minting.ICompositeFactory>()));
     // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
     // registration constructable (the F2-era lesson: extensions must be self-contained).
     services.TryAddSingleton<Whizbang.Core.Observability.WhizbangMetrics>();
@@ -312,7 +339,54 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IReceptorRegistryQuery>(),
       sp.GetRequiredService<ILogger<MessageDiscardPolicy>>(),
       new System.Diagnostics.Metrics.Meter(MessageDiscardPolicy.METER_NAME),
-      sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>()));
+      sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.RoutingOptions>>(),
+      sp.GetService<IEventMarkerResolver>()));
+
+    // Poison detector (topology arc phase 8.5). Turnkey by construction: the valve it replaces —
+    // the broker's MaxDeliveryCount, and every transport branch reading the same counter — cannot
+    // fire on a session-enabled entity, because a lock lost to connection death does not increment
+    // that counter. Registering the policy here is what makes BOTH transports execute ONE decision;
+    // it stays an optional injected dependency at each consumption point, so a custom transport or
+    // a test double that never resolves it is unaffected (the IMessageDiscardPolicy idiom).
+    services.AddOptions<Whizbang.Core.Routing.PoisonMessageOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.PoisonMessageOptions>,
+      Whizbang.Core.Routing.PoisonMessageOptionsConfigurationBinder>(sp =>
+        new Whizbang.Core.Routing.PoisonMessageOptionsConfigurationBinder(
+          sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>())));
+    // Control class (topology arc phase 9). Options only — the TTL half is turnkey (the mint reads
+    // them), the sessionless + non-durable halves are opt-in migration steps consulted LIVE by the
+    // inbox strategy and the receive boundary, so a rollback is a configuration edit, not a deploy.
+    services.AddOptions<Whizbang.Core.Routing.ControlClassOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Microsoft.Extensions.Options.IPostConfigureOptions<Whizbang.Core.Routing.ControlClassOptions>,
+      Whizbang.Core.Routing.ControlClassOptionsConfigurationBinder>(sp =>
+        new Whizbang.Core.Routing.ControlClassOptionsConfigurationBinder(
+          sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>())));
+
+    // Backlog-age duty (topology arc phase 10): the observability half of the same lesson the
+    // poison detector is the enforcement half of — a backlog that is HOSTAGE (deep, young,
+    // draining) and one that is STUCK (shallow, ancient) look identical on a depth graph.
+    // Registered unconditionally; inert until a transport contributes an IBacklogPeek.
+    services.AddOptions<Whizbang.Core.Observability.BacklogAgeOptions>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeState>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeMetrics>();
+    services.TryAddSingleton<Whizbang.Core.Observability.BacklogAgeWorker>();
+    services.AddHostedService(sp => sp.GetRequiredService<Whizbang.Core.Observability.BacklogAgeWorker>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Health.IWhizbangHealthSource,
+      Whizbang.Core.Health.BacklogAgeHealthSource>());
+
+    services.TryAddSingleton<Whizbang.Core.Routing.PoisonDetectionCapabilityState>();
+    services.TryAddSingleton<Whizbang.Core.Routing.IPoisonMessageDetector>(sp =>
+      new Whizbang.Core.Routing.PoisonMessageDetector(
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Routing.PoisonMessageOptions>>(),
+        sp.GetRequiredService<ILogger<Whizbang.Core.Routing.PoisonMessageDetector>>(),
+        new System.Diagnostics.Metrics.Meter(Whizbang.Core.Routing.PoisonMessageDetector.METER_NAME),
+        sp.GetRequiredService<Whizbang.Core.Routing.PoisonDetectionCapabilityState>()));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<
+      Whizbang.Core.Health.IWhizbangHealthSource,
+      Whizbang.Core.Health.PoisonDetectionHealthSource>());
 #pragma warning restore CA2000
 
     // Hosted services — delegate to the singleton instance so DI hands the same one
@@ -324,12 +398,14 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsWarmUp>();
     services.AddHostedService(sp => sp.GetRequiredService<HeartbeatWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<ClaimWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<PerspectiveWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<OutboxCompletionFlushWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<PerspectiveCompletionFlushWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<FailureFlushWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<LeaseRenewalWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<InboxHandlerWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<MaintenanceWorker>());
+    services.AddHostedService(sp => sp.GetRequiredService<CoalesceShipWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityCheckpointWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<SubscriptionExpansionWorker>());
     services.AddHostedService(sp => sp.GetRequiredService<IntegrityAuditWorker>());

@@ -99,18 +99,78 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<StartupReadyService>.Instance;
   }
 
+  /// <summary>
+  /// How often the wait is probed for narration. The composite stays fail-closed and unbounded —
+  /// but never silent: a boot blocked here names what it is waiting on, on a backoff, because a
+  /// hang with no output gives a consumer nothing to diagnose (issue #493).
+  /// </summary>
+  internal TimeSpan WaitProbeInterval { get; init; } = TimeSpan.FromSeconds(5);
+
   /// <inheritdoc />
   public async Task StartedAsync(CancellationToken cancellationToken) {
     var watch = Stopwatch.StartNew();
 
-    await _pipelineState.WaitForReadyAsync(cancellationToken).ConfigureAwait(false);
+    // Cancellation here means the host is being told to stop while startup is still waiting —
+    // an ordinary rollout SIGTERM, a liveness restart, an operator abandoning a slow boot. It
+    // must NOT escape: StartedAsync runs on IHostedLifecycleService, and Host.StartAsync aborts
+    // on the first exception and rethrows, so propagating it turns a routine stop into an
+    // UNHANDLED exception and a non-zero exit — which an orchestrator reads as a crash and
+    // restarts, cancelling the next startup the same way. That is a self-sustaining crash loop
+    // manufactured out of a normal deploy. Leaving quietly is correct: readiness is a composite
+    // that is fail-closed by construction, so never signalling it is the honest outcome, and the
+    // narration above has already said what the wait was blocked on. Genuine faults still
+    // propagate — only cancellation is graceful.
+    try {
+      await _narratedWaitAsync(
+        _pipelineState.WaitForReadyAsync(cancellationToken), _describePipeline, watch, cancellationToken)
+        .ConfigureAwait(false);
 
-    foreach (var contributor in _contributors) {
-      await contributor.WaitForContributorReadyAsync(cancellationToken).ConfigureAwait(false);
+      foreach (var contributor in _contributors) {
+        await _narratedWaitAsync(
+          contributor.WaitForContributorReadyAsync(cancellationToken),
+          () => $"readiness contributor '{contributor.ContributorName}'", watch, cancellationToken)
+          .ConfigureAwait(false);
+      }
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+      LogCancelledDuringStartup(_logger, watch.Elapsed.TotalSeconds);
+      return;
     }
 
     _signal.MarkReady();
     LogReady(_logger, watch.Elapsed.TotalMilliseconds, _contributors.Count);
+  }
+
+  private string _describePipeline() {
+    if (!_pipelineState.HasRunStarted) {
+      return "the startup pipeline (no run has started yet)";
+    }
+    var pending = _pipelineState.SnapshotSteps()
+      .Where(step => step.Blocking && step.Status is not StartupStepStatus.Completed)
+      .Select(step => $"{step.Name} ({step.Status})")
+      .ToList();
+    return pending.Count == 0
+      ? "the startup pipeline"
+      : $"startup pipeline step(s) {string.Join(", ", pending)}";
+  }
+
+  /// <summary>Awaits, narrating on a backoff (probes 3, 10, 30, then every 60) what is blocking.</summary>
+  private async Task _narratedWaitAsync(
+      Task wait, Func<string> describe, Stopwatch watch, CancellationToken cancellationToken) {
+    var probes = 0;
+    var nextNarration = 3;
+    while (true) {
+      var winner = await Task.WhenAny(wait, Task.Delay(WaitProbeInterval, cancellationToken))
+        .ConfigureAwait(false);
+      if (ReferenceEquals(winner, wait)) {
+        await wait.ConfigureAwait(false);   // propagate faults/cancellation
+        return;
+      }
+      probes++;
+      if (probes >= nextNarration) {
+        nextNarration = nextNarration switch { 3 => 10, 10 => 30, _ => nextNarration + 60 };
+        LogStillWaiting(_logger, watch.Elapsed.TotalSeconds, describe());
+      }
+    }
   }
 
   /// <inheritdoc />
@@ -127,4 +187,14 @@ public sealed partial class StartupReadyService : IHostedLifecycleService {
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "Startup ready: blocking steps drained and {ContributorCount} contributor(s) answered after {ElapsedMs:F0} ms")]
   static partial void LogReady(ILogger logger, double elapsedMs, int contributorCount);
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
+    Message = "Startup is not ready after {ElapsedSeconds:F0}s — still waiting on {Waiting}. "
+            + "The composite is fail-closed by design; this narration exists so the wait is never silent")]
+  static partial void LogStillWaiting(ILogger logger, double elapsedSeconds, string waiting);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Information,
+    Message = "Startup cancelled after {ElapsedSeconds:F0}s while waiting for readiness — the host is "
+            + "stopping. Readiness was never signalled (the composite is fail-closed); shutting down cleanly")]
+  static partial void LogCancelledDuringStartup(ILogger logger, double elapsedSeconds);
 }

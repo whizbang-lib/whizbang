@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using Whizbang.Core;
 
-namespace Whizbang.Core.Messaging;
+namespace Whizbang.Core.Minting;
 
 /// <summary>
 /// Turnkey base class for authoring an <see cref="ICompositeEvent"/> — bundle many inner events into
@@ -56,7 +56,7 @@ public abstract class CompositeEventBase : ICompositeEvent {
   public int MaxInnerEventsAllowed { get; init; } = 10_000;
 
   /// <inheritdoc cref="ICompositeEvent.FanoutMode" />
-  /// <remarks>Defaults to <see cref="Whizbang.Core.Messaging.FanoutMode.Auto"/>; set via the object initializer to defer to a pre-fanout receptor.</remarks>
+  /// <remarks>Defaults to <see cref="Whizbang.Core.Minting.FanoutMode.Auto"/>; set via the object initializer to defer to a pre-fanout receptor.</remarks>
   public FanoutMode FanoutMode { get; init; } = FanoutMode.Auto;
 
   /// <inheritdoc cref="ICompositeEvent.Atomicity" />

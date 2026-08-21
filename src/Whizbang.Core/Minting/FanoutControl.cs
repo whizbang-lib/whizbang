@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 
-namespace Whizbang.Core.Messaging;
+namespace Whizbang.Core.Minting;
 
 /// <summary>
 /// Declarative fan-out trigger for a composite event. Read off the composite type (default

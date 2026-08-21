@@ -225,8 +225,140 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
   }
 
   // ============================================================================
+  // post-stamp perspective doorbell (fenced-visibility wake)
+  // ============================================================================
+
+  /// <summary>
+  /// Stamping IS the perspective-visibility event for a FENCED batch: fetch paths hide events
+  /// until <c>commit_sequence</c> lands, and the commit-time doorbell has already been consumed
+  /// by the time the fence clears. The stamper's fenced-retry drain therefore calls with
+  /// <c>p_notify_owners := TRUE</c> and the stamp must ring
+  /// <c>notify_instance_owners('perspective', stamped stream ids)</c>.
+  /// </summary>
+  [Test]
+  public async Task Stamp_NotifyOwnersRequested_RingsPerspectiveDoorbellAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    // The representative fenced scenario: the stream is already PINNED to its owner (the
+    // commit-time doorbell claimed it before the fence lifted), so the post-stamp notify
+    // routes through notify_instance_owners Step 1 to the owning instance's channel.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    await _pinStreamAsync(conn, streamId, instanceId);
+    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
+
+    var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
+      var stamped = await _stampAsync(conn, batchSize: 10, notifyOwners: true);
+      await Assert.That(stamped).IsEqualTo(1);
+    });
+
+    await Assert.That(received).Contains("perspective")
+      .Because("rows became fetchable only at stamp time, so the fenced-drain stamp must ring the "
+             + "owning instance's doorbell — the commit-time doorbell cannot cover a fenced stamp");
+  }
+
+  /// <summary>
+  /// Steady-state stamping must NOT ring: the commit-time doorbell is alive and about to do
+  /// the same job, and per-batch rings during bulk stamping (startup backlogs, imports) herd
+  /// every owner's wake loops — observed as connection-pool exhaustion in tightly-pooled hosts.
+  /// </summary>
+  [Test]
+  public async Task Stamp_DefaultCall_StampsButDoesNotRingDoorbellAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    await _pinStreamAsync(conn, streamId, instanceId);
+    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
+
+    var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
+      var stamped = await _stampAsync(conn, batchSize: 10);
+      await Assert.That(stamped).IsEqualTo(1);
+    });
+
+    await Assert.That(received).IsEmpty()
+      .Because("steady-state stamps keep the pre-make-up-doorbell rate — only the fenced-retry "
+             + "drain opts into the ring");
+  }
+
+  [Test]
+  public async Task Stamp_NothingStamped_DoesNotRingDoorbellAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
+      var stamped = await _stampAsync(conn, batchSize: 10, notifyOwners: true);
+      await Assert.That(stamped).IsEqualTo(0);
+    });
+
+    await Assert.That(received).IsEmpty()
+      .Because("an empty stamp must not ring doorbells even when the caller opted in — there is nothing to announce");
+  }
+
+  // ============================================================================
   // helpers
   // ============================================================================
+
+  private static async Task _pinStreamAsync(NpgsqlConnection conn, Guid streamId, Guid instanceId) {
+    await using var pin = conn.CreateCommand();
+    pin.CommandText = @"
+      INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, last_activity_at)
+      VALUES (@sid, 0, @iid, NOW())
+      ON CONFLICT (stream_id) DO UPDATE SET assigned_instance_id = @iid";
+    pin.Parameters.AddWithValue("sid", streamId);
+    pin.Parameters.AddWithValue("iid", instanceId);
+    await pin.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _registerInstanceAsync(NpgsqlConnection conn, Guid instanceId) {
+    await using var reg = conn.CreateCommand();
+    reg.CommandText = @"
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at, started_at, metadata)
+      VALUES (@id, 'test-svc', 'test-host', 1, NOW(), NOW(), '{}'::jsonb)
+      ON CONFLICT (instance_id) DO UPDATE SET last_heartbeat_at = NOW()";
+    reg.Parameters.AddWithValue("id", instanceId);
+    await reg.ExecuteNonQueryAsync();
+  }
+
+  private static async Task<List<string>> _captureNotificationsAsync(
+      NpgsqlConnection conn, string channel, Func<Task> emit) {
+    var received = new List<string>();
+    void handler(object sender, NpgsqlNotificationEventArgs args) {
+      if (string.Equals(args.Channel, channel, StringComparison.Ordinal)) {
+        received.Add(args.Payload);
+      }
+    }
+    conn.Notification += handler;
+    try {
+      // Instance doorbell channels contain hyphens (GUID) — the identifier must be quoted.
+      await using (var listen = conn.CreateCommand()) {
+        listen.CommandText = $"LISTEN \"{channel}\"";
+        await listen.ExecuteNonQueryAsync();
+      }
+
+      await emit();
+
+      // Force a roundtrip so any pending NOTIFYs dispatch to the handler before we read.
+      await using var ping = conn.CreateCommand();
+      ping.CommandText = "SELECT 1";
+      _ = await ping.ExecuteScalarAsync();
+    } finally {
+      conn.Notification -= handler;
+      await using var unlisten = conn.CreateCommand();
+      unlisten.CommandText = $"UNLISTEN \"{channel}\"";
+      await unlisten.ExecuteNonQueryAsync();
+    }
+    return received;
+  }
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
@@ -236,9 +368,14 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
     return conn;
   }
 
-  private static async Task<int> _stampAsync(NpgsqlConnection conn, int batchSize) {
+  private static async Task<int> _stampAsync(NpgsqlConnection conn, int batchSize, bool? notifyOwners = null) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT stamp_pending_commit_sequences(@bs)";
+    if (notifyOwners is null) {
+      cmd.CommandText = "SELECT stamp_pending_commit_sequences(@bs)";
+    } else {
+      cmd.CommandText = "SELECT stamp_pending_commit_sequences(@bs, @notify)";
+      cmd.Parameters.AddWithValue("notify", notifyOwners.Value);
+    }
     cmd.Parameters.AddWithValue("bs", batchSize);
     var result = await cmd.ExecuteScalarAsync();
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);

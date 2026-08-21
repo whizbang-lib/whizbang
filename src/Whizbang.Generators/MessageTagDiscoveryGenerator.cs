@@ -310,6 +310,14 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("namespace Whizbang.Core.Generated;");
     sb.AppendLine();
+    sb.AppendLine("// Tag payload builders serialize an ad-hoc property bag (Dictionary<string, object?>) for");
+    sb.AppendLine("// notification-facing hook payloads — the one shape a JsonSerializerContext cannot pre-compute.");
+    sb.AppendLine("// The lambdas reference every extracted property statically, so the members survive trimming;");
+    sb.AppendLine("// only the last-mile object-bag serialize call is unprovable to the analyzer. Same pattern every");
+    sb.AppendLine("// consumer assembly already ships; suppressed so trim-analyzed assemblies compile identically.");
+    sb.AppendLine("#pragma warning disable IL2026 // RequiresUnreferencedCode: JsonSerializer.SerializeToElement over the property bag");
+    sb.AppendLine("#pragma warning disable IL3050 // RequiresDynamicCode: same call, AOT flavor");
+    sb.AppendLine();
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-generated registry of message types with tag attributes.");
     sb.AppendLine("/// Implements <see cref=\"IMessageTagRegistry\"/> for AOT-compatible tag discovery.");
@@ -343,6 +351,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("      }");
     sb.AppendLine("    }");
     sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  /// <inheritdoc />");
+    sb.AppendLine("  public IEnumerable<MessageTagRegistration> GetAllTags() => _tags;");
     sb.AppendLine("}");
     sb.AppendLine();
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);
@@ -359,6 +370,9 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine($"    Whizbang.Core.Tags.MessageTagRegistry.Register({className}.Instance, priority: 100);");
     sb.AppendLine("  }");
     sb.AppendLine("}");
+    sb.AppendLine();
+    sb.AppendLine("#pragma warning restore IL3050");
+    sb.AppendLine("#pragma warning restore IL2026");
 
     context.AddSource("MessageTagRegistry.g.cs", sb.ToString());
 

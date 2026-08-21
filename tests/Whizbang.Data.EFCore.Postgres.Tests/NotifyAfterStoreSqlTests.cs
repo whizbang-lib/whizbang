@@ -195,6 +195,11 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, instanceB);
     await _registerInstanceAsync(conn, instanceC);
 
+    // 114 edge-notify: the 'perspective' doorbell is precise — it rings only when the
+    // emit chain actually CREATED work items, which requires an association for the
+    // event type. Seeded here; the association-less case has its own lock below.
+    await _seedPerspectiveAssociationAsync(conn);
+
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
     var json = $"[{_outboxMessageJson(msgId, streamId, isEvent: true)}]";
@@ -254,7 +259,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       instancesToListen: [instanceA],
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, secondJson));
     await Assert.That(secondReceived).IsEmpty()
-      .Because("v0.686.1 — subsequent store calls for an already-pinned stream MUST NOT emit a NOTIFY. The pinned owner's worker is already on the case; the NOTIFY storm is what made the bulk-import regress in a consumer deployment (2026-06-12).");
+      .Because("Burst protection (114 edge-notify): the first row is still pending, so the second store piles behind it — silent, a wake is already owed. Same suppression outcome the cold-only gate bought (the 2026-06-12 bulk regression), now derived from queue state instead of stream age.");
   }
 
   [Test]
@@ -268,6 +273,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
     await _registerInstanceAsync(conn, instanceA);
 
+    await _seedPerspectiveAssociationAsync(conn);
     var streamId = (Guid)TrackedGuid.NewMedo();
 
     // First call (event): wake.
@@ -289,7 +295,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       instancesToListen: [instanceA],
       emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, secondJson));
     await Assert.That(secondReceived).IsEmpty()
-      .Because("v0.686.1 — both outbox AND perspective NOTIFY paths gate on cold-stream pinning. Hot streams skip both payloads; the pinned owner drains naturally on its next claim cycle.");
+      .Because("Burst protection (114 edge-notify): the first call's outbox row AND its perspective work items are still pending, so the second store piles behind them on both channels — a wake is already owed and the in-flight drain's refetch picks the rows up. This is the bulk-import suppression, preserved by construction.");
   }
 
   [Test]
@@ -324,7 +330,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, batchJson));
 
     await Assert.That(received).Count().IsEqualTo(1)
-      .Because("v0.686.1 — exactly one NOTIFY for the cold subset of the batch. The hot stream contributes nothing; the cold stream contributes one.");
+      .Because("Per-stream edges (114): the busy stream's row piles behind its still-pending first message (silent); the fresh stream's row is its first pending work (rings). Exactly one NOTIFY for the batch.");
   }
 
   [Test]
@@ -352,6 +358,296 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
       .Because("'outbox' notify must fire for non-event messages too — they still need transport pickup.");
     await Assert.That(payloads.Contains("perspective")).IsFalse()
       .Because("Non-event messages do not run _emit_event_store_chain, so 'perspective' notify is wrong here.");
+  }
+
+  // ============================================================================
+  // Empty→non-empty edge — the interactive-latency contract (proposal: notify-on-the-true-edge)
+  // ============================================================================
+  // The v0.686.1 cold-only gate and ClaimWorker's notify-healthy poll relaxation
+  // (5 s; bus-wired backstop ~10 s) each assume the other covers HOT (already-
+  // pinned) streams. Neither does. Contract under test: the doorbell rings when a
+  // store creates a stream's FIRST pending row (the queue's empty→non-empty edge,
+  // per category), judged by the SAME predicate the drain fetch uses:
+  //   outbox:      processed_at IS NULL AND published_at IS NULL AND schedule-eligible
+  //   inbox:       processed_at IS NULL AND schedule-eligible
+  //   perspective: wh_perspective_events.processed_at IS NULL
+  // Rows piled behind pending work stay silent (bulk protection, same outcome as
+  // the cold-only gate); a drained-to-empty stream re-arms the edge, so resume-
+  // after-idle rings instantly. The emptiness probe must be a LOCKING read
+  // (FOR SHARE) so a concurrent completion cannot produce a stale-read lost wakeup.
+
+  [Test]
+  public async Task StoreInboxMessages_DrainedStreamThenStore_FiresNotifyAsync() {
+    // The edge resets: once the consumer catches up (row drained), the next store
+    // is an empty→non-empty transition again — no matter how long the idle gap.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    _ = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson(firstMsgId, streamId)}]"));
+
+    await _markInboxDrainedAsync(conn, firstMsgId);
+
+    var received = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]"));
+
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("A store into a DRAINED (empty-queue) stream must ring the doorbell — the wake condition is queue emptiness, not stream age. Without this, an interactive stream waits on the notify-healthy claim poll (5-10 s) for every hop after its first.");
+    await Assert.That(received[0].Payload).IsEqualTo("inbox")
+      .Because("The hot-stream wake rides the same 'inbox' doorbell the cold path uses.");
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_DrainedStreamThenStore_FiresOutboxAndPerspectiveNotifyAsync() {
+    // Outbox variant, asserting BOTH payloads: 'perspective' freshness is the
+    // latency the user actually sees (the read model), so a hot-stream wake that
+    // only re-armed 'outbox' would still leave visible state poll-paced.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+    await _seedPerspectiveAssociationAsync(conn);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    _ = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, $"[{_outboxMessageJson(firstMsgId, streamId, isEvent: true)}]"));
+
+    await _markOutboxDrainedAsync(conn, firstMsgId);
+    await _markPerspectiveWorkDrainedAsync(conn, streamId);
+
+    var received = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, $"[{_outboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId, isEvent: true)}]"));
+
+    var payloads = received.Select(r => r.Payload).OrderBy(p => p).ToList();
+    await Assert.That(payloads).Contains("outbox")
+      .Because("A store into a drained stream must re-arm transport pickup immediately.");
+    await Assert.That(payloads).Contains("perspective")
+      .Because("The perspective doorbell must ring too when the stream's perspective queue was empty — read-model freshness IS the user-visible latency.");
+  }
+
+  [Test]
+  public async Task StoreInboxMessages_OnlyFutureScheduledRowPending_StoreStillFiresNotifyAsync() {
+    // Predicate-mirror lock: a row deferred into the future is NOT drainable now,
+    // so it must not count as pending. If the emptiness probe diverged from the
+    // drain fetch's eligibility predicate here, a parked retry would silently
+    // absorb the doorbell for every later store on the stream.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    _ = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson(firstMsgId, streamId)}]"));
+
+    await _deferInboxRowAsync(conn, firstMsgId);
+
+    var received = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]"));
+
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("The emptiness probe must mirror the drain fetch's eligibility predicate: a future-scheduled row is invisible to the drain, so it must be invisible to the probe too — the new (drainable-now) row is the stream's first pending work.");
+  }
+
+  [Test]
+  public async Task StoreInboxMessages_ProducerNotOwner_NotifiesPinnedOwnerChannelAsync() {
+    // Fleet routing lock: the edge changes WHEN the doorbell rings, never WHO
+    // receives it. A producer storing into a stream owned by another instance
+    // rings the OWNER's channel (notify_instance_owners Step 1), cross-instance.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    var instanceB = new Guid("00000000-0000-0000-0000-00000000000b");
+    await _registerInstanceAsync(conn, instanceA);
+    await _registerInstanceAsync(conn, instanceB);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    _ = await _captureNotificationsAsync(conn, [instanceA, instanceB],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson(firstMsgId, streamId)}]"));
+    await _markInboxDrainedAsync(conn, firstMsgId);
+
+    var received = await _captureNotificationsAsync(conn, [instanceA, instanceB],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceB, $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]"));
+
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("Exactly one doorbell for the drained stream's first new row.");
+    await Assert.That(received[0].Channel).IsEqualTo($"wh_work_i_{instanceA}")
+      .Because("The stream is pinned to instanceA; the producer (instanceB) rings the pinned owner's channel, not its own — routing is untouched by the edge design.");
+  }
+
+  [Test]
+  public async Task StoreInboxMessages_BusyStreamDoesNotSuppressDrainedStreamInSameBatchAsync() {
+    // Cross-stream independence: emptiness is judged PER STREAM. One busy stream
+    // in the batch must not absorb the doorbell owed to a drained stream.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+
+    var busyStream = (Guid)TrackedGuid.NewMedo();
+    var drainedStream = (Guid)TrackedGuid.NewMedo();
+
+    var busyMsg = (Guid)TrackedGuid.NewMedo();
+    var drainedMsg = (Guid)TrackedGuid.NewMedo();
+    _ = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA,
+        $"[{_inboxMessageJson(busyMsg, busyStream)},{_inboxMessageJson(drainedMsg, drainedStream)}]"));
+    await _markInboxDrainedAsync(conn, drainedMsg);
+    // busyMsg stays pending: busyStream is mid-backlog, drainedStream is caught up.
+
+    var received = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA,
+        $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), busyStream)},{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), drainedStream)}]"));
+
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("Per-stream edges: the busy stream's new row piles behind pending work (silent), while the drained stream's new row is its first pending row (rings). One doorbell total, for the drained stream only.");
+  }
+
+  [Test]
+  public async Task StoreInboxMessages_CompletionHeldOpenConcurrently_StoreStillWakesOwnerAsync() {
+    // The MVCC knife-edge (lost-wakeup) lock. A completion UPDATE of the stream's
+    // last pending row is held OPEN in a second connection's transaction while the
+    // store runs. A plain-read probe would see the stale "still pending" version,
+    // stay silent, and the parked drain would never learn about the new row. The
+    // FOR SHARE probe must block on the completion's row lock, re-evaluate after
+    // commit, see the queue empty, and ring. Two-connection shape, same family as
+    // the exactly-once schedule-claim tests.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    await using var holderContext = CreateDbContext();
+    var holderConn = await _openAsync(holderContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var firstMsgId = (Guid)TrackedGuid.NewMedo();
+    _ = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => await _callStoreInboxMessagesAsync(conn, instanceA, $"[{_inboxMessageJson(firstMsgId, streamId)}]"));
+
+    // Hold the completion open: the row is being completed but the commit hasn't landed.
+    await using var holderTx = await holderConn.BeginTransactionAsync();
+    await using (var complete = holderConn.CreateCommand()) {
+      complete.Transaction = holderTx;
+      complete.CommandText = "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @mid";
+      complete.Parameters.AddWithValue("mid", firstMsgId);
+      _ = await complete.ExecuteNonQueryAsync();
+    }
+
+    var received = await _captureNotificationsAsync(conn, [instanceA],
+      emit: async () => {
+        // The store runs concurrently with the held-open completion. With a locking
+        // probe it blocks until the commit below; with a plain read it returns
+        // immediately having seen the stale pending row (and the assertion fails).
+        var storeTask = Task.Run(async () => {
+          await using var storeContext = CreateDbContext();
+          var storeConn = await _openAsync(storeContext);
+          await _callStoreInboxMessagesAsync(storeConn, instanceA, $"[{_inboxMessageJson((Guid)TrackedGuid.NewMedo(), streamId)}]");
+        });
+
+        // Commit the completion once the store is provably parked on the row lock —
+        // or immediately if the store already finished (the plain-read failure mode,
+        // which the assertion below then catches). DB lock state is the completion
+        // signal here, not wall-clock time.
+        await using (var lockProbe = holderConn.CreateCommand()) {
+          lockProbe.Transaction = holderTx;
+          lockProbe.CommandText = "SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE NOT l.granted AND a.query ILIKE '%store_inbox_messages%')";
+          while (!storeTask.IsCompleted && !(bool)(await lockProbe.ExecuteScalarAsync() ?? false)) {
+            await Task.Yield();
+          }
+        }
+        await holderTx.CommitAsync();
+        await storeTask;
+      });
+
+    await Assert.That(received).Count().IsEqualTo(1)
+      .Because("The emptiness probe must be a LOCKING read (FOR SHARE): serialized against the in-flight completion, it re-evaluates after the commit, sees the queue empty, and rings. A plain read sees the stale pending row and loses the wakeup — the drain's final refetch predates this store's commit, so nothing else would ever ring.");
+  }
+
+  [Test]
+  public async Task StoreOutboxMessages_EventWithoutAssociations_DoesNotFirePerspectiveNotifyAsync() {
+    // The precise perspective contract's storm guard: an event type with NO perspective
+    // associations creates no work items, so its perspective queue is permanently empty.
+    // A proxy rule ("ring perspective whenever an event lands on an empty perspective
+    // queue") would therefore ring on EVERY store for such types — the v0.686 storm on a
+    // new channel. The doorbell must ring only when work was actually created.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceA = new Guid("00000000-0000-0000-0000-00000000000a");
+    await _registerInstanceAsync(conn, instanceA);
+    // Deliberately NO association seeded: this event type feeds no perspective. The
+    // suite-level seed helper is idempotent per type, so this test uses its own type name.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var json = $"[{_outboxMessageJsonOfType((Guid)TrackedGuid.NewMedo(), streamId, "Test.NoPerspectives, Test")}]";
+
+    var received = await _captureNotificationsAsync(
+      conn,
+      instancesToListen: [instanceA],
+      emit: async () => await _callStoreOutboxMessagesAsync(conn, instanceA, json));
+
+    var payloads = received.Select(r => r.Payload).OrderBy(p => p).ToList();
+    await Assert.That(payloads).Contains("outbox")
+      .Because("Transport pickup is still owed for the new outbox row.");
+    await Assert.That(payloads.Contains("perspective")).IsFalse()
+      .Because("No perspective work was created, so a perspective doorbell would be a spurious wake — and for association-less types it would fire on EVERY store, reintroducing the per-store notify storm.");
+  }
+
+  private static async Task _seedPerspectiveAssociationAsync(NpgsqlConnection conn) {
+    // The emit chain joins wh_message_associations on normalized_message_type with
+    // association_type = 'perspective' to create wh_perspective_events work items.
+    // Idempotent: concurrent duplicate rows are harmless (uq_perspective_event dedupes
+    // the work items), but avoid them anyway.
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO wh_message_associations (message_type, normalized_message_type, association_type, target_name, service_name)
+      SELECT 'Test.X, Test', 'Test.X, Test', 'perspective', 'TestPerspective', 'test-svc'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM wh_message_associations
+        WHERE normalized_message_type = 'Test.X, Test'
+          AND association_type = 'perspective'
+          AND target_name = 'TestPerspective')";
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _markInboxDrainedAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @mid";
+    cmd.Parameters.AddWithValue("mid", messageId);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _markOutboxDrainedAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "UPDATE wh_outbox SET processed_at = NOW() WHERE message_id = @mid";
+    cmd.Parameters.AddWithValue("mid", messageId);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _markPerspectiveWorkDrainedAsync(NpgsqlConnection conn, Guid streamId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "UPDATE wh_perspective_events SET processed_at = NOW() WHERE stream_id = @sid AND processed_at IS NULL";
+    cmd.Parameters.AddWithValue("sid", streamId);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _deferInboxRowAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "UPDATE wh_inbox SET scheduled_for = NOW() + INTERVAL '1 hour' WHERE message_id = @mid";
+    cmd.Parameters.AddWithValue("mid", messageId);
+    await cmd.ExecuteNonQueryAsync();
   }
 
   // ============================================================================
@@ -489,6 +785,22 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
         "Scope": null,
         "StreamId": null,
         "IsEvent": false
+      }
+      """;
+  }
+
+  private static string _outboxMessageJsonOfType(Guid messageId, Guid streamId, string messageType) {
+    return $$"""
+      {
+        "MessageId": "{{messageId}}",
+        "Destination": "test-topic",
+        "MessageType": "{{messageType}}",
+        "EnvelopeType": "Whizbang.Core.Observability.MessageEnvelope`1[[Test.X, Test]], Whizbang.Core",
+        "Envelope": {"p":1},
+        "Metadata": {},
+        "Scope": null,
+        "StreamId": "{{streamId}}",
+        "IsEvent": true
       }
       """;
   }

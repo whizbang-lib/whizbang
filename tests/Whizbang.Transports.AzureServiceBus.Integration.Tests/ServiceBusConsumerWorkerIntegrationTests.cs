@@ -421,13 +421,17 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       var destination = new TransportDestination("topic-01");
       await transport.PublishAsync(envelope, destination);
 
+      // Key the wait and the assertion on THIS test's MessageId: the emulator entities are
+      // shared across classes, and a prior test's message abandoned while still LOCKED is
+      // invisible to this test's drain — it redelivers into this capture window later and
+      // First() picks up the stale message instead of ours.
       var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Count > 0,
+        () => capturedInboxMessages.Any(m => m.MessageId == envelope.MessageId.Value),
         TimeSpan.FromSeconds(30));
 
       // Assert: StreamId extracted from AggregateId in hop metadata
       await Assert.That(processed).IsTrue();
-      var inbox = capturedInboxMessages.First();
+      var inbox = capturedInboxMessages.First(m => m.MessageId == envelope.MessageId.Value);
       await Assert.That(inbox.StreamId).IsEqualTo(expectedStreamId);
     } finally {
       await worker.StopAsync(CancellationToken.None);
@@ -474,13 +478,19 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
       var destination = new TransportDestination("topic-00");
       await transport.PublishAsync(envelope, destination);
 
+      // Key the wait and the assertion on THIS test's MessageId: the emulator entities are
+      // shared across classes, and a prior test's message abandoned while still LOCKED is
+      // invisible to this test's drain — it redelivers into this capture window later and
+      // First() picks up the stale message (whose hop-stamped StreamId differs from its
+      // MessageId) instead of ours. Observed on CI as expected/found ids minted in the same
+      // millisecond — the stale message's own MessageId + adjacent hop AggregateId.
       var processed = await _waitForConditionAsync(
-        () => capturedInboxMessages.Count > 0,
+        () => capturedInboxMessages.Any(m => m.MessageId == envelope.MessageId.Value),
         TimeSpan.FromSeconds(30));
 
       // Assert: StreamId falls back to MessageId
       await Assert.That(processed).IsTrue();
-      var inbox = capturedInboxMessages.First();
+      var inbox = capturedInboxMessages.First(m => m.MessageId == envelope.MessageId.Value);
       await Assert.That(inbox.StreamId).IsEqualTo(inbox.MessageId);
     } finally {
       await worker.StopAsync(CancellationToken.None);

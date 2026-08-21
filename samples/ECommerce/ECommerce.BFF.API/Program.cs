@@ -17,6 +17,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
@@ -90,8 +91,14 @@ builder.Services.AddSingleton<OrderedStreamProcessor>();
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
 // - IPerspectiveStore<T> and ILensQuery<T> for all discovered perspective models
 // Source generator discovers perspective models from BffDbContext
+// WithRouting() puts the publish side on the same topology the workers subscribe to. With no
+// Inbox/Outbox call that is the DEFAULT: commands publish to inbox.<contract-namespace> — the entity
+// the handling service provisions — instead of one shared catch-all every service filters.
 _ = builder.Services
   .AddWhizbang()
+  // Publish-only service, so there is nothing to own or subscribe to — the call itself is what
+  // registers the outbox routing strategy.
+  .WithRouting(static _ => { })
   .WithEFCore<BffDbContext>()
   .WithDriver.Postgres;
 

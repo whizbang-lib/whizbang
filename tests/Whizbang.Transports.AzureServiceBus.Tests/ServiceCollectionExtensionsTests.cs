@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
@@ -206,6 +207,152 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(capturedOptions.PublishMaxConcurrency).IsEqualTo(200);
   }
 
+  // --- configuration binding: Whizbang:Transports:AzureServiceBus ---
+
+  private static IConfiguration _configWith(params (string Key, string Value)[] pairs) {
+    var section = "Whizbang:Transports:AzureServiceBus:";
+    var data = pairs.ToDictionary(p => section + p.Key, p => (string?)p.Value);
+    return new ConfigurationBuilder().AddInMemoryCollection(data).Build();
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_BindsEveryRuntimeKnobFromConfigurationAsync() {
+    // Arrange — every configuration-bindable property set to a non-default value
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(
+      ("SendTimeout", "00:00:45"),
+      ("MaxConcurrentCalls", "64"),
+      ("PublishMaxConcurrency", "32"),
+      ("MaxAutoLockRenewalDuration", "00:07:00"),
+      ("SubscriptionLockDuration", "00:04:00"),
+      ("MaxDeliveryAttempts", "7"),
+      ("DefaultSubscriptionName", "ops-sub"),
+      ("EnableSessions", "false"),
+      ("MaxConcurrentSessions", "24"),
+      ("SessionIdleTimeout", "00:00:42"),
+      ("PrefetchCount", "11"),
+      ("EnableReceiveLivenessWatchdog", "false"),
+      ("ReceiveLivenessProbeInterval", "00:00:30"),
+      ("ReceiveLivenessSilenceThreshold", "00:10:00"),
+      ("InitialRetryAttempts", "3"),
+      ("InitialRetryDelay", "00:00:02"),
+      ("MaxRetryDelay", "00:01:00"),
+      ("BackoffMultiplier", "3.5"),
+      ("RetryIndefinitely", "false"),
+      ("EnableOpsRateSelfCheck", "false"),
+      ("OpsRateWarningThresholdPerSecond", "250.5"),
+      ("EnableAdaptiveAcceptors", "false"),
+      ("AcceptorFloor", "6"),
+      ("AcceptorEvaluationInterval", "00:00:10")));
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    // Assert — operators can reach every runtime knob without a code deploy
+    await Assert.That(options.SendTimeout).IsEqualTo(TimeSpan.FromSeconds(45));
+    await Assert.That(options.MaxConcurrentCalls).IsEqualTo(64);
+    await Assert.That(options.PublishMaxConcurrency).IsEqualTo(32);
+    await Assert.That(options.MaxAutoLockRenewalDuration).IsEqualTo(TimeSpan.FromMinutes(7));
+    await Assert.That(options.SubscriptionLockDuration).IsEqualTo(TimeSpan.FromMinutes(4));
+    await Assert.That(options.MaxDeliveryAttempts).IsEqualTo(7);
+    await Assert.That(options.DefaultSubscriptionName).IsEqualTo("ops-sub");
+    await Assert.That(options.EnableSessions).IsFalse();
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(24);
+    await Assert.That(options.SessionIdleTimeout).IsEqualTo(TimeSpan.FromSeconds(42));
+    await Assert.That(options.PrefetchCount).IsEqualTo(11);
+    await Assert.That(options.EnableReceiveLivenessWatchdog).IsFalse();
+    await Assert.That(options.ReceiveLivenessProbeInterval).IsEqualTo(TimeSpan.FromSeconds(30));
+    await Assert.That(options.ReceiveLivenessSilenceThreshold).IsEqualTo(TimeSpan.FromMinutes(10));
+    await Assert.That(options.InitialRetryAttempts).IsEqualTo(3);
+    await Assert.That(options.InitialRetryDelay).IsEqualTo(TimeSpan.FromSeconds(2));
+    await Assert.That(options.MaxRetryDelay).IsEqualTo(TimeSpan.FromMinutes(1));
+    await Assert.That(options.BackoffMultiplier).IsEqualTo(3.5);
+    await Assert.That(options.RetryIndefinitely).IsFalse();
+    await Assert.That(options.EnableOpsRateSelfCheck).IsFalse();
+    await Assert.That(options.OpsRateWarningThresholdPerSecond).IsEqualTo(250.5);
+    await Assert.That(options.EnableAdaptiveAcceptors).IsFalse();
+    await Assert.That(options.AcceptorFloor).IsEqualTo(6);
+    await Assert.That(options.AcceptorEvaluationInterval).IsEqualTo(TimeSpan.FromSeconds(10));
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_ConfigurationOverridesCodeCallbackAsync() {
+    // Arrange — code callback sets one value, configuration sets another for the same knob
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(("MaxConcurrentSessions", "64")));
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING, o => {
+      o.MaxConcurrentSessions = 24;
+      o.SessionIdleTimeout = TimeSpan.FromSeconds(5);
+    });
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    // Assert — configuration wins where set (an operator can correct a baked-in value without
+    // a redeploy); the code callback survives where configuration is silent
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(64)
+      .Because("a deploy-time configuration override must beat the compiled-in callback value");
+    await Assert.That(options.SessionIdleTimeout).IsEqualTo(TimeSpan.FromSeconds(5))
+      .Because("callback values stand wherever configuration does not speak");
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_NoConfigurationRegistered_CallbackAndDefaultsApplyAsync() {
+    // Arrange — no IConfiguration in the container at all
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING, o => o.PrefetchCount = 17);
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    // Assert
+    await Assert.That(options.PrefetchCount).IsEqualTo(17);
+    await Assert.That(options.MaxConcurrentSessions).IsEqualTo(200);
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_RegistersTheOpsRateHealthSourceAsync() {
+    // Arrange — a raisable client so resolving the transport never touches the network, and
+    // AutoProvisionInfrastructure=false so InitializeAsync skips admin-API verification.
+    var services = new ServiceCollection();
+    services.AddSingleton<ServiceBusClient>(new RaisableServiceBusClient());
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING, o => o.AutoProvisionInfrastructure = false);
+    await using var provider = services.BuildServiceProvider();
+    var sources = provider.GetServices<Whizbang.Core.Health.IWhizbangHealthSource>().ToList();
+
+    // Assert — the transport package contributes the ops-rate source to the managed-health
+    // aggregation so the idle-churn projection can DEGRADE the transport component.
+    var opsRateSource = sources.OfType<AsbOpsRateHealthSource>().SingleOrDefault();
+    await Assert.That(opsRateSource is not null).IsTrue()
+      .Because("registering the transport must also register the health source that closes the log-only Phase-1 delta");
+    await Assert.That(opsRateSource!.Component).IsEqualTo("transport");
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_AutoProvisionInfrastructure_IsCodeOnlyAsync() {
+    // Arrange — AutoProvisionInfrastructure shapes DI at registration time (whether the admin
+    // client is registered), so it is deliberately NOT configuration-bindable: a config value
+    // could not re-shape a container that is already built.
+    var services = new ServiceCollection();
+    services.AddSingleton(_configWith(("AutoProvisionInfrastructure", "false")));
+
+    // Act
+    services.AddAzureServiceBusTransport(FAKE_CONNECTION_STRING);
+    await using var provider = services.BuildServiceProvider();
+    var options = provider.GetRequiredService<IOptions<AzureServiceBusOptions>>().Value;
+
+    // Assert — the code default stands and the admin client stays registered
+    await Assert.That(options.AutoProvisionInfrastructure).IsTrue()
+      .Because("AutoProvisionInfrastructure is a registration-time DI-shape decision, not a runtime knob");
+    await Assert.That(services.Count(sd => sd.ServiceType == typeof(IServiceBusAdminClient))).IsEqualTo(1);
+  }
+
   // --- transport factory: offline initialization paths ---
 
   [Test]
@@ -289,8 +436,52 @@ public class ServiceCollectionExtensionsTests {
   }
 
   [Test]
+  public async Task AddAzureServiceBusTransport_WithNamespaceOutboxStrategy_WiresPublishTimeFlipSeamAsync() {
+    // Phase 6: the DI factory must recognize NamespaceOutboxStrategy, propagate its shared
+    // inbox topic, AND hand the strategy itself to TransportPublishStrategy so the
+    // publish-time command resolution consults the flip set.
+    var services = new ServiceCollection();
+    services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
+    services.AddLogging();
+    var namespaceStrategy = new NamespaceOutboxStrategy(
+      new Whizbang.Core.Routing.RoutingOptions(), "custom-inbox");
+    services.AddSingleton<IOutboxRoutingStrategy>(namespaceStrategy);
+    services.AddAzureServiceBusTransport(EMULATOR_CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+
+    var strategy = provider.GetRequiredService<IMessagePublishStrategy>();
+
+    await Assert.That(strategy).IsTypeOf<TransportPublishStrategy>();
+    await Assert.That(_getInboxTopic(strategy)).IsEqualTo("custom-inbox");
+    await Assert.That(_getNamespaceRouting(strategy)).IsSameReferenceAs(namespaceStrategy)
+      .Because("without the seam, flips would silently never reach the wire");
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_WithSharedTopicOutboxStrategy_ResolverSeamWiredAndNeverFlipsAsync() {
+    // Phase 7 seam unification: the DI factory consumes ICommandInboxAddressResolver — no
+    // concrete-strategy type tests. The shared-topic strategy rides the SAME wiring as the
+    // namespace strategy; byte-identical behavior holds because its resolver never flips.
+    var services = new ServiceCollection();
+    services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
+    services.AddLogging();
+    var sharedStrategy = new SharedTopicOutboxStrategy("custom-inbox", PassthroughRoutingStrategy.Instance);
+    services.AddSingleton<IOutboxRoutingStrategy>(sharedStrategy);
+    services.AddAzureServiceBusTransport(EMULATOR_CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+
+    var strategy = provider.GetRequiredService<IMessagePublishStrategy>();
+
+    var seam = _getNamespaceRouting(strategy);
+    await Assert.That(seam).IsSameReferenceAs(sharedStrategy)
+      .Because("one interface seam serves every command-routing strategy — no type tests in the factory");
+    await Assert.That(seam!.ResolveFlippedCommandInboxAddress("myapp.orders.commands")).IsNull()
+      .Because("the shared strategy never flips, so the wiring stays byte-identical to phase 6");
+  }
+
+  [Test]
   public async Task AddAzureServiceBusTransport_WithNonSharedTopicOutboxStrategy_FallsBackToDefaultInboxTopicAsync() {
-    // Arrange - a registered strategy that is NOT SharedTopicOutboxStrategy must not match the branch
+    // Arrange - a registered strategy OUTSIDE the command-inbox seam falls back to defaults
     var services = new ServiceCollection();
     services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
     services.AddLogging();
@@ -305,6 +496,8 @@ public class ServiceCollectionExtensionsTests {
     // Assert
     await Assert.That(strategy).IsTypeOf<TransportPublishStrategy>();
     await Assert.That(_getInboxTopic(strategy)).IsEqualTo(SharedTopicOutboxStrategy.DefaultInboxTopic);
+    await Assert.That(_getNamespaceRouting(strategy)).IsNull()
+      .Because("a strategy outside the seam wires no flip hook — commands ride the default inbox topic");
   }
 
   // --- AddAzureServiceBusProvisioner ---
@@ -375,5 +568,20 @@ public class ServiceCollectionExtensionsTests {
         "_inboxTopic field not found on TransportPublishStrategy - was it renamed?");
 
     return (string?)field.GetValue(strategy);
+  }
+
+  /// <summary>
+  /// Reads the private publish-time flip seam captured by TransportPublishStrategy so tests
+  /// can assert the DI factory handed the ICommandInboxAddressResolver seam through.
+  /// </summary>
+  private static Whizbang.Core.Routing.ICommandInboxAddressResolver? _getNamespaceRouting(
+      IMessagePublishStrategy strategy) {
+    var field = typeof(TransportPublishStrategy).GetField(
+      "_namespaceRouting",
+      BindingFlags.NonPublic | BindingFlags.Instance)
+      ?? throw new InvalidOperationException(
+        "_namespaceRouting field not found on TransportPublishStrategy - was it renamed?");
+
+    return (Whizbang.Core.Routing.ICommandInboxAddressResolver?)field.GetValue(strategy);
   }
 }

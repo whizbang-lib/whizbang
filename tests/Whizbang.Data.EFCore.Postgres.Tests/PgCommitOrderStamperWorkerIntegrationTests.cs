@@ -187,6 +187,122 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await contender.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// Per-database fence lock. Transaction IDs are cluster-global, so a fence built on
+  /// <c>pg_snapshot_xmin(pg_current_snapshot())</c> stalls behind ANY open write transaction in
+  /// ANY database on the server — on a shared cluster that injects standing multi-second
+  /// stamping latency from workloads that cannot possibly have written this database's
+  /// <c>wh_event_store</c>. Only backends connected to THIS database can hold uncommitted rows
+  /// here, so the correctness fence is the datname-scoped oldest in-flight backend xid. A write
+  /// transaction held open in a different database must not delay stamping in this one.
+  /// </summary>
+  [Test]
+  public async Task Worker_OpenTransactionInOtherDatabase_DoesNotStallStampingAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var worker = _newWorker(ConnectionString);
+    var leaderTcs = await _whenBecomesLeaderAsync(worker);
+    var stampPulse = new SemaphoreSlim(0);
+    worker.OnStampCompleted += _ => stampPulse.Release();
+    await worker.StartAsync(cts.Token);
+    await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Hold a WRITE transaction open in another database on the same server. The temp-table
+    // insert assigns a real xid, dragging the cluster-wide xmin horizon below every row
+    // inserted after this point. Kept open only for the bounded assert window below, then
+    // rolled back, so concurrently-running tests see at most a few seconds of horizon hold
+    // (none at all once the fence is datname-scoped).
+    var blockerCsb = new NpgsqlConnectionStringBuilder(ConnectionString) { Database = "postgres" };
+    await using var blockerConn = new NpgsqlConnection(blockerCsb.ConnectionString);
+    await blockerConn.OpenAsync();
+    await using var blockerTx = await blockerConn.BeginTransactionAsync();
+    await using (var blockerCmd = blockerConn.CreateCommand()) {
+      blockerCmd.Transaction = blockerTx;
+      blockerCmd.CommandText =
+        "CREATE TEMP TABLE wh_fence_blocker(x int) ON COMMIT DROP; INSERT INTO wh_fence_blocker VALUES (1)";
+      _ = await blockerCmd.ExecuteNonQueryAsync();
+    }
+
+    try {
+      var streamId = (Guid)TrackedGuid.NewMedo();
+      var eventId = (Guid)TrackedGuid.NewMedo();
+      await _insertEventStoreRowAsync(streamId, eventId, version: 1);
+
+      // Each iteration is gated on a stamp-completion signal (the 100 ms poll keeps them
+      // coming); the row must be stamped WHILE the other-database transaction stays open.
+      long? seq = null;
+      var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+      while (seq is null && DateTimeOffset.UtcNow < deadline) {
+        _ = await stampPulse.WaitAsync(TimeSpan.FromSeconds(5));
+        seq = await _readCommitSequenceAsync(eventId);
+      }
+      await Assert.That(seq.HasValue).IsTrue()
+        .Because("an open transaction in an unrelated database cannot have written this database's "
+               + "wh_event_store — it must not fence this database's commit-sequence stamping");
+    } finally {
+      await blockerTx.RollbackAsync();
+    }
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Stamp-until-drained lock. A wake that stamps zero rows while unstamped rows exist (the
+  /// fence is held) must NOT sleep until the next external wake — in production the relaxed
+  /// cadence is 30 s and the backup tick 5 s, which quantized every perspective apply to the
+  /// backstop cadence whenever a commit's own <c>wh_committed</c> wake landed while any older
+  /// transaction was still open. Once fenced work is observed, the worker keeps re-stamping on
+  /// a tight interval until the pending set drains. "Idle" means no pending work, not no
+  /// recent doorbell.
+  /// </summary>
+  [Test]
+  public async Task Worker_FencedWake_RetriesUntilDrained_WithoutExternalWakeAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+    // Same-database blocker opened BEFORE the row insert — a legitimate fence hold. The
+    // temp-table write assigns the blocker a real xid below the row's.
+    await using var blockerConn = new NpgsqlConnection(ConnectionString);
+    await blockerConn.OpenAsync();
+    var blockerTx = await blockerConn.BeginTransactionAsync();
+    await using (var blockerCmd = blockerConn.CreateCommand()) {
+      blockerCmd.Transaction = blockerTx;
+      blockerCmd.CommandText =
+        "CREATE TEMP TABLE wh_fence_blocker(x int) ON COMMIT DROP; INSERT INTO wh_fence_blocker VALUES (1)";
+      _ = await blockerCmd.ExecuteNonQueryAsync();
+    }
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    await _insertEventStoreRowAsync(streamId, eventId, version: 1);
+
+    // 60 s floor silences the self-poll; the worker's initial wake permit produces exactly one
+    // stamp attempt, which observes the fenced row and stamps zero. After the blocker rolls
+    // back there is NO further external wake — only the worker's own fenced-work retry can
+    // stamp the row.
+    var worker = _newWorker(ConnectionString, pollingInterval: TimeSpan.FromSeconds(60));
+    var leaderTcs = await _whenBecomesLeaderAsync(worker);
+    var stampPulse = new SemaphoreSlim(0);
+    worker.OnStampCompleted += _ => stampPulse.Release();
+    await worker.StartAsync(cts.Token);
+    await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Consume the initial-permit stamp attempt (fenced → 0 rows).
+    _ = await stampPulse.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await blockerTx.RollbackAsync();
+
+    long? seq = null;
+    var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(3);
+    while (seq is null && DateTimeOffset.UtcNow < deadline) {
+      _ = await stampPulse.WaitAsync(TimeSpan.FromSeconds(3));
+      seq = await _readCommitSequenceAsync(eventId);
+    }
+    await Assert.That(seq.HasValue).IsTrue()
+      .Because("a wake that leaves fenced rows behind must keep retrying until the pending set "
+             + "drains — pending work must not wait for the next external tick");
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   // ============================================================================
   // helpers
   // ============================================================================

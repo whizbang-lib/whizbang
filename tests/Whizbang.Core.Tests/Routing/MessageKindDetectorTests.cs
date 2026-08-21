@@ -110,6 +110,64 @@ public class MessageKindDetectorTests {
 
   #endregion
 
+  #region Framework System Namespace Detection (between attribute and interface)
+
+  [Test]
+  public async Task Detect_FrameworkSystemNamespaceType_ReturnsSystemAsync() {
+    // Arrange - test type declared inside Whizbang.Core.Commands.System implements ICommand,
+    // but the framework-system tier outranks interface detection.
+    // Act
+    var result = MessageKindDetector.Detect(
+      typeof(Whizbang.Core.Commands.System.DetectorTestSystemCommand));
+
+    // Assert
+    await Assert.That(result).IsEqualTo(MessageKind.System);
+  }
+
+  [Test]
+  public async Task Detect_RealFrameworkSystemCommand_ReturnsSystemAsync() {
+    // Arrange - a real framework system command (run-control traffic).
+    // Act
+    var result = MessageKindDetector.Detect(
+      typeof(Whizbang.Core.Commands.System.RebuildPerspectiveCommand));
+
+    // Assert
+    await Assert.That(result).IsEqualTo(MessageKind.System);
+  }
+
+  [Test]
+  public async Task Detect_FrameworkSystemSubNamespace_ReturnsSystemAsync() {
+    // Act - sub-namespaces of the framework system namespace are still system traffic
+    var result = MessageKindDetector.Detect(
+      typeof(Whizbang.Core.Commands.System.SubArea.DetectorTestNestedSystemCommand));
+
+    // Assert
+    await Assert.That(result).IsEqualTo(MessageKind.System);
+  }
+
+  [Test]
+  public async Task Detect_AttributeOverridesFrameworkSystemNamespace_ReturnsAttributeKindAsync() {
+    // Act - [MessageKind(Command)] beats the framework-system tier (explicit override wins)
+    var result = MessageKindDetector.Detect(
+      typeof(Whizbang.Core.Commands.System.DetectorTestAttributeOverridesSystem));
+
+    // Assert
+    await Assert.That(result).IsEqualTo(MessageKind.Command);
+  }
+
+  [Test]
+  public async Task Detect_ConsumerCommandsSystemNamespace_IsNotSystemAsync() {
+    // Act - a CONSUMER namespace merely ending in ".Commands.System" is not framework traffic;
+    // the generic Commands-segment convention applies.
+    var result = MessageKindDetector.Detect(
+      typeof(MyAppTest.Commands.System.DetectorTestConsumerSystemLookalike));
+
+    // Assert
+    await Assert.That(result).IsEqualTo(MessageKind.Command);
+  }
+
+  #endregion
+
   #region Priority 3: Namespace Detection
 
   [Test]

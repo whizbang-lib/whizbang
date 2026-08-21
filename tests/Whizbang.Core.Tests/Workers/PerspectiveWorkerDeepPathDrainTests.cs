@@ -176,6 +176,59 @@ public class PerspectiveWorkerDeepPathDrainTests {
       .Because("commit_sequence 20 is ahead of cursor 10 — no inversion");
   }
 
+  /// <summary>
+  /// Production-cadence apply-latency lock. Every other test in this file zeroes the drain
+  /// batching window; this one runs the REAL defaults (300 ms sliding / 3 s cap) plus
+  /// ClaimWorker-style re-emission of the same leased stream — claim_work re-offers every
+  /// leased stream on every poll, so in production the drain channel receives the same
+  /// stream_id continuously while its events are pending. Re-emitted doorbells carry no new
+  /// information (the flush fetches everything pending), so they must not hold the batch
+  /// open: the apply must land within the sliding window of the FIRST signal, not ride to
+  /// MaxWait. Live measurement before this lock: a constant 3–4 s post-lease apply tax on
+  /// every perspective hop, stacking to 5–10 s of read-model staleness per exchange.
+  /// </summary>
+  [Test]
+  public async Task DrainMode_ProductionWindow_ReemittedStream_AppliesWithinSlidingWindowAsync() {
+    // Arrange — one real pending event; production batching window.
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7(), commitSequence: 20)]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("prod-window"))]);
+    var runner = new DrainRunner();
+    var registry = _registry(runner);
+
+    var (worker, harness, _) = _createWorker(coordinator, eventStore, registry, configure: o => o.DrainBatcher = new SlidingWindowBatcherOptions {
+      SlidingWindow = TimeSpan.FromMilliseconds(300),
+      MaxWait = TimeSpan.FromSeconds(3),
+      MaxSize = 1000
+    });
+
+    // Act — first drain signal starts the clock; a feeder re-rings the same doorbell every
+    // ~100 ms (< SlidingWindow) until the apply completes, mirroring claim re-offers.
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    var feeder = Task.Run(async () => {
+      while (!coordinator.FirstCompletion.IsCompleted && !cts.IsCancellationRequested) {
+        await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+        await Task.Delay(100, cts.Token);
+      }
+    });
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    sw.Stop();
+    await cts.CancelAsync();
+    try { await feeder; } catch (OperationCanceledException) { }
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    // Assert — bounded by the sliding window from the first signal, not MaxWait.
+    await Assert.That(sw.Elapsed).IsLessThan(TimeSpan.FromMilliseconds(1500))
+      .Because("claim re-offers of an already-leased stream must not extend the apply batching "
+             + "window; the flush deadline is SlidingWindow from the first drain signal, not MaxWait");
+  }
+
   [Test]
   public async Task DrainMode_AllEventsCooled_SkipsApplyButSignalsLifecycleCompletionAsync() {
     // Arrange — the event's work_id is already in the cooldown cache (prior drain applied it).

@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
@@ -27,4 +29,24 @@ public interface IReceptorRegistryQuery {
   /// <summary>True when ANY consumer (handler / lifecycle receptor / perspective /
   /// tag-attribute) is registered for the message type.</summary>
   bool HasAnyConsumer(string messageType);
+
+  /// <summary>
+  /// Enumerates every receptor-handled message type known at compile time —
+  /// (type name, contract namespace, kind) — deduplicated by type name, in a
+  /// deterministic (ordinal type-name) order.
+  /// </summary>
+  /// <remarks>
+  /// Default interface member returning an empty list: the predicates above were the
+  /// interface's whole surface before the topology arc, so custom/test implementations
+  /// in the wild only implement those. Defaulting the enumeration keeps every existing
+  /// implementation compiling, and an empty answer degrades safely — topology consumers
+  /// (subscription context, manifest) simply see no handled-message metadata and fall
+  /// back to the singular strategy behavior.
+  /// </remarks>
+  /// <returns>The handled-message enumeration, or an empty list for implementations
+  /// that predate the enumeration surface.</returns>
+  /// <docs>internals/receptor-registry-query</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:CustomPredicatesOnlyImplementation_GetHandledMessages_DefaultsToEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WhizbangReceptorRegistryQueryAdapterTests.cs:GetHandledMessages_DelegatesToGeneratedStaticAsync</tests>
+  IReadOnlyList<HandledMessageInfo> GetHandledMessages() => [];
 }

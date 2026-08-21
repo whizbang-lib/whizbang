@@ -27,7 +27,7 @@ namespace Whizbang.Core.Generated;
 /// </summary>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
-internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
+internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher, global::Whizbang.Core.IReceptorLookup {
   private readonly IServiceScopeFactory _scopeFactory;
 
   public GeneratedDispatcher(
@@ -163,6 +163,30 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
 
     return null;
   }
+
+  // Issue #491: this assembly's routing tables, exposed for cross-assembly composition — the
+  // winning dispatcher consults these when its own tables answer null. Pure bridges onto the
+  // generated lookups above; zero reflection.
+  ReceptorInvoker<TResult>? global::Whizbang.Core.IReceptorLookup.LookupReceptorInvoker<TResult>(object message, Type messageType)
+    => GetReceptorInvoker<TResult>(message, messageType);
+
+  VoidReceptorInvoker? global::Whizbang.Core.IReceptorLookup.LookupVoidReceptorInvoker(object message, Type messageType)
+    => GetVoidReceptorInvoker(message, messageType);
+
+  Func<object, IMessageEnvelope?, CancellationToken, Task>? global::Whizbang.Core.IReceptorLookup.LookupUntypedReceptorPublisher(Type eventType)
+    => GetUntypedReceptorPublisher(eventType);
+
+  SyncReceptorInvoker<TResult>? global::Whizbang.Core.IReceptorLookup.LookupSyncReceptorInvoker<TResult>(object message, Type messageType)
+    => GetSyncReceptorInvoker<TResult>(message, messageType);
+
+  VoidSyncReceptorInvoker? global::Whizbang.Core.IReceptorLookup.LookupVoidSyncReceptorInvoker(object message, Type messageType)
+    => GetVoidSyncReceptorInvoker(message, messageType);
+
+  Func<object, ValueTask<object?>>? global::Whizbang.Core.IReceptorLookup.LookupReceptorInvokerAny(object message, Type messageType)
+    => GetReceptorInvokerAny(message, messageType);
+
+  global::Whizbang.Core.Dispatch.DispatchModes? global::Whizbang.Core.IReceptorLookup.LookupReceptorDefaultRouting(Type messageType)
+    => GetReceptorDefaultRouting(messageType);
 
   /// <summary>
   /// Generated override - publishes cascaded events to outbox using type-switch dispatch.

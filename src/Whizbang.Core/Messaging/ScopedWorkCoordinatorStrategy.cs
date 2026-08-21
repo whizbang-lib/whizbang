@@ -25,6 +25,8 @@ public record ScopedWorkCoordinatorDependencies {
   public IOptionsMonitor<TracingOptions>? TracingOptions { get; init; }
   /// <summary>System event options for audit event generation.</summary>
   public SystemEvents.SystemEventOptions? SystemEventOptions { get; init; }
+  /// <summary>Coalesce-group resolver for tag-bound coalesce stamping at the mint seam.</summary>
+  public Tags.CoalesceGroupResolver? CoalesceResolver { get; init; }
 }
 
 /// <summary>
@@ -64,7 +66,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;
-  private readonly WorkCoordinatorQueues _queues = new(logger);
+  private readonly WorkCoordinatorQueues _queues = new(logger, dependencies?.CoalesceResolver);
 
   private bool _disposed;
 
@@ -257,6 +259,8 @@ public partial class ScopedWorkCoordinatorStrategy(
             outboxFailures, inboxFailures, WorkBatchOptions.SkipInboxClaiming, _dependencies.LifecycleMessageDeserializer,
             _logger, _dependencies.TracingOptions, _metrics, _lifecycleMetrics,
             WorkChannelWriter: _workChannelWriter, PendingAuditMessages: pendingAuditMessages,
+            // Disposal drain: the ONE deliberate lifecycle skip (issue #485 kept it) — a
+            // shutdown's backgrounded stage halves would race process exit.
             SkipLifecycle: true),
           ct: default
         );

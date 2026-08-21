@@ -6,6 +6,19 @@ namespace Whizbang.Core.Routing;
 /// </summary>
 /// <remarks>
 /// <para>
+/// DEPRECATION NOTE (topology arc phase 7): NO LONGER THE DEFAULT — superseded by
+/// <see cref="NamespaceInboxStrategy"/> (per-namespace command inboxes + the system broadcast
+/// inbox) and scheduled for removal in v1.0. It remains supported through the migration window:
+/// consumers mid-migration still route unflipped namespaces through it, and
+/// <see cref="NamespaceInboxStrategy"/> composes it for the transitional shared subscription
+/// while <see cref="RoutingOptions.SharedInboxRetired"/> is false. Selecting it explicitly
+/// (<see cref="InboxRoutingOptionsBuilder.UseSharedTopic"/>) also restores the pre-migration
+/// flip and retirement defaults, so a service upgrading with its existing configuration keeps a
+/// coherent topology — shared inbox still named by the manifest, still provisioned. No
+/// <c>[Obsolete]</c>: the repository escalates CS0618 to error, which would break consumers
+/// building with warnings-as-errors.
+/// </para>
+/// <para>
 /// Routing key format: "{namespace}.{typename}" (e.g., "myapp.users.commands.createtenantcommand")
 /// </para>
 /// <para>
@@ -37,9 +50,33 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   private const string CONTROL_PLANE_NAMESPACE = "whizbang.core.messaging";
 
   /// <summary>
+  /// The minted-family namespace (topology arc phase 4): redelivery bundles, coalesced batches and
+  /// audit composites live in <c>Whizbang.Core.Minting</c>, so their control-plane subjects are
+  /// <c>whizbang.core.minting.*</c> (<c>ControlPlaneDestination.For</c> synthesizes the subject
+  /// from the CLR namespace). Admitted ALONGSIDE <see cref="CONTROL_PLANE_NAMESPACE"/> for the
+  /// transition — in-flight envelopes published by pre-move builds still carry old subjects; the
+  /// old pattern retires with the shared inbox (phase 7). Deployed subscription rules reconcile on
+  /// redeploy.
+  /// </summary>
+  private const string MINTING_NAMESPACE = "whizbang.core.minting";
+
+  /// <summary>
   /// Gets the system command namespace that all services automatically subscribe to.
   /// </summary>
   public static string SystemCommandNamespace => SYSTEM_COMMAND_NAMESPACE;
+
+  /// <summary>
+  /// True when <paramref name="routingPattern"/> is the SUPERSEDABLE control-plane family's
+  /// pattern (topology arc phase 9). The one place that decides which side of the
+  /// durable/supersedable split a framework pattern belongs on, so the two sides can never drift
+  /// apart or overlap: durable system commands and minted composite envelopes are NOT control
+  /// class — the first is one-shot operator intent, the second wraps real events.
+  /// </summary>
+  /// <param name="routingPattern">A pattern from <see cref="BuildRoutingPatterns"/>.</param>
+  /// <returns>True for the control-plane family's pattern.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/ControlClassSubscriptionSplitTests.cs:ControlSplitOn_EveryFrameworkPatternIsStillCoveredExactlyOnceAsync</tests>
+  internal static bool IsControlPlanePattern(string routingPattern) =>
+    string.Equals(routingPattern, CONTROL_PLANE_NAMESPACE + ".#", StringComparison.Ordinal);
 
   private readonly string _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
 
@@ -58,7 +95,7 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
     ArgumentNullException.ThrowIfNull(ownedDomains);
 
     // Build routing patterns from owned namespaces
-    var routingPatterns = _buildRoutingPatterns(ownedDomains);
+    var routingPatterns = BuildRoutingPatterns(ownedDomains);
 
     // Build filter expression - comma-separated list of routing patterns
     var filterExpression = string.Join(",", routingPatterns);
@@ -76,17 +113,43 @@ public sealed class SharedTopicInboxStrategy(string inboxTopic) : IInboxRoutingS
   }
 
   /// <summary>
+  /// Explicit plural override (topology arc phase 3): the shared-topic strategy has exactly
+  /// one subscription — the shared inbox with the namespace filter — so the plural surface
+  /// returns that same single subscription. Overridden (rather than inherited from the
+  /// default interface member) so the seam is exercised by the built-in strategies;
+  /// bit-identical output is locked by tests.
+  /// </summary>
+  /// <param name="context">Service identity, owned domains, and handled-message enumeration
+  /// (unused here — the shared inbox filters by owned domains only).</param>
+  /// <returns>A one-element list containing today's singular subscription.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when context is null.</exception>
+  /// <docs>fundamentals/dispatcher/routing#shared-topic-inbox</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/InboxRoutingStrategyTests.cs:SharedTopicInboxStrategy_GetSubscriptions_BitIdenticalToSingularAsync</tests>
+  public IReadOnlyList<InboxSubscription> GetSubscriptions(InboxSubscriptionContext context) {
+    ArgumentNullException.ThrowIfNull(context);
+    return [GetSubscription(context.OwnedDomains, context.ServiceName, MessageKind.Command)];
+  }
+
+  /// <summary>
   /// Builds routing patterns for namespace-based filtering.
   /// Always includes system commands namespace.
   /// </summary>
+  /// <remarks>
+  /// Internal (topology arc phase 5): <see cref="NamespaceInboxStrategy"/> builds its system
+  /// broadcast inbox patterns from THIS builder with an empty owned set, so the broadcast inbox
+  /// carries exactly the system-command + control-plane + minting patterns the shared inbox
+  /// carries today — by construction, not by copy.
+  /// </remarks>
   /// <param name="ownedNamespaces">Namespaces owned by this service (e.g., "myapp.users.commands").</param>
   /// <returns>List of routing patterns for broker binding.</returns>
-  private static List<string> _buildRoutingPatterns(IReadOnlySet<string> ownedNamespaces) {
+  internal static List<string> BuildRoutingPatterns(IReadOnlySet<string> ownedNamespaces) {
     var patterns = new List<string> {
       // All services receive system commands
       $"{SYSTEM_COMMAND_NAMESPACE}.#",
       // …and the directed integrity control plane (manifest / redelivery / drill-down traffic).
-      $"{CONTROL_PLANE_NAMESPACE}.#"
+      $"{CONTROL_PLANE_NAMESPACE}.#",
+      // …and the minted composite families (their subjects moved to whizbang.core.minting.*).
+      $"{MINTING_NAMESPACE}.#"
     };
 
     // Add service-specific command namespace patterns

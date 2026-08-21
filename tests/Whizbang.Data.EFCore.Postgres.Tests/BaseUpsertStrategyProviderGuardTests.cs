@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 // Mutates the process-wide BaseUpsertStrategy.PathOnePersistenceOptionsProvider — serialize against the
 // other persistence tests so it can't flip the provider mid-seed (the cross-test static race).
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class BaseUpsertStrategyProviderGuardTests {
 
   private sealed class ProbeDbContext(DbContextOptions<ProbeDbContext> options) : DbContext(options) { }

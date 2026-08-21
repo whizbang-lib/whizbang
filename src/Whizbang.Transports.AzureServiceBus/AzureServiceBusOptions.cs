@@ -181,6 +181,14 @@ public class AzureServiceBusOptions {
   /// always processed one at a time, in order. This setting controls how many <em>different</em>
   /// sessions are handled in parallel. Only applies when <see cref="EnableSessions"/> is true.
   /// <para>
+  /// <b>With adaptive acceptors (the default), this value is the CEILING, not a standing pool.</b>
+  /// When <see cref="EnableAdaptiveAcceptors"/> is true the processor starts at
+  /// <see cref="AcceptorFloor"/> acceptor slots and grows toward this ceiling only under observed
+  /// session pressure, decaying back when demand subsides — so the idle accept churn of the
+  /// receive machinery follows the floor, not this number. Disable adaptive acceptors to make
+  /// this a fixed standing concurrency again.
+  /// </para>
+  /// <para>
   /// <b>Example:</b> With <c>MaxConcurrentSessions = 200</c> and 2,000 active streams, 200 sessions
   /// are processed in parallel. Each session processes its messages one at a time in order.
   /// The remaining 1,800 sessions wait until a slot opens.
@@ -214,24 +222,30 @@ public class AzureServiceBusOptions {
   /// before releasing the session and accepting a different one. Only applies when
   /// <see cref="EnableSessions"/> is true.
   /// <para>
-  /// The Azure SDK default is 60 seconds. For fan-out workloads (one event per stream × many
-  /// streams) this produces a 60-second plateau after every batch of concurrent sessions: each
-  /// session receives its single message, processes it, then <em>holds the concurrency slot idle
-  /// for the full 60 s</em> waiting for a second message that will never arrive. No new sessions
-  /// can be accepted until the wait expires.
+  /// <b>Why the default is long:</b> a waiting accept is push-completed by the broker the moment
+  /// a message arrives, so a long idle timeout adds <em>no</em> pickup latency — it only removes
+  /// empty re-accept churn. Every expiry is a broker operation: each idle concurrency slot costs
+  /// <c><see cref="MaxConcurrentSessions"/> / SessionIdleTimeout</c> accept ops/sec per
+  /// subscription, per consumer instance, <em>at idle</em>. A short timeout (this option once
+  /// defaulted to 1 s) lets a modest fleet saturate an ASB Standard namespace's shared request
+  /// quota while completely idle — starving connection keepalives and session-lock renewals so
+  /// that live traffic redelivers indefinitely. The receive machinery itself can consume the
+  /// entire namespace quota while zero messages flow, and it logs nothing when healthy.
   /// </para>
   /// <para>
-  /// Defaulted to 1 second: fan-out sessions release almost immediately; bulk-import sessions
-  /// (where a single stream may receive many messages in a short burst) still hold the session
-  /// long enough that the next message keeps the session alive. Tune higher (5–30 s) only if
-  /// your workload has sustained multi-message bursts within a single stream separated by gaps
-  /// of a few seconds.
+  /// The trade-off: during a fan-out burst with more pending sessions than
+  /// <see cref="MaxConcurrentSessions"/> slots, an idle-held session delays the excess sessions
+  /// by up to this timeout. That cost is bounded and self-clears in waves; the idle-churn cost
+  /// is unbounded and takes the whole namespace down. Tune lower only when sustained fan-out
+  /// bursts exceed the session concurrency cap AND the namespace has request quota to burn
+  /// (Premium tier), and watch the idle ops-rate self-check warning when you do.
   /// </para>
-  /// Default: 1 second
+  /// Default: 60 seconds (matches the Azure SDK default; ≈3.3 idle ops/sec per subscription at
+  /// the default 200 sessions)
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#session-idle-timeout</docs>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToOneSecondAsync</tests>
-  public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(1);
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:SessionIdleTimeout_DefaultsToSixtySecondsAsync</tests>
+  public TimeSpan SessionIdleTimeout { get; set; } = TimeSpan.FromSeconds(60);
 
   /// <summary>
   /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PrefetchCount_DefaultsTo50Async</tests>
@@ -256,6 +270,89 @@ public class AzureServiceBusOptions {
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#prefetch</docs>
   public int PrefetchCount { get; set; } = 50;
+
+  #endregion
+
+  #region Adaptive Session Acceptors
+
+  /// <summary>
+  /// When true (the default), session acceptors scale with observed active-session demand
+  /// instead of standing up <see cref="MaxConcurrentSessions"/> acceptors permanently: the
+  /// session processor starts at <see cref="AcceptorFloor"/> concurrent sessions, DOUBLES
+  /// (capped at <see cref="MaxConcurrentSessions"/> — the ceiling) when active sessions hold at
+  /// or above 80% of the current pool for one <see cref="AcceptorEvaluationInterval"/>, and
+  /// HALVES (floored) after a full interval below 25% occupancy. Concurrency changes apply to
+  /// the RUNNING processor (no stop/recreate) via the SDK's dynamic concurrency update.
+  /// <para>
+  /// <b>Why:</b> every idle acceptor slot re-issues a broker accept each
+  /// <see cref="SessionIdleTimeout"/> — a billable namespace request with zero messages flowing.
+  /// A standing army's idle cost scales with the ceiling; an adaptive pool's idle cost trends to
+  /// the floor by construction, so fleets stop spending a namespace's shared request quota on
+  /// receive machinery that is doing nothing.
+  /// </para>
+  /// <para>
+  /// Only applies when <see cref="EnableSessions"/> is true. When false, the processor is
+  /// created with a fixed <see cref="MaxConcurrentSessions"/> exactly as before.
+  /// </para>
+  /// Default: true
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableAdaptiveAcceptors_DefaultsToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
+  public bool EnableAdaptiveAcceptors { get; set; } = true;
+
+  /// <summary>
+  /// The minimum number of concurrent session acceptors when <see cref="EnableAdaptiveAcceptors"/>
+  /// is true — the pool starts here and never decays below it, so a quiet service still picks up
+  /// the first message of a burst instantly. Clamped to <see cref="MaxConcurrentSessions"/> when
+  /// configured above the ceiling.
+  /// Default: 4 (≈0.07 idle ops/sec per subscription at the default 60s idle timeout)
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:AcceptorFloor_DefaultsToFourAsync</tests>
+  public int AcceptorFloor { get; set; } = 4;
+
+  /// <summary>
+  /// How long a pressure (≥ 80% occupancy) or quiet (&lt; 25% occupancy) condition must hold
+  /// before the adaptive acceptor pool grows or decays, and the cadence of the periodic
+  /// evaluation tick. Shorter reacts faster to fan-out bursts but risks thrashing concurrency on
+  /// noisy occupancy; longer smooths at the cost of up to one extra interval of queued sessions.
+  /// Default: 30 seconds
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:AcceptorEvaluationInterval_DefaultsToThirtySecondsAsync</tests>
+  public TimeSpan AcceptorEvaluationInterval { get; set; } = TimeSpan.FromSeconds(30);
+
+  #endregion
+
+  #region Idle Ops-Rate Self-Check
+
+  /// <summary>
+  /// When true, the transport projects its worst-case idle broker-operation rate every time a
+  /// session-enabled subscription starts (<c>subscriptions × MaxConcurrentSessions /
+  /// SessionIdleTimeout</c>) and logs a structured warning when the projection crosses
+  /// <see cref="OpsRateWarningThresholdPerSecond"/>. This catches configurations whose receive
+  /// machinery alone can exhaust a namespace's shared request quota at idle — a failure mode
+  /// that is invisible to message-level metrics and logs nothing when healthy.
+  /// Default: true
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:EnableOpsRateSelfCheck_DefaultsToTrueAsync</tests>
+  public bool EnableOpsRateSelfCheck { get; set; } = true;
+
+  /// <summary>
+  /// Projected idle operations per second above which the self-check warns. An ASB Standard
+  /// namespace's request quota is on the order of 1,000 ops/sec shared by every producer and
+  /// consumer in the namespace, so a single instance projecting more than 100 ops/sec of pure
+  /// idle churn is spending over a tenth of a Standard namespace doing nothing — and fleets
+  /// multiply per-instance spend. The turnkey defaults project ≈3.3 ops/sec per subscription;
+  /// the old hair-trigger configuration (200 sessions / 1 s idle timeout) projects 200 ops/sec
+  /// per subscription and is exactly what this threshold flags.
+  /// Default: 100
+  /// </summary>
+  /// <docs>messaging/transports/azure-service-bus#ops-rate-self-check</docs>
+  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:OpsRateWarningThreshold_DefaultsTo100Async</tests>
+  public double OpsRateWarningThresholdPerSecond { get; set; } = 100;
 
   #endregion
 

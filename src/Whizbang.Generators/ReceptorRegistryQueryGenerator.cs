@@ -35,9 +35,8 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   private const string ISYNCRECEPTOR_PREFIX = "global::Whizbang.Core.ISyncReceptor";
   private const string IPERSPECTIVE_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string IPERSPECTIVE_WITH_ACTIONS_PREFIX = "global::Whizbang.Core.Perspectives.IPerspectiveWithActionsFor";
-  private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICompositeEvent";
+  private const string ICOMPOSITE_EVENT_INTERFACE = "global::Whizbang.Core.Minting.ICompositeEvent";
   private const string ICOLLECTIVE_EVENT_INTERFACE = "global::Whizbang.Core.Messaging.ICollectiveEvent";
-  private const string FIREAT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
   private const string NOTIFICATION_TAG_ATTRIBUTE = "Whizbang.Core.NotificationTagAttribute";
   private const string NOTIFICATION_ID_TAG_ATTRIBUTE = "Whizbang.Core.NotificationIdTagAttribute";
 
@@ -113,11 +112,16 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
   /// One entry per (receptor class × stage) — so a receptor with two FireAt attributes produces
   /// two entries. Receptors with no FireAt fall back to ImmediateDetached (which we don't expose
   /// in the gate; it's not Pre/PostInbox), but we still record them as inbox handlers.
+  /// ContractNamespace (lowercase-invariant CLR namespace) and Kind (MessageKind member name,
+  /// mirroring MessageKindDetector's priority rules) feed the HandledMessages enumeration
+  /// (topology arc phase 3).
   /// </summary>
   private sealed record ReceptorRegistryEntry(
       string MessageType,
       ImmutableArray<string> Stages,
-      bool IsInboxHandler
+      bool IsInboxHandler,
+      string ContractNamespace,
+      string Kind
   );
 
   private static ReceptorRegistryEntry? _extractReceptorEntry(
@@ -138,45 +142,19 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var messageType = receptorInterface.TypeArguments[0]
+    var messageTypeSymbol = receptorInterface.TypeArguments[0];
+    var messageType = messageTypeSymbol
       .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
       .Replace("global::", "");
+    // Classification is shared with the ownership analyzer (WHIZ151) via
+    // CompileTimeMessageClassification — one mirror, no drift.
+    var contractNamespace = CompileTimeMessageClassification.ContractNamespaceOf(messageTypeSymbol);
+    var kind = CompileTimeMessageClassification.DetectMessageKind(messageTypeSymbol);
 
-    var stages = ImmutableArray.CreateBuilder<string>();
-    foreach (var attr in classSymbol.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() != FIREAT_ATTRIBUTE) {
-        continue;
-      }
-      if (attr.ConstructorArguments.Length == 0) {
-        continue;
-      }
-      var arg = attr.ConstructorArguments[0];
-      if (arg.Type is INamedTypeSymbol enumType
-          && enumType.Name == "LifecycleStage"
-          && arg.Value is int v) {
-        var member = enumType.GetMembers().OfType<IFieldSymbol>()
-          .FirstOrDefault(f => f.HasConstantValue && System.Convert.ToInt32(f.ConstantValue, System.Globalization.CultureInfo.InvariantCulture) == v);
-        if (member is not null) {
-          stages.Add(member.Name);
-        }
-      }
-    }
+    var stages = CompileTimeMessageClassification.FireAtStagesOf(classSymbol);
+    var isInboxHandler = CompileTimeMessageClassification.IsInboxHandler(stages);
 
-    // A receptor with no [FireAt] is a direct inbox handler that fires at PostInboxDetached/
-    // PostInboxInline by default (transport path) or LocalImmediateDetached (local path).
-    // One with [FireAt(PreInboxInline)] is a lifecycle receptor at that stage.
-    // Receptors at PreInbox/PostInbox stages are NOT inbox handlers — they're lifecycle hooks.
-    // Receptors with no stages OR with stages unrelated to PreInbox/PostInbox count as inbox handlers.
-    var hasOnlyLifecycleStages = stages.Count > 0
-      && stages.All(s => s.StartsWith("PreInbox", System.StringComparison.Ordinal)
-                      || s.StartsWith("PostInbox", System.StringComparison.Ordinal)
-                      || s.StartsWith("PrePerspective", System.StringComparison.Ordinal)
-                      || s.StartsWith("PostPerspective", System.StringComparison.Ordinal)
-                      || s.StartsWith("PostAllPerspectives", System.StringComparison.Ordinal)
-                      || s.StartsWith("PostLifecycle", System.StringComparison.Ordinal));
-    var isInboxHandler = !hasOnlyLifecycleStages;
-
-    return new ReceptorRegistryEntry(messageType, stages.ToImmutable(), isInboxHandler);
+    return new ReceptorRegistryEntry(messageType, stages, isInboxHandler, contractNamespace, kind);
   }
 
   // ===== Discovery: perspectives =====
@@ -305,6 +283,10 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     var inboxHandlerTypes = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
 
+    // Handled-message enumeration (topology arc phase 3): every receptor's message type with
+    // its contract namespace + compile-time-detected kind, deduplicated by type name.
+    var handledMessages = new System.Collections.Generic.SortedDictionary<string, (string ContractNamespace, string Kind)>(System.StringComparer.Ordinal);
+
     // Every receptor message type goes here regardless of which stage(s) it fires at.
     // Critical for HasAnyConsumer correctness: a receptor [FireAt(PostAllPerspectivesDetached)]
     // would otherwise be missed by anyConsumerTypes (since PostAllPerspectives is NOT an
@@ -324,6 +306,9 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       }
       if (entry.IsInboxHandler) {
         inboxHandlerTypes.Add(entry.MessageType);
+      }
+      if (!handledMessages.ContainsKey(entry.MessageType)) {
+        handledMessages[entry.MessageType] = (entry.ContractNamespace, entry.Kind);
       }
     }
 
@@ -418,6 +403,13 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
     sb.AppendLine("      },");
     sb.AppendLine("      StageTypes = stageTypes,");
+    // HandledMessages: fully-qualified type references so consumer types named
+    // HandledMessageInfo / MessageKind can never collide with the emitted code.
+    sb.AppendLine("      HandledMessages = new global::Whizbang.Core.Messaging.HandledMessageInfo[] {");
+    foreach (var kvp in handledMessages) {
+      sb.AppendLine($"        new global::Whizbang.Core.Messaging.HandledMessageInfo(\"{kvp.Key}\", \"{kvp.Value.ContractNamespace}\", global::Whizbang.Core.Routing.MessageKind.{kvp.Value.Kind}),");
+    }
+    sb.AppendLine("      },");
     sb.AppendLine("    };");
     sb.AppendLine();
     sb.AppendLine("    AssemblyRegistry<ReceptorRegistryContribution>.Register(contribution);");

@@ -25,13 +25,29 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   private const string TRANSPORT_NOT_INITIALIZED_MESSAGE = "RabbitMQ transport is not initialized. Call InitializeAsync() first.";
   private const string ENVELOPE_TYPE_HEADER = "EnvelopeType";
 
+  /// <summary>Transport identifier on poison-detection capability reports and quarantine metrics.</summary>
+  private const string RABBITMQ_TRANSPORT_TAG = "rabbitmq";
+
   private readonly IConnection _connection;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly RabbitMQChannelPool _channelPool;
   private readonly RabbitMQOptions _options;
   private readonly ILogger<RabbitMQTransport>? _logger;
   private readonly ConcurrentDictionary<string, bool> _declaredExchanges = new();
+  private readonly ConcurrentDictionary<string, byte> _declaredDeadLetterQueues = new();
+
+  /// <summary>
+  /// Snapshot of the dead-letter queue names this transport has declared — the fleet
+  /// dead-letter drainer enumerates these on every drain pass so queues declared after
+  /// container build still get their broker DLQs drained.
+  /// </summary>
+  internal IReadOnlyCollection<string> ActiveDeadLetterQueues => [.. _declaredDeadLetterQueues.Keys];
   private readonly IMessageDiscardPolicy? _discardPolicy;
+  private readonly IPoisonMessageDetector? _poisonDetector;
+  private readonly TimeProvider _timeProvider;
+
+  /// <summary>Last age-capability value reported per queue — see <c>_tryQuarantinePoisonAsync</c>.</summary>
+  private readonly ConcurrentDictionary<string, bool> _reportedAgeCapability = new(StringComparer.Ordinal);
   private Func<CancellationToken, Task>? _recoveryHandler;
   private bool _disposed;
   private bool _isInitialized;
@@ -44,13 +60,19 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   /// <param name="channelPool">Thread-safe channel pool</param>
   /// <param name="options">Transport configuration options</param>
   /// <param name="logger">Optional logger instance</param>
+  /// <param name="discardPolicy">Optional shared no-consumer discard policy.</param>
+  /// <param name="poisonDetector">Topology arc phase 8.5 — Core's poison policy. Optional; null
+  /// keeps pre-phase-8.5 behavior (the <c>IMessageDiscardPolicy</c> idiom — no new ITransport member).</param>
+  /// <param name="timeProvider">Clock used for message-age evaluation and publish stamping.</param>
   public RabbitMQTransport(
     IConnection connection,
     JsonSerializerOptions jsonOptions,
     RabbitMQChannelPool channelPool,
     RabbitMQOptions options,
     ILogger<RabbitMQTransport>? logger = null,
-    IMessageDiscardPolicy? discardPolicy = null
+    IMessageDiscardPolicy? discardPolicy = null,
+    IPoisonMessageDetector? poisonDetector = null,
+    TimeProvider? timeProvider = null
   ) {
     ArgumentNullException.ThrowIfNull(connection);
     ArgumentNullException.ThrowIfNull(jsonOptions);
@@ -63,6 +85,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     _options = options;
     _logger = logger;
     _discardPolicy = discardPolicy;
+    _poisonDetector = poisonDetector;
+    _timeProvider = timeProvider ?? TimeProvider.System;
 
     // Hook into connection recovery event to notify subscribers
     _connection.RecoverySucceededAsync += _onConnectionRecoverySucceededAsync;
@@ -110,6 +134,32 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       noWait: false,
       cancellationToken: cancellationToken
     );
+    _declaredExchanges.TryAdd(exchangeName, true);
+  }
+
+  /// <summary>
+  /// Verifies a CONSUMER-provisioned exchange exists (per-namespace command inbox / system
+  /// broadcast inbox — the <c>RequireProvisionedEntity</c> destination marker, topology arc
+  /// phase 6) WITHOUT creating it: an active declare would create a bindingless exchange and
+  /// the broker would silently drop every message. Probes passively on a DEDICATED rented
+  /// channel (a failed passive declare closes the channel; the pool discards closed channels
+  /// on return), caches the positive answer per process, never caches the negative one — an
+  /// outbox retry succeeds the moment the handling service provisions the entity.
+  /// </summary>
+  /// <exception cref="UnroutableDestinationException">Thrown when the exchange does not
+  /// exist — the LOUD publish-time failure the flip guarantees, carrying the entity name.</exception>
+  private async ValueTask _ensureRequiredExchangeExistsAsync(string exchangeName, CancellationToken cancellationToken) {
+    if (_declaredExchanges.ContainsKey(exchangeName)) {
+      return;
+    }
+
+    using var probe = await _channelPool.RentAsync(cancellationToken);
+    try {
+      await probe.Channel.ExchangeDeclarePassiveAsync(exchangeName, cancellationToken);
+    } catch (OperationInterruptedException ex) {
+      throw new UnroutableDestinationException(exchangeName, ex);
+    }
+
     _declaredExchanges.TryAdd(exchangeName, true);
   }
 
@@ -191,13 +241,23 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       );
     }
 
+    // Consumer-provisioned entities (phase 6) are verified — never created — BEFORE the
+    // publish channel is rented; a missing entity throws UnroutableDestinationException.
+    var requiresProvisionedEntity = CommandInboxNaming.RequiresProvisionedEntity(destination);
+    if (requiresProvisionedEntity) {
+      await _ensureRequiredExchangeExistsAsync(exchangeName, cancellationToken);
+    }
+
     try {
       // Rent channel from pool (RAII pattern - automatically returned on dispose)
       using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
       var channel = pooledChannel.Channel;
 
-      // Declare exchange (cached — only first call per exchange hits the broker)
-      await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
+      // Declare exchange (cached — only first call per exchange hits the broker; marked
+      // destinations were already verified passively above and sit in the same cache)
+      if (!requiresProvisionedEntity) {
+        await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
+      }
 
       // Get envelope type name - prefer provided envelopeType to preserve correct generic type
       // (envelope.GetType() may be MessageEnvelope<object> when loaded from outbox)
@@ -230,6 +290,11 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
         MessageId = envelope.MessageId.Value.ToString(),
         ContentType = "application/json",
         Persistent = true,
+        // Topology arc phase 8.5 — first-enqueue stamp. RabbitMQ has no broker-set equivalent of
+        // Azure Service Bus's EnqueuedTime, so the publisher must supply it; it then survives
+        // every requeue and the dead-letter exchange, which is what makes age-based poison
+        // detection possible on this transport at all.
+        Timestamp = _publishTimestamp(),
         Headers = new Dictionary<string, object?>()
       };
 
@@ -239,9 +304,17 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       // Add correlation and causation IDs if present
       _setCorrelationAndCausationHeaders(envelope, properties);
 
+      // Control-class lifetime (topology arc phase 9): lift the minted TTL out of the metadata bag
+      // into per-message expiry. Unlifted it would fall through to Headers below, where the broker
+      // never looks — i.e. a control backlog that still queues forever.
+      _applyControlClassTimeToLive(properties, ControlMessageTtl.FromMetadata(destination.Metadata));
+
       // Add custom metadata (convert JsonElement to RabbitMQ-compatible types)
       if (destination.Metadata != null) {
         foreach (var (key, value) in destination.Metadata) {
+          if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+            continue;  // lifted above
+          }
           properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
         }
       }
@@ -312,12 +385,22 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     var exchangeName = destination.Address;
     var results = new List<BulkPublishItemResult>(items.Count);
 
+    // Consumer-provisioned entities (phase 6) are verified — never created — up front; a
+    // missing entity throws UnroutableDestinationException before anything is published.
+    var requiresProvisionedEntity = CommandInboxNaming.RequiresProvisionedEntity(destination);
+    if (requiresProvisionedEntity) {
+      await _ensureRequiredExchangeExistsAsync(exchangeName, cancellationToken);
+    }
+
     try {
       using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
       var channel = pooledChannel.Channel;
 
-      // Declare exchange (cached — only first call per exchange hits the broker)
-      await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
+      // Declare exchange (cached — only first call per exchange hits the broker; marked
+      // destinations were already verified passively above and sit in the same cache)
+      if (!requiresProvisionedEntity) {
+        await _ensureExchangeDeclaredAsync(channel, exchangeName, cancellationToken);
+      }
 
       // Pipeline publishes: issue all calls on the channel sequentially without awaiting each,
       // then await completions in a second pass. RabbitMQ channels are not thread-safe, so
@@ -382,6 +465,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       MessageId = envelope.MessageId.Value.ToString(),
       ContentType = "application/json",
       Persistent = true,
+      // Phase 8.5 first-enqueue stamp — see the single-publish path.
+      Timestamp = _publishTimestamp(),
       Headers = new Dictionary<string, object?>()
     };
 
@@ -389,8 +474,16 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
     _setCorrelationAndCausationHeaders(envelope, properties);
 
+    // Control-class lifetime (topology arc phase 9): per-item stamp wins over the shared
+    // destination's, matching the collide-by-overwrite contract PerItemMetadata already documents.
+    _applyControlClassTimeToLive(
+      properties, ControlMessageTtl.Resolve(item.PerItemMetadata, destination.Metadata));
+
     if (destination.Metadata != null) {
       foreach (var (key, value) in destination.Metadata) {
+        if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+          continue;  // lifted above
+        }
         properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
       }
     }
@@ -399,6 +492,9 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     // (e.g., whizbang.body-size, whizbang.is-claim) — that's the contract.
     if (item.PerItemMetadata != null) {
       foreach (var (key, value) in item.PerItemMetadata) {
+        if (string.Equals(key, ControlMessageTtl.METADATA_KEY, StringComparison.Ordinal)) {
+          continue;  // lifted above
+        }
         properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
       }
     }
@@ -411,6 +507,31 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       body: body,
       cancellationToken: cancellationToken
     );
+  }
+
+  /// <summary>
+  /// The AMQP first-enqueue stamp applied to every publish (topology arc phase 8.5). AMQP
+  /// timestamps are whole unix seconds — sub-second precision is not available on the wire and is
+  /// irrelevant to a threshold measured in tens of minutes.
+  /// </summary>
+  private AmqpTimestamp _publishTimestamp() => new(_timeProvider.GetUtcNow().ToUnixTimeSeconds());
+
+  /// <summary>
+  /// Applies a minted control-class lifetime as AMQP per-message expiry (topology arc phase 9).
+  /// The wire encoding is a millisecond count as a string; a null or non-positive lifetime leaves
+  /// <c>Expiration</c> unset, which is the pre-phase-9 wire shape exactly. Values beyond
+  /// <see cref="long.MaxValue"/> milliseconds saturate rather than throwing — a degenerate
+  /// configuration must never fault a publish.
+  /// </summary>
+  private static void _applyControlClassTimeToLive(BasicProperties properties, TimeSpan? timeToLive) {
+    if (timeToLive is not { } lifetime || lifetime <= TimeSpan.Zero) {
+      return;
+    }
+
+    var milliseconds = lifetime.TotalMilliseconds >= long.MaxValue
+      ? long.MaxValue
+      : (long)lifetime.TotalMilliseconds;
+    properties.Expiration = milliseconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
   }
 
   /// <summary>
@@ -838,6 +959,14 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     CancellationToken cancellationToken
   ) {
     try {
+      // Topology arc phase 8.5 — poison gate FIRST, on broker metadata alone. A message held
+      // hostage by a redelivery storm may be perfectly well-formed, so this cannot sit behind
+      // deserialization or the no-consumer filter. Quarantine is BasicNack(requeue: false),
+      // which routes to the queue's dead-letter exchange — requeueing would re-arm the loop.
+      if (await _tryQuarantinePoisonAsync(channel, args, queueName)) {
+        return;
+      }
+
       var envelope = _deserializeMessage(args, out var envelopeTypeName);
       if (envelope == null) {
         await _nackDeserializationFailureAsync(channel, args, queueName);
@@ -866,6 +995,81 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     } catch (Exception ex) when (ex is not AlreadyClosedException) {
       await _handleMessageFailureAsync(channel, args, queueName, ex);
     }
+  }
+
+  /// <summary>
+  /// Topology arc phase 8.5 — asks Core's poison detector whether this delivery must be
+  /// quarantined, and executes the verdict with RabbitMQ's native mechanism:
+  /// <c>BasicNackAsync(requeue: false)</c>, which routes the message to the queue's dead-letter
+  /// exchange (the per-namespace DLQ the existing dead-letter drainer replays).
+  /// <para>
+  /// <b>Capability honesty.</b> RabbitMQ's message timestamp is PUBLISHER-set, unlike Azure
+  /// Service Bus's broker-set <c>EnqueuedTime</c>. Whizbang stamps its own publishes, so
+  /// Whizbang-to-Whizbang traffic has a trustworthy first-enqueue time that survives requeue and
+  /// the dead-letter exchange — but a message from a foreign publisher, or from a build predating
+  /// this phase, arrives without one. On that surface layer 1 CANNOT work, so the transport
+  /// declares the surface incapable (health-visible warning) and detection degrades to layer 2's
+  /// durable observation counting. It never treats an absent stamp as an infinitely old message,
+  /// and it never goes quietly inert — silence is precisely how the delivery-count valve failed.
+  /// </para>
+  /// </summary>
+  /// <returns><c>true</c> when the message was quarantined and the caller must stop.</returns>
+  private async Task<bool> _tryQuarantinePoisonAsync(
+      IChannel channel, BasicDeliverEventArgs args, string queueName) {
+    if (_poisonDetector is null) {
+      return false;
+    }
+
+    var messageId = args.BasicProperties.MessageId ?? UNKNOWN_MESSAGE_ID;
+    var unixSeconds = args.BasicProperties.Timestamp.UnixTime;
+    var hasTrustworthyAge = unixSeconds > 0;
+
+    // Report only on CHANGE. This runs per message on the receive hot path and the capability state
+    // is a shared dictionary; an unconditional write per delivery would turn a diagnostic into a
+    // contention point. A lock-free read keeps steady state to one lookup.
+    if (!_reportedAgeCapability.TryGetValue(queueName, out var previousCapability)
+        || previousCapability != hasTrustworthyAge) {
+      _reportedAgeCapability[queueName] = hasTrustworthyAge;
+      _poisonDetector.ReportAgeCapability(RABBITMQ_TRANSPORT_TAG, queueName, hasTrustworthyAge);
+    }
+
+    var context = new PoisonEvaluationContext(
+      MessageId: messageId,
+      FirstEnqueuedAt: hasTrustworthyAge ? DateTimeOffset.FromUnixTimeSeconds(unixSeconds) : null,
+      // RabbitMQ exposes no delivery counter on a classic queue — `redelivered` is a boolean, so
+      // the best honest reading is 1 or 2. Carried for telemetry only: the default detector never
+      // acts on it (that counter is exactly what this phase stopped trusting).
+      BrokerDeliveryCount: args.Redelivered ? 2 : 1,
+      DurableObservationCount: null,
+      Now: _timeProvider.GetUtcNow());
+
+    var verdict = _poisonDetector.Evaluate(context);
+    if (!verdict.ShouldQuarantine) {
+      return false;
+    }
+
+    _poisonDetector.RecordQuarantine(
+      PoisonQuarantineGate.Receive, verdict, context,
+      new Dictionary<string, object?> {
+        ["transport"] = RABBITMQ_TRANSPORT_TAG,
+        ["queue"] = queueName,
+      });
+
+    _logger?.LogWarning(
+      "NACK reason: Poison quarantine ({PoisonReason}) for message {MessageId} from queue {QueueName} "
+      + "- sending to dead letter exchange. {Detail}",
+      verdict.Reason, messageId, queueName, verdict.Detail);
+
+    try {
+      await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: false);
+    } catch (Exception ex) when (ex is AlreadyClosedException or ObjectDisposedException) {
+      _logger?.LogWarning(
+        ex,
+        "RabbitMQ channel closed/disposed while quarantining poison message {MessageId} from queue "
+        + "{QueueName} — broker will redeliver and the quarantine re-evaluates",
+        messageId, queueName);
+    }
+    return true;
   }
 
   /// <summary>
@@ -991,105 +1195,21 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
       cancellationToken: cancellationToken
     );
 
-    await channel.ExchangeDeclareAsync(
-      exchange: exchangeName,
-      type: "topic",
-      durable: true,
-      autoDelete: false,
-      arguments: null,
-      passive: false,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
+    // Delegates to RabbitMQEntityProvisioning — the ONE code path shared with the
+    // manifest-driven DARK provisioning (phase 5) so exchange/queue arguments and binding
+    // shapes can never drift between subscribe-time and boot-time provisioning.
+    await RabbitMQEntityProvisioning.DeclareSubscriptionInfrastructureAsync(
+      channel, _options, exchangeName, queueName, routingPatterns, _logger, cancellationToken);
 
+    // The helper declares the DLQ under this same option; the transport still has to REMEMBER
+    // the name, because ActiveDeadLetterQueues is what the fleet dead-letter drainer enumerates
+    // on every pass. Extracting the declaration must not take the bookkeeping with it —
+    // otherwise queues declared at subscribe time never get their broker DLQ drained.
     if (_options.AutoDeclareDeadLetterExchange) {
-      await _declareDeadLetterExchangeAsync(channel, exchangeName, queueName, cancellationToken);
-    }
-
-    var queueArgs = new Dictionary<string, object?>();
-    if (_options.AutoDeclareDeadLetterExchange) {
-      queueArgs["x-dead-letter-exchange"] = $"{exchangeName}.dlx";
-    }
-    if (_options.EnableSingleActiveConsumer) {
-      queueArgs["x-single-active-consumer"] = true;
-    }
-
-    await channel.QueueDeclareAsync(
-      queue: queueName,
-      durable: true,
-      exclusive: false,
-      autoDelete: false,
-      arguments: queueArgs,
-      passive: false,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
-
-    foreach (var pattern in routingPatterns) {
-      if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-        _logger.LogDebug(
-          "Binding queue {QueueName} to exchange {ExchangeName} with routing pattern {Pattern}",
-          queueName,
-          exchangeName,
-          pattern
-        );
-      }
-
-      await channel.QueueBindAsync(
-        queue: queueName,
-        exchange: exchangeName,
-        routingKey: pattern,
-        arguments: null,
-        noWait: false,
-        cancellationToken: cancellationToken
-      );
+      _declaredDeadLetterQueues.TryAdd($"{queueName}.dlq", 0);
     }
 
     return channel;
-  }
-
-  /// <summary>
-  /// Declares dead letter exchange and queue for a given exchange/queue pair.
-  /// </summary>
-  private static async Task _declareDeadLetterExchangeAsync(
-    IChannel channel,
-    string exchangeName,
-    string queueName,
-    CancellationToken cancellationToken
-  ) {
-    var dlxName = $"{exchangeName}.dlx";
-    var dlqName = $"{queueName}.dlq";
-
-    await channel.ExchangeDeclareAsync(
-      exchange: dlxName,
-      type: "fanout",
-      durable: true,
-      autoDelete: false,
-      arguments: null,
-      passive: false,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
-
-    await channel.QueueDeclareAsync(
-      queue: dlqName,
-      durable: true,
-      exclusive: false,
-      autoDelete: false,
-      arguments: null,
-      passive: false,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
-
-    await channel.QueueBindAsync(
-      queue: dlqName,
-      exchange: dlxName,
-      routingKey: "",
-      arguments: null,
-      noWait: false,
-      cancellationToken: cancellationToken
-    );
   }
 
   /// <summary>

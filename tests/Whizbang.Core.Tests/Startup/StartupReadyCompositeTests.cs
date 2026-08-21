@@ -281,4 +281,153 @@ public class StartupReadyCompositeTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  private sealed class _capturingLogger : Microsoft.Extensions.Logging.ILogger<StartupReadyService> {
+    private readonly List<string> _entries = [];
+    private readonly Lock _lock = new();
+    public IReadOnlyList<string> Entries {
+      get {
+        lock (_lock) {
+          return [.. _entries];
+        }
+      }
+    }
+    IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_lock) {
+        _entries.Add(formatter(state, exception));
+      }
+    }
+  }
+
+  /// <summary>
+  /// Issue #493: a fail-closed wait must never be a SILENT wait. While the composite is blocked
+  /// on a contributor, it says so — naming the contributor — on a backoff.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task StartedAsync_WhileBlockedOnAContributor_NarratesWhatItIsWaitingOnAsync(CancellationToken cancellationToken) {
+    var state = new StartupPipelineState();
+    await new StartupPipelineRunner([], [state]).RunAsync(cancellationToken);   // pipeline drained
+    var slow = new _tcsContributor("slow-transport");
+    var logger = new _capturingLogger();
+    var service = new StartupReadyService(state, new StartupReadySignal(), [slow], logger) {
+      WaitProbeInterval = TimeSpan.FromMilliseconds(15),
+    };
+
+    var started = service.StartedAsync(cancellationToken);
+    while (!logger.Entries.Any(e => e.Contains("slow-transport"))) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await Task.Delay(15, cancellationToken);
+    }
+
+    await Assert.That(logger.Entries.Any(e =>
+        e.Contains("not ready") && e.Contains("slow-transport"))).IsTrue()
+      .Because("a 16-minute hang that logs nothing gives a consumer nothing to bisect against — "
+             + "the wait must name what it is waiting on");
+
+    slow.MarkReady();
+    await started.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+  }
+
+  /// <summary>The other silent shape: the pipeline never even started (a host without the
+  /// pipeline worker, a gate that never opens). The narration must say THAT, not nothing.</summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task StartedAsync_WhenThePipelineNeverStarted_SaysSoAsync(CancellationToken cancellationToken) {
+    var logger = new _capturingLogger();
+    var service = new StartupReadyService(new StartupPipelineState(), new StartupReadySignal(), [], logger) {
+      WaitProbeInterval = TimeSpan.FromMilliseconds(15),
+    };
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+    var started = service.StartedAsync(cts.Token);
+    while (!logger.Entries.Any(e => e.Contains("no run has started"))) {
+      cancellationToken.ThrowIfCancellationRequested();
+      await Task.Delay(15, cancellationToken);
+    }
+    await cts.CancelAsync();
+    try { await started; } catch (OperationCanceledException) { /* fail-closed, as designed */ }
+
+    await Assert.That(logger.Entries.Any(e => e.Contains("no run has started"))).IsTrue()
+      .Because("'not started' and 'started but stuck' are different diagnoses; the narration must distinguish them");
+  }
+
+  // ── cancellation during startup is a graceful stop, not a crash ────────
+
+  /// <summary>
+  /// A host told to stop while startup is still waiting (SIGTERM mid-rollout, a liveness
+  /// restart, an operator cancelling a slow boot) must exit gracefully. StartedAsync runs on
+  /// IHostedLifecycleService, and Host.StartAsync aborts on the first exception and rethrows —
+  /// so propagating the cancellation out of the readiness wait turns an ordinary "we are
+  /// shutting down" into an UNHANDLED exception and a non-zero process exit. Under an
+  /// orchestrator that reads as a crash and restarts the pod, which cancels the next startup
+  /// the same way: a self-sustaining crash loop out of a routine rollout. Readiness must simply
+  /// not be signalled — the composite stays fail-closed, and the process leaves quietly.
+  /// </summary>
+  [Test]
+  public async Task ReadyService_CancelledWhileWaiting_ReturnsGracefullyWithoutSignallingAsync() {
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    // Never drained: the wait is still pending when cancellation arrives.
+    var service = new StartupReadyService(state, signal);
+
+    using var cts = new CancellationTokenSource();
+    var started = service.StartedAsync(cts.Token);
+    await cts.CancelAsync();
+
+    await started.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(started.IsCompletedSuccessfully).IsTrue()
+      .Because("cancellation during startup is a graceful stop — rethrowing it crashes the host "
+             + "(Host.StartAsync aborts on first exception) and turns a routine rollout into a crash loop");
+    await Assert.That(signal.IsReady).IsFalse()
+      .Because("the composite is fail-closed: a cancelled startup never became ready");
+  }
+
+  /// <summary>A contributor that never answers must cancel just as gracefully as the pipeline wait.</summary>
+  [Test]
+  public async Task ReadyService_CancelledWaitingOnContributor_ReturnsGracefullyAsync() {
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    var stuck = new _tcsContributor("subscriptions");
+    var service = new StartupReadyService(state, signal, [stuck]);
+
+    await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
+
+    using var cts = new CancellationTokenSource();
+    var started = service.StartedAsync(cts.Token);
+    await cts.CancelAsync();
+
+    await started.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(started.IsCompletedSuccessfully).IsTrue()
+      .Because("the contributor leg must fail closed and quiet, exactly like the pipeline leg");
+    await Assert.That(signal.IsReady).IsFalse();
+  }
+
+  /// <summary>Genuine faults must still surface — the graceful path is cancellation ONLY.</summary>
+  [Test]
+  public async Task ReadyService_ContributorFaults_StillPropagatesAsync() {
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    var faulting = new _faultingContributor("broken");
+    var service = new StartupReadyService(state, signal, [faulting]);
+
+    await _driveAsync(state, new StartupRunPlan([_step("Migrate")]), _completed("Migrate"));
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+    await Assert.ThrowsAsync<InvalidOperationException>(async () => await service.StartedAsync(cts.Token))
+      .Because("a broken contributor is a real failure — swallowing it would hide a fail-closed host");
+    await Assert.That(signal.IsReady).IsFalse();
+  }
+
+  private sealed class _faultingContributor(string name) : IStartupReadinessContributor {
+    public string ContributorName => name;
+    public Task WaitForContributorReadyAsync(CancellationToken cancellationToken) =>
+      Task.FromException(new InvalidOperationException("contributor is broken"));
+  }
 }

@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
@@ -23,4 +25,12 @@ public sealed class WhizbangReceptorRegistryQueryAdapter(IReceptorRegistry? runt
   public bool HasAnyConsumer(string messageType)
     => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.HasAnyConsumer(messageType)
        || runtimeRegistry?.HasRuntimeConsumerFor(messageType) == true;
+
+  /// <inheritdoc />
+  /// <remarks>Runtime-registered receptors (the control-plane surface) are NOT enumerated
+  /// here — they register after startup and carry no compile-time namespace/kind metadata;
+  /// the predicate surface (<see cref="HasAnyConsumer"/>) still covers them at the discard
+  /// gates.</remarks>
+  public IReadOnlyList<HandledMessageInfo> GetHandledMessages()
+    => Whizbang.Core.Generated.WhizbangReceptorRegistryQuery.GetHandledMessages();
 }

@@ -104,8 +104,19 @@ public sealed partial class IntegrityCheckpointWorker(
     // historically-emitted (own-lane digest) types, so quiet periods still heartbeat every
     // covered topic. Falls back to the dispatcher when the transport infrastructure (or any
     // resolvable topic) is absent — in-memory hosts keep the original behavior.
+    // CONTROL CLASS (topology arc phase 9): the checkpoint is the archetypal supersedable control
+    // signal — the next cycle re-derives it from the same watermarks, so a copy that outlives its
+    // successor is pure backlog. mint.Checkpoints owns the lifetime derivation (TTL ≈ 2× cadence);
+    // the worker supplies only the cadence it actually runs on, so retuning the interval retunes
+    // the lifetime with it. Absent mint (host built without AddWhizbang) ⇒ no TTL, pre-phase-9.
+    var minted = scope.ServiceProvider.GetService<Minting.ICheckpointMint>()?.Mint(
+      new Minting.ControlMintRequest<IntegrityCheckpoint> {
+        Payload = checkpoint,
+        Cadence = TimeSpan.FromSeconds(_options.CheckpointIntervalSeconds),
+      });
+
     var topicsPublished = await _tryPublishToOwnEventTopicsAsync(
-      scope.ServiceProvider, coordinator, checkpoint, window, cancellationToken).ConfigureAwait(false);
+      scope.ServiceProvider, coordinator, checkpoint, window, minted?.TimeToLive, cancellationToken).ConfigureAwait(false);
     if (topicsPublished == 0) {
       await dispatcher.PublishAsync(checkpoint).ConfigureAwait(false);
     }
@@ -124,13 +135,24 @@ public sealed partial class IntegrityCheckpointWorker(
   }
 
   /// <summary>
+  /// Stamps a minted control-class lifetime onto a destination, if one was minted. Applied AFTER
+  /// <c>ControlPlaneDestination</c> (which replaces the metadata bag wholesale) so the session key
+  /// survives — a sessionless delivery to a session-enabled subscription is dead-lettered silently.
+  /// </summary>
+  private static TransportDestination _withControlLifetime(
+      TransportDestination destination, TimeSpan? timeToLive) =>
+    timeToLive is { } lifetime && lifetime > TimeSpan.Zero
+      ? ControlMessageTtl.Stamp(destination, lifetime)
+      : destination;
+
+  /// <summary>
   /// Publishes the checkpoint envelope once per DISTINCT topic of this origin's audited event
   /// types. Returns the number of topics published to; 0 means the caller should use the
   /// dispatcher fallback (missing transport infrastructure, or no type resolved to a topic).
   /// </summary>
   private async Task<int> _tryPublishToOwnEventTopicsAsync(
       IServiceProvider services, IWorkCoordinator coordinator, IntegrityCheckpoint checkpoint,
-      IntegrityCheckpointWindow window, CancellationToken cancellationToken) {
+      IntegrityCheckpointWindow window, TimeSpan? timeToLive, CancellationToken cancellationToken) {
     var transport = services.GetService<ITransport>();
     var serializer = services.GetService<IEnvelopeSerializer>();
     var catalog = services.GetService<IMessageTypeCatalog>();
@@ -167,8 +189,10 @@ public sealed partial class IntegrityCheckpointWorker(
       // Session-enabled subscriptions dead-letter sessionless deliveries — the checkpoint's own
       // stream identity (one homogeneous checkpoint stream per origin) is the session key.
       if (routing is not null) {
-        var destination = ControlPlaneDestination.WithSession(
-          routing.GetDestination(eventType, ownedDomains, MessageKind.Event), checkpoint.CheckpointStreamId);
+        var destination = _withControlLifetime(
+          ControlPlaneDestination.WithSession(
+            routing.GetDestination(eventType, ownedDomains, MessageKind.Event), checkpoint.CheckpointStreamId),
+          timeToLive);
         destinations.TryAdd(destination.Address, destination);
         continue;
       }
@@ -177,7 +201,8 @@ public sealed partial class IntegrityCheckpointWorker(
         continue;   // not a registry-known event — no topic to ride.
       }
       var address = topicStrategy?.ResolveTopic(eventType, baseTopic) ?? baseTopic;
-      destinations.TryAdd(address, ControlPlaneDestination.For(address, checkpoint.CheckpointStreamId));
+      destinations.TryAdd(address, _withControlLifetime(
+        ControlPlaneDestination.For(address, checkpoint.CheckpointStreamId), timeToLive));
     }
     if (destinations.Count == 0) {
       return 0;

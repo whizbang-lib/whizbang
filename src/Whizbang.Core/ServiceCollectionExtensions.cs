@@ -120,10 +120,59 @@ public static class ServiceCollectionExtensions {
         }
       }
 #pragma warning restore S3267
+
+      // Merge coalesce bindings too — last-wins per tag applies across AddWhizbang calls,
+      // consistent with the single-call Coalesce() semantics.
+      foreach (var binding in coreOptions.Tags.CoalesceBindings) {
+        existing.UseCoalesceBinding(binding.Key, binding.Value);
+      }
+
+      // Same merge rule for the TransportNamespace routing bindings (topology arc phase 8):
+      // last-wins per tag across AddWhizbang calls.
+      foreach (var binding in coreOptions.Tags.RouteNamespaceBindings) {
+        existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
+      }
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);
     }
+
+    // Tag-policy startup validation: the reserved sys- tag prefix and coalesce-binding
+    // ambiguity are checked when the host starts (a hosted service so every assembly's
+    // [ModuleInitializer] has populated MessageTagRegistry by then); a violation aborts
+    // host.RunAsync() instead of shipping under a policy nobody declared.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, TagPolicyStartupValidator>());
+
+    // Coalesce-group resolver: the AOT tag lookup the outbox mint seams consult to stamp
+    // tag-bound coalesce groups + max-delay floors. Singleton — it caches per-type-name
+    // resolution over the (post-startup immutable) tag registry and bindings. Resolution-time
+    // is where the built-in audit binding (EnableAudit's knobs -> Coalesce(SystemTags.AUDIT))
+    // is applied: all registration ordering has settled by then, and add-if-absent semantics
+    // keep any host binding for the tag in charge.
+    services.TryAddSingleton(sp => {
+      var tagOptions = sp.GetRequiredService<TagOptions>();
+      SystemEvents.SystemEventCoalesceDefaults.Apply(
+        tagOptions,
+        sp.GetService<IOptions<SystemEvents.SystemEventOptions>>()?.Value);
+      return new CoalesceGroupResolver(tagOptions, sp.GetService<TimeProvider>());
+    });
+
+    // TransportNamespace resolver (topology arc phase 8): the AOT tag lookup the transport
+    // boundary consults to map a message type to its broker namespace. Singleton for the same
+    // reason as CoalesceGroupResolver — it caches per-type-name resolution over the
+    // (post-startup immutable) registry and bindings. The configuration binder is applied at
+    // resolution time so `Whizbang:Tags:RouteNamespace:<tag>` wins over the code callback and
+    // an operator can re-class traffic without a redeploy.
+    services.TryAddSingleton(sp => {
+      var tagOptions = sp.GetRequiredService<TagOptions>();
+      TagRouteNamespaceConfigurationBinder.Apply(tagOptions, sp.GetService<IConfiguration>());
+      return new TransportNamespaceResolver(tagOptions);
+    });
+
+    // Control-class resolver (topology arc phase 9): the sibling lookup the RECEIVE boundary
+    // consults, answering "is this type-name in the sys-control class?" so the non-durable path is
+    // taken for it and for nothing else. Singleton for the same caching reason as above.
+    services.TryAddSingleton(_ => new ControlClassResolver());
 
     // Register TracingOptions with IOptions pattern
     _configureTracingOptions(services, coreOptions);
@@ -244,6 +293,18 @@ public static class ServiceCollectionExtensions {
     });
 
     services.AddWhizbangMessageSecurity();
+
+    // The event mint (topology arc phase 4): the composite splitter + the family facade.
+    // Turnkey in the core pipeline — never a per-assembly generated registration, which
+    // multi-assembly hosts can strip (the silent worker-never-starts signature). TryAdd keeps
+    // repeat AddWhizbang() calls idempotent and lets a host substitute its own families first.
+    services.TryAddSingleton<Minting.ICompositeFactory, Minting.CompositeFactory>();
+    services.TryAddSingleton<Minting.ICollectiveMint, Minting.CollectiveMint>();
+    // The checkpoint family reads the control-class options for its TTL derivation (phase 9);
+    // register them here too so `AddWhizbang()` alone still yields a mint that derives correctly.
+    services.AddOptions<Routing.ControlClassOptions>();
+    services.TryAddSingleton<Minting.ICheckpointMint, Minting.CheckpointMint>();
+    services.TryAddSingleton<Minting.IEventMint, Minting.EventMint>();
 
     // Register lens infrastructure
     services.TryAddSingleton<LensOptions>();

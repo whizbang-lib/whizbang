@@ -53,6 +53,13 @@ public sealed partial class LoggingStartupStepObserver : IStartupStepObserver {
     return ValueTask.CompletedTask;
   }
 
+  /// <inheritdoc />
+  public ValueTask OnStepWaitingAsync(StartupStepWaitContext context, CancellationToken cancellationToken) {
+    LogStepWaiting(_logger, context.Descriptor.Name, context.Duty,
+      context.Waited.TotalSeconds, context.LastRefusalDetail ?? "held by another instance");
+    return ValueTask.CompletedTask;
+  }
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Debug,
     Message = "Startup step {Step} starting")]
   static partial void LogStarting(ILogger logger, string step);
@@ -64,6 +71,10 @@ public sealed partial class LoggingStartupStepObserver : IStartupStepObserver {
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
     Message = "Startup step {Step}: FAILED in {DurationMs:F0}ms — {Reason}")]
   static partial void LogFailed(ILogger logger, string step, double durationMs, string reason);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
+    Message = "Startup step '{Step}' has been waiting {WaitedSeconds:F0}s for duty '{Duty}' ({Detail}) — boot is blocked until it is granted or the elector reports it unacquirable")]
+  static partial void LogStepWaiting(ILogger logger, string step, string duty, double waitedSeconds, string detail);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "Startup pipeline completed: {Total} step(s), {Skipped} skipped, {Failed} failed")]

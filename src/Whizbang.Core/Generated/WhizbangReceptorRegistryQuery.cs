@@ -42,6 +42,7 @@ public static class WhizbangReceptorRegistryQuery {
   private static HashSet<string>? _cachedAnyConsumer;
   private static HashSet<string>? _cachedInboxHandler;
   private static Dictionary<LifecycleStage, HashSet<string>>? _cachedStageTypes;
+  private static IReadOnlyList<HandledMessageInfo>? _cachedHandledMessages;
 
   /// <summary>True if any receptor is registered for the given lifecycle stage + message type.</summary>
   public static bool HasReceptors(LifecycleStage stage, string messageType) {
@@ -59,6 +60,28 @@ public static class WhizbangReceptorRegistryQuery {
   public static bool HasAnyConsumer(string messageType) {
     var anyConsumer = _ensureAnyConsumerCached();
     return anyConsumer.Contains(_normalizeTypeName(messageType));
+  }
+
+  /// <summary>
+  /// Enumerates every receptor-handled message type across all loaded assemblies'
+  /// contributions — deduplicated by message type name (first contribution wins) and
+  /// sorted ordinally by type name so topology projections (subscription context,
+  /// manifest, drift checks) see a deterministic sequence.
+  /// </summary>
+  /// <returns>The merged handled-message enumeration; empty when no contribution
+  /// carries handled-message metadata.</returns>
+  /// <docs>internals/receptor-registry-query</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryAggregationTests.cs:TwoContributions_GetHandledMessages_UnionsAndDeduplicatesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangReceptorRegistryQueryAggregationTests.cs:GetHandledMessages_DeterministicOrder_SortedByTypeNameAsync</tests>
+  public static IReadOnlyList<HandledMessageInfo> GetHandledMessages() {
+    var current = AssemblyRegistry<ReceptorRegistryContribution>.Count;
+    if (_cachedHandledMessages is not null && _cachedContributionCount == current) {
+      return _cachedHandledMessages;
+    }
+    lock (_lock) {
+      _rebuildIfStale(current);
+      return _cachedHandledMessages!;
+    }
   }
 
   /// <summary>
@@ -118,6 +141,7 @@ public static class WhizbangReceptorRegistryQuery {
     var any = new HashSet<string>(System.StringComparer.Ordinal);
     var inbox = new HashSet<string>(System.StringComparer.Ordinal);
     var stages = new Dictionary<LifecycleStage, HashSet<string>>();
+    var handledByName = new Dictionary<string, HandledMessageInfo>(System.StringComparer.Ordinal);
     foreach (var contribution in AssemblyRegistry<ReceptorRegistryContribution>.GetOrderedContributions()) {
       foreach (var t in contribution.AnyConsumerTypes) {
         any.Add(t);
@@ -134,10 +158,18 @@ public static class WhizbangReceptorRegistryQuery {
           set.Add(t);
         }
       }
+      foreach (var handled in contribution.HandledMessages) {
+        // Dedupe by type name across assemblies (first contribution wins — the same type
+        // handled in two assemblies carries identical namespace/kind metadata anyway).
+        handledByName.TryAdd(handled.MessageTypeName, handled);
+      }
     }
+    var handledList = new List<HandledMessageInfo>(handledByName.Values);
+    handledList.Sort(static (a, b) => string.CompareOrdinal(a.MessageTypeName, b.MessageTypeName));
     _cachedAnyConsumer = any;
     _cachedInboxHandler = inbox;
     _cachedStageTypes = stages;
+    _cachedHandledMessages = handledList;
     _cachedContributionCount = currentCount;
   }
 
@@ -152,6 +184,7 @@ public static class WhizbangReceptorRegistryQuery {
       _cachedAnyConsumer = null;
       _cachedInboxHandler = null;
       _cachedStageTypes = null;
+      _cachedHandledMessages = null;
       _cachedContributionCount = -1;
     }
   }

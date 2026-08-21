@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 // BaseUpsertStrategy.PathOnePersistenceOptionsProvider static. Without this, a mutator here could flip the
 // provider mid-seed of a parallel persistence test (e.g. ComplexTypeJsonMappingTests), engaging the atomic
 // path for a model it can't cleanly bind — the cross-test static race behind the PostgreSQL-integration flake.
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
   [After(Test)]
   public Task ClearPathOneProviderAsync() {

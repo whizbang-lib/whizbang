@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;

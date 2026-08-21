@@ -42,6 +42,27 @@ public class MessageKindTests {
     await Assert.That(kind).IsEqualTo(MessageKind.Query);
   }
 
+  [Test]
+  public async Task MessageKind_HasSystem_ValueAsync() {
+    // Arrange & Act - topology arc phase 3: framework system/broadcast traffic
+    // (run-control, killswitches, durable system commands) gets its own kind.
+    const MessageKind kind = MessageKind.System;
+
+    // Assert
+    await Assert.That(kind).IsEqualTo(MessageKind.System);
+  }
+
+  [Test]
+  public async Task MessageKind_ExistingNumericValues_AreStableAsync() {
+    // Lock: adding System must NOT renumber the existing members — persisted metadata
+    // and wire payloads carry these values, so they are append-only.
+    await Assert.That((int)MessageKind.Unknown).IsEqualTo(0);
+    await Assert.That((int)MessageKind.Command).IsEqualTo(1);
+    await Assert.That((int)MessageKind.Event).IsEqualTo(2);
+    await Assert.That((int)MessageKind.Query).IsEqualTo(3);
+    await Assert.That((int)MessageKind.System).IsEqualTo(4);
+  }
+
   #endregion
 
   #region Attribute Detection (Priority 1)

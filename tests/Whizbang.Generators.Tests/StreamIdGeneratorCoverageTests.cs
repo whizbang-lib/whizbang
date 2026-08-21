@@ -21,6 +21,7 @@ public class StreamIdGeneratorCoverageTests {
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Messaging;
+            using Whizbang.Core.Minting;
 
             namespace TestNamespace;
 
@@ -61,6 +62,7 @@ public class StreamIdGeneratorCoverageTests {
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Messaging;
+            using Whizbang.Core.Minting;
 
             namespace TestNamespace;
 
@@ -92,6 +94,7 @@ public class StreamIdGeneratorCoverageTests {
             using System.Linq;
             using Whizbang.Core;
             using Whizbang.Core.Messaging;
+            using Whizbang.Core.Minting;
 
             namespace TestNamespace;
 
@@ -116,6 +119,7 @@ public class StreamIdGeneratorCoverageTests {
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Messaging;
+            using Whizbang.Core.Minting;
 
             namespace TestNamespace;
 
@@ -496,6 +500,7 @@ public class StreamIdGeneratorCoverageTests {
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Messaging;
+            using Whizbang.Core.Minting;
 
             namespace TestNamespace;
 
