@@ -401,10 +401,11 @@ public class NamespaceInboxStrategyTests {
   }
 
   [Test]
-  public async Task GetSubscriptions_OptionsBoundButNotRetired_TransitionalSharedStillPresentAsync() {
-    // Regression guard: binding options alone changes nothing — the transitional shared
-    // subscription stays until retirement is explicitly opted into.
-    var options = new RoutingOptions().RouteAllCommandNamespacesToInbox();
+  public async Task GetSubscriptions_FullFlipButNotRetired_TransitionalSharedStillPresentAsync() {
+    // The dual-delivery rollback rung: publishers fully flipped, but the receiver explicitly
+    // KEEPS the catch-all. (Retirement follows the flip by default since the topology arc's
+    // default flip, so this state is now asked for rather than inherited.)
+    var options = new RoutingOptions().RouteAllCommandNamespacesToInbox().KeepSharedInbox();
     var strategy = new NamespaceInboxStrategy(options);
 
     var subscriptions = strategy.GetSubscriptions(_context());
@@ -439,11 +440,16 @@ public class NamespaceInboxStrategyTests {
   }
 
   [Test]
-  public async Task RoutingOptions_Default_IsStillSharedTopicStrategyAsync() {
-    // The flip decision is phase 6/7 — namespace inboxes are opt-in in this phase.
+  public async Task RoutingOptions_Default_IsNamespaceInboxStrategy_FullyRetiredAsync() {
+    // DEFAULT LOCK (changed by the topology arc's default flip — this asserted the legacy
+    // SharedTopicInboxStrategy while namespace inboxes were opt-in): a config-free consumer
+    // gets the per-namespace topology with no catch-all remnant.
     var options = new RoutingOptions();
 
-    await Assert.That(options.InboxStrategy).IsTypeOf<SharedTopicInboxStrategy>();
+    await Assert.That(options.InboxStrategy).IsTypeOf<NamespaceInboxStrategy>();
+    await Assert.That(options.SharedInboxRetired).IsTrue();
+    await Assert.That(options.InboxStrategy.GetSubscriptions(_context()).Select(s => s.Topic))
+      .DoesNotContain("inbox");
   }
 
   #endregion

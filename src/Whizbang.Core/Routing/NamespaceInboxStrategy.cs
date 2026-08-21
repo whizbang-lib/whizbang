@@ -3,29 +3,31 @@ using System.Collections.Frozen;
 namespace Whizbang.Core.Routing;
 
 /// <summary>
-/// Per-namespace command inboxes (topology arc phase 5, spec migration step 1): the service
-/// subscribes to one <c>inbox.&lt;contract-namespace&gt;</c> topic for every DISTINCT contract
-/// namespace it handles commands from (derived from the receptor registry's handled-message
-/// enumeration), PLUS the system broadcast inbox (<c>inbox.whizbang</c>), PLUS — transitionally —
-/// today's shared-inbox subscription unchanged, so behavior is a strict superset of the shared
-/// strategy while publishers still send everything to the shared inbox.
+/// Per-namespace command inboxes — THE DEFAULT inbox topology. The service subscribes to one
+/// <c>inbox.&lt;contract-namespace&gt;</c> topic for every DISTINCT contract namespace it handles
+/// commands from (derived from the receptor registry's handled-message enumeration), PLUS the
+/// system broadcast inbox (<c>inbox.whizbang</c>). While the shared inbox is NOT retired
+/// (mid-migration) it also carries the legacy shared-inbox subscription unchanged, making the set
+/// a strict superset of the shared strategy.
 /// </summary>
 /// <remarks>
-/// <para>Retirement schedule per subscription part:</para>
+/// <para>The three subscription parts:</para>
 /// <list type="bullet">
-///   <item><b>Per-namespace command inboxes</b> — permanent; the target topology. They sit DARK
-///   (no publisher sends to them) until the publisher flip (phase 6).</item>
+///   <item><b>Per-namespace command inboxes</b> — permanent; the target topology. One send, one
+///   delivery, one settle: three broker operations per command instead of a fan-out across every
+///   service subscribed to a catch-all.</item>
 ///   <item><b>System broadcast inbox</b> (<c>inbox.whizbang</c>) — permanent; carries the
-///   system-command + integrity control-plane + minted-composite patterns the shared inbox
-///   carries today. Broadcast/control/minted envelope types NEVER route to per-namespace
-///   inboxes — the whole <c>whizbang.core</c> contract subtree is reserved for it.</item>
-///   <item><b>Transitional shared-inbox subscription</b> — retires via
-///   <see cref="RoutingOptions.RetireSharedInbox"/> (phase 7, valid only after the full
-///   publisher flip); until then it keeps every command flowing exactly as today.</item>
+///   system-command + integrity control-plane + minted-composite patterns. Broadcast/control/minted
+///   envelope types NEVER route to per-namespace inboxes — the whole <c>whizbang.core</c> contract
+///   subtree is reserved for it.</item>
+///   <item><b>Transitional shared-inbox subscription</b> — present only while
+///   <see cref="RoutingOptions.SharedInboxRetired"/> is false, i.e. mid-migration
+///   (<see cref="RoutingOptions.KeepSharedInbox"/>, a partial flip, or an explicitly selected
+///   legacy strategy). It keeps every command flowing exactly as the pre-migration topology did,
+///   so a service can receive from upgraded and un-upgraded publishers at once.</item>
 /// </list>
-/// <para>NOT the default strategy — opt in via
-/// <see cref="InboxRoutingOptionsBuilder.UseNamespaceInboxes"/>; the default flip decision is
-/// phase 6/7.</para>
+/// <para>Selected by default (<see cref="RoutingOptions"/>'s constructor); name a non-standard
+/// transitional topic with <see cref="InboxRoutingOptionsBuilder.UseNamespaceInboxes"/>.</para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#namespace-inbox</docs>
 /// <tests>tests/Whizbang.Core.Tests/Routing/NamespaceInboxStrategyTests.cs</tests>

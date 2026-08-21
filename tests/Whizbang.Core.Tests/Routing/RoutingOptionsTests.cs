@@ -508,12 +508,13 @@ public class RoutingOptionsTests {
   }
 
   [Test]
-  public async Task Inbox_DefaultStrategy_IsSharedTopicAsync() {
+  public async Task Inbox_DefaultStrategy_IsPerNamespaceInboxesAsync() {
     // Arrange
     var options = new RoutingOptions();
 
-    // Assert - Default should be SharedTopicInboxStrategy
-    await Assert.That(options.InboxStrategy).IsTypeOf<SharedTopicInboxStrategy>();
+    // Assert - the per-namespace command topology is the out-of-the-box default (it was the
+    // legacy SharedTopicInboxStrategy until the topology arc's default flip).
+    await Assert.That(options.InboxStrategy).IsTypeOf<NamespaceInboxStrategy>();
   }
 
   #endregion
@@ -592,12 +593,14 @@ public class RoutingOptionsTests {
   }
 
   [Test]
-  public async Task Outbox_DefaultStrategy_IsDomainTopicAsync() {
+  public async Task Outbox_DefaultStrategy_IsNamespaceRoutingAsync() {
     // Arrange
     var options = new RoutingOptions();
 
-    // Assert - Default should be DomainTopicOutboxStrategy
-    await Assert.That(options.OutboxStrategy).IsTypeOf<DomainTopicOutboxStrategy>();
+    // Assert - NamespaceOutboxStrategy is the out-of-the-box default (it was
+    // DomainTopicOutboxStrategy until the topology arc's default flip); its EVENT routing is
+    // byte-identical to the strategy it replaces.
+    await Assert.That(options.OutboxStrategy).IsTypeOf<NamespaceOutboxStrategy>();
   }
 
   #endregion

@@ -115,6 +115,50 @@ The **Backend for Frontend (BFF)** pattern provides a dedicated API layer optimi
 - Tracks processed message IDs in PostgreSQL inbox table
 - Ensures exactly-once processing within each service
 
+#### Command Topology (per-namespace inboxes)
+
+Every service here calls `WithRouting(...)` with **no inbox/outbox strategy call**, which is the
+default topology:
+
+- a service subscribes to one `inbox.<contract-namespace>` entity per command namespace its
+  receptors handle, plus the system broadcast inbox `inbox.whizbang`;
+- publishers send commands to those same entities (the derivation is shared, so publisher and
+  subscriber can never disagree), and events keep going to per-namespace domain topics;
+- there is **no catch-all** topic that every service binds to and filters.
+
+That is three broker operations per command — send, deliver, settle — instead of one send plus a
+delivery-and-discard for every other service bound to a shared inbox.
+
+**`ECommerce.NotificationWorker` deliberately differs**: it adds `KeepSharedInbox()`, the
+mid-migration shape. It subscribes to its per-namespace inboxes *and* the legacy catch-all, so it
+receives whether or not a given publisher has been upgraded — a strict superset. That is the
+configuration a fleet runs in while it migrates service by service.
+
+##### Migrating an existing service
+
+An existing service that names a legacy strategy explicitly keeps working untouched — that choice
+also restores the pre-migration routing state, so its shared inbox is still provisioned:
+
+```csharp
+// Unchanged on upgrade: legacy strategies, shared inbox still created, nothing flipped.
+routing.Inbox.UseSharedTopic("inbox")
+       .Outbox.UseSharedTopic("inbox");
+```
+
+To adopt the new topology, migrate one namespace at a time:
+
+1. **Handling service** — drop the `Inbox.UseSharedTopic(...)` call and add `KeepSharedInbox()`. It
+   now provisions and subscribes to its per-namespace inboxes while keeping the catch-all, so
+   nothing is missed while publishers lag.
+2. **Each publisher** — flip that one namespace: `routing.RouteCommandNamespaceToInbox("myapp.orders.commands")`,
+   or the configuration entry `Whizbang:Routing:CommandNamespacesToInbox`. Rolling back is removing
+   the entry; `RouteNoCommandNamespacesToInbox()` (or
+   `Whizbang:Routing:RouteAllCommandNamespacesToInbox=false`) rolls the publisher back entirely.
+3. **When every namespace is flipped** — drop `KeepSharedInbox()` and the remaining strategy calls.
+   The catch-all is then referenced by nothing and can be deleted at the broker.
+
+Each step is configuration-bindable, so a migration step or a rollback needs no code change.
+
 ## Project Structure
 
 ```

@@ -62,14 +62,16 @@ builder.Services.AddSingleton<OrderedStreamProcessor>();
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
 // - IPerspectiveStore<T> and ILensQuery<T> for all discovered perspective models
 // Source generator discovers ProductDto, InventoryLevelDto from perspective implementations
-// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions
+// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions.
+// No Inbox/Outbox call: the DEFAULT topology is per-namespace command inboxes — this worker
+// subscribes to one inbox.<contract-namespace> entity per command namespace its receptors handle
+// (plus the system broadcast inbox), and never to a catch-all everyone else's traffic flows through.
 _ = builder.Services
   .AddWhizbang()
   .WithRouting(routing => {
     routing
       .OwnDomains("ecommerce.inventory.commands")
-      .SubscribeTo("ecommerce.products.events")
-      .Inbox.UseSharedTopic("inbox");
+      .SubscribeTo("ecommerce.products.events");
   })
   .WithEFCore<InventoryDbContext>()
   .WithDriver.Postgres

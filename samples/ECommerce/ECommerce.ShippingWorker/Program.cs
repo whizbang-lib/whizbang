@@ -50,14 +50,16 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 builder.Services.AddDbContext<ShippingDbContext>(options =>
   options.UseNpgsql(postgresConnection));
 
-// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions
+// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions.
+// No Inbox/Outbox call: the DEFAULT topology is per-namespace command inboxes — this worker
+// subscribes to one inbox.<contract-namespace> entity per command namespace its receptors handle
+// (plus the system broadcast inbox), and never to a catch-all everyone else's traffic flows through.
 _ = builder.Services
   .AddWhizbang()
   .WithRouting(routing => {
     routing
       .OwnDomains("ecommerce.shipping.commands")
-      .SubscribeTo("ecommerce.orders.events")
-      .Inbox.UseSharedTopic("inbox");
+      .SubscribeTo("ecommerce.orders.events");
   })
   .WithEFCore<ShippingDbContext>()
   .WithDriver.Postgres

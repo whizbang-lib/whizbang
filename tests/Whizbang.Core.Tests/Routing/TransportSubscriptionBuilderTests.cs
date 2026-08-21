@@ -54,9 +54,11 @@ public class TransportSubscriptionBuilderTests {
     // Act
     var destinations = builder.BuildDestinations();
 
-    // Assert - Should have only inbox
+    // Assert - only inbox destinations. The DEFAULT inbox entity changed with the topology
+    // arc's default flip (it was the legacy catch-all "inbox"); with no receptors registered
+    // the default topology names just the system broadcast inbox.
     await Assert.That(destinations.Count).IsEqualTo(1);
-    await Assert.That(destinations[0].Address).IsEqualTo("inbox");
+    await Assert.That(destinations[0].Address).IsEqualTo(CommandInboxNaming.SystemBroadcastTopic);
   }
 
   #endregion
@@ -107,9 +109,12 @@ public class TransportSubscriptionBuilderTests {
 
   [Test]
   public async Task BuildInboxDestination_IncludesRoutingKeyFilterAsync() {
-    // Arrange
+    // Arrange - the owned-domain filter expression is a SHARED-TOPIC concern (per-namespace
+    // inboxes ARE the filter), so this selects that strategy explicitly now that it is no
+    // longer the default.
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("myapp.orders.commands");
+    routingOptions.Inbox.UseSharedTopic("inbox");
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), null);
     var builder = new TransportSubscriptionBuilder(
@@ -308,8 +313,10 @@ public class TransportSubscriptionBuilderTests {
   public async Task BuildInboxDestinations_SharedTopicStrategy_BitIdenticalToSingularPathAsync() {
     // Zero-behavior-change lock: the plural-driven destination list must be EXACTLY the
     // one destination the singular path produced (address, routing key, metadata keys).
+    // The shared-topic strategy is selected explicitly now that it is no longer the default.
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("myapp.orders.commands");
+    routingOptions.Inbox.UseSharedTopic("inbox");
 
     var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Empty);
     var builder = new TransportSubscriptionBuilder(
@@ -457,9 +464,12 @@ public class TransportSubscriptionBuilderTests {
 
     await Assert.That(manifest).IsNotNull();
     await Assert.That(manifest!.ServiceName).IsEqualTo("OrderService");
-    await Assert.That(manifest.Subscriptions.Count).IsEqualTo(1)
-      .Because("the default shared strategy names exactly one subscription — zero new entities");
-    await Assert.That(manifest.Subscriptions[0].Topic).IsEqualTo("inbox");
+    // The DEFAULT topology changed with the topology arc's default flip: it named exactly the
+    // one legacy "inbox" subscription; it now names the system broadcast inbox (no receptors
+    // are registered here, so there is no per-namespace command inbox) and NO catch-all.
+    await Assert.That(manifest.Subscriptions.Count).IsEqualTo(1);
+    await Assert.That(manifest.Subscriptions[0].Topic)
+      .IsEqualTo(CommandInboxNaming.SystemBroadcastTopic);
   }
 
   [Test]

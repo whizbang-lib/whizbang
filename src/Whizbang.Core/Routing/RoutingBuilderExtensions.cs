@@ -27,15 +27,39 @@ internal sealed class RoutingConfiguredMarker : IRoutingConfigured;
 /// </list>
 /// </para>
 /// <para>
-/// Example usage:
+/// <b>The default topology.</b> With no inbox/outbox call at all, a service runs the
+/// per-namespace command topology: it subscribes to one <c>inbox.&lt;contract-namespace&gt;</c>
+/// entity per command namespace its receptors handle (plus the system broadcast inbox
+/// <c>inbox.whizbang</c>), publishes commands to those same entities, publishes events to domain
+/// topics, and subscribes to NO catch-all. That is three broker operations per command — send,
+/// deliver, settle — instead of a fan-out to every service bound to a shared inbox.
 /// <code>
 /// services.AddWhizbang()
 ///     .WithRouting(routing => {
 ///         routing.OwnDomains("myapp.orders.commands")
-///                .SubscribeTo("myapp.payments.events")
-///                .Inbox.UseSharedTopic("inbox");
+///                .SubscribeTo("myapp.payments.events");
 ///     });
 /// </code>
+/// </para>
+/// <para>
+/// <b>Migrating an existing service.</b> A service that explicitly selects a legacy strategy
+/// (<c>Inbox.UseSharedTopic</c> / <c>Outbox.UseSharedTopic</c> / <c>UseDomainTopics</c> /
+/// <c>UseCustom</c>) keeps working exactly as before: that selection also restores the
+/// pre-migration flip and retirement state, so its shared inbox is still named by the topology
+/// manifest and still provisioned. To adopt the new topology, migrate one namespace at a time:
+/// <list type="number">
+/// <item><description>Drop the inbox call on the handling service and add
+/// <see cref="RoutingOptions.KeepSharedInbox"/> — it now subscribes to its per-namespace inboxes
+/// AND the catch-all, a strict superset, so nothing can be missed while publishers lag.</description></item>
+/// <item><description>On each publisher, flip that namespace with
+/// <see cref="RoutingOptions.RouteCommandNamespaceToInbox"/> (or the configuration entry
+/// <c>Whizbang:Routing:CommandNamespacesToInbox</c>). Rollback is removing the entry.</description></item>
+/// <item><description>Once every namespace is flipped, drop <c>KeepSharedInbox()</c> and the
+/// explicit strategy calls. The catch-all is then unreferenced and can be deleted at the broker.</description></item>
+/// </list>
+/// Every step is also configuration-bindable
+/// (<c>Whizbang:Routing:RouteAllCommandNamespacesToInbox</c>,
+/// <c>Whizbang:Routing:RetireSharedInbox</c>), so a migration step or a rollback needs no redeploy.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#with-routing</docs>
@@ -69,8 +93,7 @@ public static class RoutingBuilderExtensions {
   ///     .WithRouting(routing => {
   ///         routing
   ///             .OwnDomains("myapp.orders.commands", "myapp.users.commands")
-  ///             .SubscribeTo("myapp.payments.events")
-  ///             .Inbox.UseSharedTopic("whizbang.inbox");
+  ///             .SubscribeTo("myapp.payments.events");
   ///     })
   ///     .AddTransportConsumer(); // Auto-generates subscriptions from routing config
   /// </code>

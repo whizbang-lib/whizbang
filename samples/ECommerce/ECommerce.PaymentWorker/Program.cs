@@ -59,14 +59,16 @@ builder.Services.AddDbContext<PaymentDbContext>(options =>
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
-// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions
+// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions.
+// No Inbox/Outbox call: the DEFAULT topology is per-namespace command inboxes — this worker
+// subscribes to one inbox.<contract-namespace> entity per command namespace its receptors handle
+// (plus the system broadcast inbox), and never to a catch-all everyone else's traffic flows through.
 _ = builder.Services
   .AddWhizbang()
   .WithRouting(routing => {
     routing
       .OwnDomains("ecommerce.payment.commands")
-      .SubscribeTo("ecommerce.orders.events")
-      .Inbox.UseSharedTopic("inbox");
+      .SubscribeTo("ecommerce.orders.events");
   })
   .WithEFCore<PaymentDbContext>()
   .WithDriver.Postgres

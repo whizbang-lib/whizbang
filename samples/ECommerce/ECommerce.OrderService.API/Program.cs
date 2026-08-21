@@ -10,6 +10,7 @@ using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -81,8 +82,16 @@ builder.Services.AddDbContext<OrderDbContext>(options =>
 // This automatically registers ALL infrastructure:
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
 // Source generator discovers infrastructure from [WhizbangDbContext] attribute
+// WithRouting() puts the publish side on the same topology the workers subscribe to. With no
+// Inbox/Outbox call that is the DEFAULT: commands publish to inbox.<contract-namespace> — the entity
+// the handling service provisions — instead of one shared catch-all every service filters. Publish
+// fails LOUDLY (UnroutableDestinationException, retried from the outbox) if no service has
+// provisioned the entity yet, rather than dropping the command broker-side.
 _ = builder.Services
   .AddWhizbang()
+  // Publish-only service, so there is nothing to own or subscribe to — the call itself is what
+  // registers the outbox routing strategy.
+  .WithRouting(static _ => { })
   .WithEFCore<OrderDbContext>()
   .WithDriver.Postgres;
 

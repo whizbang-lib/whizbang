@@ -4,18 +4,20 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Core.Routing;
 
 /// <summary>
-/// The publisher flip (topology arc phase 6, spec migration step 2): kind-aware outbox
-/// routing that sends commands to their per-namespace inbox entity
-/// (<c>inbox.&lt;contract-namespace&gt;</c>) once the namespace is FLIPPED via
-/// <see cref="RoutingOptions.RouteCommandNamespaceToInbox"/> /
-/// <see cref="RoutingOptions.RouteAllCommandNamespacesToInbox"/> (or configuration:
-/// <c>Whizbang:Routing:CommandNamespacesToInbox</c>).
+/// The publisher side of the per-namespace command topology — THE DEFAULT outbox strategy:
+/// kind-aware routing that sends commands to their per-namespace inbox entity
+/// (<c>inbox.&lt;contract-namespace&gt;</c>) while the namespace is FLIPPED. Every namespace is
+/// flipped by default; narrow the set with
+/// <see cref="RoutingOptions.RouteCommandNamespaceToInbox"/>, roll it back entirely with
+/// <see cref="RoutingOptions.RouteNoCommandNamespacesToInbox"/>, or drive either from
+/// configuration (<c>Whizbang:Routing:CommandNamespacesToInbox</c> /
+/// <c>Whizbang:Routing:RouteAllCommandNamespacesToInbox</c>).
 /// </summary>
 /// <remarks>
 /// <para>Routing per kind:</para>
 /// <list type="bullet">
 ///   <item><b>Events</b> (and Query/Unknown) — domain topics, byte-identical to
-///   <see cref="DomainTopicOutboxStrategy"/> (the default strategy today).</item>
+///   <see cref="DomainTopicOutboxStrategy"/> (the strategy this one replaced as the default).</item>
 ///   <item><b>Commands, flipped namespace</b> — <c>inbox.&lt;ns&gt;</c> (derivation shared with
 ///   <see cref="NamespaceInboxStrategy"/> through <see cref="CommandInboxNaming"/>), routing key
 ///   <c>{ns}.{typename}</c>, destination marked
@@ -32,7 +34,8 @@ namespace Whizbang.Core.Routing;
 /// </list>
 /// <para>The flip set is consulted LIVE on every call (the strategy holds the
 /// <see cref="RoutingOptions"/> instance), so configuration-bound flips and rollbacks apply
-/// without re-registering the strategy. NOT the default strategy — opt in via
+/// without re-registering the strategy. Selected by default (<see cref="RoutingOptions"/>'s
+/// constructor); name a non-standard legacy shared topic with
 /// <see cref="OutboxRoutingOptionsBuilder.UseNamespaceRouting"/>.</para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>

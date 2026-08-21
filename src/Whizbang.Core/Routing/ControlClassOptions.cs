@@ -23,8 +23,8 @@ namespace Whizbang.Core.Routing;
 /// topology (Service Bus cannot toggle <c>RequiresSession</c> in place — the subscription is
 /// deleted and recreated) and <see cref="NonDurableReceive"/> removes the durable inbox row that
 /// today's retry and dead-letter machinery is built on. Both are therefore migration steps a host
-/// opts into, exactly like <c>UseNamespaceInboxes()</c> (phase 5) and <c>RetireSharedInbox()</c>
-/// (phase 7). TTL minting is on by default because it is the half that cannot lose information:
+/// opts into — unlike the per-namespace inbox topology and its shared-inbox retirement, which are
+/// the DEFAULT. TTL minting is on by default because it is the half that cannot lose information:
 /// its only members are messages whose successor is already scheduled.
 /// </para>
 /// <para>
