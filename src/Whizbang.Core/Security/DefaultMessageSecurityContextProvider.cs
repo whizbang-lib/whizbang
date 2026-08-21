@@ -67,8 +67,10 @@ public sealed class DefaultMessageSecurityContextProvider(
       throw new ArgumentNullException(nameof(envelope), "Message envelope has null Payload");
     }
 
-    // Check if message type is exempt
-    var payloadType = envelope.Payload.GetType();
+    // Check if message type is exempt. Resolve through any envelope wrapping FIRST so every
+    // decision below — the exempt-type set, the control-plane and system-event carve-outs, and the
+    // type named in the exception — sees the message the caller actually sent.
+    var payloadType = _resolveEffectivePayloadType(envelope.Payload);
     if (_options.ExemptMessageTypes?.Contains(payloadType) == true) {
       return default;
     }
@@ -133,6 +135,40 @@ public sealed class DefaultMessageSecurityContextProvider(
     }
 
     return null;
+  }
+
+  /// <summary>
+  /// Resolves the type of the message a caller actually sent, seeing through any envelope-in-envelope
+  /// wrapping.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Every security decision here keys off the payload TYPE. When a payload is itself an
+  /// <see cref="IMessageEnvelope"/>, the naive <c>Payload.GetType()</c> answers
+  /// <c>MessageEnvelope&lt;T&gt;</c> — a type that can never carry
+  /// <see cref="Messaging.IControlPlaneMessage"/> or <see cref="SystemEvents.ISystemEvent"/>, because
+  /// those markers belong to the inner payload. The carve-outs then miss and a strict policy refuses
+  /// traffic that is exempt by design. Marking more types cannot fix that; the marker is already
+  /// there, one layer down.
+  /// </para>
+  /// <para>
+  /// This walks to the innermost payload rather than peeling a single layer, so the same defect
+  /// cannot reappear one level deeper. The walk is bounded: a malformed or self-referencing chain
+  /// stops at the depth limit and yields the last type seen, which fails CLOSED — an unresolved
+  /// payload keeps the strict contract instead of being waved through. Wrapping a domain message
+  /// therefore never becomes a way to escape that contract.
+  /// </para>
+  /// </remarks>
+  private static Type _resolveEffectivePayloadType(object payload) {
+    const int MAX_UNWRAP_DEPTH = 8;
+    var current = payload;
+    for (var depth = 0; depth < MAX_UNWRAP_DEPTH; depth++) {
+      if (current is not IMessageEnvelope nested || nested.Payload is null) {
+        break;
+      }
+      current = nested.Payload;
+    }
+    return current.GetType();
   }
 
   /// <summary>

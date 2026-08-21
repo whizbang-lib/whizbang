@@ -150,5 +150,90 @@ public class ControlPlaneSecurityExemptionTests {
              + "receptor invocation) the feature silently never runs. Unmarked: "
              + string.Join(", ", unmarked));
   }
+
+  /// <summary>
+  /// The exemption reads <c>envelope.Payload.GetType()</c> and tests the marker against THAT type.
+  /// When the payload is itself an <see cref="IMessageEnvelope"/> — a doubly-wrapped envelope — the
+  /// test lands on <c>MessageEnvelope&lt;T&gt;</c>, which never carries
+  /// <see cref="IControlPlaneMessage"/> because the marker belongs to the inner payload. The
+  /// exemption silently misses and a strict consumer throws on traffic that is exempt by design.
+  /// <para>
+  /// Observed live: every service in a fleet threw
+  /// <see cref="SecurityContextRequiredException"/> naming
+  /// <c>MessageEnvelope`1[[…RedeliveryComposite…]]</c> — the envelope type, not the composite,
+  /// which is what identifies the double wrap. Because the inbox worker catches per lifecycle stage
+  /// and continues, ONE message threw on several stages, each with a full stack; the receptor never
+  /// ran, so redelivery repair never completed and re-requested, and the allocation churn drove pods
+  /// from a flat working set into repeated OOM kills on a regular cycle. A service carrying no
+  /// composite code of its own was affected too, because the shared inbox fans control-plane traffic
+  /// to every subscriber.
+  /// </para>
+  /// Marking more types cannot fix this: the marker WAS present on the inner payload. The exemption
+  /// has to see through the wrapper.
+  /// </summary>
+  [Test]
+  public async Task StrictPolicy_NestedEnvelopeCarryingControlPlaneMessage_EstablishesNoContextWithoutThrowingAsync() {
+    var provider = _strictProvider();
+    var inner = _unscopedEnvelope(new RedeliveryComposite {
+      StreamId = TrackedGuid.NewMedo().Value,
+      OriginServiceId = TrackedGuid.NewMedo().Value,
+    });
+    var outer = _unscopedEnvelope((object)inner);
+
+    var result = await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+
+    await Assert.That(result).IsNull()
+      .Because("the marker is on the INNER payload — an exemption that only inspects the outer "
+             + "wrapper misses it and storms a strict consumer with exceptions for traffic that is "
+             + "exempt by design");
+  }
+
+  /// <summary>
+  /// The unwrap must not become a blanket exemption. Wrapping a domain message in an extra envelope
+  /// is not a way to escape the strict contract — if it were, the fix would trade a log storm for a
+  /// silent authorization hole, which is far worse than the bug it replaces.
+  /// </summary>
+  [Test]
+  public async Task StrictPolicy_NestedEnvelopeCarryingDomainMessage_StillThrowsAsync() {
+    var provider = _strictProvider();
+    var inner = _unscopedEnvelope(new _plainDomainEvent { Sid = TrackedGuid.NewMedo().Value });
+    var outer = _unscopedEnvelope((object)inner);
+
+    Exception? caught = null;
+    try {
+      await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+    } catch (Exception ex) {
+      caught = ex;
+    }
+
+    await Assert.That(caught).IsTypeOf<SecurityContextRequiredException>()
+      .Because("unwrapping resolves the REAL payload type — it must not hand an unmarked domain "
+             + "message a free pass just because something wrapped it twice");
+  }
+
+  /// <summary>
+  /// Nesting is not guaranteed to stop at one level, so the unwrap walks to the innermost payload
+  /// rather than peeling exactly once. A fix that unwraps a single layer would pass the test above
+  /// and still storm on a three-deep envelope.
+  /// </summary>
+  [Test]
+  public async Task StrictPolicy_DeeplyNestedEnvelopeCarryingControlPlaneMessage_EstablishesNoContextWithoutThrowingAsync() {
+    var provider = _strictProvider();
+    var innermost = _unscopedEnvelope(new IntegrityCheckpoint {
+      CheckpointStreamId = TrackedGuid.NewMedo().Value,
+      OriginServiceId = TrackedGuid.NewMedo().Value,
+      OriginServiceName = "origin-svc",
+      FromCommitSequence = 0,
+      ToCommitSequence = 5,
+    });
+    var middle = _unscopedEnvelope((object)innermost);
+    var outer = _unscopedEnvelope((object)middle);
+
+    var result = await provider.EstablishContextAsync(outer, new _emptyServiceProvider());
+
+    await Assert.That(result).IsNull()
+      .Because("peeling exactly one layer would leave the same defect one level deeper — the "
+             + "exemption resolves the innermost payload");
+  }
 }
 
