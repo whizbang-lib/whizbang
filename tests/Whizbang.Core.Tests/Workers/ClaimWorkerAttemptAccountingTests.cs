@@ -1,8 +1,8 @@
+using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
-using System.Threading.Channels;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
