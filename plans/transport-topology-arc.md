@@ -251,6 +251,34 @@ PR #513 before this decision; it stays (no revert).
   `[a-z0-9_-]` per segment, ≤ 260−64 chars (class-decoration headroom) — tag→namespace
   routability asserted before traffic classes ship. Legacy shared-inbox test infra
   (MultiServiceHarness.SHARED_TOPIC default) left functional by design.
+- **Phase 7.5 — DEFAULT FLIP (owner decision 2026-08-20).** The arc shipped every new behavior as
+  opt-in, so a config-free consumer still got the legacy shared-inbox topology (~42 broker
+  ops/command). The good topology now ships out of the box AND the catch-all `inbox` retires by
+  default. **STATUS: implemented on feat/namespace-topology-by-default (uncommitted).**
+  `RoutingOptions`' constructor selects `NamespaceInboxStrategy(this)` + `NamespaceOutboxStrategy(this)`;
+  the flip/retirement flags became TRI-STATE (`bool?`) with derived defaults —
+  `AllCommandNamespacesRouteToInbox => explicit ?? !legacySelected` and
+  `SharedInboxRetired => explicit ?? AllCommandNamespacesRouteToInbox`. That second coupling is what
+  keeps the end state internally consistent: retirement FOLLOWS the flip, so no default path can
+  reach the combination `ThrowIfRetirementIncomplete()` rejects (the guard survives, reachable only
+  by asking for both halves explicitly). LEGACY COHERENCE is the load-bearing safety property:
+  `Inbox/Outbox.UseSharedTopic`, `UseDomainTopics` and `UseCustom` all call
+  `RoutingOptions.SelectLegacyTopology()`, which restores the pre-migration defaults — otherwise the
+  manifest would stop naming the shared entity and both provisioners (which provision only what the
+  manifest names) would silently stop creating the very inbox such a consumer receives on.
+  `RouteCommandNamespaceToInbox(ns)` sets `_routeAll ??= false` — naming one namespace IS the
+  migrate-one-at-a-time statement — which makes the mid-migration superset fall out for free.
+  New explicit inverses `RouteNoCommandNamespacesToInbox()` / `KeepSharedInbox()` plus the config key
+  `Whizbang:Routing:RouteAllCommandNamespacesToInbox` and two-way binding of
+  `Whizbang:Routing:RetireSharedInbox` close the config-rollback hole the new default would otherwise
+  open (with the flip defaulted ON, "remove the entry" no longer means "roll back").
+  Locks: `DefaultNamespaceTopologyTests` (config-free end state incl. manifest via both the builder
+  and the real DI factory; legacy byte-identity + shared inbox still provisioned; every clearing
+  path; explicit-wins-over-clearing ordering; mid-migration superset; the retirement guard;
+  config rollback). Samples: the ECommerce fleet moved to the default (all commands share ONE
+  contract namespace, so the fleet cannot be mixed — the two publish-only APIs gained `WithRouting`
+  so publisher and subscriber agree), with NotificationWorker left on the mid-migration
+  `KeepSharedInbox()` shape as the in-repo migration reference.
 - **Phase 8 — tag-bound TransportNamespace routing** (#424 incr 2): `TagOptions.RouteNamespace`,
   `Transport.Namespaces` map, per-namespace clients + provisioning, `sys-` validation,
   single-namespace no-op guarantee.

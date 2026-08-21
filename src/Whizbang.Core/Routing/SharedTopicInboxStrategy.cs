@@ -6,13 +6,17 @@ namespace Whizbang.Core.Routing;
 /// </summary>
 /// <remarks>
 /// <para>
-/// DEPRECATION NOTE (topology arc phase 7): scheduled for removal in v1.0, superseded by
+/// DEPRECATION NOTE (topology arc phase 7): NO LONGER THE DEFAULT — superseded by
 /// <see cref="NamespaceInboxStrategy"/> (per-namespace command inboxes + the system broadcast
-/// inbox). This strategy remains supported through the migration window — consumers
-/// mid-migration still route unflipped namespaces through it, and
+/// inbox) and scheduled for removal in v1.0. It remains supported through the migration window:
+/// consumers mid-migration still route unflipped namespaces through it, and
 /// <see cref="NamespaceInboxStrategy"/> composes it for the transitional shared subscription
-/// until <see cref="RoutingOptions.RetireSharedInbox"/>. No <c>[Obsolete]</c>: the repository
-/// escalates CS0618 to error, which would break consumers building with warnings-as-errors.
+/// while <see cref="RoutingOptions.SharedInboxRetired"/> is false. Selecting it explicitly
+/// (<see cref="InboxRoutingOptionsBuilder.UseSharedTopic"/>) also restores the pre-migration
+/// flip and retirement defaults, so a service upgrading with its existing configuration keeps a
+/// coherent topology — shared inbox still named by the manifest, still provisioned. No
+/// <c>[Obsolete]</c>: the repository escalates CS0618 to error, which would break consumers
+/// building with warnings-as-errors.
 /// </para>
 /// <para>
 /// Routing key format: "{namespace}.{typename}" (e.g., "myapp.users.commands.createtenantcommand")

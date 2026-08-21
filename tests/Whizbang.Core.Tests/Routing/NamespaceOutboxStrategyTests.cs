@@ -25,20 +25,32 @@ public class NamespaceOutboxStrategyTests {
   private static readonly IReadOnlySet<string> _noDomains =
     new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+  /// <summary>
+  /// A strategy on the PRE-MIGRATION flip state — nothing flipped, shared inbox kept. The
+  /// all-namespaces flip is the default now, so the unflipped/mid-migration branches these
+  /// tests exercise have to be asked for explicitly.
+  /// </summary>
   private static NamespaceOutboxStrategy _strategy(
       out RoutingOptions options, string sharedInboxTopic = "inbox") {
-    options = new RoutingOptions();
+    options = new RoutingOptions().RouteNoCommandNamespacesToInbox().KeepSharedInbox();
     return new NamespaceOutboxStrategy(options, sharedInboxTopic);
   }
 
   #region RoutingOptions flip set
 
   [Test]
-  public async Task FlipSet_Defaults_EmptyAndAllOffAsync() {
+  public async Task FlipSet_Defaults_EveryNamespaceFlippedWithNoExplicitEntriesAsync() {
+    // DEFAULT LOCK (changed by the topology arc's default flip — this asserted "all off" while
+    // the flip was opt-in): the explicit set stays empty, but every namespace routes to its
+    // per-namespace inbox because the migration END state is the default.
     var options = new RoutingOptions();
 
     await Assert.That(options.CommandNamespacesToInbox).IsEmpty();
-    await Assert.That(options.AllCommandNamespacesRouteToInbox).IsFalse();
+    await Assert.That(options.AllCommandNamespacesRouteToInbox).IsTrue();
+    await Assert.That(options.IsCommandNamespaceRoutedToInbox("myapp.orders.commands")).IsTrue();
+
+    // …and the explicit inverse restores the pre-migration state.
+    await Assert.That(options.RouteNoCommandNamespacesToInbox().AllCommandNamespacesRouteToInbox).IsFalse();
     await Assert.That(options.IsCommandNamespaceRoutedToInbox("myapp.orders.commands")).IsFalse();
   }
 
@@ -338,9 +350,10 @@ public class NamespaceOutboxStrategyTests {
   }
 
   [Test]
-  public async Task DefaultOutboxStrategy_UnchangedByPhase6Async() {
-    // DEFAULT LOCK: nothing changes unless the consumer opts in.
-    await Assert.That(new RoutingOptions().OutboxStrategy).IsTypeOf<DomainTopicOutboxStrategy>();
+  public async Task DefaultOutboxStrategy_IsNamespaceRoutingAsync() {
+    // DEFAULT LOCK (changed by the topology arc's default flip — this asserted
+    // DomainTopicOutboxStrategy while namespace routing was opt-in).
+    await Assert.That(new RoutingOptions().OutboxStrategy).IsTypeOf<NamespaceOutboxStrategy>();
   }
 
   [Test]
@@ -448,15 +461,18 @@ public class NamespaceOutboxStrategyTests {
 
   [Test]
   public async Task WithRouting_NoConfigurationSection_DefaultsLockedAsync() {
-    // Also covers the no-IConfiguration-registered host (locked no-op).
+    // Also covers the no-IConfiguration-registered host (locked no-op). The DEFAULT it locks
+    // changed with the topology arc's default flip: no configuration means the migration END
+    // state, not the starting line.
     var services = new ServiceCollection();
     new WhizbangBuilder(services).WithRouting(r => r.Outbox.UseNamespaceRouting());
 
     using var provider = services.BuildServiceProvider();
     var options = provider.GetRequiredService<IOptions<RoutingOptions>>().Value;
 
-    await Assert.That(options.CommandNamespacesToInbox).IsEmpty();
-    await Assert.That(options.AllCommandNamespacesRouteToInbox).IsFalse();
+    await Assert.That(options.CommandNamespacesToInbox).IsEmpty()
+      .Because("the default flip needs no explicit entries");
+    await Assert.That(options.AllCommandNamespacesRouteToInbox).IsTrue();
   }
 
   [Test]
@@ -481,11 +497,13 @@ public class NamespaceOutboxStrategyTests {
   }
 
   [Test]
-  public async Task WithRouting_ConfigurationRollback_EntryRemoved_NamespaceReturnsToSharedInboxAsync() {
-    // ROLLBACK LOCK: the same host, rebooted without the entry, routes legacy again.
+  public async Task WithRouting_ConfigurationRollback_RouteAllFalse_NamespaceReturnsToSharedInboxAsync() {
+    // ROLLBACK LOCK: the same host, rebooted with the flip switched off in configuration,
+    // routes legacy again. The rollback token changed with the topology arc's default flip —
+    // "remove the entry" now means "keep the default", so the switch is explicit.
     var configuration = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
-        ["Whizbang:Routing:SomethingElse"] = "x" // section exists, flip key absent
+        ["Whizbang:Routing:RouteAllCommandNamespacesToInbox"] = "false"
       })
       .Build();
     var services = new ServiceCollection();

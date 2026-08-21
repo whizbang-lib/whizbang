@@ -46,14 +46,25 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 builder.Services.AddDbContext<NotificationDbContext>(options =>
   options.UseNpgsql(postgresConnection));
 
-// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions
+// WithRouting() configures message routing and AddTransportConsumer() auto-generates subscriptions.
+//
+// MIGRATION REFERENCE — this worker deliberately runs the MID-MIGRATION topology while the rest of
+// the fleet runs the default. KeepSharedInbox() is the explicit inverse of the default retirement:
+// the per-namespace command inboxes are subscribed AND the legacy catch-all "inbox" subscription is
+// kept, so this service is a strict SUPERSET — it receives whether a publisher has been upgraded
+// (per-namespace inbox) or not (catch-all). That is the shape a fleet runs in while it migrates one
+// service at a time; drop the call once every publisher is upgraded. The publisher-side counterpart
+// is RouteCommandNamespaceToInbox(ns) — flip one namespace per deploy — with
+// RouteNoCommandNamespacesToInbox() as the full rollback. Both are also configuration-bindable
+// (Whizbang:Routing:RetireSharedInbox / :RouteAllCommandNamespacesToInbox / :CommandNamespacesToInbox),
+// so a migration step or a rollback needs no code change.
 _ = builder.Services
   .AddWhizbang()
   .WithRouting(routing => {
     routing
       .OwnDomains("ecommerce.notification.commands")
       .SubscribeTo("ecommerce.orders.events")
-      .Inbox.UseSharedTopic("inbox");
+      .KeepSharedInbox();
   })
   .WithEFCore<NotificationDbContext>()
   .WithDriver.Postgres

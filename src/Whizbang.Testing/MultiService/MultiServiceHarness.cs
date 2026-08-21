@@ -156,12 +156,13 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
     }
 
     /// <summary>
-    /// Overrides this service's routing configuration (topology arc phase 6). Default —
-    /// when never called — remains the shared-inbox topology
-    /// (<c>Inbox.UseSharedTopic("inbox")</c> + <c>Outbox.UseSharedTopic("inbox")</c>),
-    /// byte-identical to every pre-phase-6 harness test. Use it to run a service on the
-    /// namespace-inbox topology (<c>UseNamespaceInboxes()</c> / <c>UseNamespaceRouting()</c>)
-    /// for flip-migration locks.
+    /// Overrides this service's routing configuration. The harness DEFAULT — when never called —
+    /// is deliberately the EXPLICIT LEGACY topology
+    /// (<c>Inbox.UseSharedTopic("inbox")</c> + <c>Outbox.UseSharedTopic("inbox")</c>), not the
+    /// framework default: it keeps every pre-topology-arc harness test byte-identical, and it is
+    /// itself the standing coverage of what an existing consumer's explicit configuration does on
+    /// upgrade. Use this to run a service on the framework's default per-namespace topology, or on
+    /// a mid-migration one, for flip/retirement locks.
     /// </summary>
     public ServiceDefinition WithRouting(Action<Whizbang.Core.Routing.RoutingOptions> configure) {
       RoutingOverride = configure;

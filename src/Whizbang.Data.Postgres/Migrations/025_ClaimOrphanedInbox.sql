@@ -35,7 +35,33 @@ BEGIN
         -- Without this, hung handlers (no exception thrown, lease eventually expires) looked
         -- identical to fresh messages in a consumer's production environment — an extended stuck-message backlog with
         -- attempts=0 across thousands of rows (production audit).
-        attempts = i.attempts + 1
+        attempts = i.attempts + 1,
+        -- Attribute the attempt this claim is REPLACING. process_inbox_failures records
+        -- error/failure_reason only when dispatch reported a failure; when the process is killed
+        -- mid-dispatch (SIGKILL from a failed liveness probe, container replaced, handler hung past
+        -- its lease) nothing reports anything — the lease just expires and the bump above spends
+        -- another attempt in silence. The budget then runs out and the row dead-letters as
+        -- "MaxAttemptsExceeded: attempts=N > max=M", which describes the counter and not the cause.
+        --
+        -- Observed in production as ~54k inbox rows averaging 11 attempts, every one with
+        -- error IS NULL and failure_reason = 99 (Unknown) — no way to tell a crash-looping host
+        -- from a genuinely failing handler. Stamp the abandonment so the row carries its own
+        -- history: an expired lease still held by an instance (instance_id IS NOT NULL) means the
+        -- previous attempt ended without ever reporting. Guarded on error IS NULL so a real
+        -- recorded failure is never papered over — that error is the better diagnostic.
+        failure_reason = CASE
+          WHEN i.instance_id IS NOT NULL AND i.lease_expiry < p_now AND i.error IS NULL
+          THEN 6  -- MessageFailureReason.LeaseExpired
+          ELSE i.failure_reason
+        END,
+        error = CASE
+          WHEN i.instance_id IS NOT NULL AND i.lease_expiry < p_now AND i.error IS NULL
+          THEN 'Attempt ' || i.attempts || ' ended without a reported outcome: lease held by instance '
+               || i.instance_id::text || ' expired at ' || i.lease_expiry::text
+               || ' (process terminated mid-dispatch, or the handler outran its lease). '
+               || 'No dispatch failure was recorded for that attempt.'
+          ELSE i.error
+        END
     WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
       AND i.processed_at IS NULL

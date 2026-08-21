@@ -96,6 +96,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   timeout-based overloads are now `[Obsolete]`.
 
 ### Changed
+- **Per-namespace command inboxes are now the DEFAULT transport topology, and the legacy catch-all
+  `inbox` topic is retired out of the box.** A service configured with `AddWhizbang().WithRouting(…)`
+  and no inbox/outbox call subscribes to one `inbox.<contract-namespace>` entity per command
+  namespace its receptors handle, plus the system broadcast inbox `inbox.whizbang`, and to no
+  catch-all; commands publish to those same entities and events keep publishing to domain topics
+  unchanged. Three broker operations per command (send, deliver, settle) instead of a fan-out across
+  every service bound to the shared inbox.
+  - *Existing services keep working with no code change.* Explicitly selecting a legacy strategy
+    (`Inbox.UseSharedTopic` / `Outbox.UseSharedTopic` / `UseDomainTopics` / `UseCustom`) also restores
+    the pre-migration flip and retirement state, so the shared inbox is still named by the topology
+    manifest and still provisioned by both transports.
+  - *To adopt, one namespace at a time:* drop the inbox call on the handling service and add
+    `KeepSharedInbox()` (it then subscribes to its per-namespace inboxes AND the catch-all — a strict
+    superset); flip each publisher namespace with `RouteCommandNamespaceToInbox(ns)`; once every
+    namespace is flipped, drop `KeepSharedInbox()` and delete the catch-all at the broker.
+  - New switches, all configuration-bindable: `RouteNoCommandNamespacesToInbox()` /
+    `Whizbang:Routing:RouteAllCommandNamespacesToInbox` (full publisher rollback) and
+    `KeepSharedInbox()` / `Whizbang:Routing:RetireSharedInbox=false` (keep the catch-all while
+    publishers stay flipped). `Whizbang:Routing:RetireSharedInbox` and the
+    `CommandNamespacesToInbox` list now bind both directions, so a migration step or a rollback needs
+    no redeploy.
 - Work-pump decomposed: the claim poller returns stream-ids only and a per-stream drainer fetches bodies,
   with single-writer-per-stream ownership; every former polling worker was converted to
   NOTIFY/channel/transport-driven.

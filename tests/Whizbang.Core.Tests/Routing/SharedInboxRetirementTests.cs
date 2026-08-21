@@ -23,13 +23,19 @@ public class SharedInboxRetirementTests {
   #region RoutingOptions API
 
   [Test]
-  public async Task RetireSharedInbox_DefaultsOff_FluentSetsAndChainsAsync() {
+  public async Task RetireSharedInbox_DefaultsOn_AndBothFluentSwitchesChainAsync() {
+    // DEFAULT LOCK (changed by the topology arc's default flip — retirement asserted OFF while
+    // it was an explicit opt-in): the migration end-state IS the default now, and
+    // KeepSharedInbox is its explicit inverse.
     var options = new RoutingOptions();
-    await Assert.That(options.SharedInboxRetired).IsFalse()
-      .Because("retirement is an explicit opt-in — the migration end-state, never a default");
+    await Assert.That(options.SharedInboxRetired).IsTrue()
+      .Because("the catch-all is retired out of the box");
+
+    var kept = options.KeepSharedInbox();
+    await Assert.That(kept).IsSameReferenceAs(options);
+    await Assert.That(options.SharedInboxRetired).IsFalse();
 
     var result = options.RetireSharedInbox();
-
     await Assert.That(result).IsSameReferenceAs(options);
     await Assert.That(options.SharedInboxRetired).IsTrue();
   }
@@ -57,8 +63,13 @@ public class SharedInboxRetirementTests {
   public async Task WithRouting_RetirementWithoutFullFlip_ThrowsClearStartupErrorAsync() {
     // THE GUARD: retirement with the flip incomplete = a namespace still publishing to the
     // shared inbox with nobody subscribed = silent loss. Startup must throw, not degrade.
+    // Since the topology arc's default flip, the incoherent combination can only be reached by
+    // asking for BOTH halves explicitly — which is exactly what this arranges.
     var services = new ServiceCollection();
-    new WhizbangBuilder(services).WithRouting(r => r.RetireSharedInbox());
+    new WhizbangBuilder(services).WithRouting(r => {
+      r.RouteNoCommandNamespacesToInbox();
+      r.RetireSharedInbox();
+    });
 
     using var provider = services.BuildServiceProvider();
 
@@ -95,6 +106,7 @@ public class SharedInboxRetirementTests {
     var services = new ServiceCollection();
     new WhizbangBuilder(services).WithRouting(r => {
       r.Outbox.UseNamespaceRouting();
+      r.RouteNoCommandNamespacesToInbox();
       r.RetireSharedInbox();
     });
 
@@ -129,11 +141,13 @@ public class SharedInboxRetirementTests {
   }
 
   [Test]
-  public async Task WithRouting_ConfigurationRetirementWithoutWildcard_ThrowsOnResolutionAsync() {
+  public async Task WithRouting_ConfigurationRetirementWithoutFullFlip_ThrowsOnResolutionAsync() {
     // The guard applies to configuration-driven retirement identically: the config binder
     // runs first, THEN validation — an operator cannot config their way into silent loss.
+    // (The flip must now be switched OFF explicitly to reach the incoherent combination.)
     var configuration = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["Whizbang:Routing:RouteAllCommandNamespacesToInbox"] = "false",
         ["Whizbang:Routing:RetireSharedInbox"] = "true"
       })
       .Build();
@@ -149,8 +163,10 @@ public class SharedInboxRetirementTests {
   }
 
   [Test]
-  public async Task WithRouting_ConfigurationRetireSharedInboxFalseOrAbsent_NotRetiredAsync() {
-    // "false" and absent both leave retirement off — rollback is removing/falsing the entry.
+  public async Task WithRouting_ConfigurationRetireSharedInboxFalse_NotRetiredAsync() {
+    // An explicit "false" is the rollback rung: publishers stay flipped, the receiver keeps the
+    // catch-all. (Absent no longer means "off" — since the topology arc's default flip, absent
+    // means "follow the flip", i.e. retired. Locked in DefaultNamespaceTopologyTests.)
     var configuration = new ConfigurationBuilder()
       .AddInMemoryCollection(new Dictionary<string, string?> {
         ["Whizbang:Routing:CommandNamespacesToInbox:0"] = "*",
