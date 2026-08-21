@@ -3,6 +3,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -156,7 +157,52 @@ public class InboxGracefulReleaseSqlTests : EFCoreTestBase {
              + "same message concurrently");
   }
 
+  /// <summary>
+  /// Exercises the COORDINATOR method rather than the SQL function beneath it. The two are separate
+  /// failure surfaces: schema resolution, parameter typing and the array marshalling all live in the
+  /// C# wrapper, so a green SQL test says nothing about whether the path a worker actually calls
+  /// works. Testing only the function is how this method reached production with no coverage at all.
+  /// </summary>
+  [Test]
+  public async Task Coordinator_ReleaseUnprocessedInbox_RefundsThroughTheRealCallPathAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var messageId = TrackedGuid.NewMedo().Value;
+    var streamId = TrackedGuid.NewMedo().Value;
+    var instance = TrackedGuid.NewMedo().Value;
+
+    await _insertInboxRowAsync(conn, messageId, streamId, attempts: 0);
+    await _claimOrphanedInboxAsync(conn, instance);
+
+    var coordinator = _coordinator(dbContext);
+    var released = await coordinator.ReleaseUnprocessedInboxAsync(instance, [messageId]);
+
+    await Assert.That(released).IsEqualTo(1)
+      .Because("the coordinator must report what it actually released — a worker sizing its next "
+             + "claim on that number needs it to be true");
+    var row = await _readInboxRowAsync(conn, messageId);
+    await Assert.That(row.Attempts).IsEqualTo(0)
+      .Because("the refund must survive the wrapper, not just the function");
+    await Assert.That(row.InstanceId).IsNull();
+  }
+
+  [Test]
+  public async Task Coordinator_ReleaseUnprocessedInbox_EmptyList_IsANoOpAsync() {
+    await using var dbContext = CreateDbContext();
+    var coordinator = _coordinator(dbContext);
+
+    var released = await coordinator.ReleaseUnprocessedInboxAsync(TrackedGuid.NewMedo().Value, []);
+
+    await Assert.That(released).IsEqualTo(0)
+      .Because("an empty hand-back must not open a connection or issue a statement — the shutdown "
+             + "path calls this whenever a loop ends, most often with nothing to release");
+  }
+
   // ==================== helpers ====================
+
+  private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>
+    new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();

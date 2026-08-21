@@ -493,9 +493,9 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// throws.
   /// </remarks>
   private async Task _releaseUndispatchedAsync(List<Guid> messageIds) {
-    if (messageIds.Count == 0) {
-      return;
-    }
+    // No empty-guard here: the sole call site only fires when rows were left undelivered, and
+    // ReleaseUnprocessedInboxAsync already returns 0 without opening a connection for an empty list
+    // (locked by Coordinator_ReleaseUnprocessedInbox_EmptyList_IsANoOpAsync).
     try {
       using var scope = _scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();

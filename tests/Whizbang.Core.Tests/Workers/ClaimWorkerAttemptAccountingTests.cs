@@ -151,6 +151,49 @@ public class ClaimWorkerAttemptAccountingTests {
              + "re-claimed later, which is strictly better than a worker that stops polling");
   }
 
+  /// <summary>
+  /// A coordinator that has not implemented the hand-back must fail LOUDLY. The tempting default is
+  /// a silent no-op, but that would leave every undelivered row silently charged on a store whose
+  /// author never opted in — the exact invisible budget drain this work exists to remove. A thrown
+  /// NotImplementedException surfaces the gap the first time a worker tries.
+  /// </summary>
+  [Test]
+  public async Task CoordinatorWithoutRelease_ThrowsRatherThanSilentlySucceedingAsync() {
+    IWorkCoordinator bare = new MinimalCoordinator();
+
+    Exception? caught = null;
+    try {
+      await bare.ReleaseUnprocessedInboxAsync(TrackedGuid.NewMedo().Value, [TrackedGuid.NewMedo().Value]);
+    } catch (Exception ex) {
+      caught = ex;
+    }
+
+    await Assert.That(caught).IsTypeOf<NotImplementedException>()
+      .Because("a silent default would let rows keep paying attempts on a store that never wired the "
+             + "hand-back, reproducing the drain invisibly instead of reporting it");
+  }
+
+  /// <summary>A coordinator implementing nothing beyond the required members.</summary>
+  private sealed class MinimalCoordinator : IWorkCoordinator {
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) =>
+      Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] });
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) =>
+      Task.FromResult(true);
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new List<PerspectiveCursorInfo>());
+    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
+  }
+
   // ==================== helpers ====================
 
   private static WorkBatch _batchOf(int rows, int attempts) {
