@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test model for PostgresDriverExtensions tests.
 /// </summary>
+[Category("Shard1")]
 public class PostgresTestModel {
   public string Name { get; set; } = string.Empty;
 }
@@ -38,6 +39,7 @@ public class PostgresTestDbContext(DbContextOptions<PostgresTestDbContext> optio
 /// Verifies driver registration, service configuration, and error handling.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard4")]
 public class PostgresDriverExtensionsTests {
   [Test]
   public async Task Postgres_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync() {

@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// per-test database).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard1")]
 public class PgSharedNotifyConnectionProbeIntegrationTests : EFCoreTestBase {
   private static readonly bool[] _expectedSingleTrueTransition = [true];
 

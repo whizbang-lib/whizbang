@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/118_BrokerDeadLetterImport.sql</code-under-test>
+[Category("Shard3")]
 public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
 
   private static Whizbang.Core.Messaging.IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>

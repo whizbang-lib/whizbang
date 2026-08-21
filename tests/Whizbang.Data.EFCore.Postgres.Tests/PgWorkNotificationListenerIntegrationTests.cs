@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// connection against the test DB; we issue pg_notify on a separate connection.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard3")]
 public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
 
   private static async Task<TaskCompletionSource<WorkSignalCategory>> _attachAsync(PgWorkNotificationListener listener) {

@@ -38,6 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[Category("Shard3")]
 public class OutboxDlqRecoverySqlTests : EFCoreTestBase {
 
   private const string _stack = """

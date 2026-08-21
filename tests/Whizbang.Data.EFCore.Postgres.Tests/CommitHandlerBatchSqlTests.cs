@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+[Category("Shard2")]
 public class CommitHandlerBatchSqlTests : EFCoreTestBase {
 
   /// <summary>

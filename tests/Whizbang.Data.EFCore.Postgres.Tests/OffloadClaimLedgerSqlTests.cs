@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/messaging/body-offload</docs>
 [Category("Integration")]
 [NotInParallel("OffloadClaimLedger")]
+[Category("Shard2")]
 public class OffloadClaimLedgerSqlTests : EFCoreTestBase {
 
   private static IWorkCoordinator _coordinator(WorkCoordinationDbContext ctx) =>

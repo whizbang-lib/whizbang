@@ -38,6 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
+[Category("Shard2")]
 public class DigestEpochSqlTests : EFCoreTestBase {
 
   private const string ZERO = "00000000-0000-0000-0000-000000000000";

@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the real combined contexts keep serving every other type.
 /// </summary>
 /// <docs>fundamentals/events/event-store-serialization</docs>
+[Category("Shard4")]
 public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
   private const string ORPHAN_EVENT_TYPE = "Whizbang.Tests.FallbackOrphanEvent";
   private static readonly string[] _onePerspective = ["P.One"];

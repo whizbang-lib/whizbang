@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityManifestReceptors.cs</code-under-test>
 [NotInParallel("IntegrityManifestGates")]   // the receptors' per-process gates are shared state
+[Category("Shard3")]
 public class IntegrityManifestReceptorTests {
 
   [Test]

@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("EFCore")]
 [Category("Lenses")]
 [Category("Unit")]
+[Category("Shard2")]
 public class EFCorePostgresLensQueryScopeTests {
   private readonly Uuid7IdProvider _idProvider = new();
 

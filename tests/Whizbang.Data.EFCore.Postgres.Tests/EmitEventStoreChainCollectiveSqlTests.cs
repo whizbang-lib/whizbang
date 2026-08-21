@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///   is created per collective event — driven purely by the flag, with no association lookup.</description></item>
 /// </list>
 /// </summary>
+[Category("Shard2")]
 public class EmitEventStoreChainCollectiveSqlTests : EFCoreTestBase {
 
   // Mirror of the SQL literal in migration 061. Kept in sync with the C# sink constant the

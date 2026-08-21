@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the read throws <c>NotSupportedException</c>; with it, the DTO round-trips.
 /// A string round-trip cannot reproduce this — only a real jsonb column reorders keys.
 /// </summary>
+[Category("Shard2")]
 public class JsonbPolymorphicRoundTripIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task ReadAsync_EventWithNestedPolymorphicShortKeyDto_RoundTripsThroughRealJsonbAsync() {

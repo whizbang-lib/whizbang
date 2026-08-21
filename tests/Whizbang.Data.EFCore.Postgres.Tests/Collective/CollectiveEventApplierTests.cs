@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// <docs>fundamentals/messaging/collective-events</docs>
 [Category("Unit")]
 [Category("CollectiveEvents")]
+[Category("Shard4")]
 public class CollectiveEventApplierTests {
 
   // ── Type-mismatch guards ───────────────────────────────────────────────

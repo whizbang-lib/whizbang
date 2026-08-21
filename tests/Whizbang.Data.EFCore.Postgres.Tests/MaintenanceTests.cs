@@ -10,6 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Integration tests for the perform_maintenance() PostgreSQL function.
 /// Tests deduplication table cleanup (Task 4) and stuck inbox purge (Task 5).
 /// </summary>
+[Category("Shard4")]
 public class MaintenanceTests : EFCoreTestBase {
 
   private async Task<NpgsqlConnection> _openConnectionAsync() {

@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>fundamentals/perspectives/row-retention</docs>
 [NotInParallel("PerspectiveRetentionEnrollment")]
+[Category("Shard1")]
 public class PerspectiveRetentionEnrollmentSqlTests : EFCoreTestBase {
   [Test]
   public async Task Registry_CarriesRetentionEnrollmentColumnsAsync() {

@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Each test resets static state via reflection to ensure isolation.
 /// </summary>
 [NotInParallel("DbContextInitializationRegistry")]
+[Category("Shard3")]
 public class DbContextInitializationRegistryTests {
   [Before(Test)]
   public void ResetStaticState() {

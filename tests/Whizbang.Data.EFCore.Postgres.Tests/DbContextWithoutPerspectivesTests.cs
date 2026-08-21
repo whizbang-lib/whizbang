@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// even when there are no custom perspectives.
 /// Uses SharedPostgresContainer with per-test database isolation.
 /// </summary>
+[Category("Shard4")]
 public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
   private string? _testDatabaseName;
   private string _connectionString = null!;

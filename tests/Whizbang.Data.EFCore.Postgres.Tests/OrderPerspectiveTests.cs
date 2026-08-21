@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests show how perspectives use the store abstraction to maintain read models.
 /// Uses strongly-typed IDs to demonstrate typed provider system.
 /// </summary>
+[Category("Shard2")]
 public class OrderPerspectiveTests {
   private readonly IWhizbangIdProvider<TestOrderId> _orderIdProvider = TestOrderId.CreateProvider(new Uuid7IdProvider());
 

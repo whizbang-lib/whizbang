@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/000_MigrationTracking.sql</code-under-test>
 [Category("Migrations")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class DropAllOverloadsSchemaResolutionTests : EFCoreTestBase {
 
   [Test]

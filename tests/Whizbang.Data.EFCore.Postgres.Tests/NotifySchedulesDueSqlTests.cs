@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>ScheduleDueSignal</c>'s <c>[WireName("schedule")]</c>); one NOTIFY per unique owner.</para>
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard1")]
 public class NotifySchedulesDueSqlTests : EFCoreTestBase {
 
   [Test]

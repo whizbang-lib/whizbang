@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// eliminate (observed in a production run as a burst of false-positive inversions).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard4")]
 public class GetPerspectiveCursorsCommitSequenceTests : EFCoreTestBase {
 
   [Test]

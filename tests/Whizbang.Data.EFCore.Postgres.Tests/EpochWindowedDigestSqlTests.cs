@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
+[Category("Shard3")]
 public class EpochWindowedDigestSqlTests : EFCoreTestBase {
 
   private async Task<NpgsqlConnection> _openAsync() {

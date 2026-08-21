@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 [Category("Integration")]
+[Category("Shard3")]
 public class OutboxFetchByteBudgetSqlTests : EFCoreTestBase {
 
   private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>

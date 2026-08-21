@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Unit")]
 [Category("Analyzers")]
+[Category("Shard2")]
 public class LensQueryTypeArgumentAnalyzerTests {
   #region Valid Usage - No Diagnostic
 

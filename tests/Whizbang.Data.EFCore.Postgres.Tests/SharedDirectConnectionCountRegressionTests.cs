@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// probe conn ≤ SelfTestTimeout).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard4")]
 public class SharedDirectConnectionCountRegressionTests : EFCoreTestBase {
 
   /// <summary>

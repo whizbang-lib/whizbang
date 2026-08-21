@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// new work / had cursors advanced.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard2")]
 public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
 
   // ----- commit_handler_result -----

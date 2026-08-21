@@ -37,6 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// count on the round-trip integrity query.</para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[Category("Shard2")]
 public class DlqStackTracePreservationSqlTests : EFCoreTestBase {
 
   // Realistic multi-line stacks across the three source-table failure modes

@@ -144,9 +144,39 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
+    # The three Postgres-tagged projects run sequentially inside one job (shared containers),
+    # and EFCore alone is ~87% of it — so EFCore is sliced four ways by shard category while
+    # Dapper and Soak ride their own runners. Every tagged project appears in exactly one shard;
+    # ShardCoverageGuardTests fails the build if a class carries no shard category, which would
+    # otherwise mean it silently runs in no shard at all.
+    # Whizbang.Soak.Tests is Postgres-tagged but is NOT an integration-mode project, so it has
+    # never run in this job and gets no shard — a shard for it would run zero tests, emit no
+    # coverage artifact, and hang the quality gate waiting for a file that never arrives.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: efcore-1
+            projectFilter: 'EFCore\.Postgres'
+            testFilter: '[Category=Shard1]'
+          - shard: efcore-2
+            projectFilter: 'EFCore\.Postgres'
+            testFilter: '[Category=Shard2]'
+          - shard: efcore-3
+            projectFilter: 'EFCore\.Postgres'
+            testFilter: '[Category=Shard3]'
+          - shard: efcore-4
+            projectFilter: 'EFCore\.Postgres'
+            testFilter: '[Category=Shard4]'
+          - shard: dapper
+            projectFilter: 'Dapper\.Postgres'
+            testFilter: ''
     uses: ./.github/workflows/reusable-test-postgres.yml
     with:
       artifact-name: build-${{ github.run_id }}
+      project-filter: ${{ matrix.projectFilter }}
+      test-filter: ${{ matrix.testFilter }}
+      shard-name: ${{ matrix.shard }}
 
   inmemory-integration:
     name: InMemory Integration
@@ -164,9 +194,22 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
     permissions:
       contents: read
+    # Three RabbitMQ-tagged projects, previously sequential in one job.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: whizbang
+            projectFilter: 'Whizbang\.Transports\.RabbitMQ'
+          - shard: ecommerce
+            projectFilter: 'ECommerce\.RabbitMQ'
+          - shard: lifecycle
+            projectFilter: 'ECommerce\.Lifecycle'
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
       artifact-name: build-${{ github.run_id }}
+      project-filter: ${{ matrix.projectFilter }}
+      shard-name: ${{ matrix.shard }}
 
   servicebus-integration:
     # Single-dimension matrix so GitHub renders the leg names itself ("Service Bus
@@ -212,7 +255,7 @@ jobs:
     uses: ./.github/workflows/reusable-quality.yml
     with:
       # unit, postgres, inmemory, rabbitmq, azureblob + 2 servicebus shards
-      coverage-artifact-count: 7
+      coverage-artifact-count: 13
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

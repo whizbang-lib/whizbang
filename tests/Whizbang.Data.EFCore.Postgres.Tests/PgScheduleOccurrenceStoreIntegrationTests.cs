@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// back a refreshed authority snapshot.
 /// </summary>
 /// <docs>fundamentals/temporal/pre-fire-hook</docs>
+[Category("Shard1")]
 public class PgScheduleOccurrenceStoreIntegrationTests : EFCoreTestBase {
   private PgScheduleOccurrenceStore _store() {
     var opts = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };

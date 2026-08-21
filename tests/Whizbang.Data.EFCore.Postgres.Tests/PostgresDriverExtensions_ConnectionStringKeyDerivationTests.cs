@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// regression — a consumer's production SCRAM workaround stops working again.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard2")]
 public class PostgresDriverExtensions_ConnectionStringKeyDerivationTests {
 
   [Test]

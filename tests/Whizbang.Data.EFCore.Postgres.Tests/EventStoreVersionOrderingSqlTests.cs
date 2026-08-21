@@ -33,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/event-store/version-ordering</docs>
+[Category("Shard3")]
 public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
 
   // ============================================================================

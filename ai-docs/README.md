@@ -18,6 +18,7 @@ This directory contains focused documentation topics to help Claude Code underst
   - **Critical:** Test-first is mandatory, 100% coverage goal
 
 - **[flaky-tests.md](flaky-tests.md)** - Diagnosing and fixing intermittent test failures
+- [test-sharding.md](test-sharding.md) — how CI splits slow test projects across runners, and the guard that stops a class silently running in no shard
   - **When to use:** Tests pass sometimes but fail other times
   - **Critical:** Static resources need `[NotInParallel]`, wait for ALL events affecting asserted data
 

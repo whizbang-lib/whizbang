@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// methods for the work-pump decomposition's separate-timer design.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+[Category("Shard3")]
 public class EFCoreRecordHeartbeatTests : EFCoreTestBase {
 
   [Test]

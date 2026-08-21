@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <tests>src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs</tests>
 [Category("Integration")]
+[Category("Shard4")]
 public class EventStoreHealthSourceIntegrationTests : EFCoreTestBase {
 
   private sealed class FakeLifecycle(LifecyclePhase phase) : IWhizbangLifecycleState {

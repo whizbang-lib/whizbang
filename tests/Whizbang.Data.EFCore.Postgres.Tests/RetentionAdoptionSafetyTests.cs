@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>fundamentals/perspectives/row-retention</docs>
 [NotInParallel("RetentionAdoptionSafety")]
+[Category("Shard3")]
 public class RetentionAdoptionSafetyTests : EFCoreTestBase {
   private const string TABLE = "wh_per_adoption";
   private const string CLR_TYPE = "TestApp.AdoptionModel";

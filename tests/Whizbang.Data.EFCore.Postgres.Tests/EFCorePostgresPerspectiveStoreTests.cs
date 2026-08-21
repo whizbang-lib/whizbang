@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for EFCorePostgresPerspectiveStore implementation of IPerspectiveStore.
 /// These tests use EF Core InMemory provider for fast, isolated testing.
 /// </summary>
+[Category("Shard4")]
 public class EFCorePostgresPerspectiveStoreTests {
   private readonly Uuid7IdProvider _idProvider = new();
 

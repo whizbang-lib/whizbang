@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// already-applied events become no-ops, which is what these tests pin down.
 /// </para>
 /// </summary>
+[Category("Shard2")]
 public class PerspectiveApplyIdempotencyTests : EFCoreTestBase {
 
   private static async Task<IPerspectiveRunner> CreateRunnerAsync(

@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/110_StandbyHandshake.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard4")]
 public class StandbyHandshakeSqlTests : EFCoreTestBase {
 
   private async Task<NpgsqlConnection> _openAsync(CancellationToken ct) {

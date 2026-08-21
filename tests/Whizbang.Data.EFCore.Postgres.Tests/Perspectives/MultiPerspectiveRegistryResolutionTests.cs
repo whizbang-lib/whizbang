@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// matching the production symptom (one perspective row missing).
 /// </para>
 /// </summary>
+[Category("Shard3")]
 public class MultiPerspectiveRegistryResolutionTests {
 
   private static IPerspectiveRunnerRegistry _resolveRegistry(IServiceProvider sp) =>

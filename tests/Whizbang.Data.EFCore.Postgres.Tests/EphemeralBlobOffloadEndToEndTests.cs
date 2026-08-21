@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the whole path with no interference and no truncation, using the real components (not fakes) throughout.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard2")]
 public class EphemeralBlobOffloadEndToEndTests : EFCoreTestBase {
   [Test]
   public async Task BlobOffloadedBody_Rehydrated_LandsFullInEphemeralEventBodyAsync() {

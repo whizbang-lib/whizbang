@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>diagnostics/WHIZ070</docs>
 /// <docs>diagnostics/WHIZ071</docs>
 [Category("Unit")]
+[Category("Shard4")]
 public class VectorFieldPackageReferenceAnalyzerTests {
   /// <summary>
   /// Verifies that no diagnostic is reported when both packages are referenced.
