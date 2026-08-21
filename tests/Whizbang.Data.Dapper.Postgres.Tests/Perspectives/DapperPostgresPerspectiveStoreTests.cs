@@ -14,7 +14,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// Integration tests for <see cref="DapperPostgresPerspectiveStore{TModel}"/>.
 /// Validates scope handling: set on INSERT, excluded from UPDATE, force-updated via IScopeEvent path.
 /// </summary>
-[NotInParallel("DapperPerspectiveStoreTests")]
+[NotInParallel("PostgreSQL")]
 public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
   private const string TABLE_NAME = "wh_per_dapper_test";
   private JsonSerializerOptions _jsonOptions = null!;

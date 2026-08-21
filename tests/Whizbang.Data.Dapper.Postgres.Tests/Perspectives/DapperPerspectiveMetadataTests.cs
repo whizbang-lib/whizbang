@@ -31,7 +31,7 @@ namespace Whizbang.Data.Dapper.Postgres.Tests.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives</docs>
-[NotInParallel("DapperPerspectiveStoreTests")]
+[NotInParallel("PostgreSQL")]
 public class DapperPerspectiveMetadataTests : PostgresTestBase {
   private const string TABLE_NAME = "wh_per_dapper_metadata_test";
   private JsonSerializerOptions _jsonOptions = null!;

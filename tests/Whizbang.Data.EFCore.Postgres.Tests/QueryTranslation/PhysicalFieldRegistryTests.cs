@@ -15,7 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// calls run concurrently with theirs, racing on the shared registry — intermittently clobbering a model's
 /// physical-field/JSON mapping and failing an unrelated test's setup. One shared group eliminates the race.
 /// </remarks>
-[NotInParallel("PostgreSQL")]
+[NotInParallel("EFCorePostgresTests")]
 public class PhysicalFieldRegistryTests {
   // Test model for registration
   public class TestModel {
