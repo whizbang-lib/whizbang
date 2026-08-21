@@ -113,6 +113,21 @@ flowchart TD
   A release PR (`chore(release): vX.Y.Z` into `main`) publishes exactly the title version on merge —
   `release.yml` reads that same title — so the preview must show it verbatim (no GitVersion, no `-pr`
   suffix). Keyed on the *title* (not the branch name) so an edited title still previews correctly.
+
+> [!WARNING]
+> **The release PR title IS the version string — nothing may follow it.** "Exactly the title version"
+> is literal: everything after `chore(release): v` is taken as the version, including any descriptive
+> suffix. A title like `chore(release): v0.1024.0 — reconcile the divergence` yields
+> `RELEASE_VERSION=0.1024.0 — reconcile the divergence`, and **Create Release** dies at
+> `git tag` with `is not a valid tag name` (exit 128). Build/Pack, Publish and Upload then *skip*, so
+> nothing is half-published — but nothing ships, and the failure is at the very end of the pipeline.
+> Put the description in the PR body, never the title.
+>
+> Prefer **`/release [major|minor|patch|auto]`**, which dispatches `release.yml` via
+> `workflow_dispatch` and bypasses title parsing entirely. To recover from a bad title, re-dispatch
+> rather than re-titling and re-merging:
+> `gh workflow run release.yml --ref main -f version=X.Y.Z -f release_type=auto -f dry_run=false`
+> — note **`dry_run` defaults to `true`**, so omitting it is a silent no-op that reports success.
 - **Release-branch override** covers pushes to / PRs into a `release/v*` branch, where the branch name
   is the deterministic version source (GitVersion would otherwise pick the highest *repo-wide* line,
   which is wrong on an old-line hotfix branch).
