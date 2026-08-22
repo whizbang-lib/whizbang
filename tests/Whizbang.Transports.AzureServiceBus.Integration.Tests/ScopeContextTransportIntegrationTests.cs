@@ -44,7 +44,14 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
     var transport = await _createTransportAsync();
-    var awaiter = new MessageAwaiter<IMessageEnvelope>(e => e);
+    // Accept ONLY the envelope this test published. The topic is shared by nine test
+    // classes, and draining before the test cannot close the gap: a message whose broker
+    // lock expires after the drain window becomes visible again afterwards and lands in
+    // this awaiter. Taking "whatever arrives first" then asserts against a foreign
+    // envelope — which fails as scope == null, looking like a transport bug rather than
+    // contamination. Matching on MessageId makes the test independent of channel state.
+    var awaiter = new MessageAwaiter<IMessageEnvelope>(
+      e => e, filter: e => e.MessageId == envelope.MessageId);
     var warmupSignal = new SignalAwaiter();
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
 
@@ -99,7 +106,14 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
     await _drainMessagesAsync("topic-01", "sub-01-a");
 
     var transport = await _createTransportAsync();
-    var awaiter = new MessageAwaiter<IMessageEnvelope>(e => e);
+    // Accept ONLY the envelope this test published. The topic is shared by nine test
+    // classes, and draining before the test cannot close the gap: a message whose broker
+    // lock expires after the drain window becomes visible again afterwards and lands in
+    // this awaiter. Taking "whatever arrives first" then asserts against a foreign
+    // envelope — which fails as scope == null, looking like a transport bug rather than
+    // contamination. Matching on MessageId makes the test independent of channel state.
+    var awaiter = new MessageAwaiter<IMessageEnvelope>(
+      e => e, filter: e => e.MessageId == envelope.MessageId);
     var warmupSignal = new SignalAwaiter();
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
 
@@ -165,7 +179,14 @@ public sealed class ScopeContextTransportIntegrationTests(ServiceBusEmulatorFixt
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
     var transport = await _createTransportAsync();
-    var awaiter = new MessageAwaiter<IMessageEnvelope>(e => e);
+    // Accept ONLY the envelope this test published. The topic is shared by nine test
+    // classes, and draining before the test cannot close the gap: a message whose broker
+    // lock expires after the drain window becomes visible again afterwards and lands in
+    // this awaiter. Taking "whatever arrives first" then asserts against a foreign
+    // envelope — which fails as scope == null, looking like a transport bug rather than
+    // contamination. Matching on MessageId makes the test independent of channel state.
+    var awaiter = new MessageAwaiter<IMessageEnvelope>(
+      e => e, filter: e => e.MessageId == envelope.MessageId);
     var warmupSignal = new SignalAwaiter();
     var warmupId = SubscriptionWarmup.GenerateWarmupId();
 

@@ -138,7 +138,14 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
     var envelope = _createEnvelopeWithScope("SYSTEM", "*");
     var destination = _createUniqueDestination();
 
-    var awaiter = new MessageAwaiter<IMessageEnvelope>(e => e);
+    // Accept ONLY the envelope this test published. The topic is shared by nine test
+    // classes, and draining before the test cannot close the gap: a message whose broker
+    // lock expires after the drain window becomes visible again afterwards and lands in
+    // this awaiter. Taking "whatever arrives first" then asserts against a foreign
+    // envelope — which fails as scope == null, looking like a transport bug rather than
+    // contamination. Matching on MessageId makes the test independent of channel state.
+    var awaiter = new MessageAwaiter<IMessageEnvelope>(
+      e => e, filter: e => e.MessageId == envelope.MessageId);
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       destination,
@@ -183,7 +190,14 @@ public sealed class ScopeContextTransportIntegrationTests : IAsyncDisposable {
     };
     var destination = _createUniqueDestination();
 
-    var awaiter = new MessageAwaiter<IMessageEnvelope>(e => e);
+    // Accept ONLY the envelope this test published. The topic is shared by nine test
+    // classes, and draining before the test cannot close the gap: a message whose broker
+    // lock expires after the drain window becomes visible again afterwards and lands in
+    // this awaiter. Taking "whatever arrives first" then asserts against a foreign
+    // envelope — which fails as scope == null, looking like a transport bug rather than
+    // contamination. Matching on MessageId makes the test independent of channel state.
+    var awaiter = new MessageAwaiter<IMessageEnvelope>(
+      e => e, filter: e => e.MessageId == envelope.MessageId);
     var subscription = await _transport!.SubscribeAsync(
       awaiter.Handler,
       destination,
