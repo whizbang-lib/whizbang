@@ -80,16 +80,15 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     using var sub = bus.Subscribe<WorkOutboxAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
     await bus.StartAsync(cts.Token);
-    await Task.Delay(200, cts.Token);   // LISTEN resync
 
     // Pin a stream to this pod's instance and invoke notify_instance_owners — the exact call the
     // existing SQL emitters make today. If the wire-name / registry / transport chain is intact,
     // the bus subscriber receives WorkOutboxAvailableSignal without any SQL change on the emit side.
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
-    await _invokeNotifyInstanceOwnersAsync("outbox", streamId);
 
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await _notifyUntilReceivedAsync(
+      () => _invokeNotifyInstanceOwnersAsync("outbox", streamId), received, cts.Token);
 
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
@@ -224,13 +223,12 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     foreach (var hosted in provider.GetServices<IHostedService>()) {
       await hosted.StartAsync(cts.Token);
     }
-    await Task.Delay(200, cts.Token);   // LISTEN resync
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
-    await _invokeNotifyInstanceOwnersAsync("perspective", streamId);
 
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await _notifyUntilReceivedAsync(
+      () => _invokeNotifyInstanceOwnersAsync("perspective", streamId), received, cts.Token);
 
     // Bonus lock on the wire-route self-test: the hosted probe must have verified the REAL
     // Postgres transport end to end (pg_notify to own channel, back through typed dispatch).
@@ -242,5 +240,35 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
       await hosted.StopAsync(CancellationToken.None);
     }
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Re-invokes the SQL emitter until the bus subscriber reports the signal, or the deadline passes.
+  /// </summary>
+  /// <remarks>
+  /// <c>pg_notify</c> reaches only sessions already LISTENing and is never queued, so a notification
+  /// emitted before the LISTEN lands is lost permanently. Starting the bus (or the host) does not
+  /// guarantee the LISTEN has been registered on the shared connection — that happens on the
+  /// connection's own loop. A fixed <c>Task.Delay(200)</c> is a bet on that interval, and a loaded
+  /// runner loses it: the notification is dropped and the test waits out its full timeout for a
+  /// signal that no longer exists.
+  ///
+  /// <para>Re-emitting keeps the assertion intact — the contract is "notify_instance_owners reaches
+  /// the typed subscriber", and if the chain is broken every attempt is dropped and the test still
+  /// fails on the deadline.</para>
+  /// </remarks>
+  private static async Task _notifyUntilReceivedAsync<T>(
+      Func<Task> emitAsync, TaskCompletionSource<T> received, CancellationToken cancellationToken,
+      int timeoutSeconds = 15) {
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
+    while (true) {
+      await emitAsync();
+      try {
+        await received.Task.WaitAsync(TimeSpan.FromMilliseconds(500), cancellationToken);
+        return;
+      } catch (TimeoutException) when (DateTimeOffset.UtcNow < deadline) {
+        // The LISTEN had not landed when that notification went out — emit another.
+      }
+    }
   }
 }

@@ -134,12 +134,10 @@ public class PgAppSignalChannelIntegrationTests : EFCoreTestBase {
       return Task.CompletedTask;
     });
 
-    // Wait for the resync-signal to land the LISTEN on the shared conn before publishing.
-    await Task.Delay(200, cts.Token);
+    await _publishUntilReceivedAsync(
+      () => channel.PublishAsync(topic, "should-be-delivered"), cts.Token, received.Task);
 
-    await channel.PublishAsync(topic, "should-be-delivered");
-
-    var payload = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var payload = await received.Task;
     await Assert.That(payload).IsEqualTo("should-be-delivered");
 
     await ((Microsoft.Extensions.Hosting.IHostedService)shared).StopAsync(CancellationToken.None);
@@ -174,15 +172,43 @@ public class PgAppSignalChannelIntegrationTests : EFCoreTestBase {
     using var subA = channel.Subscribe(topic, (p, _) => { a.TrySetResult(p); return Task.CompletedTask; });
     using var subB = channel.Subscribe(topic, (p, _) => { b.TrySetResult(p); return Task.CompletedTask; });
 
-    await Task.Delay(200, cts.Token);
+    await _publishUntilReceivedAsync(
+      () => channel.PublishAsync(topic, "fanout-payload"), cts.Token, a.Task, b.Task);
 
-    await channel.PublishAsync(topic, "fanout-payload");
-
-    var resA = await a.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    var resB = await b.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var resA = await a.Task;
+    var resB = await b.Task;
     await Assert.That(resA).IsEqualTo("fanout-payload");
     await Assert.That(resB).IsEqualTo("fanout-payload");
 
     await ((Microsoft.Extensions.Hosting.IHostedService)shared).StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Publishes until every awaited subscriber has been delivered to, or the deadline passes.
+  /// </summary>
+  /// <remarks>
+  /// <c>pg_notify</c> reaches only sessions already LISTENing and is never queued, so a payload
+  /// published before the subscribe-side LISTEN lands on the shared connection is lost permanently.
+  /// <c>Subscribe</c> returning does not prove the LISTEN has been registered — the resync runs on
+  /// the connection's own loop. A fixed <c>Task.Delay(200)</c> is a bet on that interval; a loaded
+  /// runner loses it and the test then waits out its full timeout for a payload that no longer
+  /// exists.
+  ///
+  /// <para>Re-publishing keeps the assertion honest: if the channel never delivers, every attempt is
+  /// dropped and the test still fails on the deadline. Handlers use <c>TrySetResult</c>, so repeat
+  /// deliveries are harmless.</para>
+  /// </remarks>
+  private static async Task _publishUntilReceivedAsync(
+      Func<Task> publishAsync, CancellationToken cancellationToken, params Task[] awaited) {
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (true) {
+      await publishAsync();
+      try {
+        await Task.WhenAll(awaited).WaitAsync(TimeSpan.FromMilliseconds(500), cancellationToken);
+        return;
+      } catch (TimeoutException) when (DateTimeOffset.UtcNow < deadline) {
+        // A LISTEN had not landed when that notification went out — publish again.
+      }
+    }
   }
 }
