@@ -123,13 +123,12 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     using var sub = bus.Subscribe<WorkInboxAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
     await bus.StartAsync(cts.Token);
-    await Task.Delay(200, cts.Token);
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
-    await _invokeNotifyInstanceOwnersAsync("inbox", streamId);
 
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await _notifyUntilReceivedAsync(
+      () => _invokeNotifyInstanceOwnersAsync("inbox", streamId), received, cts.Token);
 
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
@@ -164,13 +163,12 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     using var sub = bus.Subscribe<WorkPerspectiveAvailableSignal>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
 
     await bus.StartAsync(cts.Token);
-    await Task.Delay(200, cts.Token);
 
     var streamId = Guid.NewGuid();
     await _pinStreamToInstanceAsync(streamId, instance.InstanceId);
-    await _invokeNotifyInstanceOwnersAsync("perspective", streamId);
 
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10), cts.Token);
+    await _notifyUntilReceivedAsync(
+      () => _invokeNotifyInstanceOwnersAsync("perspective", streamId), received, cts.Token);
 
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
