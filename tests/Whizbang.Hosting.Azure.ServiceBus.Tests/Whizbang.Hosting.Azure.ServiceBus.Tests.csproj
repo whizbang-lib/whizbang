@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
     <!-- Unit: Fast tests, no external infrastructure needed -->
     <WhizbangTestType>Unit</WhizbangTestType>
     <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
