@@ -54,8 +54,14 @@ jobs:
 
       # SonarCloud free plan only supports main branch + PR analysis, so the scanner is
       # skipped for push events to non-main branches (e.g. develop).
+      #
+      # merge_group is skipped too, and NOT because it is cheap to drop: the queue ref is a
+      # throwaway (gh-readonly-queue/develop/pr-N-<sha>) and carries no pull_request context,
+      # so the scanner would submit a BRANCH analysis of a branch that ceases to exist minutes
+      # later — rejected outright on the main-plus-PRs free plan. The PR analysis already
+      # gated this exact change, and keeping the queue run lean is the point of the queue.
       - name: SonarScanner Begin
-        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+        if: (github.event_name != 'push' || github.ref == 'refs/heads/main') && github.event_name != 'merge_group'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
@@ -224,7 +230,7 @@ jobs:
           fi
 
       - name: SonarScanner End
-        if: github.event_name != 'push' || github.ref == 'refs/heads/main'
+        if: (github.event_name != 'push' || github.ref == 'refs/heads/main') && github.event_name != 'merge_group'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
