@@ -35,20 +35,37 @@ public sealed partial class WhizbangShutdownService(
     var sw = Stopwatch.StartNew();
     LogShutdownStarting(logger, instanceProvider.InstanceId, instanceProvider.ServiceName, instanceProvider.HostName);
 
+    // Deliberately NOT `cancellationToken`. StopAsync runs on the shutdown path, where the host's
+    // token is already cancelled by the time cleanup executes — forwarding it cancels the
+    // deregistration statement mid-flight, abandoning the instance row at exactly the moment we are
+    // trying to remove it. Bound the work on its own clock instead, so a wedged store still cannot
+    // hold the process past the orchestrator's grace period and earn a hard kill.
+    using var deregisterWindow = new CancellationTokenSource(_deregisterTimeout);
+
     try {
       await using var scope = serviceProvider.CreateAsyncScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-      await coordinator.DeregisterInstanceAsync(instanceProvider.InstanceId, cancellationToken);
+      await coordinator.DeregisterInstanceAsync(instanceProvider.InstanceId, deregisterWindow.Token);
       sw.Stop();
 
       LogShutdownComplete(logger, instanceProvider.InstanceId, sw.ElapsedMilliseconds);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
+    } catch (OperationCanceledException ex) {
+      // Never silent: swallowing this without a trace would strand the instance row AND erase the
+      // only evidence that it happened, which is strictly worse than the crash this replaces.
+      sw.Stop();
+      LogShutdownDeregisterAbandoned(logger, instanceProvider.InstanceId, sw.ElapsedMilliseconds, ex);
+    } catch (Exception ex) {
       sw.Stop();
       LogShutdownFailed(logger, instanceProvider.InstanceId, sw.ElapsedMilliseconds, ex);
-      // Don't rethrow — stale cleanup will handle it if deregistration fails
+      // Don't rethrow — a failed deregistration must not turn a graceful stop into a crash exit.
     }
   }
+
+  /// <summary>
+  /// Independent budget for deregistration, since the caller's token is already cancelled here.
+  /// </summary>
+  private static readonly TimeSpan _deregisterTimeout = TimeSpan.FromSeconds(5);
 
   [LoggerMessage(
     EventId = 1,
@@ -70,4 +87,13 @@ public sealed partial class WhizbangShutdownService(
     Message = "Whizbang shutdown deregistration failed for instance {InstanceId} after {ElapsedMs}ms — stale cleanup will handle it"
   )]
   private static partial void LogShutdownFailed(ILogger logger, Guid instanceId, long elapsedMs, Exception exception);
+
+  [LoggerMessage(
+    EventId = 4,
+    Level = LogLevel.Warning,
+    Message = "Whizbang shutdown abandoned deregistration for instance {InstanceId} after {ElapsedMs}ms — the store did not "
+      + "complete within the deregistration budget. Shutdown continues; the instance row remains in the fleet table until "
+      + "stale-instance cleanup reaps it, so fleet membership may over-count this instance until then"
+  )]
+  private static partial void LogShutdownDeregisterAbandoned(ILogger logger, Guid instanceId, long elapsedMs, Exception exception);
 }
