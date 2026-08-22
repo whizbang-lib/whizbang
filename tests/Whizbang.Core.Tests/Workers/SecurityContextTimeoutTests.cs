@@ -159,6 +159,9 @@ public class SecurityContextTimeoutTests {
   // --- InboxDispatchWorker fakes ---
 
   private sealed class _FakeInboxChannelWriter : IInboxChannelWriter {
+    // Not exercised by this fake: it tracks no in-flight work, so there is nothing to gate on.
+    public int InFlightCount => 0;
+    public int PruneInFlightOlderThan(TimeSpan age) => 0;
     private readonly System.Threading.Channels.Channel<InboxWork> _channel = System.Threading.Channels.Channel.CreateUnbounded<InboxWork>();
     public System.Threading.Channels.ChannelReader<InboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);

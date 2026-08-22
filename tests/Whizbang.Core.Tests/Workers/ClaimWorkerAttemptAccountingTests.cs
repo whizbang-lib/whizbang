@@ -54,7 +54,7 @@ public class ClaimWorkerAttemptAccountingTests {
   }
 
   [Test]
-  public async Task CleanWork_KeepsTheClaimWindowAtTheConfiguredCeilingAsync() {
+  public async Task CleanWork_GrowsTheClaimWindowInsteadOfNarrowingItAsync() {
     var coord = new RecordingCoordinator {
       // attempts == 1 is a FIRST claim, not a re-claim: nothing to correct.
       BatchToReturn = _batchOf(rows: 4, attempts: 1)
@@ -64,13 +64,21 @@ public class ClaimWorkerAttemptAccountingTests {
       PollingMaxIntervalMilliseconds = 60,
       MaxStreamsPerBatch = 500,
       MinStreamsPerBatch = 25,
+      ClaimWindowGrowthStep = 25,
     });
 
     await coord.WaitForCallsAsync(4, TimeSpan.FromSeconds(5));
 
-    await Assert.That(coord.LastMaxStreams).IsEqualTo(500)
-      .Because("a healthy worker must keep the operator's configured batch size — narrowing on "
-             + "first-claim traffic would throttle a service that is keeping up perfectly well");
+    // This assertion was previously "== 500", which held only because the window was CONSTRUCTED at
+    // the ceiling. That made it a test of the starting value rather than of the behaviour it names.
+    // The window now starts at the floor (cold start is when over-claiming does its damage), so the
+    // real property is directional: clean traffic must GROW the window, never narrow it.
+    await Assert.That(coord.LastMaxStreams).IsGreaterThan(25)
+      .Because("first-claim traffic is evidence of spare capacity — a healthy worker must be "
+             + "allowed to widen rather than stay pinned at its cautious starting point");
+    await Assert.That(coord.LastMaxStreams).IsLessThanOrEqualTo(500)
+      .Because("the operator's configured batch size remains the ceiling; the window may approach "
+             + "it but never exceed it");
   }
 
   [Test]
@@ -209,6 +217,84 @@ public class ClaimWorkerAttemptAccountingTests {
     return new WorkBatch { OutboxWork = [], InboxWork = inbox, PerspectiveWork = [] };
   }
 
+  [Test]
+  public async Task OutstandingWorkAlreadyHeld_NarrowsTheClaimBelowTheWindowAsync() {
+    var coord = new RecordingCoordinator { BatchToReturn = _batchOf(rows: 1, attempts: 1) };
+    // Already holding 95 rows against a 100-row floor: only 5 rows of headroom remain.
+    var channel = new ProbeInboxChannel { InFlight = 95 };
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxStreamsPerBatch = 1000,
+      MinStreamsPerBatch = 25,
+      MinOutstandingInboxRows = 100,
+    }, channel);
+
+    // One claim is the right observation point. This fake holds its 95 rows and never completes
+    // any, so after the first drain sample the worker correctly concludes it is stalled and stops
+    // claiming altogether — waiting for more calls would be waiting for behaviour the design
+    // deliberately forbids.
+    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(5));
+
+    // The budget is a HARDER constraint than the window: it may pull the claim below even the
+    // window's floor, because holding more than can be drained inside the lease is what spends the
+    // retry budget. A window-only bound cannot express this — it has no idea what is already held.
+    await Assert.That(coord.LastMaxStreams).IsLessThan(25)
+      .Because("outstanding work already close to the budget must throttle the next claim, "
+             + "regardless of how wide the batch window happens to be");
+    await Assert.That(coord.LastMaxStreams).IsGreaterThan(0)
+      .Because("remaining headroom must still be usable — collapsing to zero while capacity exists "
+             + "would stall a worker that is keeping up");
+  }
+
+  [Test]
+  public async Task StaleInFlightWork_IsAgedOutAtTheLeaseDurationAsync() {
+    var coord = new RecordingCoordinator { BatchToReturn = _batchOf(rows: 1, attempts: 1) };
+    var channel = new ProbeInboxChannel();
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxStreamsPerBatch = 1000,
+      MinStreamsPerBatch = 25,
+      LeaseSeconds = 300,
+    }, channel);
+
+    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
+
+    // Without this the gate becomes a deadlock: if work is held and nothing ever completes, the
+    // worker would never claim again. Entries older than the lease are no longer ours — the lease
+    // lapsed and the store will re-issue them — so ageing them out is what reopens the gate.
+    await Assert.That(channel.LastPruneAge).IsEqualTo(TimeSpan.FromSeconds(300))
+      .Because("the prune threshold must be the lease duration itself: anything shorter discards "
+             + "work still legitimately in progress, anything longer wedges the worker for longer "
+             + "than the rows were even ours");
+  }
+
+  /// <summary>
+  /// Reports a controllable amount of outstanding work and records how the worker ages it out.
+  /// </summary>
+  private sealed class ProbeInboxChannel : IInboxChannelWriter {
+    private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
+    public int InFlight { get; set; }
+    public TimeSpan? LastPruneAge { get; private set; }
+
+    public int InFlightCount => InFlight;
+    public int PruneInFlightOlderThan(TimeSpan age) {
+      LastPruneAge = age;
+      return 0;
+    }
+
+    public ChannelReader<InboxWork> Reader => _channel.Reader;
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
+    public bool TryWrite(InboxWork work) => _channel.Writer.TryWrite(work);
+    public bool IsInFlight(Guid messageId) => false;
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() => _channel.Writer.Complete();
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+  }
+
   private static WorkerHarness _startWorker(
       RecordingCoordinator coord, ClaimWorkerOptions options, IInboxChannelWriter? inboxChannel = null) {
     var services = new ServiceCollection();
@@ -256,6 +342,8 @@ public class ClaimWorkerAttemptAccountingTests {
   /// </summary>
   private sealed class RefusingInboxChannel : IInboxChannelWriter {
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
+    public int InFlightCount => 0;
+    public int PruneInFlightOlderThan(TimeSpan age) => 0;
     public ChannelReader<InboxWork> Reader => _channel.Reader;
     public event Action? OnNewInboxWorkAvailable { add { } remove { } }
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) =>

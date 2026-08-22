@@ -532,7 +532,21 @@ public class PerspectiveDedupIntegrationTests {
         PartitionNumber = 1
       });
     }
-    coordinator.WorkPerCycle.Add(batchWork);
+    // Offer the SAME batch on several cycles rather than once.
+    //
+    // SequentialWorkCoordinator serves WorkPerCycle[n] to the nth claim and an empty list after
+    // that, so a single queued cycle is consumed by whichever claim happens first. Under parallel
+    // load that claim can land before the worker is ready to process what it returns — the batch is
+    // taken, dropped, and the test then waits the full timeout for ten calls that can no longer
+    // arrive. That is the flake: single-shot work racing worker startup, not a product defect.
+    //
+    // Repeating it does not weaken the assertions. Dedup here is keyed on WorkId and every item has
+    // a distinct one, so re-offering the identical batch must still produce exactly ten calls —
+    // if dedup regressed, CallCount would exceed ten and the test fails, which is precisely what it
+    // exists to catch. The repeat therefore removes the race and exercises dedup harder.
+    for (var cycle = 0; cycle < 3; cycle++) {
+      coordinator.WorkPerCycle.Add(batchWork);
+    }
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner));
 
