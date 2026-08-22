@@ -7,6 +7,7 @@ on:
       - 'release/v**'  # branch-name-versioned publish (release-publish job)
   pull_request:
     branches: [main, develop, 'release/**']
+  merge_group:       # the queue's own run, on the prospective merge commit
   workflow_dispatch:
 
 # Least-privilege: NO workflow-level grants (S8233/S8264) — every job declares exactly
@@ -40,7 +41,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # merge_group has no base ref to diff against, so the filter is skipped there and
+      # every code-gated job forces itself on instead. A queue run must never narrow its
+      # own matrix: the filter returning empty would skip the suites, CI Result would go
+      # green on nothing, and the queue would merge untested code.
       - name: Detect changed paths
+        if: github.event_name != 'merge_group'
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         id: filter
         with:
@@ -117,7 +123,7 @@ jobs:
     # !failure() && !cancelled(): version is skipped (not failed) on PRs — build must
     # still run there with the placeholder version below. Pushes honor the change filter
     # too: a docs-only merge runs no build/tests and publishes no package.
-    if: ${{ !failure() && !cancelled() && (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch') }}
+    if: ${{ !failure() && !cancelled() && (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-build.yml
@@ -205,7 +211,7 @@ jobs:
     # while they run, then waits for their coverage artifacts internally (failing fast
     # if any test job fails). actions:read is required for that polling.
     needs: [changes]
-    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
     permissions:
       contents: read
       actions: read
