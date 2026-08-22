@@ -4,7 +4,7 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <WhizbangTestTags>Integration;Docker</WhizbangTestTags>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
     <!-- Unit: No external dependencies (RabbitMQ, Docker) required -->
     <WhizbangTestType>Unit</WhizbangTestType>
     <!-- Suppress CA1707: Test method names use underscores for readability -->
