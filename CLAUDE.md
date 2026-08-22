@@ -64,6 +64,20 @@ public async Task MessageEnvelope_AddHop_AddsHopToList() { }
 
 **ALL async methods and test methods must end with "Async" suffix.**
 
+### Language — en-US
+
+Write **American English** everywhere: code, comments, XML docs, commit messages, PR titles
+and descriptions, markdown docs, and test names.
+
+```
+✅ behavior, serialize, initialize, analyze, canceled, color, catalog, center, license
+❌ behaviour, serialise, initialise, analyse, cancelled, colour, catalogue, centre, licence
+```
+
+The public API is already en-US (`SerializationError`, `Whizbang.Core.Serialization`,
+`MessageDiscardPolicy`), so British spellings in prose read as inconsistent against the very
+identifiers they describe — and a mixed-dialect codebase makes grep and API naming unpredictable.
+
 ---
 
 ## Common Commands
