@@ -4,6 +4,7 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
     <WhizbangTestType>Unit</WhizbangTestType>
     <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
     <NoWarn>$(NoWarn);CA1707</NoWarn>

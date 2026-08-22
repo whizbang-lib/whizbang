@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Unit</WhizbangTestTags>
     <!-- Unit: Fast tests, no external infrastructure needed -->
     <WhizbangTestType>Unit</WhizbangTestType>
     <!-- Enable viewing generated files -->

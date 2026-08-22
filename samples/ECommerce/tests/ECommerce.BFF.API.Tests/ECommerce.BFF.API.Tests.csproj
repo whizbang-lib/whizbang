@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
+    <WhizbangTestTags>Integration;Docker</WhizbangTestTags>
     <!-- Unit: Fast tests, no external infrastructure needed -->
     <WhizbangTestType>Unit</WhizbangTestType>
     <IsPackable>false</IsPackable>
