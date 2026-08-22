@@ -76,9 +76,14 @@ jobs:
   # anything ships, so build waits for GitVersion. On PRs nothing ships — build starts
   # immediately with a placeholder while pr-version computes the real number in
   # parallel, purely for the PR comment.
+  # Queue runs are excluded alongside PRs: nothing ships from either, and GitVersion derives
+  # its prerelease label from the branch name — for a queue ref that is
+  # gh-readonly-queue/develop/pr-544-<40 hex>, yielding an 85-character version. Package file
+  # names built from it trip NU5123 (path too long), which is warning-as-error here, so pack
+  # fails on every queue run. Both events fall through to the placeholder below instead.
   version:
     name: Version
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-version.yml
@@ -128,7 +133,7 @@ jobs:
       contents: read
     uses: ./.github/workflows/reusable-build.yml
     with:
-      version: ${{ needs.version.outputs.semver || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number) }}
+      version: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
 
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
@@ -280,7 +285,7 @@ jobs:
 
       - name: Pack NuGet packages (no rebuild)
         env:
-          VERSION: ${{ needs.version.outputs.semver || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number) }}
+          VERSION: ${{ needs.version.outputs.semver || (github.event_name == 'merge_group' && format('0.0.0-queue.{0}', github.run_number) || format('0.0.0-pr{0}.{1}', github.event.pull_request.number, github.run_number)) }}
         run: |
           # NU5017 false positive for analyzer packages in .NET 10 SDK
           dotnet pack --configuration Release --no-build --output ./packages /p:Version="$VERSION" || true
@@ -344,8 +349,9 @@ jobs:
         run: ls -la ./packages
 
       - name: Upload NuGet packages
-        # On PRs pack is a packability gate only — nothing consumes the artifact.
-        if: github.event_name != 'pull_request'
+        # On PRs and queue runs pack is a packability gate only — nothing consumes the
+        # artifact, because the publish jobs are gated on push.
+        if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nuget-packages-${{ github.run_id }}
