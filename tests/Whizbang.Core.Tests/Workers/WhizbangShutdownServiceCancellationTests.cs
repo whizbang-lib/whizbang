@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Configuration;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
@@ -64,11 +65,25 @@ public class WhizbangShutdownServiceCancellationTests {
     await Assert.That(logger.Entries.Any(e => e.Level >= LogLevel.Warning)).IsTrue();
   }
 
+  [Test]
+  public async Task DeregistrationBudget_DefaultsToAValueThatCanReleaseARealBacklogAsync() {
+    // Deregistration releases every lease the instance holds before deleting the row, in ONE
+    // all-or-nothing call — so its cost scales with the claimed backlog, and a timeout releases
+    // nothing at all. A budget of a few seconds cannot complete that on a backlogged service; it
+    // just guarantees the leases stay held. The ceiling is the orchestrator's grace period
+    // (commonly 30s), past which the process is hard-killed and the clean exit is lost.
+    var options = new WhizbangCoreOptions();
+
+    await Assert.That(options.ShutdownDeregistrationTimeout).IsGreaterThanOrEqualTo(TimeSpan.FromSeconds(10));
+    await Assert.That(options.ShutdownDeregistrationTimeout).IsLessThan(TimeSpan.FromSeconds(30));
+  }
+
   private static WhizbangShutdownService _build(IWorkCoordinator coordinator, out _CapturingLogger logger) {
     var services = new ServiceCollection();
     services.AddSingleton(coordinator);
     logger = new _CapturingLogger();
-    return new WhizbangShutdownService(services.BuildServiceProvider(), new _StubInstanceProvider(), logger);
+    return new WhizbangShutdownService(
+      services.BuildServiceProvider(), new _StubInstanceProvider(), new WhizbangCoreOptions(), logger);
   }
 
   private sealed record _Entry(LogLevel Level, string Message);

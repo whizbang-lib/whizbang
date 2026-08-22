@@ -22,6 +22,7 @@ namespace Whizbang.Core.Workers;
 public sealed partial class WhizbangShutdownService(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
+  Whizbang.Core.Configuration.WhizbangCoreOptions coreOptions,
   ILogger<WhizbangShutdownService> logger
 ) : IHostedService {
   /// <summary>No-op on startup.</summary>
@@ -35,12 +36,16 @@ public sealed partial class WhizbangShutdownService(
     var sw = Stopwatch.StartNew();
     LogShutdownStarting(logger, instanceProvider.InstanceId, instanceProvider.ServiceName, instanceProvider.HostName);
 
-    // Deliberately NOT `cancellationToken`. StopAsync runs on the shutdown path, where the host's
-    // token is already cancelled by the time cleanup executes — forwarding it cancels the
-    // deregistration statement mid-flight, abandoning the instance row at exactly the moment we are
-    // trying to remove it. Bound the work on its own clock instead, so a wedged store still cannot
-    // hold the process past the orchestrator's grace period and earn a hard kill.
-    using var deregisterWindow = new CancellationTokenSource(_deregisterTimeout);
+    // Deliberately NOT `cancellationToken`. The host cancels that token when its shutdown budget
+    // expires, and deregistration is the one piece of shutdown work that must not be interrupted:
+    // it releases every lease this instance holds and then removes the instance row, in a single
+    // all-or-nothing call. Cancelling it rolls the whole thing back — releasing nothing, stranding
+    // the row — and, when the exception escapes, converts a graceful stop into a crash exit.
+    //
+    // Bound it on its own clock instead. The budget is configurable because the work scales with
+    // how much this instance had claimed; the ceiling is the orchestrator's grace period, past
+    // which the process is hard-killed and the clean exit is lost anyway.
+    using var deregisterWindow = new CancellationTokenSource(coreOptions.ShutdownDeregistrationTimeout);
 
     try {
       await using var scope = serviceProvider.CreateAsyncScope();
@@ -62,10 +67,6 @@ public sealed partial class WhizbangShutdownService(
     }
   }
 
-  /// <summary>
-  /// Independent budget for deregistration, since the caller's token is already cancelled here.
-  /// </summary>
-  private static readonly TimeSpan _deregisterTimeout = TimeSpan.FromSeconds(5);
 
   [LoggerMessage(
     EventId = 1,
