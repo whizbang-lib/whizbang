@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Unit")]
 [Category("Lenses")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class EFCoreLensQueryFactoryTests : EFCoreTestBase {
 
   #region Constructor Tests

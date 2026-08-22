@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// JSONB serialization through the full path so a regression in either the C# wrapper
 /// or the SQL function fails this test cohort.
 /// </summary>
+[Category("Shard3")]
 public class EFCoreStoreInboxMessagesTests : EFCoreTestBase {
 
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _build(WorkCoordinationDbContext ctx)

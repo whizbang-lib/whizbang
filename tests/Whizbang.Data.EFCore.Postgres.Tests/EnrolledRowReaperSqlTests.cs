@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>fundamentals/perspectives/row-retention</docs>
 [NotInParallel("EnrolledRowReaper")]
+[Category("Shard4")]
 public class EnrolledRowReaperSqlTests : EFCoreTestBase {
   private const string TABLE = "wh_per_enrolled_reap";
   private const string CLR_TYPE = "TestApp.EnrolledReapModel";

@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// applied in arrival order, and marked processed, so that check stays silent.
 /// </summary>
 /// <docs>fundamentals/perspectives/rewind-invariants</docs>
+[Category("Shard4")]
 public class ReconcileRewindDeclarationSqlTests : EFCoreTestBase {
 
   private const string EVENT_TYPE = "Whizbang.Tests.ReconcileRewindProbeEvent";

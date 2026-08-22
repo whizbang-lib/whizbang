@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>wh_committed</c> notification reaches each LISTEN-er.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard1")]
 public class CommittedNotifyEmissionSqlTests : EFCoreTestBase {
 
   [Test]

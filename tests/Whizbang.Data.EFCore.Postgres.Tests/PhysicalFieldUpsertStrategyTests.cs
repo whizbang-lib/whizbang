@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for <see cref="IDbUpsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync{TModel}"/>.
 /// Validates that physical field values are correctly persisted to shadow properties.
 /// </summary>
+[Category("Shard3")]
 public class PhysicalFieldUpsertStrategyTests {
   private readonly Uuid7IdProvider _idProvider = new();
 

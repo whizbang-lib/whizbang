@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// not when events are directly dispatched. These tests use command handlers
 /// that return events with different routing modes to verify the cascade flow.</para>
 /// </remarks>
+[Category("Shard4")]
 public class LocalEventStorageTests : EFCoreTestBase {
   #region Test Messages
 

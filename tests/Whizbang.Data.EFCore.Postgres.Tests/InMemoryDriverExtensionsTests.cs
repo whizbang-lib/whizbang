@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test model for InMemoryDriverExtensions tests.
 /// </summary>
+[Category("Shard1")]
 public class InMemoryTestModel {
   public string Value { get; set; } = string.Empty;
 }
@@ -31,6 +32,7 @@ public class InMemoryTestDbContext(DbContextOptions<InMemoryTestDbContext> optio
 /// Verifies driver registration, service configuration, and error handling.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard2")]
 public class InMemoryDriverExtensionsTests {
   [Test]
   public async Task InMemory_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync() {

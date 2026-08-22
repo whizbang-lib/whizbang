@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 [NotInParallel("BitemporalColumnMigration")]
+[Category("Shard1")]
 public class BitemporalColumnMigrationTests : EFCoreTestBase {
   private const string LEGACY_TABLE = "wh_per_bitemporal_legacy";
 

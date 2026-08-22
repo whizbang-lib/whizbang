@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </para>
 /// </summary>
 /// <code-under-test>src/Whizbang.Generators/Templates/PerspectiveRunnerTemplate.cs</code-under-test>
+[Category("Shard4")]
 public class ReconcileRewindScenarioTests : EFCoreTestBase {
 
   private const string PERSPECTIVE = "action_test";

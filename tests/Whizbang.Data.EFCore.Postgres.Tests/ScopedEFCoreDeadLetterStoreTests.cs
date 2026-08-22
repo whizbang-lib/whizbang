@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// perspective workers inject <see cref="IDeadLetterStore"/> while the
 /// underlying EFCore impl still gets a per-call scoped DbContext.
 /// </summary>
+[Category("Shard3")]
 public class ScopedEFCoreDeadLetterStoreTests : EFCoreTestBase {
 
   // ===== Constructor null guards =====

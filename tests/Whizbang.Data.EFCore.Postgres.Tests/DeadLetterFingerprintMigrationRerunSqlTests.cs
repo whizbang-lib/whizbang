@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// CrashLoopBackOff propagated to the consumer's downstream services.</para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[Category("Shard4")]
 public class DeadLetterFingerprintMigrationRerunSqlTests : EFCoreTestBase {
 
   // --- helpers ---

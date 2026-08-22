@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// argument validation surface and the round-trip mapping for the happy path.
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[Category("Shard3")]
 public class EFCoreDeadLetterStoreTests : EFCoreTestBase {
 
   // ===== Constructor =====

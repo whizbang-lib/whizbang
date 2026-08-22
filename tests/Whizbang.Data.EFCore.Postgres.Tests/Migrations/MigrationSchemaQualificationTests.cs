@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>contributors/data-engines/writing-migrations</docs>
 [Category("Migrations")]
+[Category("Shard4")]
 public class MigrationSchemaQualificationTests {
 
   // Substituting the placeholder with itself is an identity replace, so this yields the migration

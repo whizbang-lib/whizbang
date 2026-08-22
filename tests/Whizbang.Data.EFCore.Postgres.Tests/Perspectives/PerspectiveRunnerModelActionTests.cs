@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// Integration tests that run events through the generated ActionTestPerspectiveRunner
 /// and verify database state. Tests all 4 ModelAction outcomes: None (create/update), Delete, Purge.
 /// </summary>
+[Category("Shard4")]
 public class PerspectiveRunnerModelActionTests : EFCoreTestBase {
 
   private static async Task<IPerspectiveRunner> CreateRunnerAsync(

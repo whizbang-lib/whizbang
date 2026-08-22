@@ -34,6 +34,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>operations/dead-letter-queue/summary-aggregation</docs>
+[Category("Shard1")]
 public class DeadLetterSummarySqlTests : EFCoreTestBase {
 
   private const string _stackInvalidOp = """

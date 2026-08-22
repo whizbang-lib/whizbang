@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
+[Category("Shard1")]
 public class CoordinatorIntegrityRepairLedgerTests {
 
   private static IntegrityRepairLedger.DivergenceKey _key() =>

@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the EF InMemory provider cannot translate it.
 /// </summary>
 /// <tests>src/Whizbang.Data.EFCore.Postgres/EFCorePostgresLensQuery.cs</tests>
+[Category("Shard3")]
 public class EFCorePostgresLensQueryPrincipalScopePostgresTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 

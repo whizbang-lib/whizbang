@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// (group and floor cleared) ships through the normal pump unchanged.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+[Category("Shard1")]
 public class TagBoundCoalescingSqlTests : EFCoreTestBase {
   /// <summary>
   /// A CoalesceGroup value in the store_outbox_messages payload must persist to the

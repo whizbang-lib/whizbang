@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// stream's owner to a known instance and LISTEN on that instance's channel.
 /// </summary>
 /// <docs>fundamentals/perspectives/sync</docs>
+[Category("Shard1")]
 public class SyncInquiryWakeSqlTests : EFCoreTestBase {
 
   [Test]

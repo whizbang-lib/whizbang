@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>EnsureWhizbangDatabaseInitializedAsync</c> in <see cref="EFCoreTestBase"/>; the
 /// registry starts empty because the base class does not pass a service provider.
 /// </summary>
+[Category("Shard2")]
 public class EFCoreMessageTypeRegistryPopulatorTests : EFCoreTestBase {
 
   [Test]

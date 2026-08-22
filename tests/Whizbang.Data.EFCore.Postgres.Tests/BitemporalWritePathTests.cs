@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspectives</docs>
 [NotInParallel("BitemporalWritePath")]
+[Category("Shard2")]
 public class BitemporalWritePathTests : EFCoreTestBase {
   private const string TABLE = "wh_per_bitemporal_write";
 

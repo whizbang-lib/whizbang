@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/MigrationVersionGuard.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class SchemaLedgerVersionTests : EFCoreTestBase {
 
   /// <summary>A version that outranks whatever this build stamps, so the ledger looks "newer".</summary>

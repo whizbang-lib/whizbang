@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// cache and the conditional body fetch.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard1")]
 public class FetchPendingPerspectiveEventsSqlTests : EFCoreTestBase {
 
   [Test]

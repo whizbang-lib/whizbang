@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <tests>No tests found</tests>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class PhysicalFieldIntegrationTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 

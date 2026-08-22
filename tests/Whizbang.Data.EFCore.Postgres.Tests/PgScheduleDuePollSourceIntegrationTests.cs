@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// owned by this pod's instance is due (<c>next_fire_at &lt;= NOW()</c>), and not otherwise.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard4")]
 public class PgScheduleDuePollSourceIntegrationTests : EFCoreTestBase {
   private sealed class CountingSink : ISignalSink {
     public int Received { get; private set; }

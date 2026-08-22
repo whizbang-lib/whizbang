@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class SplitModeIntegrationTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 

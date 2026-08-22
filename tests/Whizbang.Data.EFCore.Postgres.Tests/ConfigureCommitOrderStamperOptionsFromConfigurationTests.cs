@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// key spelling, the parse format, or the option assignment fails this
 /// test before it ships.
 /// </summary>
+[Category("Shard1")]
 public class ConfigureCommitOrderStamperOptionsFromConfigurationTests {
 
   private static CommitOrderStamperOptions _bind(Dictionary<string, string?> kv) {

@@ -32,6 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegrityCheckpointReceptor.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Messaging/IntegrityGapTracker.cs</code-under-test>
+[Category("Shard4")]
 public class IntegrityCheckpointReceptorTests {
 
   public sealed record VerifiedEvent : IEvent {

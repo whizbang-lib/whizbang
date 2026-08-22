@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/IntegritySweepScheduler.cs</code-under-test>
 /// <docs>resilience/stream-integrity</docs>
+[Category("Shard2")]
 public class IntegritySweepSchedulingTests {
 
   private sealed class _captureScheduleManager : IScheduleManager {

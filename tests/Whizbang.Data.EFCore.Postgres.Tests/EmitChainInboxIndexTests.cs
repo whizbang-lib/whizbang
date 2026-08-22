@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// regression.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/work-pump</docs>
+[Category("Shard4")]
 public class EmitChainInboxIndexTests : EFCoreTestBase {
 
   [Test]

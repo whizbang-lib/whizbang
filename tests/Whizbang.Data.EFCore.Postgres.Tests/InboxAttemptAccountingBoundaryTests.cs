@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[Category("Shard4")]
 public class InboxAttemptAccountingBoundaryTests : EFCoreTestBase {
 
   /// <summary>

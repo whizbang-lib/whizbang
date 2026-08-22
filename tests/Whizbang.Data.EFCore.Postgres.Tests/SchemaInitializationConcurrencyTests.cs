@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard3")]
 public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
   // ═══════════════════════════════════════════════════════════════════════════

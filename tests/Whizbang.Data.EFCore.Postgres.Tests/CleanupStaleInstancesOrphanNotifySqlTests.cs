@@ -35,6 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard1")]
 public class CleanupStaleInstancesOrphanNotifySqlTests : EFCoreTestBase {
 
   [Test]

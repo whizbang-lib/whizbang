@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
 [Category("Integration")]
+[Category("Shard4")]
 public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 

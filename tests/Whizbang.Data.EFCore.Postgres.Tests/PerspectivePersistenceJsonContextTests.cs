@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// WhizbangIdConverter the bytes diverge and EF's reader rejects them.
 /// This context exists specifically to bypass the WhizbangIdConverter for perspective TModels.
 /// </remarks>
+[Category("Shard1")]
 public class PerspectivePersistenceJsonContextTests {
   /// <summary>
   /// Locks the byte-format invariant for [WhizbangId] struct properties on perspective TModels.

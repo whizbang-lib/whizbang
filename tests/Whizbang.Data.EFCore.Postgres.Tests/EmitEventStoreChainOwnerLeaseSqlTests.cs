@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard3")]
 public class EmitEventStoreChainOwnerLeaseSqlTests : EFCoreTestBase {
 
   private const string EVENT_TYPE = "Whizbang.Tests.OwnerLeaseEvent, Whizbang.Tests";

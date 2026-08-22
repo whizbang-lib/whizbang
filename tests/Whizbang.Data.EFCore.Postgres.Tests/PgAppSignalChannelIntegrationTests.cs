@@ -32,6 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/app-signals</docs>
+[Category("Shard4")]
 public class PgAppSignalChannelIntegrationTests : EFCoreTestBase {
 
   private PgAppSignalChannel _newChannel(WhizbangNotificationOptions? options = null) {

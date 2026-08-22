@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// runtime-registers it at the three default lifecycle stages.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard2")]
 public class ScheduledStreamCloseReceptorTests {
   private sealed class RecordingCloser : IStreamCloser {
     public (Guid StreamId, long Through, bool Archive)? LastCall { get; private set; }

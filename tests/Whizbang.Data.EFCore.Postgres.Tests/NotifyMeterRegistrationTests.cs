@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <see cref="NotifyMetrics.METER_NAME"/> that forgets the registry fails HERE.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Observability/WhizbangMeters.cs</code-under-test>
+[Category("Shard2")]
 public class NotifyMeterRegistrationTests {
   [Test]
   public async Task TurnkeyList_CarriesTheNotifyMeterName_MatchingTheOwningConstantAsync() {

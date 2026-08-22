@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class MultiInstanceEvictionE2ETests : EFCoreTestBase {
 
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinatorFor(WorkCoordinationDbContext ctx) =>

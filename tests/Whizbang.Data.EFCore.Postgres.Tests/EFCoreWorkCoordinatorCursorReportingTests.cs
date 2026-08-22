@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// A level-agnostic capturing logger keeps every diagnostic logging branch live.
 /// </summary>
 /// <docs>fundamentals/perspectives/perspectives</docs>
+[Category("Shard2")]
 public class EFCoreWorkCoordinatorCursorReportingTests : EFCoreTestBase {
 
   // --------------------------------------------------------------------------

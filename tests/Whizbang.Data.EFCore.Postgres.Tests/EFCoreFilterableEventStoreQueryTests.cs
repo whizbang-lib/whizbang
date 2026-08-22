@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [Category("EventStoreQuery")]
+[Category("Shard1")]
 public class EFCoreFilterableEventStoreQueryTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 

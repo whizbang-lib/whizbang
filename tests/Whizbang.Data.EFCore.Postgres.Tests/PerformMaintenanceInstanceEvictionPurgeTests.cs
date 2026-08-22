@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// abandoned active-stream rows.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/032_PerformMaintenance.sql</code-under-test>
+[Category("Shard2")]
 public class PerformMaintenanceInstanceEvictionPurgeTests : EFCoreTestBase {
 
   [Test]

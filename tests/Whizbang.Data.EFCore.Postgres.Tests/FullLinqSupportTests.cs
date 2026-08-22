@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class FullLinqSupportTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 

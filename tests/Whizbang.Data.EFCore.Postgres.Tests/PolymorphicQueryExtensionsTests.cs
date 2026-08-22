@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Unit")]
 [Category("Polymorphic")]
+[Category("Shard2")]
 public class PolymorphicQueryExtensionsTests {
 
   // Test model classes

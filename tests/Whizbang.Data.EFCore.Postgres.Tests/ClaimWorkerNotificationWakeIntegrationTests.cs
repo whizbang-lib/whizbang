@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// floor; this test asserts that NOTIFY actually accelerates burst latency.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard3")]
 public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
 
   /// <summary>Captures every ClaimWorkAsync call's timestamp so we can compare wake-fired vs polling-fired.</summary>

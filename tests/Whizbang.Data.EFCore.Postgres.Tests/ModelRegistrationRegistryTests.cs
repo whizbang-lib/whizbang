@@ -9,6 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for ModelRegistrationRegistry tests.
 /// </summary>
+[Category("Shard2")]
 public class RegistryTestDbContext(DbContextOptions<RegistryTestDbContext> options) : DbContext(options) {
 }
 
@@ -18,6 +19,7 @@ public class RegistryTestDbContext(DbContextOptions<RegistryTestDbContext> optio
 /// Target: 100% branch coverage.
 /// </summary>
 [NotInParallel("ModelRegistrationRegistry tests share static state")]
+[Category("Shard2")]
 public class ModelRegistrationRegistryTests {
   [Test]
   public async Task RegisterModels_WithValidRegistrar_StoresCallbackAsync() {

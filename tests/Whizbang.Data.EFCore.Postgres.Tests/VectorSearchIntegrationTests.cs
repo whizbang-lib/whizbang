@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [Category("VectorSearch")]
+[Category("Shard2")]
 public class VectorSearchIntegrationTests : IAsyncDisposable {
   private string? _testDatabaseName;
   private string _connectionString = null!;

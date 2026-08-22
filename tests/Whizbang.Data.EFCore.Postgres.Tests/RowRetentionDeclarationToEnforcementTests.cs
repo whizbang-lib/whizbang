@@ -35,6 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/perspectives/row-retention</docs>
 [Category("Integration")]
 [NotInParallel("RowRetentionDeclarationToEnforcement")]
+[Category("Shard3")]
 public class RowRetentionDeclarationToEnforcementTests : EFCoreTestBase {
   private const string TABLE = "wh_per_decl_e2e";
   private const string CLR_TYPE = "TestApp.DeclarationToEnforcementModel";

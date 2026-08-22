@@ -32,6 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 // provider mid-seed of a parallel persistence test (e.g. ComplexTypeJsonMappingTests), engaging the atomic
 // path for a model it can't cleanly bind — the cross-test static race behind the PostgreSQL-integration flake.
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard3")]
 public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
   [After(Test)]
   public Task ClearPathOneProviderAsync() {
