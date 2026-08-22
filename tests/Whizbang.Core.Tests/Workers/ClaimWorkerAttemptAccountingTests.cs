@@ -276,21 +276,24 @@ public class ClaimWorkerAttemptAccountingTests {
       MaxStreamsPerBatch = 5000,
       MinStreamsPerBatch = 25,
       MinOutstandingInboxRows = 100,
-      MaxOutstandingInboxRows = 10_000,
+      // The budget ceiling sits BETWEEN the two readings on purpose: 1000 counted across all three
+      // exhausts it, 200 counted from inbox alone leaves 300 rows of headroom. Without this the
+      // claim window is the binding constraint and the test passes either way — which is exactly
+      // how two earlier versions of this test managed to be vacuous.
+      MaxOutstandingInboxRows = 500,
     }, completionMeter: meter);
 
-    // Sustained drain of ~8 rows/sec keeps the budget near 8 x 300 x 0.5 = 1200, comfortably above
-    // the 1000 counted across all three but far above the 200 counted from inbox alone. That gap is
-    // what makes the two readings distinguishable.
-    for (var i = 0; i < 12; i++) {
+    // Feed the meter so a drain rate exists. With none, the stall rule zeroes headroom regardless of
+    // how outstanding is counted, and the readings again become indistinguishable.
+    for (var i = 0; i < 8; i++) {
       meter.Record(400);
       await coord.WaitForCallsAsync(i + 2, TimeSpan.FromSeconds(5));
     }
 
-    await Assert.That(coord.LastMaxStreams).IsLessThan(900)
+    await Assert.That(coord.LastMaxStreams).IsLessThanOrEqualTo(1)
       .Because("outbox and perspective rows hold leases and charge attempts exactly as inbox rows "
-             + "do — counting inbox alone would see only a fifth of what is actually held and claim "
-             + "far more, letting the identical over-claim recur in another column");
+             + "do — at 1000 held against a 500 budget there is no headroom at all, whereas counting "
+             + "inbox alone would see 200, find 300 rows spare, and keep claiming");
   }
 
   [Test]
