@@ -86,6 +86,32 @@ public sealed class WhizbangCoreOptions {
   public bool AutoRegisterAspNetHosting { get; set; } = true;
 
   /// <summary>
+  /// How long graceful shutdown may spend deregistering this instance before giving up.
+  /// Default: 15 seconds.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deregistration is not a single-row delete — it releases <em>every lease this instance holds</em>
+  /// (outbox, inbox, perspective events, receptor processing, active streams) before removing the
+  /// instance row, all in one call. Its cost therefore scales with how much work the instance had
+  /// claimed, which can be tens of thousands of rows on a backlogged service.
+  /// </para>
+  /// <para>
+  /// It is also <strong>all-or-nothing</strong>: the whole thing runs in a single implicit
+  /// transaction, so a timeout rolls it back and releases nothing. Setting this too low does not
+  /// degrade gracefully — it guarantees the leases stay held until they expire on their own, and
+  /// leaves the instance row for stale cleanup.
+  /// </para>
+  /// <para>
+  /// The ceiling is the orchestrator's termination grace period (commonly 30s): overrun it and the
+  /// process is hard-killed, losing the clean exit entirely. The default leaves room for the rest of
+  /// shutdown. Raise it for services that routinely hold large claim backlogs; lower it only if you
+  /// would rather abandon deregistration quickly than delay shutdown.
+  /// </para>
+  /// </remarks>
+  public TimeSpan ShutdownDeregistrationTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
+  /// <summary>
   /// Gets or sets whether tag processing is enabled.
   /// Default: true (process tags after receptor completion).
   /// </summary>
