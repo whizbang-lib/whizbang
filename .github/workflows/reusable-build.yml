@@ -74,3 +74,109 @@ jobs:
             !**/obj/Release/**/refint/**
           retention-days: 1
           compression-level: 6
+
+      # ----------------------------------------------------------------------------
+      # Coverage instrumentation — ONCE per run, here, instead of once per test job.
+      #
+      # dotnet-coverage instrument is a static rewrite: it bakes the session id into the
+      # binary, which then reports to a collector of that name on whatever machine runs it.
+      # Sessions are machine-local IPC, so every test job can start its own collector under
+      # the SAME id without colliding. That is what lets this move out of the test jobs,
+      # where it was ~11 minutes of every single one (70-75% of the job, against 5-23% for
+      # the tests themselves).
+      #
+      # Two things this must not break:
+      #
+      #   1. NuGet. The pack job consumes build-<run> and runs `dotnet pack --no-build`, so
+      #      an instrumented src/ or tools/ output would SHIP instrumented assemblies. The
+      #      clean artifact is therefore uploaded ABOVE, before anything is rewritten, and
+      #      only tests/ + samples/ copies are instrumented below. Those copies are what the
+      #      test hosts actually load, so coverage is unaffected.
+      #   2. Duplicate work. The same assembly is copied into every test project's output —
+      #      386 paths for 123 distinct blobs. Instrument each blob once and hard-copy the
+      #      result over its twins; instrumenting by path would redo 3.1x the work. Dedupe is
+      #      by CONTENT hash, not file name: 18 names have copies that genuinely differ
+      #      across projects, so name-keying would ship the wrong bits.
+      # ----------------------------------------------------------------------------
+      - name: Install dotnet-coverage
+        run: dotnet tool install --global dotnet-coverage
+
+      - name: Instrument test-side assemblies for coverage
+        env:
+          SESSION_ID: coverage-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          echo "=== Collecting test-side Whizbang assemblies ==="
+          mapfile -t DLLS < <(find tests samples -path "*/bin/Release/*" -name "Whizbang.*.dll" -type f \
+            ! -name "*.resources.dll" ! -path "*/ref/*" ! -name "*.g.dll" | sort)
+          echo "found ${#DLLS[@]} paths"
+
+          # Dedupe by CONTENT hash, not file name: the same assembly is copied into every
+          # test project's output (386 paths for 123 distinct blobs), but 18 NAMES have
+          # copies that genuinely differ across projects, so name-keying would ship the
+          # wrong bits. Instrument each blob once and copy the result over its twins.
+          #
+          # Both the .dll AND its .pdb are rewritten (instrument refuses with "no_symbols"
+          # when the pdb is absent), so duplicates get both files copied — an instrumented
+          # dll beside a clean pdb would not map coverage back to source.
+          declare -A REP_DLL REP_PDB
+          INSTRUMENTED=0; COPIED=0; SKIPPED=0
+          for dll in "${DLLS[@]}"; do
+            pdb="${dll%.dll}.pdb"
+            [ -f "$pdb" ] || { SKIPPED=$((SKIPPED+1)); continue; }   # no symbols => cannot instrument
+            HASH=$(sha256sum "$dll" | cut -d' ' -f1)
+            if [ -n "${REP_DLL[$HASH]:-}" ]; then
+              cp -f "${REP_DLL[$HASH]}" "$dll"
+              cp -f "${REP_PDB[$HASH]}" "$pdb"
+              COPIED=$((COPIED+1))
+            else
+              if dotnet-coverage instrument "$dll" --session-id "$SESSION_ID" --nologo -dco; then
+                REP_DLL[$HASH]="$dll"; REP_PDB[$HASH]="$pdb"
+                INSTRUMENTED=$((INSTRUMENTED+1))
+              else
+                echo "::warning::could not instrument $dll"
+              fi
+            fi
+          done
+          echo "=== instrumented $INSTRUMENTED blobs, copied to $COPIED duplicates, skipped $SKIPPED without symbols ==="
+
+          if [ "$INSTRUMENTED" -eq 0 ]; then
+            echo "::error::Nothing was instrumented — every test job would collect empty coverage."
+            exit 1
+          fi
+
+          # instrument leaves <file>.orig backups beside each rewritten file. They are dead
+          # weight in the artifact and would confuse the guard below, so drop them.
+          find tests samples -path "*/bin/Release/*" \( -name "*.dll.orig" -o -name "*.pdb.orig" \) -delete
+
+      # Guard: the clean artifact is uploaded ABOVE, before anything is rewritten. A future
+      # edit that reorders these steps would quietly start shipping instrumented assemblies
+      # to NuGet. instrument leaves a <file>.orig beside whatever it rewrites, which is a
+      # far more reliable marker than grepping a binary for a string it does not contain.
+      - name: Verify packable output was not instrumented
+        run: |
+          set -euo pipefail
+          FOUND=$(find src tools -name "*.dll.orig" -o -name "*.pdb.orig" 2>/dev/null | head -5)
+          if [ -n "$FOUND" ]; then
+            echo "::error::src/ or tools/ output was instrumented — pack would ship it to NuGet."
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "packable output is clean"
+
+      - name: Upload Instrumented Assemblies
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          # Overlay only — the instrumented DLLs at their original relative paths. Test jobs
+          # download build-<run> first, then this on top, and the paths line up so the
+          # instrumented copies replace the clean ones. Keeps a second full artifact off the
+          # wire; instrumentation adds ~0% to binary size, so this is a few hundred MB.
+          name: build-instrumented-${{ github.run_id }}
+          path: |
+            tests/**/bin/Release/**/Whizbang.*.dll
+            tests/**/bin/Release/**/Whizbang.*.pdb
+            samples/**/bin/Release/**/Whizbang.*.dll
+            samples/**/bin/Release/**/Whizbang.*.pdb
+            !**/*.orig
+          retention-days: 1
+          compression-level: 6
