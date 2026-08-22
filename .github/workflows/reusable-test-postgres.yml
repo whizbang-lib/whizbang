@@ -29,6 +29,16 @@ jobs:
         with:
           name: ${{ inputs.artifact-name }}
 
+      # Overlay the instrumented assemblies on top of the clean build output. Same relative
+      # paths, so these replace their clean twins in the test projects' bin dirs — which is
+      # what the test hosts load. Instrumentation now happens once in the build job rather
+      # than ~11 minutes in every one of these jobs.
+      - name: Download Instrumented Assemblies
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: build-instrumented-${{ github.run_id }}
+
       - name: Cache NuGet packages
         if: inputs.artifact-name == ''
         uses: actions/cache@v5
@@ -50,23 +60,13 @@ jobs:
         if: inputs.artifact-name != ''
         run: dotnet tool install --global dotnet-coverage
 
-      # Instrument Whizbang DLLs in test output dirs (where tests load from)
-      - name: Instrument Whizbang Assemblies for Coverage
+      # Assemblies arrive already instrumented from the build job — see reusable-build.yml.
+      # This step only names the session the instrumented bits were stamped with, so the
+      # collector below answers to it. The id must match build's EXACTLY: a mismatch is
+      # silent, tests pass, and the coverage file comes out empty.
+      - name: Name the coverage session
         if: inputs.artifact-name != ''
-        run: |
-          SESSION_ID="coverage-${{ github.run_id }}-postgres"
-          echo "SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
-          echo "=== Instrumenting Whizbang assemblies for coverage ==="
-
-          find . -path "*/bin/Release/net10.0/Whizbang.*.dll" -type f | while read dll; do
-            if [[ "$dll" == *".resources.dll" ]] || [[ "$dll" == */ref/* ]] || [[ "$dll" == *".g.dll" ]]; then
-              continue
-            fi
-            echo "Instrumenting: $dll"
-            dotnet-coverage instrument "$dll" --session-id "$SESSION_ID" || echo "Warning: Could not instrument $dll"
-          done
-
-          echo "=== Instrumentation complete ==="
+        run: echo "SESSION_ID=coverage-${{ github.run_id }}" >> "$GITHUB_ENV"
 
       - name: Start Coverage Collection Server
         if: inputs.artifact-name != ''
