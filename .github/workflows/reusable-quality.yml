@@ -102,24 +102,45 @@ jobs:
       # (source-generated files must exist before the coverage merge). Runs while the
       # test suites are still executing in their own jobs.
       # Build ONLY what Sonar analyzes. sonar.config excludes samples, benchmarks, tools and
-      # scripts from analysis, yet the full-solution build compiled them anyway — 30 of the 95
-      # projects, built purely to be thrown away. Tests are NOT excluded (there are per-rule
-      # ignores for them), so they stay in scope.
+      # scripts from analysis, yet the full-solution build compiled them anyway — 28 of the 93
+      # projects, built purely to be thrown away. Tests are NOT excluded (sonar.config carries
+      # per-rule ignores for **/tests/**, which only makes sense if they are analyzed).
       #
-      # The analysis solution is GENERATED each run rather than committed: a checked-in list
-      # would drift, and a new src/ project missing from it would silently stop being analyzed
-      # while everything stayed green. Generating from the tree cannot drift.
-      - name: Build (analyzed)
+      # The exclusion list is READ FROM sonar.config rather than hardcoded here, so the build
+      # scope and the analysis scope cannot drift apart — one source of truth, and adding an
+      # exclusion there automatically stops building it.
+      #
+      # The solution is produced by FILTERING the real Whizbang.slnx, not by synthesising a bare
+      # one. A synthesised solution omits the <Configurations> block, and without it MSBuild can
+      # resolve a project under more than one platform concurrently — two writers on the same
+      # deps.json, which fails as "the process cannot access the file".
+      - name: Generate analysis solution
         run: |
           set -euo pipefail
-          {
-            echo '<Solution>'
-            find src tests -name '*.csproj' -not -path '*/obj/*' -not -path '*/bin/*' \
-              | sort | sed 's|^|  <Project Path="|; s|$|" />|'
-            echo '</Solution>'
-          } > Whizbang.Analysis.slnx
-          echo "analysing $(grep -c '<Project' Whizbang.Analysis.slnx) projects (full solution is 95)"
-          dotnet build Whizbang.Analysis.slnx --configuration Release
+          python3 - <<'PY'
+          import re
+          cfg = open('sonar.config').read()
+          m = re.search(r'^sonar\.exclusions=(.+)$', cfg, re.M)
+          pats = [p.strip() for p in m.group(1).split(',') if p.strip()]
+          dirs = [mm.group(1) for p in pats if (mm := re.match(r'\*\*/([^/*]+)/\*\*', p))]
+          sln = open('Whizbang.slnx').read()
+          kept, dropped = [], 0
+          for line in sln.splitlines(keepends=True):
+              pm = re.search(r'<Project Path="([^"]+)"', line)
+              if pm and any(re.search(rf'(^|/){re.escape(d)}/', pm.group(1)) for d in dirs):
+                  dropped += 1
+                  continue
+              kept.append(line)
+          out = ''.join(kept)
+          open('Whizbang.Analysis.slnx','w').write(out)
+          print(f"excluded dirs from sonar.config: {dirs}")
+          print(f"dropped {dropped} projects; analysing {out.count('<Project Path=')}")
+          assert '<Configurations>' in out, 'Configurations block must survive — see comment above'
+          assert out.count('<Project Path=') > 0, 'refusing to analyse an empty solution'
+          PY
+
+      - name: Build (analyzed)
+        run: dotnet build Whizbang.Analysis.slnx --configuration Release
 
       - name: Wait for test suites to publish coverage
         env:
