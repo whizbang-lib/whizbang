@@ -605,7 +605,12 @@ public class PerspectiveDedupIntegrationTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await runner.WaitForCallCountAsync(5, TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
+    // Wait for the FIRST apply, not all five. The property under test is that completions are
+    // recorded at all — the meter records per batch as the batch scope disposes, so one processed
+    // batch is sufficient evidence. Demanding an exact count made this depend on the worker
+    // draining a specific amount inside a fixed window, which is a throughput assertion wearing a
+    // correctness assertion's clothes: it passed alone and timed out under full-suite load.
+    await runner.WaitForAtLeastOneCallAsync(TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
