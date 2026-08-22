@@ -53,6 +53,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IInboxChannelWriter _inboxChannelWriter;
+  private readonly WorkCompletionMeter? _completionMeter;
   private readonly IInboxHandlerCommitChannel _handlerCommitChannel;
   private readonly IFailureChannel _failureChannel;
   private readonly ISchemaReadyGate _schemaReadyGate;
@@ -108,10 +109,12 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IGenerationProvider? generationProvider = null,
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
     Whizbang.Core.Observability.InboxMetrics? inboxMetrics = null,
-    Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null) {
+    Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
+    WorkCompletionMeter? completionMeter = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
+    _completionMeter = completionMeter;
     _handlerCommitChannel = handlerCommitChannel ?? throw new ArgumentNullException(nameof(handlerCommitChannel));
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
@@ -251,6 +254,13 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     try {
       await ProcessOneInnerAsync(work, stoppingToken);
     } finally {
+      // One row has stopped occupying this instance — success and failure alike, since both free
+      // the capacity the claim loop budgets against. Recorded in `finally` because that is the only
+      // point guaranteed to run exactly once per row: hooking the success path alone would
+      // under-report drain on a service working hard on failing messages, and under-reporting is
+      // not benign here — it reads as a service that cannot keep up and throttles one that can.
+      _completionMeter?.Record();
+
       var totalMs = _timeProvider.GetElapsedTime(dispatchStartTicks).TotalMilliseconds;
       // v0.660 slice 8: always record into the per-message-type histogram so
       // operators can see distribution by event type without enabling Debug

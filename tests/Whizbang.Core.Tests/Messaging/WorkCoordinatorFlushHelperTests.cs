@@ -516,8 +516,6 @@ public class WorkCoordinatorFlushHelperTests {
 
   private sealed class CountingInboxChannelWriter : IInboxChannelWriter {
     public int SignalCount;
-    public int InFlightCount => 0;
-    public int PruneInFlightOlderThan(TimeSpan age) => 0;
     public ChannelReader<InboxWork> Reader => throw new NotSupportedException();
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => ValueTask.CompletedTask;
     public bool TryWrite(InboxWork work) => true;

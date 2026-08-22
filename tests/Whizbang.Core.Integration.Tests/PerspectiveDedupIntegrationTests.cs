@@ -566,6 +566,55 @@ public class PerspectiveDedupIntegrationTests {
 
   // ==================== Helpers ====================
 
+  /// <summary>
+  /// Perspective rows are leased and charge attempts exactly as inbox and outbox rows do, so the
+  /// claim loop counts them toward outstanding work. This pins the other half of that arithmetic:
+  /// their completions must be MEASURED too.
+  /// </summary>
+  /// <remarks>
+  /// Counting a work kind as outstanding while never recording its completions is not a partial
+  /// implementation, it is a throttle — outstanding climbs, drain reads low, the budget shrinks, and
+  /// a perspective-heavy service is squeezed for work it is finishing perfectly well. That is the
+  /// same count-one-thing-measure-another shape that starved four transports in CI.
+  /// </remarks>
+  [Test]
+  public async Task PerspectiveWork_RecordsItsCompletionsIntoTheMeterAsync() {
+    var meter = new Whizbang.Core.Workers.WorkCompletionMeter();
+    var runner = new ApplyTrackingRunner();
+    var coordinator = new SequentialWorkCoordinator();
+
+    var batchWork = new List<PerspectiveWork>();
+    for (var i = 0; i < 5; i++) {
+      batchWork.Add(new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = Guid.CreateVersion7(),
+        PerspectiveName = "Test.Metering",
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      });
+    }
+    // Offered across several cycles for the same reason as the concurrency test above: the
+    // coordinator serves WorkPerCycle[n] to the nth claim, so a single cycle can be consumed by a
+    // claim that lands before the worker is ready to process it.
+    for (var cycle = 0; cycle < 3; cycle++) {
+      coordinator.WorkPerCycle.Add(batchWork);
+    }
+
+    var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), completionMeter: meter);
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await runner.WaitForCallCountAsync(5, TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    await Assert.That(meter.ReadAndReset()).IsGreaterThan(0)
+      .Because("perspective rows count toward outstanding work, so their completions must be "
+             + "measured too — counting a work kind without measuring it drives the drain rate down "
+             + "and throttles a service that is keeping up");
+  }
+
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createWorker(
     IWorkCoordinator coordinator,
     IPerspectiveRunnerRegistry registry,
@@ -575,7 +624,8 @@ public class PerspectiveDedupIntegrationTests {
     ILifecycleCoordinator? lifecycleCoordinator = null,
     IReceptorInvoker? receptorInvoker = null,
     IEventStore? eventStore = null,
-    IEventTypeProvider? eventTypeProvider = null) {
+    IEventTypeProvider? eventTypeProvider = null,
+    Whizbang.Core.Workers.WorkCompletionMeter? completionMeter = null) {
     var instanceProvider = new _fakeInstanceProvider();
     IPerspectiveCompletionStrategy strategy = useBatchedStrategy
       ? new BatchedCompletionStrategy()
@@ -614,6 +664,7 @@ public class PerspectiveDedupIntegrationTests {
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
+      completionMeter: completionMeter,
       // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
       // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
       recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider())

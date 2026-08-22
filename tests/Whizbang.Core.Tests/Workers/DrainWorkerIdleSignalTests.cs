@@ -336,9 +336,6 @@ public class DrainWorkerIdleSignalTests {
   }
 
   private sealed class _CapturingInboxWriter : IInboxChannelWriter {
-    // Not exercised by this fake: it tracks no in-flight work, so there is nothing to gate on.
-    public int InFlightCount => 0;
-    public int PruneInFlightOlderThan(TimeSpan age) => 0;
     public ConcurrentBag<Guid> WrittenIds { get; } = [];
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
     public ChannelReader<InboxWork> Reader => _channel.Reader;

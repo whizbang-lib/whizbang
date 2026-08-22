@@ -217,86 +217,162 @@ public class ClaimWorkerAttemptAccountingTests {
     return new WorkBatch { OutboxWork = [], InboxWork = inbox, PerspectiveWork = [] };
   }
 
+
+
+
+  // ==================== Outstanding-work budget ====================
+
+  /// <summary>
+  /// A batch spanning all three work kinds. Every one of them is leased and charges an attempt, so
+  /// the budget has to see the total — counting one column would let the identical over-claim
+  /// arithmetic recur in another.
+  /// </summary>
+  private static WorkBatch _mixedBatch(int inboxRows, int outboxRows, int perspectiveRows) {
+    var inbox = new List<InboxWork>(inboxRows);
+    for (var i = 0; i < inboxRows; i++) {
+      inbox.Add(new InboxWork {
+        MessageId = TrackedGuid.NewMedo().Value,
+        MessageType = "TestEvent",
+        Envelope = null!,
+        Attempts = 1,
+      });
+    }
+    var outbox = new List<OutboxWork>(outboxRows);
+    for (var i = 0; i < outboxRows; i++) {
+      outbox.Add(new OutboxWork {
+        MessageId = TrackedGuid.NewMedo().Value,
+        Envelope = null!,
+        EnvelopeType = "TestEvent",
+        MessageType = "TestEvent",
+        Attempts = 1,
+        Destination = "test",
+      });
+    }
+    var perspective = new List<PerspectiveWork>(perspectiveRows);
+    for (var i = 0; i < perspectiveRows; i++) {
+      perspective.Add(new PerspectiveWork {
+        WorkId = TrackedGuid.NewMedo().Value,
+        StreamId = TrackedGuid.NewMedo().Value,
+        PerspectiveName = "Test.Perspective",
+        LastProcessedEventId = null,
+        PartitionNumber = 1,
+      });
+    }
+    return new WorkBatch { OutboxWork = outbox, InboxWork = inbox, PerspectiveWork = perspective };
+  }
+
   [Test]
-  public async Task OutstandingWorkAlreadyHeld_NarrowsTheClaimBelowTheWindowAsync() {
-    var coord = new RecordingCoordinator { BatchToReturn = _batchOf(rows: 1, attempts: 1) };
-    // Already holding 95 rows against a 100-row floor: only 5 rows of headroom remain.
-    var channel = new ProbeInboxChannel { InFlight = 95 };
+  public async Task OutstandingBudget_CountsAllThreeWorkKindsNotJustInboxAsync() {
+    // The meter MUST be fed here. With no completions the drain rate is zero, the stall rule zeroes
+    // headroom, and the claim clamps to 1 no matter how outstanding is counted — so the test would
+    // pass for the wrong reason and could not tell the two readings apart. (Verified: an earlier
+    // version of this test failed to detect inbox-only counting for exactly that reason.)
+    var meter = new WorkCompletionMeter();
+    // 200 inbox + 400 outbox + 400 perspective = 1000 outstanding. Inbox alone reads 200.
+    var coord = new RecordingCoordinator { BatchToReturn = _mixedBatch(200, 400, 400) };
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxStreamsPerBatch = 5000,
+      MinStreamsPerBatch = 25,
+      MinOutstandingInboxRows = 100,
+      MaxOutstandingInboxRows = 10_000,
+    }, completionMeter: meter);
+
+    // Sustained drain of ~8 rows/sec keeps the budget near 8 x 300 x 0.5 = 1200, comfortably above
+    // the 1000 counted across all three but far above the 200 counted from inbox alone. That gap is
+    // what makes the two readings distinguishable.
+    for (var i = 0; i < 12; i++) {
+      meter.Record(400);
+      await coord.WaitForCallsAsync(i + 2, TimeSpan.FromSeconds(5));
+    }
+
+    await Assert.That(coord.LastMaxStreams).IsLessThan(900)
+      .Because("outbox and perspective rows hold leases and charge attempts exactly as inbox rows "
+             + "do — counting inbox alone would see only a fifth of what is actually held and claim "
+             + "far more, letting the identical over-claim recur in another column");
+  }
+
+  [Test]
+  public async Task OutstandingBudget_WithoutAMeter_DoesNotEngageAtAllAsync() {
+    // Same over-budget batch, but nothing can measure drain.
+    var coord = new RecordingCoordinator { BatchToReturn = _mixedBatch(40, 40, 40) };
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
       PollingIntervalMilliseconds = 20,
       PollingMaxIntervalMilliseconds = 60,
       MaxStreamsPerBatch = 1000,
       MinStreamsPerBatch = 25,
       MinOutstandingInboxRows = 100,
-    }, channel);
+    });
 
-    // One claim is the right observation point. This fake holds its 95 rows and never completes
-    // any, so after the first drain sample the worker correctly concludes it is stalled and stops
-    // claiming altogether — waiting for more calls would be waiting for behaviour the design
-    // deliberately forbids.
-    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(5));
+    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
 
-    // The budget is a HARDER constraint than the window: it may pull the claim below even the
-    // window's floor, because holding more than can be drained inside the lease is what spends the
-    // retry budget. A window-only bound cannot express this — it has no idea what is already held.
-    await Assert.That(coord.LastMaxStreams).IsLessThan(25)
-      .Because("outstanding work already close to the budget must throttle the next claim, "
-             + "regardless of how wide the batch window happens to be");
-    await Assert.That(coord.LastMaxStreams).IsGreaterThan(0)
-      .Because("remaining headroom must still be usable — collapsing to zero while capacity exists "
-             + "would stall a worker that is keeping up");
+    // Without measurement the drain rate would read zero forever. If the bound still engaged, the
+    // stall rule would zero headroom and pin every claim at 1 — an unexplained throughput collapse
+    // with nothing in the logs. Declining to bound at all is the honest behaviour: no measurement,
+    // no bound. Asserting well above the floor is what distinguishes "not engaged" from "engaged
+    // and clamped", which a `> 25` assertion could not.
+    await Assert.That(coord.LastMaxStreams).IsGreaterThan(50)
+      .Because("an unmeasured budget throttles silently and presents as a performance mystery — "
+             + "absent a meter the bound must not engage rather than clamp on a rate it cannot read");
   }
 
   [Test]
-  public async Task StaleInFlightWork_IsAgedOutAtTheLeaseDurationAsync() {
-    var coord = new RecordingCoordinator { BatchToReturn = _batchOf(rows: 1, attempts: 1) };
-    var channel = new ProbeInboxChannel();
+  public async Task OutstandingBudget_NeverSizesTheClaimToZeroAsync() {
+    // Far beyond any budget: 500 rows held against a 100-row floor, with no completions recorded.
+    var coord = new RecordingCoordinator { BatchToReturn = _mixedBatch(500, 0, 0) };
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
       PollingIntervalMilliseconds = 20,
       PollingMaxIntervalMilliseconds = 60,
       MaxStreamsPerBatch = 1000,
       MinStreamsPerBatch = 25,
-      LeaseSeconds = 300,
-    }, channel);
+      MinOutstandingInboxRows = 100,
+    }, completionMeter: new WorkCompletionMeter());
 
-    await coord.WaitForCallsAsync(3, TimeSpan.FromSeconds(5));
+    await coord.WaitForCallsAsync(4, TimeSpan.FromSeconds(5));
 
-    // Without this the gate becomes a deadlock: if work is held and nothing ever completes, the
-    // worker would never claim again. Entries older than the lease are no longer ours — the lease
-    // lapsed and the store will re-issue them — so ageing them out is what reopens the gate.
-    await Assert.That(channel.LastPruneAge).IsEqualTo(TimeSpan.FromSeconds(300))
-      .Because("the prune threshold must be the lease duration itself: anything shorter discards "
-             + "work still legitimately in progress, anything longer wedges the worker for longer "
-             + "than the rows were even ours");
+    // The poll is the ONLY thing that observes outstanding work. A worker that stops polling can
+    // never discover it has recovered, which is precisely how the first version of this deadlocked.
+    // Re-emitting rows already leased to us charges no new attempt, so polling stays cheap.
+    await Assert.That(coord.LastMaxStreams).IsGreaterThanOrEqualTo(1)
+      .Because("the claim must never be sized to zero — polling is the only observation channel, so "
+             + "a worker that stops polling cannot see that it is healthy again");
+    await Assert.That(coord.CallCount).IsGreaterThanOrEqualTo(4)
+      .Because("claims must keep happening while over budget; the bound narrows the claim, it does "
+             + "not suspend the loop");
   }
 
-  /// <summary>
-  /// Reports a controllable amount of outstanding work and records how the worker ages it out.
-  /// </summary>
-  private sealed class ProbeInboxChannel : IInboxChannelWriter {
-    private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
-    public int InFlight { get; set; }
-    public TimeSpan? LastPruneAge { get; private set; }
+  [Test]
+  public async Task OutstandingBudget_GrowsOnRecordedCompletionsAsync() {
+    var meter = new WorkCompletionMeter();
+    var coord = new RecordingCoordinator { BatchToReturn = _mixedBatch(120, 0, 0) };
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxStreamsPerBatch = 1000,
+      MinStreamsPerBatch = 25,
+      MinOutstandingInboxRows = 100,
+    }, completionMeter: meter);
 
-    public int InFlightCount => InFlight;
-    public int PruneInFlightOlderThan(TimeSpan age) {
-      LastPruneAge = age;
-      return 0;
+    // Completions are an OBSERVED EVENT, not a difference between readings. That is what lets this
+    // assert on the control loop without depending on wall-clock behaviour, and what stops arriving
+    // work from masking drain and understating capacity.
+    for (var i = 0; i < 20; i++) {
+      meter.Record(200);
+      await coord.WaitForCallsAsync(i + 2, TimeSpan.FromSeconds(5));
     }
 
-    public ChannelReader<InboxWork> Reader => _channel.Reader;
-    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
-    public bool TryWrite(InboxWork work) => _channel.Writer.TryWrite(work);
-    public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
-    public bool ShouldRenewLease(Guid messageId) => false;
-    public void Complete() => _channel.Writer.Complete();
-    public event Action? OnNewInboxWorkAvailable;
-    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+    await Assert.That(coord.LastMaxStreams).IsGreaterThan(1)
+      .Because("a worker demonstrably draining hundreds of rows per interval has earned more than "
+             + "the cautious floor; the budget must widen on measured throughput or it would pin a "
+             + "healthy service at its cold-start value forever");
   }
 
   private static WorkerHarness _startWorker(
-      RecordingCoordinator coord, ClaimWorkerOptions options, IInboxChannelWriter? inboxChannel = null) {
+      RecordingCoordinator coord,
+      ClaimWorkerOptions options,
+      IInboxChannelWriter? inboxChannel = null,
+      WorkCompletionMeter? completionMeter = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
@@ -309,7 +385,8 @@ public class ClaimWorkerAttemptAccountingTests {
       gate,
       Options.Create(options),
       NullLogger<ClaimWorker>.Instance,
-      inboxChannel: inboxChannel);
+      inboxChannel: inboxChannel,
+      completionMeter: completionMeter);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);
@@ -342,8 +419,6 @@ public class ClaimWorkerAttemptAccountingTests {
   /// </summary>
   private sealed class RefusingInboxChannel : IInboxChannelWriter {
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
-    public int InFlightCount => 0;
-    public int PruneInFlightOlderThan(TimeSpan age) => 0;
     public ChannelReader<InboxWork> Reader => _channel.Reader;
     public event Action? OnNewInboxWorkAvailable { add { } remove { } }
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) =>

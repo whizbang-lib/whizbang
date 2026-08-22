@@ -52,9 +52,6 @@ public class InboxDrainWorkerGapTests {
   /// per-write failure injector (<see cref="FailWith"/>) for the error-isolation branches.
   /// </summary>
   private sealed class TestInboxWriter : IInboxChannelWriter {
-    // Not exercised by this fake: it tracks no in-flight work, so there is nothing to gate on.
-    public int InFlightCount => 0;
-    public int PruneInFlightOlderThan(TimeSpan age) => 0;
     private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
     private int _signalCount;
     public ConcurrentQueue<InboxWork> Written { get; } = new();

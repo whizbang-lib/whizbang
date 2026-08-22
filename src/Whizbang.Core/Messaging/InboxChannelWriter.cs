@@ -54,22 +54,6 @@ public class InboxChannelWriter : IInboxChannelWriter {
   /// <inheritdoc />
   public void RemoveInFlight(Guid messageId) => _inFlight.TryRemove(messageId, out _);
 
-  /// <inheritdoc />
-  public int InFlightCount => _inFlight.Count;
-
-  /// <inheritdoc />
-  public int PruneInFlightOlderThan(TimeSpan age) {
-    var cutoff = DateTimeOffset.UtcNow - age;
-    var pruned = 0;
-
-    foreach (var entry in _inFlight) {
-      if (entry.Value <= cutoff && _inFlight.TryRemove(entry.Key, out _)) {
-        pruned++;
-      }
-    }
-
-    return pruned;
-  }
 
   /// <inheritdoc />
   public bool ShouldRenewLease(Guid messageId) {

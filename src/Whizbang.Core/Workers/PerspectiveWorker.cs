@@ -79,7 +79,12 @@ public partial class PerspectiveWorker(
   // supplies it, and without it the startup work below would run against a database that may
   // not have been migrated yet — the exact ungated-repair defect the startup pipeline exists
   // to close.
-  ISchemaReadyGate? schemaReadyGate = null
+  ISchemaReadyGate? schemaReadyGate = null,
+  // Drain measurement for the claim loop's outstanding budget. Perspective rows are leased
+  // and charge attempts like any other work, so the budget counts them — and a work kind
+  // that is counted but never measured drags the drain rate down and throttles a healthy
+  // service.
+  WorkCompletionMeter? completionMeter = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -87,6 +92,7 @@ public partial class PerspectiveWorker(
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly WorkCompletionMeter? _completionMeter = completionMeter;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
@@ -925,7 +931,8 @@ public partial class PerspectiveWorker(
     // Issue #520: reservations taken by the dedup filter below are owned by THIS batch and are
     // released when the batch scope exits, whatever the outcome (see _claimWindowScope).
     var claimWindowReservations = new List<Guid>();
-    using var claimWindowScope = new _claimWindowScope(_claimWindowWorkIds, claimWindowReservations);
+    using var claimWindowScope = new _claimWindowScope(
+      _claimWindowWorkIds, claimWindowReservations, _completionMeter, workBatch.PerspectiveWork.Count);
 
     var groupedWork = _reconcileAcknowledgementsAndPrepareWork(
       workBatch, sentCompletionCount: sentCompletionCount, sentFailureCount: sentFailureCount,
@@ -2496,12 +2503,24 @@ public partial class PerspectiveWorker(
   /// silently un-retryable until process restart. Trading a duplicate-apply bug for a
   /// message-loss bug would be the worse outcome, so the release is never conditional.
   /// </summary>
-  private readonly struct _claimWindowScope(ConcurrentDictionary<Guid, byte> reservations, List<Guid> owned)
+  private readonly struct _claimWindowScope(
+      ConcurrentDictionary<Guid, byte> reservations,
+      List<Guid> owned,
+      WorkCompletionMeter? completionMeter = null,
+      int workItemCount = 0)
     : IDisposable {
     public void Dispose() {
       foreach (var workId in owned) {
         reservations.TryRemove(workId, out _);
       }
+
+      // The batch has stopped occupying this instance, so the claim loop's outstanding budget can
+      // count it as drained. Recorded here rather than at any individual completion path because
+      // this scope already carries the guarantee needed — it releases "when the batch scope exits,
+      // whatever the outcome" — and this worker reaches its end state through several modes (drain,
+      // rewind, collective sink). Hooking those individually is how a completion path gets missed,
+      // and a missed path under-reports drain, shrinks the budget, and throttles a healthy service.
+      completionMeter?.Record(workItemCount);
     }
   }
 
