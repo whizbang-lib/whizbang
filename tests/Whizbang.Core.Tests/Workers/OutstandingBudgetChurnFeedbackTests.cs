@@ -37,6 +37,9 @@ public class OutstandingBudgetChurnFeedbackTests {
   private const int BUDGET_FLOOR = 100;
   private const int BUDGET_CEILING = 10_000;
 
+  /// <summary>Completions reported per claim, so the budget sits in a healthy (non-stalled) regime.</summary>
+  private const int DRAIN_PER_CYCLE = 500;
+
   private sealed class StubInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = TrackedGuid.NewMedo();
     public string ServiceName => "test";
@@ -54,13 +57,16 @@ public class OutstandingBudgetChurnFeedbackTests {
   /// Reports a FIXED outstanding figure regardless of what it hands back, which is the situation the
   /// store actually presents: the response is truncated, the held total is not.
   /// </summary>
-  private sealed class _reportingCoordinator(long outstandingRows, bool measurable) : IWorkCoordinator {
+  private sealed class _reportingCoordinator(
+      long outstandingRows, bool measurable, WorkCompletionMeter? meter = null) : IWorkCoordinator {
     private readonly Lock _lock = new();
     private readonly Dictionary<int, TaskCompletionSource> _watchers = [];
 
     public int CallCount { get; private set; }
     /// <summary>The limit asked for by the most recent claim.</summary>
     public int LastStreamsRequested { get; private set; }
+    /// <summary>How many times the worker asked the store what it was holding.</summary>
+    public int OutstandingProbeCount;
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
       var inbox = new List<InboxWork>();
@@ -69,6 +75,11 @@ public class OutstandingBudgetChurnFeedbackTests {
         LastStreamsRequested = req.MaxStreams;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
+      // Report healthy drain. Without it the budget's stall rule ("work held, nothing completing →
+      // claim nothing") fires and pins the claim to its minimum whatever the outstanding figure is,
+      // which would let these tests pass no matter where that figure came from.
+      meter?.Record(DRAIN_PER_CYCLE);
+
       // Hand back exactly what was asked for — the truncated view. If the worker sized its budget
       // from this, it would never see the outstanding total reported below.
       for (var i = 0; i < req.MaxStreams; i++) {
@@ -83,8 +94,10 @@ public class OutstandingBudgetChurnFeedbackTests {
     }
 
     public ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
-        Guid instanceId, CancellationToken cancellationToken = default)
-      => ValueTask.FromResult(measurable ? new OutstandingWork { InboxRows = outstandingRows } : null);
+        Guid instanceId, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref OutstandingProbeCount);
+      return ValueTask.FromResult(measurable ? new OutstandingWork { InboxRows = outstandingRows } : null);
+    }
 
     public Task WaitForCallsAsync(int n, TimeSpan timeout) {
       TaskCompletionSource tcs;
@@ -134,7 +147,7 @@ public class OutstandingBudgetChurnFeedbackTests {
 
   private static async Task<_reportingCoordinator> _runAsync(
       long outstanding, bool measurable, WorkCompletionMeter? meter, int cycles = 6) {
-    var coord = new _reportingCoordinator(outstanding, measurable);
+    var coord = new _reportingCoordinator(outstanding, measurable, meter);
     var worker = _worker(coord, meter);
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -177,6 +190,13 @@ public class OutstandingBudgetChurnFeedbackTests {
     await Assert.That(coord.LastStreamsRequested).IsGreaterThanOrEqualTo(WINDOW_FLOOR)
       .Because("a backend that cannot report outstanding work must degrade to no bound rather than "
              + "to a silent floor");
+
+    // The answer is latched, not re-asked. A backend either implements the count or it does not, so
+    // re-probing would spend a round trip per poll and repeat the same warning forever to say so.
+    await Assert.That(coord.OutstandingProbeCount).IsEqualTo(1)
+      .Because("'cannot measure' is a property of the backend, not a transient condition — asking "
+             + "again every cycle adds a query per poll to the hot claim path and turns a one-time "
+             + "diagnostic into log noise that hides it");
   }
 
   [Test]
