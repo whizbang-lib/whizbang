@@ -70,6 +70,26 @@ public class InboxChannelWriterInFlightBoundingTests {
              + "duplicate offer while the original is still being processed");
   }
 
+  [Test]
+  public async Task TryWrite_TracksAndEvictsOnTheSameTermsAsWriteAsync() {
+    var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var writer = new InboxChannelWriter(clock);
+    var stale = _work();
+
+    // TryWrite is the synchronous handoff path. It must track and age out identically to WriteAsync:
+    // if only one path evicted, the set would still grow without bound on any deployment whose
+    // writes happen to take the other route, and the leak would look fixed while it was not.
+    await Assert.That(writer.TryWrite(stale)).IsTrue();
+    await Assert.That(writer.IsInFlight(stale.MessageId)).IsTrue();
+
+    clock.Advance(TimeSpan.FromHours(2));
+    await Assert.That(writer.TryWrite(_work())).IsTrue();
+
+    await Assert.That(writer.IsInFlight(stale.MessageId)).IsFalse()
+      .Because("both write paths must bound the set — an unswept path leaves the leak in place "
+             + "while the swept one makes it look fixed");
+  }
+
   private static InboxWork _work() {
     var messageId = MessageId.New();
     return new InboxWork {

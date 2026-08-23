@@ -138,6 +138,23 @@ public class AdaptiveOutstandingBudgetTests {
   }
 
   [Test]
+  public async Task Observe_WithNonPositiveElapsed_IsIgnoredAsync() {
+    var budget = _budget();
+    for (var i = 0; i < 40; i++) {
+      budget.Observe(completed: 10, elapsed: TimeSpan.FromSeconds(1));
+    }
+    var settled = budget.Current;
+
+    budget.Observe(completed: 1_000_000, elapsed: TimeSpan.Zero);
+    budget.Observe(completed: 1_000_000, elapsed: TimeSpan.FromSeconds(-1));
+
+    // Rate is completed/elapsed, so a zero or negative interval is a division by zero or a negative
+    // rate. Either would wreck the estimate from a single bad sample — and the caller supplies the
+    // interval, so a clock glitch or a same-tick double-poll is enough to produce one.
+    await Assert.That(budget.Current).IsEqualTo(settled);
+  }
+
+  [Test]
   public async Task Constructor_FloorAboveCeiling_ClampsRatherThanThrowsAsync() {
     // Mirrors AdaptiveClaimWindow: a careless configuration should degrade to "fixed size" rather
     // than refuse to start.

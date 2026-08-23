@@ -57,6 +57,21 @@ public class WorkCompletionMeterTests {
   }
 
   [Test]
+  public async Task Record_WithZeroOrNegativeCount_IsIgnoredAsync() {
+    var meter = new WorkCompletionMeter();
+    meter.Record(4);
+
+    meter.Record(0);
+    meter.Record(-10);
+
+    // A negative or zero count is a caller bug, and quietly folding it into the total would corrupt
+    // the drain rate — negatives most damagingly, since they would understate throughput and shrink
+    // the budget for no reason. Ignoring keeps a bad call harmless rather than silently poisoning
+    // the control loop.
+    await Assert.That(meter.ReadAndReset()).IsEqualTo(4);
+  }
+
+  [Test]
   public async Task Record_IsSafeUnderConcurrentCompletionsAsync() {
     var meter = new WorkCompletionMeter();
 
