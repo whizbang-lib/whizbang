@@ -459,7 +459,7 @@ jobs:
       - name: Build
         env:
           VERSION: ${{ needs.check-release.outputs.version }}
-        run: dotnet build --configuration Release --no-restore -maxcpucount:1 -p:Version="$VERSION"
+        run: dotnet build --configuration Release --no-restore -p:Version="$VERSION"
 
       - name: Pack NuGet packages
         env:
