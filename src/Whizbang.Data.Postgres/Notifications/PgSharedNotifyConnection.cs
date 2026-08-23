@@ -71,6 +71,9 @@ public sealed partial class PgSharedNotifyConnection(
   // the shared conn via WaitAsync, so we can't issue LISTEN from Subscribe directly —
   // NpgsqlConnection isn't thread-safe and a concurrent command would throw.
   private CancellationTokenSource? _resyncSignal;
+  // Latches a resync request so it survives the window where _resyncSignal is null — see
+  // _signalResync. Drained by the dispatch loop before every wait.
+  private int _resyncPending;
   private bool _isAvailable;
   private bool _aliveLockHeld;
   private DateTimeOffset? _lastVerifiedAt;
@@ -272,9 +275,16 @@ public sealed partial class PgSharedNotifyConnection(
   /// the loop's wait token so it unwinds, calls _syncListensAsync, and resumes WaitAsync.
   /// </summary>
   private void _signalResync() {
+    // Latch BEFORE reading the handle. The loop publishes its handle before draining the latch,
+    // so the two orderings are both covered: if we latch first the loop drains it and syncs; if
+    // the loop drains first, its handle is already published and our Cancel below unwinds it.
+    // Without the latch, a request landing while the handle is null — the loop is mid-sync, or
+    // running the keepalive ping — is dropped outright and that channel is never listened, so
+    // every notification on it is lost for the lifetime of the connection.
+    Volatile.Write(ref _resyncPending, 1);
     var cts = Volatile.Read(ref _resyncSignal);
     if (cts is null) {
-      return;  // Dispatch loop not currently waiting; next iteration will sync naturally.
+      return;  // Loop isn't waiting; it will drain the latch before its next wait.
     }
     try {
       cts.Cancel();
@@ -471,21 +481,23 @@ public sealed partial class PgSharedNotifyConnection(
           Volatile.Write(ref _resyncSignal, resync);
           using var combined = CancellationTokenSource.CreateLinkedTokenSource(
             stoppingToken, keepalive.Token, resync.Token);
-          var resyncFired = false;
+
+          // Drain the latch AFTER publishing the handle, so a request racing this point either
+          // is seen here or finds the handle and cancels the wait below. Covers both the request
+          // that woke us and any that landed while we were syncing.
+          if (Interlocked.Exchange(ref _resyncPending, 0) == 1) {
+            await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
+          }
+
           var keepaliveFired = false;
           try {
             await conn.WaitAsync(combined.Token).ConfigureAwait(false);
             // Notification arrived (or backend message) — handler ran synchronously inside
             // WaitAsync. Loop again to wait for the next one.
           } catch (OperationCanceledException) when (combined.Token.IsCancellationRequested && !stoppingToken.IsCancellationRequested) {
-            resyncFired = resync.IsCancellationRequested;
             keepaliveFired = keepalive.IsCancellationRequested;
           } finally {
             Volatile.Write(ref _resyncSignal, null);
-          }
-
-          if (resyncFired) {
-            await _syncListensAsync(conn, stoppingToken).ConfigureAwait(false);
           }
           if (keepaliveFired) {
             // Verify the connection is still alive. If SELECT 1 throws, we'll fall into
