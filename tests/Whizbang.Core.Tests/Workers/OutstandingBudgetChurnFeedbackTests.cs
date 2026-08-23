@@ -200,6 +200,44 @@ public class OutstandingBudgetChurnFeedbackTests {
   }
 
   [Test]
+  public async Task ClaimWorker_HonorsTheOperatorOptOutAndNeverProbesTheStoreAsync() {
+    // Disabling the budget must mean BYPASSED, not "engaged but permissive". The adaptive claim
+    // window already had a latent bug of exactly this shape — "disabled" left it frozen at its
+    // constructed value, which was harmless only while that value happened to be the ceiling.
+    var coord = new _reportingCoordinator(BUDGET_CEILING, measurable: true, meter: null);
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      gate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 1,
+        PollingMaxIntervalMilliseconds = 5,
+        MinStreamsPerBatch = WINDOW_FLOOR,
+        AdaptiveOutstandingBudget = false,
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      completionMeter: new WorkCompletionMeter());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.WaitForCallsAsync(6, TimeSpan.FromSeconds(20));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coord.LastStreamsRequested).IsGreaterThanOrEqualTo(WINDOW_FLOOR)
+      .Because("an operator who turned the bound off must not be throttled by it, even while the "
+             + "store reports it is holding the entire ceiling");
+    await Assert.That(coord.OutstandingProbeCount).IsEqualTo(0)
+      .Because("a disabled bound must not pay for a measurement it will never use — a query per "
+             + "poll on the hot claim path is exactly the cost the opt-out exists to avoid");
+  }
+
+  [Test]
   public async Task ClaimWorker_LeavesTheBoundDisengagedWithoutAMeterAsync() {
     // No meter means no measured drain, so the budget has no rate to size itself from.
     var coord = await _runAsync(outstanding: BUDGET_CEILING, measurable: true, meter: null);
