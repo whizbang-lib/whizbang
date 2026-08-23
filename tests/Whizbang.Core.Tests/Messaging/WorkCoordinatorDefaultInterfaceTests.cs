@@ -359,6 +359,20 @@ public class WorkCoordinatorDefaultInterfaceTests {
       new HandlerInboxCompletion((Guid)TrackedGuid.NewMedo(), (int)MessageProcessingStatus.Stored));
   }
 
+  [Test]
+  public async Task CountOutstandingWorkAsync_DefaultImplementation_ReportsUnmeasurableNotZeroAsync() {
+    var reported = await _coordinator.CountOutstandingWorkAsync((Guid)TrackedGuid.NewMedo());
+
+    // The distinction is load-bearing rather than stylistic. Zero is a MEASUREMENT meaning "this
+    // instance holds nothing", which licenses a full-size claim. Null means the figure was never
+    // read, and the claim-outstanding budget declines to engage rather than bound against it.
+    // A backend that cannot count returning 0 here would disable the bound while looking exactly
+    // like a healthy idle worker — the silent-disable this default exists to prevent.
+    await Assert.That(reported).IsNull()
+      .Because("a backend that has not implemented the count must report UNMEASURABLE, not zero — "
+             + "zero is a reading, and the budget would size itself from a number nobody took");
+  }
+
   /// <summary>
   /// Implements ONLY the abstract members of <see cref="IWorkCoordinator"/> so every
   /// default interface member above executes its actual default body. Do NOT add

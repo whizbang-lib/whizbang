@@ -1,6 +1,9 @@
 -- Migration: 025_ClaimOrphanedInbox.sql
 -- Date: 2026-04-21 (owner-preferring claim — fixes rank-churn wedge, production incident)
 -- Description: Creates claim_orphaned_inbox function for claiming orphaned inbox messages.
+--              2026-08-23: p_max_rows BOUNDS ACQUISITION. Previously this leased every eligible
+--              row in one UPDATE and charged an attempt to each, so a claim limit could only
+--              throttle re-emission -- a valve downstream of the flood.
 --              Owner-preferring semantics: a stream's live owner always claims its
 --              messages; partition-based load balancing applies only to unowned /
 --              abandoned-owner streams.
@@ -15,7 +18,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
   p_lease_expiry TIMESTAMPTZ,
   p_now TIMESTAMPTZ,
   p_partition_count INTEGER,
-  p_stale_cutoff TIMESTAMPTZ
+  p_stale_cutoff TIMESTAMPTZ,
+  p_max_rows INTEGER DEFAULT NULL
 ) RETURNS TABLE(
   message_id UUID,
   stream_id UUID
@@ -23,7 +27,70 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
 #variable_conflict use_column
 BEGIN
   RETURN QUERY
-  WITH claimed AS (
+  -- Bound ACQUISITION, not just re-emission. Without a limit here this statement leases every
+  -- eligible row in one shot and charges an attempt to each, so an instance restarting onto a large
+  -- backlog claims the whole thing instantly. The rows it cannot dispatch inside the lease expire
+  -- un-dispatched, get re-claimed here, spend another attempt, and eventually dead-letter as
+  -- MaxAttemptsExceeded having never reached a receptor — the error branch below is this statement
+  -- stamping its own casualties.
+  --
+  -- The caller's claim limit previously reached claim_orphaned_perspective_events but not this
+  -- function, so both the adaptive claim window and the outstanding budget were throttling a valve
+  -- downstream of the flood: p_max_streams bounds only the RE-EMISSION of work already held
+  -- (claim_work's eligible_inbox filters on instance_id = p_instance_id). That is why narrowing the
+  -- window changed the rate of lease saturation without ever converging.
+  --
+  -- LIMIT NULL is unlimited in Postgres, so the default preserves the old behavior for any caller
+  -- that has not been taught to pass a bound.
+  WITH candidates AS (
+    -- The FULL predicate belongs here, not a cheap pre-filter. Selecting rows by age alone and
+    -- filtering for ownership afterwards would let another instance's rows permanently occupy this
+    -- instance's window — it would take the limit in candidates, match none of them, and claim
+    -- nothing while its own work waited behind them. FOR UPDATE holds the chosen rows so the
+    -- update below cannot race a concurrent claimer between selection and write.
+    SELECT i.message_id AS cand_message_id
+    FROM __SCHEMA__.wh_inbox i
+    WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
+      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+      AND i.processed_at IS NULL
+      AND (
+        -- OWNER PATH — see the rationale on the original predicate below.
+        EXISTS (
+          SELECT 1 FROM __SCHEMA__.wh_active_streams ast
+          WHERE ast.stream_id = i.stream_id
+            AND ast.assigned_instance_id = p_instance_id
+            AND ast.lease_expiry > p_now
+        )
+        OR
+        -- UNOWNED / ABANDONED PATH
+        (
+          (i.partition_number IS NULL
+           OR (i.partition_number % p_active_instance_count) = p_instance_rank)
+          AND NOT EXISTS (
+            SELECT 1 FROM __SCHEMA__.wh_active_streams ast
+            WHERE ast.stream_id = i.stream_id
+              AND ast.assigned_instance_id != p_instance_id
+              AND ast.lease_expiry > p_now
+              AND EXISTS (
+                SELECT 1 FROM __SCHEMA__.wh_service_instances si
+                WHERE si.instance_id = ast.assigned_instance_id
+                  AND (
+                    si.last_heartbeat_at >= p_stale_cutoff
+                    OR EXISTS (
+                      SELECT 1 FROM pg_stat_activity sa
+                      WHERE sa.application_name = 'whizbang-' || si.instance_id::text
+                    )
+                  )
+              )
+          )
+        )
+      )
+    -- Oldest first: the retry budget of the longest-waiting rows is the closest to being spent.
+    ORDER BY i.received_at
+    LIMIT p_max_rows
+    FOR UPDATE OF i SKIP LOCKED
+  ),
+  claimed AS (
     UPDATE __SCHEMA__.wh_inbox i
     SET instance_id = p_instance_id,
         lease_expiry = p_lease_expiry,
@@ -62,65 +129,27 @@ BEGIN
                || 'No dispatch failure was recorded for that attempt.'
           ELSE i.error
         END
-    WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+    -- Ownership and partition routing were resolved in `candidates` above, under a row lock. Only
+    -- the two cheap invariants are re-asserted here, as defense against a lease that lapsed between
+    -- selection and write:
+    --
+    --   OWNER PATH — a stream's live owner always claims its messages, ignoring partition modulo,
+    --   which preserves per-stream FIFO and prevents the rank-churn wedge seen in production: when
+    --   active_instance_count changes, modulo routing for a partition can shift to a different rank
+    --   than the stream's existing owner. Without that branch the modulo-matched instance is blocked
+    --   by the ownership NOT EXISTS and the owner is blocked by the modulo filter — neither claims.
+    --
+    --   UNOWNED / ABANDONED PATH — no live owner, so partition-based load balancing decides the rank.
+    --   NULL partition_number (no stream binding) stays claimable by any rank. "Live" means a
+    --   heartbeat within p_stale_cutoff OR a registered LISTEN connection in pg_stat_activity; an
+    --   instance killed by SIGKILL holds no meaningful ownership, and without the recency clause its
+    --   dead lease would block cross-instance claims for the full lease duration (300 s default).
+    --   See 011 (cleanup_stale_instances) for the eventual DELETE — this claim-time check is what
+    --   makes recovery happen at the stale threshold rather than at lease expiry.
+    FROM candidates c
+    WHERE i.message_id = c.cand_message_id
       AND i.processed_at IS NULL
-      AND (
-        -- OWNER PATH — if this instance already owns the stream (live, non-expired lease
-        -- in wh_active_streams), it always claims. Partition modulo is IGNORED. This
-        -- preserves per-stream FIFO and prevents the rank-churn wedge observed in
-        -- production: when active_instance_count changes, partition-modulo
-        -- routing for a partition number can shift to a different rank than the stream's
-        -- existing owner's rank. Without this branch, the modulo-matched instance is
-        -- blocked by the ownership NOT EXISTS below AND the owner is blocked by the
-        -- modulo filter — neither can claim.
-        EXISTS (
-          SELECT 1 FROM __SCHEMA__.wh_active_streams ast
-          WHERE ast.stream_id = i.stream_id
-            AND ast.assigned_instance_id = p_instance_id
-            AND ast.lease_expiry > p_now
-        )
-        OR
-        -- UNOWNED / ABANDONED PATH — stream has no live owner. Partition-based load
-        -- balancing decides which rank picks it up. NULL partition_number (message has
-        -- no stream binding) remains claimable by any rank.
-        (
-          (i.partition_number IS NULL
-           OR (i.partition_number % p_active_instance_count) = p_instance_rank)
-          AND NOT EXISTS (
-            SELECT 1 FROM __SCHEMA__.wh_active_streams ast
-            WHERE ast.stream_id = i.stream_id
-              AND ast.assigned_instance_id != p_instance_id
-              AND ast.lease_expiry > p_now
-              AND EXISTS (
-                -- A live instance = one whose last heartbeat is within the abandon threshold
-                -- (p_stale_cutoff). An instance that stopped heartbeating (SIGKILL, crash,
-                -- container replaced) holds no meaningful ownership: its wh_active_streams
-                -- lease reflects intent that will never be realised. Without the heartbeat-
-                -- recency clause the dead lease remains "live" for up to lease_duration_seconds
-                -- (300 s by default), blocking fresh cross-instance claims for minutes.
-                -- See migration 029 (process_work_batch) for where v_stale_cutoff is computed
-                -- and 011 (cleanup_stale_instances) for the eventual DELETE once the row is
-                -- past the threshold; this claim-time check is what makes the system actually
-                -- recover at the threshold boundary rather than at the lease-expiry boundary.
-                SELECT 1 FROM __SCHEMA__.wh_service_instances si
-                WHERE si.instance_id = ast.assigned_instance_id
-                  -- Slice 2b of zero-idle-polling — owner counts as alive if
-                  -- EITHER its heartbeat is fresh OR a Whizbang LISTEN
-                  -- connection is currently registered in pg_stat_activity
-                  -- (the latter is TCP-fresh regardless of heartbeat cadence).
-                  -- Additive — existing heartbeat-only semantics preserved.
-                  AND (
-                    si.last_heartbeat_at >= p_stale_cutoff
-                    OR EXISTS (
-                      SELECT 1 FROM pg_stat_activity sa
-                      WHERE sa.application_name = 'whizbang-' || si.instance_id::text
-                    )
-                  )
-              )
-          )
-        )
-      )
+      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
     RETURNING i.message_id AS c_message_id, i.stream_id AS c_stream_id, i.partition_number AS c_partition_number
   ),
   -- 2026-06-02: split the wh_active_streams ledger maintenance into REFRESH (row-only
@@ -169,4 +198,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_inbox IS
-'Claims orphaned inbox messages with expired or null leases. Owner-preferring: a stream''s live owner always claims its messages (FIFO per-stream, immune to rank churn from scale events). Partition-modulo load balancing applies only to streams with no live owner. An abandoned (non-heartbeating) instance''s lease does NOT block cross-instance claims, giving SIGKILL-tolerant recovery bounded by the stale threshold rather than the 300 s active-streams lease. Returns claimed message IDs for Orphaned flag in orchestrator response.';
+'Claims orphaned inbox messages with expired or null leases. Owner-preferring: a stream''s live owner always claims its messages (FIFO per-stream, immune to rank churn from scale events). Partition-modulo load balancing applies only to streams with no live owner. An abandoned (non-heartbeating) instance''s lease does NOT block cross-instance claims, giving SIGKILL-tolerant recovery bounded by the stale threshold rather than the 300 s active-streams lease. Returns claimed message IDs for Orphaned flag in orchestrator response. p_max_rows bounds ACQUISITION (oldest-first, FOR UPDATE SKIP LOCKED); NULL means unlimited, preserving pre-2026-08 behavior for callers that pass no bound. Without it the claim limit governed only re-emission, so held work grew until leases lapsed together and rows dead-lettered as MaxAttemptsExceeded without reaching a receptor.';

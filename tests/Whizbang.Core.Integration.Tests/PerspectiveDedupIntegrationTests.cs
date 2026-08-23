@@ -611,6 +611,13 @@ public class PerspectiveDedupIntegrationTests {
     // draining a specific amount inside a fixed window, which is a throughput assertion wearing a
     // correctness assertion's clothes: it passed alone and timed out under full-suite load.
     await runner.WaitForAtLeastOneCallAsync(TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
+
+    // The apply is not the recording. Completions are recorded when the batch scope DISPOSES, which
+    // happens after the apply observed above — so reading the meter straight after that wait races
+    // the worker's teardown. StartAsync returns once the service has started, not when its loop has
+    // finished, so awaiting workerTask never closed that gap; StopAsync does, because it waits for
+    // ExecuteAsync to return and therefore for the scope to have disposed.
+    await worker.StopAsync(CancellationToken.None);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 

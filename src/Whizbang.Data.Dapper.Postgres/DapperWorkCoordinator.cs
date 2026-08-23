@@ -72,6 +72,26 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  public async ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
+      Guid instanceId, CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    // Selected in the function's own column order and mapped positionally, matching the recompute
+    // query below. Dapper binds ValueTuple members by POSITION, not by name, so the order of this
+    // SELECT is what matters here — renaming the columns would not break it, but reordering them
+    // silently would, and the result (counts landing in the wrong fields) would still look like a
+    // plausible number rather than an error.
+    var row = await connection.QuerySingleAsync<(long inbox_rows, long outbox_rows, long perspective_rows)>(
+      "SELECT inbox_rows, outbox_rows, perspective_rows FROM count_outstanding_work(@instanceId)",
+      new { instanceId });
+    return new OutstandingWork {
+      InboxRows = row.inbox_rows,
+      OutboxRows = row.outbox_rows,
+      PerspectiveRows = row.perspective_rows
+    };
+  }
+
+  /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;

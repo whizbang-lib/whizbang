@@ -530,6 +530,26 @@ public class ClaimWorkerAttemptAccountingTests {
       return Task.FromResult(BatchToReturn);
     }
 
+    /// <summary>
+    /// Reports the work this fake store is holding, across all three kinds.
+    /// </summary>
+    /// <remarks>
+    /// The worker no longer infers outstanding from the claim response, because the real claim
+    /// truncates its eligible set to the limit being computed — a count taken from it can never
+    /// exceed that limit. It asks the store instead, so a fake that does not answer leaves the
+    /// budget disengaged (by design) and any test of the bound would silently measure nothing.
+    /// </remarks>
+    public ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
+        Guid instanceId, CancellationToken cancellationToken = default) {
+      lock (_lock) {
+        return ValueTask.FromResult<OutstandingWork?>(new OutstandingWork {
+          InboxRows = BatchToReturn.InboxWork.Count,
+          OutboxRows = BatchToReturn.OutboxWork.Count,
+          PerspectiveRows = BatchToReturn.PerspectiveWork.Count
+        });
+      }
+    }
+
     public Task<int> ReleaseUnprocessedInboxAsync(
         Guid instanceId, IReadOnlyList<Guid> messageIds, CancellationToken cancellationToken = default) {
       lock (_lock) {
