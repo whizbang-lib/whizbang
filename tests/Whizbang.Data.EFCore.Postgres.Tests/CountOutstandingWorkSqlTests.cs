@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/claim-backpressure</docs>
+[Category("Shard1")]
 public class CountOutstandingWorkSqlTests : EFCoreTestBase {
 
   private static async Task<NpgsqlConnection> _openAsync(DbContext ctx) {

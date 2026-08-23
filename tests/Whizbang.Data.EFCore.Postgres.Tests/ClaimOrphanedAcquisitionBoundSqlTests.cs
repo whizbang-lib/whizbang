@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/claim-backpressure</docs>
+[Category("Shard1")]
 public class ClaimOrphanedAcquisitionBoundSqlTests : EFCoreTestBase {
 
   private const int BACKLOG = 200;
