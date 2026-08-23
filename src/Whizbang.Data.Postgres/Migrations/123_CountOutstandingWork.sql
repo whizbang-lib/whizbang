@@ -17,10 +17,19 @@
 -- Dependencies: 001-122 (wh_inbox, wh_outbox, wh_perspective_events)
 
 -- ============================================================================
--- Supporting index. The count filters on instance_id among unprocessed rows;
--- the existing idx_inbox_instance_id spans processed rows too, which on a table
--- retaining history is most of it. Partial keeps the scan proportional to the
--- work actually outstanding rather than to table size.
+-- Supporting indexes. The count runs once per claim poll, so it has to be
+-- index-served: filtering on instance_id among unprocessed rows via the existing
+-- idx_inbox_instance_id would also walk that instance's processed history, which
+-- on a table retaining history is most of it. Partial keeps the scan proportional
+-- to work actually outstanding rather than to table size.
+--
+-- OPERATOR NOTE — one-time startup cost on first deploy of this version. The
+-- migration runner wraps each file in a transaction, and CREATE INDEX CONCURRENTLY
+-- cannot run inside one, so these builds take an ACCESS EXCLUSIVE lock for their
+-- duration and block reads and writes on the table. The cost is proportional to
+-- table size and is paid ONCE (IF NOT EXISTS), on the deploy that first applies
+-- this file. On a large wh_inbox that can be minutes, so schedule that deploy
+-- accordingly. Same pattern and same trade-off as the index work in 031 and 115.
 -- ============================================================================
 
 CREATE INDEX IF NOT EXISTS idx_inbox_outstanding_by_instance
