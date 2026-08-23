@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -19,6 +20,7 @@ namespace Whizbang.Core.Workers;
 /// Phase C of work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerAttemptAccountingTests.cs</tests>
 public sealed partial class ClaimWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
@@ -33,10 +35,17 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IInboxDrainChannel? _inboxDrainChannel;
   private readonly ClaimWorkerOptions _options;
   private readonly AdaptiveClaimWindow _claimWindow;
+  private readonly AdaptiveOutstandingBudget _outstandingBudget;
+
+  /// <summary>Observed inbox rows per claimed stream, smoothed. Converts a row budget into streams.</summary>
+  private double _rowsPerStream = 1.0;
+  private int _lastOutstanding;
+  private long _lastDrainTicks;
   private readonly ILogger<ClaimWorker> _logger;
   private readonly IPinnedConnectionPool _pinnedPool;
   private readonly ISignalBus? _signalBus;
   private readonly SignalBusLivenessState? _busLiveness;
+  private readonly WorkCompletionMeter? _completionMeter;
   private int _doorbellSinceLastClaim;
   private bool _lastClaimWasEmpty;
   private ISignalSubscription? _outboxSignalSub;
@@ -77,7 +86,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     INotifySignalingGate? signalingGate = null,
     IPinnedConnectionPool? pinnedPool = null,
     ISignalBus? signalBus = null,
-    SignalBusLivenessState? busLiveness = null) {
+    SignalBusLivenessState? busLiveness = null,
+    WorkCompletionMeter? completionMeter = null) {
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -89,6 +99,11 @@ public sealed partial class ClaimWorker : BackgroundService {
       ceiling: _options.MaxStreamsPerBatch,
       floor: _options.MinStreamsPerBatch,
       additiveStep: _options.ClaimWindowGrowthStep);
+    _outstandingBudget = new AdaptiveOutstandingBudget(
+      leaseSeconds: _options.LeaseSeconds,
+      ceiling: _options.MaxOutstandingInboxRows,
+      floor: _options.MinOutstandingInboxRows,
+      safetyFactor: _options.OutstandingBudgetSafetyFactor);
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _outboxChannel = outboxChannel;
     _inboxChannel = inboxChannel;
@@ -99,6 +114,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
     _signalBus = signalBus;
     _busLiveness = busLiveness;
+    _completionMeter = completionMeter;
 
     // F1 unify-now: bus signals for outbox/inbox/perspective work-available replace the raw
     // WorkSignalCategory subscription for those categories. Push transport (NOTIFY) and pull
@@ -435,13 +451,28 @@ public sealed partial class ClaimWorker : BackgroundService {
       // until they dead-letter as MaxAttemptsExceeded having never reached a receptor. Hand them
       // back instead: the refund is only ever taken by a worker that KNOWS it did not dispatch,
       // so a process that dies here still (correctly) leaves its charge standing.
-      var ordered = batch.InboxWork.OrderByMessageId().ToList();
+      // Skip rows already in flight. claim_work re-emits every row still leased to this instance and
+      // unprocessed on EVERY poll, so without this the same row is queued again each cycle —
+      // duplicate copies of work already being dispatched.
+      //
+      // Safe ONLY because in-flight entries now age out. An earlier IsInFlight write-time filter on
+      // this path proved unrecoverable in production: a flag stranded by a hung or cancelled task
+      // made this worker discard that row's emits forever, and only restarting the process cleared
+      // it. With ageing, a stranded flag stops mattering once the lease has lapsed — the row becomes
+      // eligible again on its own, so the failure is self-healing rather than permanent.
+      var ordered = batch.InboxWork
+        .Where(w => !_inboxChannel.IsInFlight(w.MessageId))
+        .OrderByMessageId()
+        .ToList();
       var handedOff = 0;
       try {
         for (; handedOff < ordered.Count; handedOff++) {
           await _inboxChannel.WriteAsync(ordered[handedOff], ct);
         }
       } finally {
+        // Only rows THIS loop failed to deliver are refunded. A row filtered out above was handed
+        // off on an earlier poll and is being processed — refunding it would credit an attempt for
+        // work that is genuinely in progress.
         if (handedOff < ordered.Count) {
           await _releaseUndispatchedAsync(ordered.Skip(handedOff).Select(w => w.MessageId).ToList());
         }
@@ -507,17 +538,77 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
   }
 
+  /// <summary>Feeds the drain rate that sizes the outstanding budget.</summary>
+  /// <remarks>
+  /// Deliberately conservative: this counts only the NET decrease in outstanding work between
+  /// samples, so work arriving in the same interval masks some completions and the measured rate
+  /// comes out low. That understates capacity and therefore sizes the budget smaller — the safe
+  /// direction to be wrong in, since the failure being prevented is holding too much.
+  /// </remarks>
+  private void _observeDrain(int outstanding) {
+    var now = Stopwatch.GetTimestamp();
+
+    if (_lastDrainTicks != 0 && _completionMeter is not null) {
+      // Real completions, not a difference between outstanding readings. Rows arriving inside the
+      // same interval would mask completions in a delta, so the measured rate would read low and
+      // the budget would shrink for no reason — and a delta-based rate makes the control loop
+      // untestable without wall-clock sleeps.
+      var completed = (int)Math.Min(int.MaxValue, _completionMeter.ReadAndReset());
+      _outstandingBudget.Observe(completed, Stopwatch.GetElapsedTime(_lastDrainTicks, now));
+    }
+
+    _lastOutstanding = outstanding;
+    _lastDrainTicks = now;
+  }
+
   private async Task<WorkBatch> _claimOnceAsync(CancellationToken ct) {
     await using var pin = await _pinnedPool.TryPinForAsync(typeof(ClaimWorker), ct);
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    // Opting out of the adaptive window means claiming at the operator's configured ceiling, not
+    // at whatever value the window happens to hold. Previously this always read the window and
+    // relied on it having been constructed AT the ceiling — so "disabled" meant "frozen wherever it
+    // started" rather than "bypassed". That was invisible while the window started wide; once it
+    // starts at the floor, the distinction is the difference between honouring the opt-out and
+    // silently pinning every claim to the minimum.
+    var maxStreams = _options.AdaptiveClaimWindow ? _claimWindow.Current : _options.MaxStreamsPerBatch;
+
+    // Bound the TOTAL outstanding, not just this batch — a loop that claims and immediately claims
+    // again accumulates held work across cycles regardless of batch size.
+    //
+    // The outstanding figure comes from the STORE, never from an in-memory flag. That is not a
+    // stylistic preference: an earlier in-memory IsInFlight filter on this path proved unrecoverable
+    // in production (see the emit loop below) — a flag stranded by a hung or cancelled task made
+    // this worker silently discard every later emit for that stream, and only a restart cleared it.
+    // Any counter we maintain ourselves can be stranded the same way. claim_work's eligible_* CTEs
+    // re-emit every row still leased to us and unprocessed on EVERY poll, so the previous claim's
+    // counts are the outstanding total according to SQL, and it re-derives itself each cycle. A
+    // wrong value cannot persist.
+    //
+    // No meter means no measured drain. Rather than let the rate read zero forever and pin every
+    // deployment at the floor, the bound simply does not engage — an unmeasured budget is worse
+    // than none, because it throttles silently and looks like a performance problem.
+    if (_options.AdaptiveOutstandingBudget && _completionMeter is not null) {
+      var headroomRows = _outstandingBudget.Headroom(_lastOutstanding);
+
+      // Convert the row budget into streams: the store claims by stream, and rows-per-stream varies
+      // by orders of magnitude, so a fixed assumption would be wrong in one direction or the other.
+      var streamsAffordable = (int)Math.Ceiling(headroomRows / Math.Max(1.0, _rowsPerStream));
+
+      // NEVER drop to zero. Skipping the claim entirely is how the previous design deadlocked: the
+      // poll is the only thing that observes outstanding work, so a worker that stops polling stops
+      // being able to discover that it has recovered. Re-emitting rows we already hold costs no new
+      // attempt — they are already leased to us — so polling at the floor is cheap and self-healing.
+      maxStreams = Math.Max(1, Math.Min(maxStreams, streamsAffordable));
+    }
+
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
       HostName: _instanceProvider.HostName,
       ProcessId: _instanceProvider.ProcessId,
-      MaxStreams: _claimWindow.Current,
+      MaxStreams: maxStreams,
       PartitionCount: _options.PartitionCount,
       LeaseSeconds: _options.LeaseSeconds), ct);
 
@@ -526,6 +617,25 @@ public sealed partial class ClaimWorker : BackgroundService {
     // inside its lease — and every one of those rows has silently spent a retry attempt it never
     // used. Narrowing here is what stops a backlog consuming its own budget and dead-lettering
     // healthy messages as MaxAttemptsExceeded.
+    // Keep the rows-per-stream estimate current. The store claims by stream while the budget is in
+    // rows, and the ratio is workload-specific — mostly-singleton streams and a few thousand-row
+    // streams both occur, so a fixed assumption would be wrong in one direction or the other.
+    if (batch.InboxStreamIds.Count > 0 && batch.InboxWork.Count > 0) {
+      var observed = (double)batch.InboxWork.Count / batch.InboxStreamIds.Count;
+      _rowsPerStream = (0.2 * observed) + (0.8 * _rowsPerStream);
+    }
+
+    // Outstanding, straight from the store. claim_work re-emits everything still leased to this
+    // instance and unprocessed, so these counts ARE the current outstanding total — re-derived every
+    // poll rather than accumulated, which is what makes it impossible to strand.
+    //
+    // All three work kinds count. Every one of them is leased and charges an attempt, so bounding
+    // only the inbox would leave the identical over-claim arithmetic free to recur in another
+    // column — the failure would simply move rather than stop.
+    if (_options.AdaptiveOutstandingBudget && _completionMeter is not null) {
+      _observeDrain(batch.InboxWork.Count + batch.OutboxWork.Count + batch.PerspectiveWork.Count);
+    }
+
     if (_options.AdaptiveClaimWindow) {
       var reclaimed = 0;
       for (var i = 0; i < batch.InboxWork.Count; i++) {
@@ -631,6 +741,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     Message = "ClaimWorker handed back {Released} of {Attempted} undispatched inbox rows, "
             + "refunding the attempt each claim charged")]
   static partial void LogReleasedUndispatched(ILogger logger, int released, int attempted);
+
 
   [LoggerMessage(EventId = 10, Level = LogLevel.Warning,
     Message = "ClaimWorker could not hand back {Attempted} undispatched inbox rows; "
@@ -748,6 +859,51 @@ public sealed class ClaimWorkerOptions {
   /// Floor for the adaptive claim window, so a struggling instance still makes progress. Default 25.
   /// </summary>
   public int MinStreamsPerBatch { get; set; } = 25;
+
+  /// <summary>
+  /// Bounds how many claimed-but-unprocessed inbox ROWS this instance may hold at once. Default true.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Distinct from <see cref="AdaptiveClaimWindow"/>, and not substitutable for it. The window bounds
+  /// the size of each individual claim; this bounds the <i>total outstanding</i> across claims. A loop
+  /// that claims and immediately claims again accumulates outstanding work every cycle no matter how
+  /// small each batch is, until the whole backlog is held and its leases lapse together — so a batch
+  /// bound alone changes only how long that takes, never whether it happens.
+  /// </para>
+  /// <para>
+  /// Set false to restore the previous unbounded behaviour. Appropriate only where throughput is
+  /// known to exceed arrival rate, since the failure mode it prevents is silent: rows dead-letter as
+  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded"/> having never
+  /// reached a receptor, with no handler failure to explain it.
+  /// </para>
+  /// </remarks>
+  public bool AdaptiveOutstandingBudget { get; set; } = true;
+
+  /// <summary>
+  /// Minimum outstanding inbox rows, retained even when stalled. Default 100.
+  /// </summary>
+  /// <remarks>
+  /// Also the cold-start value: a restarting instance has no drain history, and a restart carrying a
+  /// large backlog is exactly when unbounded claiming does its damage, so capacity is earned from
+  /// observed completions rather than assumed.
+  /// </remarks>
+  public int MinOutstandingInboxRows { get; set; } = 100;
+
+  /// <summary>
+  /// Hard ceiling on outstanding inbox rows, whatever the measured drain rate suggests. Default 10000.
+  /// </summary>
+  public int MaxOutstandingInboxRows { get; set; } = 10_000;
+
+  /// <summary>
+  /// Fraction of the lease window to plan against when sizing the outstanding budget. Default 0.5.
+  /// </summary>
+  /// <remarks>
+  /// Below 1.0 buys deliberate headroom. Lease expiry is a cliff rather than a gradual degradation —
+  /// at the full computed capacity any slowdown tips straight into mass expiry, and every expired row
+  /// is re-claimed at another attempt. Raise it only if drain rate is very stable.
+  /// </remarks>
+  public double OutstandingBudgetSafetyFactor { get; set; } = 0.5;
 
   /// <summary>
   /// Streams added back per fully clean cycle. Default 25 — additive on purpose, since recovering

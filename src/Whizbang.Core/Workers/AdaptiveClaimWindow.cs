@@ -29,6 +29,12 @@ namespace Whizbang.Core.Workers;
 /// hold leases across thousands of streams, which is the shape of the original failure.
 /// </para>
 /// </remarks>
+/// <remarks>
+/// Bounds the size of an individual claim. It does <b>not</b> bound how much work the instance holds
+/// in total — a loop that claims and immediately claims again accumulates outstanding work across
+/// cycles at any batch size. <see cref="AdaptiveOutstandingBudget"/> is the control for that, and the
+/// two are complementary rather than alternatives. See <c>operations/workers/claim-backpressure</c>.
+/// </remarks>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveClaimWindowTests.cs</tests>
 public sealed class AdaptiveClaimWindow {
@@ -53,9 +59,18 @@ public sealed class AdaptiveClaimWindow {
     _floor = Math.Min(floor, ceiling);
     _additiveStep = additiveStep;
     _churnThreshold = churnThreshold;
-    // Start at the ceiling: an unloaded service should not pay a warm-up penalty, and the window
-    // only costs something once churn actually appears.
-    _current = ceiling;
+    // Start at the FLOOR, not the ceiling.
+    //
+    // This previously started wide, reasoning that an unloaded service should not pay a warm-up
+    // penalty. Production disproved it: cold start is the most dangerous moment, not the safest.
+    // A process that restarts carrying a large backlog has no churn history yet, so a
+    // ceiling-width first claim grabs the maximum before any feedback exists to shrink it — and a
+    // restart-with-backlog is exactly the situation that produces one.
+    //
+    // The warm-up cost is small and self-correcting (a genuinely idle service ramps back to the
+    // ceiling within a few clean cycles); the overshoot cost is leases held on work that cannot be
+    // drained inside the lease window, which converts a backlog into spent retry budget.
+    _current = _floor;
   }
 
   /// <summary>Streams to request on the next claim.</summary>

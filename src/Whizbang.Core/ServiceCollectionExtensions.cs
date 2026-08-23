@@ -271,6 +271,12 @@ public static class ServiceCollectionExtensions {
     // Inbox channel for routing claimed inbox work to the publisher worker
     services.TryAddSingleton<Messaging.IInboxChannelWriter, Messaging.InboxChannelWriter>();
 
+    // Shared completion counter. The claim loop sizes its outstanding budget from this; the
+    // dispatch and publish workers feed it. Registered unconditionally because a MISSING meter
+    // silently disables the bound rather than failing loudly — see ClaimWorker, which declines to
+    // engage the budget at all without measurement rather than throttle on a rate it cannot read.
+    services.TryAddSingleton<Workers.WorkCompletionMeter>();
+
     // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
     // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
     // but the factory lambda resolves at runtime so ordering is fine.

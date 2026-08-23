@@ -31,6 +31,7 @@ public interface IInboxChannelWriter {
   /// <summary>Returns true if the message has been in-flight long enough to need a lease renewal.</summary>
   bool ShouldRenewLease(Guid messageId);
 
+
   /// <summary>Signals that no more work will be written.</summary>
   void Complete();
 

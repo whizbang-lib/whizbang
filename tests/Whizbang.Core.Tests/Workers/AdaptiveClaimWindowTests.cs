@@ -15,17 +15,41 @@ namespace Whizbang.Core.Tests.Workers;
 public class AdaptiveClaimWindowTests {
 
   [Test]
-  public async Task StartsAtTheCeilingAsync() {
-    var window = new AdaptiveClaimWindow(ceiling: 1000);
+  public async Task StartsAtTheFloorAsync() {
+    var window = new AdaptiveClaimWindow(ceiling: 1000, floor: 25);
 
-    await Assert.That(window.Current).IsEqualTo(1000)
-      .Because("an unloaded service should not pay a warm-up penalty — the window only costs "
-             + "something once churn actually appears");
+    await Assert.That(window.Current).IsEqualTo(25)
+      .Because("cold start is the most dangerous moment, not the safest: a process restarting with "
+             + "a large backlog has no churn history, so a ceiling-width first claim takes the "
+             + "maximum before any feedback exists to shrink it. This assertion is INVERTED from "
+             + "its original form — it previously pinned a ceiling start on the reasoning that an "
+             + "unloaded service should not pay a warm-up penalty. That reasoning held only for "
+             + "idle services; under a restart-with-backlog it is what grabs the whole queue. The "
+             + "warm-up cost is small and self-correcting; the overshoot cost is spent retry budget");
+  }
+
+  /// <summary>
+  /// Grows a freshly-constructed window to its ceiling through clean cycles.
+  /// </summary>
+  /// <remarks>
+  /// The window now starts at the FLOOR, because cold start is the moment over-claiming does its
+  /// damage. Any test describing shrink/hold behaviour therefore has to put the window into the
+  /// warmed-up state it is talking about — otherwise it silently asserts against the cold-start
+  /// value instead of the behaviour it names.
+  /// </remarks>
+  private static AdaptiveClaimWindow _warmedToCeiling(
+    int ceiling = 1000, int floor = 25, int additiveStep = 25, double churnThreshold = 0.5
+  ) {
+    var window = new AdaptiveClaimWindow(ceiling, floor, additiveStep, churnThreshold);
+    while (window.Current < ceiling) {
+      window.Observe(claimedRows: 100, reclaimedRows: 0);
+    }
+    return window;
   }
 
   [Test]
   public async Task ChurnHalvesTheWindowAsync() {
-    var window = new AdaptiveClaimWindow(ceiling: 1000);
+    var window = _warmedToCeiling();
 
     window.Observe(claimedRows: 100, reclaimedRows: 80);
 
@@ -62,7 +86,7 @@ public class AdaptiveClaimWindowTests {
 
   [Test]
   public async Task CleanCyclesGrowTheWindowAdditivelyAsync() {
-    var window = new AdaptiveClaimWindow(ceiling: 1000, floor: 25, additiveStep: 25);
+    var window = _warmedToCeiling();
     window.Observe(claimedRows: 100, reclaimedRows: 100);   // 500
     window.Observe(claimedRows: 100, reclaimedRows: 100);   // 250
 
@@ -93,7 +117,7 @@ public class AdaptiveClaimWindowTests {
   /// </summary>
   [Test]
   public async Task EmptyClaimsDoNotInflateTheWindowAsync() {
-    var window = new AdaptiveClaimWindow(ceiling: 1000, floor: 25, additiveStep: 25);
+    var window = _warmedToCeiling();
     window.Observe(claimedRows: 100, reclaimedRows: 100);   // 500
 
     for (var cycle = 0; cycle < 10; cycle++) {
@@ -111,7 +135,7 @@ public class AdaptiveClaimWindowTests {
   /// </summary>
   [Test]
   public async Task ModestChurnHoldsTheWindowSteadyAsync() {
-    var window = new AdaptiveClaimWindow(ceiling: 1000, floor: 25, additiveStep: 25, churnThreshold: 0.5);
+    var window = _warmedToCeiling();
 
     window.Observe(claimedRows: 100, reclaimedRows: 10);
 

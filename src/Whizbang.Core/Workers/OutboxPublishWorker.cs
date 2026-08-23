@@ -54,7 +54,9 @@ public sealed partial class OutboxPublishWorker(
   IGenerationProvider? generationProvider = null,
   Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
   IPinnedConnectionPool? pinnedPool = null,
-  IOccurrencePublishGate? occurrenceGate = null) : BackgroundService {
+  IOccurrencePublishGate? occurrenceGate = null,
+  WorkCompletionMeter? completionMeter = null) : BackgroundService {
+  private readonly WorkCompletionMeter? _completionMeter = completionMeter;
   private readonly IPinnedConnectionPool _pinnedPool = pinnedPool ?? NoOpPinnedConnectionPool.Instance;
   // Defaults to the no-op gate, so hosts that never registered one publish exactly as before.
   private readonly IOccurrencePublishGate _occurrenceGate = occurrenceGate ?? new NoOpOccurrencePublishGate();
@@ -227,6 +229,13 @@ public sealed partial class OutboxPublishWorker(
             Reason = MessageFailureReason.Unknown
           }, stoppingToken);
         }
+      } finally {
+        // One outbox row has stopped occupying this instance. Recorded in `finally` on the loop's
+        // enclosing try — the only point that runs exactly once per row. This worker reaches its end
+        // state through several distinct branches (published, deferred, failed, promoted to DLQ),
+        // and RemoveInFlight already shows the cost of hooking those individually: it fires on four
+        // of them and misses the success path entirely.
+        _completionMeter?.Record();
       }
       _maybeFireIdle();
     }
@@ -322,6 +331,12 @@ public sealed partial class OutboxPublishWorker(
             Reason = MessageFailureReason.Unknown
           }, stoppingToken);
         }
+      } finally {
+        // A whole batch has stopped occupying this instance, so record its SIZE, not one. Recording
+        // a single completion per bulk iteration would under-report drain by the batch factor,
+        // shrink the budget, and throttle exactly the high-throughput services bulk mode exists to
+        // serve — a bug that would look like a performance regression, not an accounting error.
+        _completionMeter?.Record(batch.Count);
       }
       _maybeFireIdle();
     }
