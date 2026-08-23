@@ -220,6 +220,80 @@ public class ClaimWorkerAttemptAccountingTests {
 
 
 
+  // ==================== Handoff dedup ====================
+
+  /// <summary>
+  /// claim_work re-emits every row still leased to this instance and unprocessed on EVERY poll, so
+  /// the same row arrives in successive batches until it is processed. Writing it to the channel
+  /// each time queues duplicate copies of work already in flight.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The dedup is safe here ONLY because in-flight entries now age out. An earlier IsInFlight
+  /// write-time filter on this path was unrecoverable in production: a flag stranded by a hung or
+  /// cancelled task made the worker discard that row's emits forever, and only a restart cleared it.
+  /// With ageing, a stranded flag stops mattering once the lease has lapsed — the row becomes
+  /// eligible again on its own.
+  /// </para>
+  /// <para>
+  /// A skipped row must NOT be treated as undispatched. It was handed off on an earlier poll and is
+  /// being processed; refunding its attempt would credit work that is genuinely in progress.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Handoff_DoesNotReWriteWorkAlreadyInFlightAsync() {
+    var coord = new RecordingCoordinator { BatchToReturn = _batchOf(rows: 3, attempts: 1) };
+    var channel = new _CountingInboxChannel();
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+    }, inboxChannel: channel);
+
+    // The coordinator returns the SAME three rows every poll, exactly as claim_work re-emits rows
+    // that remain leased and unprocessed.
+    await coord.WaitForCallsAsync(5, TimeSpan.FromSeconds(5));
+
+    await Assert.That(channel.DistinctMessagesWritten).IsEqualTo(3)
+      .Because("the same three rows are re-offered on every poll; without dedup each poll queues "
+             + "another copy of work already in flight");
+    await Assert.That(channel.TotalWrites).IsEqualTo(3)
+      .Because("a row already in flight must be skipped outright, not re-queued — duplicates cost "
+             + "channel depth and dispatch effort on work that is already being processed");
+    await Assert.That(coord.ReleasedIds.Count).IsEqualTo(0)
+      .Because("a skipped row was handed off on an earlier poll and is being processed; refunding "
+             + "its attempt would credit work that is genuinely in progress");
+  }
+
+  /// <summary>Counts writes and reports everything written as permanently in flight.</summary>
+  private sealed class _CountingInboxChannel : IInboxChannelWriter {
+    private readonly Channel<InboxWork> _channel = Channel.CreateUnbounded<InboxWork>();
+    private readonly HashSet<Guid> _seen = [];
+    public int TotalWrites { get; private set; }
+    public int DistinctMessagesWritten => _seen.Count;
+
+    public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) {
+      lock (_seen) {
+        TotalWrites++;
+        _seen.Add(work.MessageId);
+      }
+      return _channel.Writer.WriteAsync(work, ct);
+    }
+
+    public bool IsInFlight(Guid messageId) {
+      lock (_seen) {
+        return _seen.Contains(messageId);
+      }
+    }
+
+    public ChannelReader<InboxWork> Reader => _channel.Reader;
+    public bool TryWrite(InboxWork work) => _channel.Writer.TryWrite(work);
+    public void RemoveInFlight(Guid messageId) { }
+    public bool ShouldRenewLease(Guid messageId) => false;
+    public void Complete() => _channel.Writer.Complete();
+    public event Action? OnNewInboxWorkAvailable;
+    public void SignalNewInboxWorkAvailable() => OnNewInboxWorkAvailable?.Invoke();
+  }
+
   // ==================== Outstanding-work budget ====================
 
   /// <summary>

@@ -451,13 +451,28 @@ public sealed partial class ClaimWorker : BackgroundService {
       // until they dead-letter as MaxAttemptsExceeded having never reached a receptor. Hand them
       // back instead: the refund is only ever taken by a worker that KNOWS it did not dispatch,
       // so a process that dies here still (correctly) leaves its charge standing.
-      var ordered = batch.InboxWork.OrderByMessageId().ToList();
+      // Skip rows already in flight. claim_work re-emits every row still leased to this instance and
+      // unprocessed on EVERY poll, so without this the same row is queued again each cycle —
+      // duplicate copies of work already being dispatched.
+      //
+      // Safe ONLY because in-flight entries now age out. An earlier IsInFlight write-time filter on
+      // this path proved unrecoverable in production: a flag stranded by a hung or cancelled task
+      // made this worker discard that row's emits forever, and only restarting the process cleared
+      // it. With ageing, a stranded flag stops mattering once the lease has lapsed — the row becomes
+      // eligible again on its own, so the failure is self-healing rather than permanent.
+      var ordered = batch.InboxWork
+        .Where(w => !_inboxChannel.IsInFlight(w.MessageId))
+        .OrderByMessageId()
+        .ToList();
       var handedOff = 0;
       try {
         for (; handedOff < ordered.Count; handedOff++) {
           await _inboxChannel.WriteAsync(ordered[handedOff], ct);
         }
       } finally {
+        // Only rows THIS loop failed to deliver are refunded. A row filtered out above was handed
+        // off on an earlier poll and is being processed — refunding it would credit an attempt for
+        // work that is genuinely in progress.
         if (handedOff < ordered.Count) {
           await _releaseUndispatchedAsync(ordered.Skip(handedOff).Select(w => w.MessageId).ToList());
         }
