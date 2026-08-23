@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// assignment design (no race, no broadcast).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notify-instance-owners</docs>
+[Category("Shard1")]
 public class NotifyInstanceOwnersDeterministicTargetSqlTests : EFCoreTestBase {
 
   [Test]

@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// - Null schema logs warning and returns default
 /// - Empty schema logs warning and returns default
 /// </summary>
+[Category("Shard2")]
 public class EFCoreWorkCoordinatorSchemaTests {
   private const string DEFAULT_SCHEMA = "public";
 

@@ -36,6 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// with the pre-fix generator (verified by reverting the
 /// <c>EFCoreServiceRegistrationGenerator.cs</c> patch and rebuilding).</para>
 /// </summary>
+[Category("Shard2")]
 public class GeneratedExtensionDoesNotDisposeConfigurationManagerTests {
 
   [Test]

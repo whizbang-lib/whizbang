@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>fundamentals/perspectives/row-retention</docs>
 [NotInParallel("PerspectiveRowCap")]
+[Category("Shard3")]
 public class PerspectiveRowCapSqlTests : EFCoreTestBase {
   private const string TABLE = "wh_per_rowcap";
   private const string CLR_TYPE = "TestApp.RowCapModel";

@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// The latter is the throughput multiplier (SAVEPOINT-per-handler isolation).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/handler-commit</docs>
+[Category("Shard4")]
 public class EFCoreCommitHandlerTests : EFCoreTestBase {
 
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> Coord(WorkCoordinationDbContext ctx) =>

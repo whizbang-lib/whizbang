@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("StreamDigests")]
+[Category("Shard2")]
 public class StreamDigestTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";

@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Uses InMemory DbContext to avoid PostgreSQL dependency (DeserializeStreamEvents is a pure function).
 /// Uses OrderCreatedEvent which is registered in the generated MessageJsonContext.
 /// </summary>
+[Category("Shard1")]
 public class DeserializeStreamEventsTests {
 
   [Test]

@@ -37,6 +37,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// attribute value, not the class-name derivation.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard2")]
 public class SourceGenEmitsNotificationConnectionStringPostConfigureTests {
 
   [Test]

@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// commit forgot to register the EFCore implementations — production symptom
 /// observed by a consumer: <c>wh_dead_letters</c> empty even with WRN logs firing.
 /// </summary>
+[Category("Shard2")]
 public class PostgresDriverExtensions_DeadLetterRegistrationTests {
 
   [Test]

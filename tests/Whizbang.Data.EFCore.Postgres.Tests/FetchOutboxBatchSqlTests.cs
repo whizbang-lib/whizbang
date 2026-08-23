@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// archive-specified split: claim_work returns stream_ids, drainer fetches per-stream rows.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard2")]
 public class FetchOutboxBatchSqlTests : EFCoreTestBase {
 
   [Test]

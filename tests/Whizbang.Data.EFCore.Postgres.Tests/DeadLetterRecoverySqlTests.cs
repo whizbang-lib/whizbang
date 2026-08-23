@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>schedule_next_dead_letter_attempt</c>, <c>reset_dead_letters_for_generation</c>.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+[Category("Shard1")]
 public class DeadLetterRecoverySqlTests : EFCoreTestBase {
 
   [Test]

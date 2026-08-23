@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// is reapable again, and its hold row is cleaned up. Verified against a real Postgres.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard2")]
 public class EphemeralDestructionHoldSqlTests : EFCoreTestBase {
   private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>
     new(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());

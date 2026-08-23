@@ -8,6 +8,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// End-to-end integration tests for schema initialization workflow.
 /// Tests idempotency, error handling, and complete initialization process.
 /// </summary>
+[Category("Shard3")]
 public class SchemaInitializationTests : EFCoreTestBase {
   [Test]
   public async Task EnsureWhizbangDatabaseInitialized_CreatesCoreInfrastructureTablesAsync() {

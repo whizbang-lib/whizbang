@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Messaging/IntegrityCheckpoint.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("IntegrityCheckpoint")]
+[Category("Shard3")]
 public class IntegrityCheckpointAdvanceTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";

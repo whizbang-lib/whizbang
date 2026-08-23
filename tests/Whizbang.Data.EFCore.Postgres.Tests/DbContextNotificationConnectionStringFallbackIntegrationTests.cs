@@ -50,6 +50,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// test fails at OpenAsync with the production-equivalent error.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard2")]
 public class DbContextNotificationConnectionStringFallbackIntegrationTests : EFCoreTestBase {
 
   /// <summary>

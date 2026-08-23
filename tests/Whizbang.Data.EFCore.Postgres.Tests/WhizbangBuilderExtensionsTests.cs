@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for WhizbangBuilderExtensions tests.
 /// </summary>
+[Category("Shard1")]
 public class WhizbangBuilderExtensionsTestDbContext(DbContextOptions<WhizbangBuilderExtensionsTestDbContext> options) : DbContext(options) {
   protected override void OnModelCreating(ModelBuilder modelBuilder) {
     modelBuilder.Entity<PerspectiveRow<WhizbangBuilderExtensionsTestModel>>(entity => entity.HasKey(e => e.Id));
@@ -30,6 +31,7 @@ public class WhizbangBuilderExtensionsTestModel {
 /// Verifies the unified .AddWhizbang().WithEFCore() API.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard1")]
 public class WhizbangBuilderExtensionsTests {
   [Test]
   public async Task WithEFCore_WithValidBuilder_ReturnsEFCoreDriverSelectorAsync() {

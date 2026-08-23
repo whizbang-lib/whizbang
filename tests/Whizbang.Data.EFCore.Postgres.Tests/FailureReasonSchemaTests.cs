@@ -8,6 +8,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for failure_reason column in outbox and inbox tables.
 /// Verifies schema migration 009_AddFailureReasonColumn.sql.
 /// </summary>
+[Category("Shard1")]
 public class FailureReasonSchemaTests : EFCoreTestBase {
   [Test]
   public async Task OutboxTable_ShouldHaveFailureReasonColumnAsync() {

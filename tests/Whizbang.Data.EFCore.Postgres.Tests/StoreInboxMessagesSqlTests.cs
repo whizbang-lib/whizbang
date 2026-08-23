@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// ON CONFLICT DO NOTHING on inbox PK) so any future bulk-INSERT-FROM-unnest refactor
 /// has to keep these properties.
 /// </summary>
+[Category("Shard2")]
 public class StoreInboxMessagesSqlTests : EFCoreTestBase {
 
   [Test]

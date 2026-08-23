@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the returned data AND the resulting table state.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+[Category("Shard2")]
 public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
   private static readonly string[] _typeAAndUnknownFilter = ["Type.A", "Type.Unknown"];
 

@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the wire-name "outbox" round-trips to <see cref="WorkOutboxAvailableSignal"/> automatically.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard1")]
 public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
   private async Task _pinStreamToInstanceAsync(Guid streamId, Guid instanceId) {
     await using var conn = new NpgsqlConnection(ConnectionString);

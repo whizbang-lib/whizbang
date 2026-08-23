@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// asymmetry shows up as exactly the production symptom.
 /// </para>
 /// </summary>
+[Category("Shard4")]
 public class EmitEventStoreChainMultiPerspectiveSqlTests : EFCoreTestBase {
 
   private const string EVENT_TYPE = "Whizbang.Tests.MultiPerspectiveEvent, Whizbang.Tests";

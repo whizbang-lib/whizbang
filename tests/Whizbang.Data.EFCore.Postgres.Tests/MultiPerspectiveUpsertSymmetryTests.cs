@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <see cref="MultiPerspectivePostgresUpsertSymmetryTests"/>.
 /// </para>
 /// </summary>
+[Category("Shard3")]
 public class MultiPerspectiveUpsertSymmetryTests {
 
   /// <summary>Mirrors OrderModel shape: scalar properties only — the working case.</summary>

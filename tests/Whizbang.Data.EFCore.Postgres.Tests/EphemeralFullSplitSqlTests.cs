@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// through the body-first COALESCE (#13b4-1), so round-trips must be unchanged.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard2")]
 public class EphemeralFullSplitSqlTests : EFCoreTestBase {
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();

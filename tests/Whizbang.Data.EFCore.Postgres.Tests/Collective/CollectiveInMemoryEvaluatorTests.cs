@@ -10,6 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// SQL apply, used when a stream is folded row-by-row during a perspective replay/rebuild. Pure logic, no DB.
 /// </summary>
 /// <tests>src/Whizbang.Data.Postgres/Collective/CollectiveInMemoryEvaluator.cs</tests>
+[Category("Shard2")]
 public class CollectiveInMemoryEvaluatorTests {
 
   private sealed class _model {

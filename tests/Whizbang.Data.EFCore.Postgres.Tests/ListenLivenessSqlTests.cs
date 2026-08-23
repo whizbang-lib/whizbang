@@ -63,6 +63,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer#listen-as-heartbeat</docs>
+[Category("Shard1")]
 public class ListenLivenessSqlTests : EFCoreTestBase {
 
   private static readonly DateTimeOffset _staleCutoff = DateTimeOffset.UtcNow.AddMinutes(-1);

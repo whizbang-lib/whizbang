@@ -11,6 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for EFCoreDriverSelector tests.
 /// </summary>
+[Category("Shard3")]
 public class DriverSelectorTestDbContext(DbContextOptions<DriverSelectorTestDbContext> options) : DbContext(options) {
 }
 
@@ -19,6 +20,7 @@ public class DriverSelectorTestDbContext(DbContextOptions<DriverSelectorTestDbCo
 /// Since constructor and DbContextType are internal, we test them indirectly through the fluent API.
 /// Target: 100% branch coverage of public surface.
 /// </summary>
+[Category("Shard2")]
 public class EFCoreDriverSelectorTests {
   [Test]
   public async Task WithDriver_ReturnsIDriverOptionsAsync() {

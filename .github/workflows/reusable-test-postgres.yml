@@ -7,6 +7,21 @@ on:
         description: 'Build artifact to download (enables -NoBuild with coverage)'
         type: string
         required: false
+      project-filter:
+        description: 'Run-Tests.ps1 -ProjectFilter regex selecting which Postgres-tagged projects this shard runs'
+        type: string
+        required: false
+        default: ''
+      test-filter:
+        description: 'Run-Tests.ps1 -TestFilter, e.g. "[Category=Shard1]" — slices one project across runners'
+        type: string
+        required: false
+        default: ''
+      shard-name:
+        description: 'Shard label — suffixes the coverage/TRX artifacts and session so parallel shards do not collide'
+        type: string
+        required: false
+        default: ''
 
 jobs:
   postgres-tests:
@@ -78,13 +93,13 @@ jobs:
 
       - name: Run PostgreSQL Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Postgres -NoBuild -ReportTrx
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Configuration Release -Tag Postgres -NoBuild -ReportTrx -ProjectFilter '${{ inputs.project-filter }}' -TestFilter '${{ inputs.test-filter }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
       - name: Run PostgreSQL Integration Tests (with dynamic coverage)
         if: inputs.artifact-name == ''
-        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres -ReportTrx
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag Postgres -ReportTrx -ProjectFilter '${{ inputs.project-filter }}' -TestFilter '${{ inputs.test-filter }}'
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
@@ -100,7 +115,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: trx-postgres
+          name: trx-postgres${{ inputs.shard-name != '' && format('-{0}', inputs.shard-name) || '' }}
           path: |
             tests/**/TestResults/*.trx
             samples/**/TestResults/*.trx
@@ -111,7 +126,7 @@ jobs:
         if: success() && inputs.artifact-name != ''
         uses: actions/upload-artifact@v6
         with:
-          name: coverage-postgres
+          name: coverage-postgres${{ inputs.shard-name != '' && format('-{0}', inputs.shard-name) || '' }}
           path: TestResults/*.cobertura.xml
           retention-days: 1
 
@@ -119,6 +134,6 @@ jobs:
         if: success() && inputs.artifact-name == ''
         uses: actions/upload-artifact@v6
         with:
-          name: coverage-postgres
+          name: coverage-postgres${{ inputs.shard-name != '' && format('-{0}', inputs.shard-name) || '' }}
           path: 'tests/**/TestResults/*.cobertura.xml'
           retention-days: 1

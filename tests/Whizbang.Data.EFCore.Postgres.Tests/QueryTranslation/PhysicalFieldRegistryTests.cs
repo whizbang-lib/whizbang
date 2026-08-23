@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// physical-field/JSON mapping and failing an unrelated test's setup. One shared group eliminates the race.
 /// </remarks>
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class PhysicalFieldRegistryTests {
   // Test model for registration
   public class TestModel {

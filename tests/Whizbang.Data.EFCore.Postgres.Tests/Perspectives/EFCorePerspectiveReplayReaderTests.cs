@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// with IsNew correctly set per row in the wh_perspective_events work queue:
 /// row present (and not yet processed) → IsNew=true; row absent → IsNew=false.
 /// </summary>
+[Category("Shard3")]
 public class EFCorePerspectiveReplayReaderTests : EFCoreTestBase {
 
   private const string PerspectiveName = "replay_reader_test";

@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptor.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/RedeliveryRequestReceptorRegistrar.cs</code-under-test>
 [NotInParallel("RedeliveryBuildGate")]   // the receptor's per-process build gate is shared state
+[Category("Shard1")]
 public class RedeliveryRequestReceptorTests {
 
   [Test]

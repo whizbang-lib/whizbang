@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Verifies Scope(), ScopeOverride(), DefaultScope across all scope types.
 /// </summary>
 [Category("Integration")]
+[Category("Shard3")]
 public class FluentScopeApiTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 

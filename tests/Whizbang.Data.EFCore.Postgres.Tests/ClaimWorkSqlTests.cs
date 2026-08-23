@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Foundational contract tests for Phase A of the work-pump decomposition.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+[Category("Shard2")]
 public class ClaimWorkSqlTests : EFCoreTestBase {
 
   /// <summary>

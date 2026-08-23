@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>proposals/pre-destruction-seam</docs>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard3")]
 public class PerspectiveRowGuardEndToEndTests : EFCoreTestBase {
   private const string TABLE = "wh_per_guard_e2e";
   private const string CLR_TYPE = "Whizbang.Data.EFCore.Postgres.Tests.PerspectiveRowGuardEndToEndTests+GuardedE2EModel";

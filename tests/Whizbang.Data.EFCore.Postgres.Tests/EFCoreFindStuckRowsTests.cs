@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// introduced in migration 054.
 /// </summary>
 /// <docs>operations/observability/stuck-row-sentinel</docs>
+[Category("Shard2")]
 public class EFCoreFindStuckRowsTests : EFCoreTestBase {
 
   /// <summary>

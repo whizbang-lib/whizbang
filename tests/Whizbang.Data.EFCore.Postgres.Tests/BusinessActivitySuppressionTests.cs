@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+[Category("Shard3")]
 public class BusinessActivitySuppressionTests {
   private sealed record SuppressionModel {
     public string Name { get; init; } = "";

@@ -28,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class AtomicUpsertPhysicalFieldsIntegrationTests : IAsyncDisposable {
   static AtomicUpsertPhysicalFieldsIntegrationTests() {
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);

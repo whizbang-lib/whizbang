@@ -32,6 +32,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>operations/configuration/empty-stream-id-policy</docs>
+[Category("Shard1")]
 public class StreamIdCoalescerTests {
 
   private sealed record _LogEntry(LogLevel Level, string Message);

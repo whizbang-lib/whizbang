@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/108_InstanceCapabilities.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard3")]
 public class DutyElectionE2ETests : EFCoreTestBase {
 
   private sealed class _pod : IServiceInstanceProvider {

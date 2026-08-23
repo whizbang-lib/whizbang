@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Messaging/Redelivery.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("RedeliverySelection")]
+[Category("Shard4")]
 public class SelectRedeliveryEventsTests : EFCoreTestBase {
 
   private const string TENANT_A = "tenant-a";

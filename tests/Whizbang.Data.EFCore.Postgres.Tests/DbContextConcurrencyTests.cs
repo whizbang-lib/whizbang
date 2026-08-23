@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 [Category("Integration")]
 [Category("Concurrency")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard4")]
 public class DbContextConcurrencyTests : EFCoreTestBase {
   private const int ParallelQueryCount = 10;
   private const int HighConcurrencyCount = 50;

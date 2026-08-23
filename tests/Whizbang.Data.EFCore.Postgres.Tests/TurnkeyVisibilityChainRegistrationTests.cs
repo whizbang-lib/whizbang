@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/WorkerPipelineExtensions.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Notifications/PostgresNotificationsServiceCollectionExtensions.cs</code-under-test>
+[Category("Shard4")]
 public class TurnkeyVisibilityChainRegistrationTests {
 
   private static ServiceCollection _composeTurnkey() {

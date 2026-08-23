@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// composite row while completing the singles atomically.
 /// </summary>
 /// <docs>fundamentals/messages/message-tags#coalescing</docs>
+[Category("Shard3")]
 public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
   [Test]
   public async Task GetPendingCoalesceGroupStats_ReturnsPerGroupCountsAndAgesAsync() {

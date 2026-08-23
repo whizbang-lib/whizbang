@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// (handler_name instead of destination, received_at instead of created_at, no published_at column).
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard2")]
 public class FetchInboxBatchSqlTests : EFCoreTestBase {
 
   [Test]

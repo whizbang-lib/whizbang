@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>contributors/data-engines/writing-migrations</docs>
 [NotInParallel("PublicFrameworkTableRepair")]
+[Category("Shard1")]
 public class PublicFrameworkTableRepairSqlTests : EFCoreTestBase {
   private const string SCHEMA = "svc_repair_probe";
   private const string PROBE_KEY = "repair_probe_setting";

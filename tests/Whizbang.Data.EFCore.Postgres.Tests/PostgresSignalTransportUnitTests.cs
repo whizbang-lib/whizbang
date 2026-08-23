@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// cover.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard2")]
 public class PostgresSignalTransportUnitTests {
   private readonly record struct UnitBroadcastSignal(int V) : ISignal {
     public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.BestEffort;

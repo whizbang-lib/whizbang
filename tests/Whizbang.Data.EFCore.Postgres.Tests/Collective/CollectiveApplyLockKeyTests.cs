@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/Collective/CollectiveApplyLockKey.cs</code-under-test>
 [Category("Collective")]
+[Category("Shard4")]
 public class CollectiveApplyLockKeyTests {
 
   [Test]

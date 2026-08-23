@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// messages must be completely unaffected.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard2")]
 public class ScheduleDeliveryGuaranteeSqlTests : EFCoreTestBase {
   private async Task _insertScheduleAsync(NpgsqlConnection conn, Guid scheduleId, short deliveryGuarantee) {
     await using var cmd = conn.CreateCommand();

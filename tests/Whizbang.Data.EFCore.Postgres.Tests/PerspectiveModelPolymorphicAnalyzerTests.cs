@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// static, and non-perspective properties are not flagged.
 /// </summary>
 [Category("Unit")]
+[Category("Shard1")]
 public class PerspectiveModelPolymorphicAnalyzerTests {
   /// <summary>
   /// Verifies that a perspective model with an abstract-class property triggers WHIZ811 (Info).

@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 [Category("Integration")]
 [NotInParallel("OutboxDrainMemoryFootprint")]   // serializes siblings; cross-test noise is handled by min-of-N sampling
+[Category("Shard4")]
 public class OutboxDrainMemoryFootprintTests : EFCoreTestBase {
 
   private const int ROW_COUNT = 30;

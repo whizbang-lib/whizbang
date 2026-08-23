@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// the returned data AND the resulting table state.
 /// </summary>
 /// <docs>fundamentals/lifecycle/lifecycle-reconciliation</docs>
+[Category("Shard4")]
 public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
   private static readonly string[] _twoPerspectives = ["P.One", "P.Two"];
   private static readonly string[] _onePerspective = ["P.One"];

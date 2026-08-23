@@ -34,6 +34,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
+[Category("Shard4")]
 public class OpportunisticHeartbeatSqlTests : EFCoreTestBase {
 
   private sealed class StubInstanceProvider(Guid id) : IServiceInstanceProvider {

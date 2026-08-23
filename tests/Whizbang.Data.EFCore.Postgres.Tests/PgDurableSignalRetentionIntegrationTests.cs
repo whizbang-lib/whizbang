@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// - Fresh rows (younger than retention) stay regardless of cursor state.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard1")]
 public class PgDurableSignalRetentionIntegrationTests : EFCoreTestBase {
   private async Task<long> _insertSignalAsync(string wireName, DateTimeOffset createdAt) {
     await using var conn = new NpgsqlConnection(ConnectionString);

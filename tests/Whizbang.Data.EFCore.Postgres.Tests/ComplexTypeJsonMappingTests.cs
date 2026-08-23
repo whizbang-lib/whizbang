@@ -36,6 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class ComplexTypeJsonMappingTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 

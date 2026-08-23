@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// static is never touched.
 /// </summary>
 /// <docs>fundamentals/messaging/apply-hooks</docs>
+[Category("Shard1")]
 public class PerEventApplyHooksTests {
 
   private sealed class _model {

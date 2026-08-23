@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// semantics rather than inventing new ones.
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
+[Category("Shard4")]
 public class CoordinatorIntegrityRepairLedgerBatchTests {
 
   private sealed class _batchCoordinator : IWorkCoordinator {

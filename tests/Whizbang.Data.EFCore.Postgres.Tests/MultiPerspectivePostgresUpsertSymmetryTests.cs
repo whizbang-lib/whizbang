@@ -28,6 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class MultiPerspectivePostgresUpsertSymmetryTests : IAsyncDisposable {
   private static readonly Uuid7IdProvider _idProvider = new();
 

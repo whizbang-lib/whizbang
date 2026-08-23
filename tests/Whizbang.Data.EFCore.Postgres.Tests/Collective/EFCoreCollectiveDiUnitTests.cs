@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Collective;
 /// Unit tests (no database) for the EF Core collective DI extensions, session accessor, and executor
 /// session-cast guard.
 /// </summary>
+[Category("Shard1")]
 public class EFCoreCollectiveDiUnitTests {
 
   private sealed class _jobModel { public string Status { get; set; } = ""; }

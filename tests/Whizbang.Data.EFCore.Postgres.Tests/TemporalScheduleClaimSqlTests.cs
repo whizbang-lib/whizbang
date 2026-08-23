@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// occurrence creation is exactly-once even under concurrent claimers.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard2")]
 public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
   private const int PARTITION_COUNT = 16;
 

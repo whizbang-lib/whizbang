@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// cancellation contract, and the blocking (default) vs. opt-in non-blocking initialization behavior
 /// including the migration timeout — all fail-closed on the schema-ready gate.
 /// </summary>
+[Category("Shard3")]
 public class WhizbangDatabaseInitializerServiceTests {
 
   // ---------- best-effort partition recompute (cancellation contract) ----------

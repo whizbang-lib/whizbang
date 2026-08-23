@@ -57,6 +57,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Azure Postgres does, so a green here means a green there.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard3")]
 public class NotificationDataSourceConfigurationIntegrationTests : EFCoreTestBase {
 
   [Test]

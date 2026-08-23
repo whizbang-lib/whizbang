@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/089_TableRewriteRequests.sql</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard4")]
 public class TableRewriteJourneyE2ETests : EFCoreTestBase {
 
   private sealed class _pod : IServiceInstanceProvider {
