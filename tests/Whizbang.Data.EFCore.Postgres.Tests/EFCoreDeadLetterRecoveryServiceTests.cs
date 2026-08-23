@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// tests lock the wrapper's constructor + round-trip mapping for each method.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+[Category("Shard4")]
 public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
 
   // ===== Constructor =====

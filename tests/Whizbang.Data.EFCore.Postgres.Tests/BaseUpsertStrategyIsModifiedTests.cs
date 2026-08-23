@@ -22,6 +22,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// The key validation is that version increments and data changes persist correctly.
 /// </remarks>
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard4")]
 public class BaseUpsertStrategyIsModifiedTests : EFCoreTestBase {
   /// <summary>
   /// Tests that version is incremented on each upsert, confirming the update path is taken.

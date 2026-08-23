@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// against a real Postgres so the coordinator SQL runs end-to-end.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard1")]
 public class EphemeralReclassifyCoordinatorTests : EFCoreTestBase {
   private static string _commitRequest(Guid eventId, Guid streamId, string eventType, int flags) => $$"""
     {

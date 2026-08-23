@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Mirrors the Dapper snapshot store tests using the EFCore test base.
 /// </summary>
 [Category("Integration")]
+[Category("Shard2")]
 public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
   private EFCorePerspectiveSnapshotStore _store = null!;
 

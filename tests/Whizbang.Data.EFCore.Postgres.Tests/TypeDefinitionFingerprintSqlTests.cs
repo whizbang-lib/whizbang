@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// type's previous definition (so the reconciler can record a lineage edge). Verified against a real Postgres.
 /// </summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+[Category("Shard1")]
 public class TypeDefinitionFingerprintSqlTests : EFCoreTestBase {
   private static byte[] _hash(string seed) {
     // Deterministic 32-byte stand-in for a generator-produced content hash.

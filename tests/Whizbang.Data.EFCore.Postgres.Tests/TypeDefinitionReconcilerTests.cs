@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// runs end-to-end.
 /// </summary>
 /// <docs>fundamentals/events/type-definition-fingerprint</docs>
+[Category("Shard3")]
 public class TypeDefinitionReconcilerTests : EFCoreTestBase {
   private const string EventType = "Whizbang.Tests.ReconcilerDriftEvent";
 

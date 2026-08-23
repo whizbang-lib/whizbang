@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("Integration")]
 [Category("TurnkeyVector")]
+[Category("Shard4")]
 public class TurnkeyVectorIntegrationTests : IAsyncDisposable {
   private string? _testDatabaseName;
   private string _connectionString = null!;

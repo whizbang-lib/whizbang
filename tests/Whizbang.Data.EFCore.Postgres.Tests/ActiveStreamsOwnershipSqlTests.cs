@@ -23,6 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 ///    releasing leases held by the dead instance.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/stream-ownership</docs>
+[Category("Shard2")]
 public class ActiveStreamsOwnershipSqlTests : EFCoreTestBase {
 
   // ----- store_outbox_messages UPSERT -----

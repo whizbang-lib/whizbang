@@ -38,6 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>aggregate_dead_letters</c> recomputes old rows.</para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/error-fingerprinting</docs>
+[Category("Shard3")]
 public class DeadLetterFingerprintSqlTests : EFCoreTestBase {
 
   private const string _typicalStack = """

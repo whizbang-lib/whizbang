@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// — so migrating data or running on a server in another zone can never shift a fire.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard3")]
 public class TemporalUtcSafetySqlTests : EFCoreTestBase {
   private static DateTimeOffset _utc(int y, int mo, int d, int h, int mi) =>
     new(y, mo, d, h, mi, 0, TimeSpan.Zero);

@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>GROUP BY error_fingerprint</c> immediately.</para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/outbox-dlq-promotion</docs>
+[Category("Shard4")]
 public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
 
   private const string _stackForFingerprintA = """

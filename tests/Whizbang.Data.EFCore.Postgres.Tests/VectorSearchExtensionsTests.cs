@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These unit tests verify the API contracts and helper methods.
 /// </remarks>
 [Category("VectorSearch")]
+[Category("Shard4")]
 public class VectorSearchExtensionsTests {
   private readonly Uuid7IdProvider _idProvider = new();
 

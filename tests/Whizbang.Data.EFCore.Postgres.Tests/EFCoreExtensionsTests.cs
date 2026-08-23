@@ -10,6 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Test DbContext for EFCoreExtensions tests.
 /// </summary>
+[Category("Shard4")]
 public class SampleDbContext(DbContextOptions<SampleDbContext> options) : DbContext(options) {
 }
 
@@ -18,6 +19,7 @@ public class SampleDbContext(DbContextOptions<SampleDbContext> options) : DbCont
 /// Verifies the extension method properly creates EFCoreDriverSelector with correct type information.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard3")]
 public class EFCoreExtensionsTests {
   [Test]
   public async Task WithEFCore_WithValidBuilder_ReturnsEFCoreDriverSelectorAsync() {

@@ -11,6 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Verifies that Dictionary properties in perspective models are detected and reported.
 /// </summary>
 [Category("Unit")]
+[Category("Shard2")]
 public class PerspectiveModelDictionaryAnalyzerTests {
   /// <summary>
   /// Verifies that a perspective model with Dictionary property triggers WHIZ810.

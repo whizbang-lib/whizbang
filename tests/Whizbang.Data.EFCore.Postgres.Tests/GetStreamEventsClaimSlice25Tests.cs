@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// claimed later by <c>claim_orphaned_perspective_events</c>, by which point the
 /// cursor had already advanced.
 /// </remarks>
+[Category("Shard1")]
 public class GetStreamEventsClaimSlice25Tests : EFCoreTestBase {
 
   [Test]

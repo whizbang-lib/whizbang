@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [Category("RawSql")]
 [Category("Integration")]
+[Category("Shard1")]
 public class LensQueryConnectionExtensionsExecutionTests : EFCoreTestBase {
   private readonly Uuid7IdProvider _idProvider = new();
 

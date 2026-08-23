@@ -9,6 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for C# layer handling of event storage failures from process_work_batch.
 /// Verifies error detection, logging, and graceful degradation.
 /// </summary>
+[Category("Shard2")]
 public class EventStorageFailureHandlingTests {
 
   [Test]

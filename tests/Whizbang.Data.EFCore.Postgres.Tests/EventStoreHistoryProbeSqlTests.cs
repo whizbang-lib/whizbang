@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Postgres so the LINQ Guid comparison provably translates to the uuid ordering the store uses.
 /// </summary>
 /// <docs>fundamentals/perspectives/row-retention</docs>
+[Category("Shard3")]
 public class EventStoreHistoryProbeSqlTests : EFCoreTestBase {
   private static async Task _seedPointerAsync(NpgsqlConnection conn, Guid eventId, Guid streamId, long version) {
     await using var cmd = conn.CreateCommand();

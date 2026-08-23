@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
 [Category("Integration")]
+[Category("Shard1")]
 public class PacedRepairDrainSqlTests : EFCoreTestBase {
 
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext ctx) =>

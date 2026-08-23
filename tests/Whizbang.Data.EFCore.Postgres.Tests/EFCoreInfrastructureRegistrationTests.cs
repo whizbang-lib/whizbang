@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <summary>
 /// Sample perspective model for testing infrastructure registration.
 /// </summary>
+[Category("Shard2")]
 public class SamplePerspectiveModel {
   public required Guid Id { get; init; }
   public required string Name { get; init; }
@@ -33,6 +34,7 @@ public class InfraTestDbContext(DbContextOptions<InfraTestDbContext> options) : 
 /// Verifies service registration for IPerspectiveStore and ILensQuery.
 /// Target: 100% branch coverage.
 /// </summary>
+[Category("Shard4")]
 public class EFCoreInfrastructureRegistrationTests {
   /// <summary>
   /// Registers the scope dependencies required by EFCorePostgresLensQuery constructors.

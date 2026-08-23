@@ -48,6 +48,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 /// <docs>resilience/stream-integrity</docs>
 [Category("Integration")]
+[Category("Shard4")]
 public class ReconcileConvergenceE2ETests : EFCoreTestBase {
   private const string TYPE = "Contracts.ConvergenceProbe";
   private const string TENANT = "tenant-a";

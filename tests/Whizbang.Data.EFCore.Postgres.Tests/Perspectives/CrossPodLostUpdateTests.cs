@@ -25,6 +25,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// a write whose commit_sequence is below the stored row's. It uses two independent
 /// <see cref="EFCorePostgresPerspectiveStore{TModel}"/> instances over one database to model two pods.</para>
 /// </summary>
+[Category("Shard4")]
 public class CrossPodLostUpdateTests : EFCoreTestBase {
 
   [Test]

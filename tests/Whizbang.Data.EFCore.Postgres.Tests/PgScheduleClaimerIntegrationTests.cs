@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// count, using the DB clock for the due decision.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+[Category("Shard3")]
 public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
   private (PgScheduleClaimer Claimer, IServiceInstanceProvider Instance) _create() {
     var opts = new WhizbangNotificationOptions { DirectConnectionString = ConnectionString };

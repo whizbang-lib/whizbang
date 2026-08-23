@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <docs>fundamentals/perspectives/row-retention</docs>
 [NotInParallel("EffectiveExpiryLadder")]
+[Category("Shard4")]
 public class EffectiveExpiryLadderTests : EFCoreTestBase {
   private const string TABLE = "wh_per_expiry_ladder";
 

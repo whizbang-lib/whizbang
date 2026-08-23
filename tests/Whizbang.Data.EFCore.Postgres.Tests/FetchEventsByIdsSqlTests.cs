@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// that survived the cooldown + cursor + inversion filters.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard1")]
 public class FetchEventsByIdsSqlTests : EFCoreTestBase {
 
   [Test]

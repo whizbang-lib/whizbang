@@ -39,6 +39,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/stream-ownership</docs>
+[Category("Shard3")]
 public class ClaimOrphanedActiveStreamsPinningSqlTests : EFCoreTestBase {
 
   // ============================================================================

@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// dispatch through <c>TickForTestsAsync</c>.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard3")]
 public class PgWorkAvailablePollSourceIntegrationTests : EFCoreTestBase {
   private sealed class CountingSink : ISignalSink {
     public int Received { get; private set; }

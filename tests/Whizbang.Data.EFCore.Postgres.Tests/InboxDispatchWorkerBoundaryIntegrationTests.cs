@@ -50,6 +50,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class InboxDispatchWorkerBoundaryIntegrationTests : EFCoreTestBase {
 
   /// <summary>Inbound event consumed by the worker — its hop is the ONLY carrier of identity at the boundary.</summary>

@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// reproduction tests.</para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
+[Category("Shard4")]
 public class PostgresDriverExtensions_TurnkeyResolverWiringTests {
 
   // A representative consumer production config shape: ConnectionStrings:appservice-db

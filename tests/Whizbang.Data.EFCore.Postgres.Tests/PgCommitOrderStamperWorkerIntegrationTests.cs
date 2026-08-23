@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard3")]
 public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
 
   private PgCommitOrderStamperWorker _newWorker(

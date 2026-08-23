@@ -27,6 +27,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>The tests in this file lock both halves into regression coverage so future
 /// refactors don't silently revert the perf shape or drop the wire-up.</para>
 /// </summary>
+[Category("Shard4")]
 public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
   // ============================================================================

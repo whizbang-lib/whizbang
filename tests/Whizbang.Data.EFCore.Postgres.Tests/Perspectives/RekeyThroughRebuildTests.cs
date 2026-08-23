@@ -26,6 +26,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// was never created — which this test catches.</para>
 /// </summary>
 [Category("Integration")]
+[Category("Shard2")]
 public class RekeyThroughRebuildTests : EFCoreTestBase {
 
   private const string RekeyPerspectiveName =

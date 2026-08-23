@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// next-fire computations stay in lockstep.
 /// </summary>
 /// <docs>fundamentals/temporal/recurrence</docs>
+[Category("Shard4")]
 public class WhScheduleNextFireSqlTests : EFCoreTestBase {
   private static DateTimeOffset _utc(int y, int mo, int d, int h, int mi) =>
     new(y, mo, d, h, mi, 0, TimeSpan.Zero);

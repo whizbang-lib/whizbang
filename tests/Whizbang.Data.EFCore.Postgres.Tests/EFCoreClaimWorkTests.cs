@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Polling-side method; non-empty mapping lands in Phase C worker integration.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+[Category("Shard4")]
 public class EFCoreClaimWorkTests : EFCoreTestBase {
 
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> Coord(WorkCoordinationDbContext ctx) =>

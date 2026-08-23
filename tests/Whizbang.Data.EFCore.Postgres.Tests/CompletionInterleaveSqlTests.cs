@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// cannot leave a row in a bad state regardless of which call lands first.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+[Category("Shard4")]
 public class CompletionInterleaveSqlTests : EFCoreTestBase {
 
   [Test]

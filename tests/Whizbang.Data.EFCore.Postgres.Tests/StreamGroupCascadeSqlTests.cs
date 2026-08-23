@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard2")]
 public class StreamGroupCascadeSqlTests : EFCoreTestBase {
   private const string LEADER_TABLE = "wh_per_sg_leader";
   private const string FOLLOWER_TABLE = "wh_per_sg_follower";

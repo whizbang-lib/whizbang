@@ -16,6 +16,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// This is the legacy <c>process_outbox_completions</c> design (mig 013) restored after the Phase H regression.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+[Category("Shard1")]
 public class CompleteOutboxPublishedSqlTests : EFCoreTestBase {
 
   [Test]

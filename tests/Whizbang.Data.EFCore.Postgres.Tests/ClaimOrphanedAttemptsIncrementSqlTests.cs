@@ -36,6 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+[Category("Shard3")]
 public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
 
   // ============================================================================

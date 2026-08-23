@@ -21,6 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Perspectives;
 /// Paired with the unit tests in Whizbang.Core.Tests/Perspectives/PerspectiveRebuilderTests.cs.
 /// </summary>
 [Category("Integration")]
+[Category("Shard2")]
 public class PerspectiveRebuilderIntegrationTests : EFCoreTestBase {
 
   private const string RebuildBalancePerspectiveName =

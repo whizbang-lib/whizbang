@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// column, so it needs no per-app table list. Skipped under <c>debug_mode</c>. Verified against a real Postgres.
 /// </summary>
 /// <docs>fundamentals/events/ephemeral-events</docs>
+[Category("Shard4")]
 public class PerspectiveRowReaperSqlTests : EFCoreTestBase {
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext ctx) {
     var connection = (NpgsqlConnection)ctx.Database.GetDbConnection();

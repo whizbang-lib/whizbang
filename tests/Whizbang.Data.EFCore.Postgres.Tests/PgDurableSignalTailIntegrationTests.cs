@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// signals must NOT persist (the fast path is NOTIFY only).
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard2")]
 public class PgDurableSignalTailIntegrationTests : EFCoreTestBase {
   private readonly record struct DurableProbe(int V) : ISignal {
     public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.Durable;

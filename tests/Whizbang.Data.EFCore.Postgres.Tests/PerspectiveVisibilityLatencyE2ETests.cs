@@ -49,6 +49,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
 public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
 
   /// <summary>

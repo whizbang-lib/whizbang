@@ -38,6 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// EF's reader can deserialize Path 1's output.
 /// </para>
 /// </remarks>
+[Category("Shard3")]
 public class PerspectivePersistenceByteFormatIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task PathOneWrite_ProducesJsonSemanticallyEquivalentToEFWriteAsync() {

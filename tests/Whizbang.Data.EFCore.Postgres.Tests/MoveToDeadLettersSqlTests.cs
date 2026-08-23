@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
+[Category("Shard3")]
 public class MoveToDeadLettersSqlTests : EFCoreTestBase {
 
   [Test]

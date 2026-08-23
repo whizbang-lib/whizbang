@@ -15,6 +15,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/MigrationVersionGuard.cs</code-under-test>
 [Category("Migrations")]
+[Category("Shard4")]
 public class MigrationVersionGuardTests {
 
   // ── the defect this exists to prevent ───────────────────────────────────

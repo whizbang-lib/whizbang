@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <docs>fundamentals/perspectives/perspectives-with-actions</docs>
 [NotInParallel("EFCorePostgresTests")]
 [Category("Integration")]
+[Category("Shard2")]
 public class MessageAssociationRegistrationTests : EFCoreTestBase {
 
   // ════════════════════════════════════════════════════════════════════════

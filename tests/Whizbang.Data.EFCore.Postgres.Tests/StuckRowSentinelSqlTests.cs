@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <docs>operations/observability/stuck-row-sentinel</docs>
+[Category("Shard3")]
 public class StuckRowSentinelSqlTests : EFCoreTestBase {
 
   /// <summary>

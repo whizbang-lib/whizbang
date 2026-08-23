@@ -19,6 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// is healthy" and "one publish per death, not one per tick" invariants matter.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard3")]
 public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
   private sealed class CountingBus : ISignalBus {
     public List<Type> Published { get; } = [];

@@ -17,6 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// connection back to a typed subscriber on the bus.
 /// </summary>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+[Category("Shard4")]
 public class PostgresSignalTransportIntegrationTests : EFCoreTestBase {
   private readonly record struct TransportProbe(int V) : ISignal {
     public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.BestEffort;

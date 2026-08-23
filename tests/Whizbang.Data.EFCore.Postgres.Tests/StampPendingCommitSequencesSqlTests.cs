@@ -34,6 +34,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </list>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/commit-sequence</docs>
+[Category("Shard1")]
 public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
 
   [Test]

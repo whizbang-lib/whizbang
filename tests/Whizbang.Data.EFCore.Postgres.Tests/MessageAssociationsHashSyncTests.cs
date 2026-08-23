@@ -20,6 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </summary>
 [NotInParallel("EFCorePostgresTests")]
 [Category("Integration")]
+[Category("Shard2")]
 public class MessageAssociationsHashSyncTests : EFCoreTestBase {
 
   private const string ServiceName = "Whizbang.Data.EFCore.Postgres.Tests";
