@@ -58,7 +58,6 @@
       <PrivateAssets>all</PrivateAssets>
       <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
       <!-- Don't use OutputItemType=Analyzer for Shared - it needs to be copied as a regular dependency -->
-      <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
     </ProjectReference>
   </ItemGroup>
 

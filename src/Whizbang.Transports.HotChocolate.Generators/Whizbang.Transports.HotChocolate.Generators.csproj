@@ -55,7 +55,6 @@
     <ProjectReference Include="../Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
       <PrivateAssets>all</PrivateAssets>
       <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
-      <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
     </ProjectReference>
   </ItemGroup>
 
