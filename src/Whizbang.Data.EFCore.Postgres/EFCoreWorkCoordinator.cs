@@ -171,6 +171,38 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
+      Guid instanceId, CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "count_outstanding_work");
+
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    cmd.CommandText = $"SELECT inbox_rows, outbox_rows, perspective_rows FROM {functionName}(@instanceId)";
+#pragma warning restore S2077
+    cmd.Parameters.AddWithValue("instanceId", instanceId);
+
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    if (!await reader.ReadAsync(cancellationToken)) {
+      // No row means the function answered nothing, which is not the same as "holds nothing".
+      // Null keeps the budget disengaged rather than licensing a full-size claim off a
+      // measurement that was never taken.
+      return null;
+    }
+    return new OutstandingWork {
+      InboxRows = reader.GetInt64(0),
+      OutboxRows = reader.GetInt64(1),
+      PerspectiveRows = reader.GetInt64(2)
+    };
+  }
+
+  /// <inheritdoc />
   public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

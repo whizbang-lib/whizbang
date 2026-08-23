@@ -1,6 +1,9 @@
 -- Migration: 025_ClaimOrphanedInbox.sql
 -- Date: 2026-04-21 (owner-preferring claim — fixes rank-churn wedge, production incident)
 -- Description: Creates claim_orphaned_inbox function for claiming orphaned inbox messages.
+--              2026-08-23: p_max_rows BOUNDS ACQUISITION. Previously this leased every eligible
+--              row in one UPDATE and charged an attempt to each, so a claim limit could only
+--              throttle re-emission -- a valve downstream of the flood.
 --              Owner-preferring semantics: a stream's live owner always claims its
 --              messages; partition-based load balancing applies only to unowned /
 --              abandoned-owner streams.
@@ -195,4 +198,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_inbox IS
-'Claims orphaned inbox messages with expired or null leases. Owner-preferring: a stream''s live owner always claims its messages (FIFO per-stream, immune to rank churn from scale events). Partition-modulo load balancing applies only to streams with no live owner. An abandoned (non-heartbeating) instance''s lease does NOT block cross-instance claims, giving SIGKILL-tolerant recovery bounded by the stale threshold rather than the 300 s active-streams lease. Returns claimed message IDs for Orphaned flag in orchestrator response.';
+'Claims orphaned inbox messages with expired or null leases. Owner-preferring: a stream''s live owner always claims its messages (FIFO per-stream, immune to rank churn from scale events). Partition-modulo load balancing applies only to streams with no live owner. An abandoned (non-heartbeating) instance''s lease does NOT block cross-instance claims, giving SIGKILL-tolerant recovery bounded by the stale threshold rather than the 300 s active-streams lease. Returns claimed message IDs for Orphaned flag in orchestrator response. p_max_rows bounds ACQUISITION (oldest-first, FOR UPDATE SKIP LOCKED); NULL means unlimited, preserving pre-2026-08 behavior for callers that pass no bound. Without it the claim limit governed only re-emission, so held work grew until leases lapsed together and rows dead-lettered as MaxAttemptsExceeded without reaching a receptor.';

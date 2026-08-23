@@ -68,6 +68,22 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <summary>True when the most recent claim re-offered the previous claim's work set.</summary>
   private bool _lastClaimWasRepeat;
 
+  /// <summary>
+  /// Set once the work coordinator has been asked for outstanding work and answered that it cannot
+  /// measure it. Latched rather than re-probed: a backend either implements the count or it does
+  /// not, and retrying it every poll would add a round trip per cycle to say the same thing.
+  /// </summary>
+  private bool _outstandingUnmeasurable;
+
+  /// <summary>
+  /// Whether the outstanding bound is doing anything. Every precondition must hold: the operator
+  /// enabled it, drain is measurable, and the store can report what this instance holds. Missing any
+  /// one of them means the budget would be sized from a number nobody read — worse than no bound,
+  /// because it throttles silently and presents as an unexplained performance problem.
+  /// </summary>
+  private bool _budgetEngaged =>
+    _options.AdaptiveOutstandingBudget && _completionMeter is not null && !_outstandingUnmeasurable;
+
   /// <summary>Constructor.</summary>
 #pragma warning disable S107 // ClaimWorker is the central poller — its channel/option dependencies are unavoidable.
   public ClaimWorker(
@@ -259,6 +275,22 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     LogStarted(_logger, _options.PollingIntervalMilliseconds, _options.PollingMaxIntervalMilliseconds, _instanceProvider.InstanceId);
+
+    // Say at startup whether the bound is on, and if not, exactly which precondition is missing.
+    // Store measurability is only knowable after the first claim, so a coordinator that cannot
+    // report outstanding work logs its own line then (EventId 14) rather than being guessed at here.
+    if (!_options.AdaptiveOutstandingBudget) {
+      LogOutstandingBudgetInactive(_logger, "disabled via AdaptiveOutstandingBudget");
+    } else if (_completionMeter is null) {
+      LogOutstandingBudgetInactive(_logger, "no WorkCompletionMeter registered, so drain is unmeasurable");
+    } else {
+      LogOutstandingBudgetActive(
+        _logger,
+        _options.MinOutstandingInboxRows,
+        _options.MaxOutstandingInboxRows,
+        _options.LeaseSeconds,
+        _options.OutstandingBudgetSafetyFactor);
+    }
 
     // Killswitch: ops can disable this worker via ClaimWorkerOptions.Enabled = false
     // (e.g., maintenance window, isolating a misbehaving instance) without removing the
@@ -589,7 +621,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     // No meter means no measured drain. Rather than let the rate read zero forever and pin every
     // deployment at the floor, the bound simply does not engage — an unmeasured budget is worse
     // than none, because it throttles silently and looks like a performance problem.
-    if (_options.AdaptiveOutstandingBudget && _completionMeter is not null) {
+    if (_budgetEngaged) {
       var headroomRows = _outstandingBudget.Headroom(_lastOutstanding);
 
       // Convert the row budget into streams: the store claims by stream, and rows-per-stream varies
@@ -632,8 +664,21 @@ public sealed partial class ClaimWorker : BackgroundService {
     // All three work kinds count. Every one of them is leased and charges an attempt, so bounding
     // only the inbox would leave the identical over-claim arithmetic free to recur in another
     // column — the failure would simply move rather than stop.
-    if (_options.AdaptiveOutstandingBudget && _completionMeter is not null) {
-      _observeDrain(batch.InboxWork.Count + batch.OutboxWork.Count + batch.PerspectiveWork.Count);
+    if (_budgetEngaged) {
+      // Ask the store what this instance is actually holding. The batch counts CANNOT answer that:
+      // claim_work truncates its eligible_* CTEs to the limit computed above, so a figure taken
+      // from them can never exceed that limit no matter how much work is held. Sizing the budget
+      // from it means reading our own output instead of the system state — the budget stays wide
+      // open, more work is claimed each poll, and held work grows without the number ever moving.
+      var outstanding = await coordinator.CountOutstandingWorkAsync(_instanceProvider.InstanceId, ct);
+      if (outstanding is null) {
+        // Unmeasurable is not zero. Zero would license a full-size claim on the strength of a
+        // reading that was never taken, so the bound stands down instead — loudly, once.
+        _outstandingUnmeasurable = true;
+        LogOutstandingUnmeasurable(_logger);
+      } else {
+        _observeDrain((int)Math.Min(int.MaxValue, outstanding.Total));
+      }
     }
 
     if (_options.AdaptiveClaimWindow) {
@@ -762,6 +807,25 @@ public sealed partial class ClaimWorker : BackgroundService {
   [LoggerMessage(EventId = 7, Level = LogLevel.Information,
     Message = "ClaimWorker startup catch-up complete: picked up {ItemsPicked} pre-existing work item(s)")]
   static partial void LogStartupCatchUp(ILogger logger, int itemsPicked);
+
+  // A bound that silently fails to engage is indistinguishable from one that is working, which is
+  // how a previous version of this shipped, deployed, and looked correct while holding twelve times
+  // the work it permitted. State it plainly at startup, and say WHICH precondition is missing.
+  [LoggerMessage(EventId = 12, Level = LogLevel.Information,
+    Message = "ClaimWorker outstanding budget ACTIVE: floor={Floor} rows, ceiling={Ceiling} rows, "
+            + "leaseSeconds={LeaseSeconds}, safetyFactor={SafetyFactor}")]
+  static partial void LogOutstandingBudgetActive(
+    ILogger logger, int floor, int ceiling, int leaseSeconds, double safetyFactor);
+
+  [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
+    Message = "ClaimWorker outstanding budget INACTIVE ({Reason}) — claimed work is not bounded by "
+            + "measured drain; a backlog can be leased faster than it can be dispatched")]
+  static partial void LogOutstandingBudgetInactive(ILogger logger, string reason);
+
+  [LoggerMessage(EventId = 14, Level = LogLevel.Warning,
+    Message = "ClaimWorker outstanding budget DISENGAGED: the work coordinator does not report "
+            + "outstanding work, so the bound has nothing to measure against")]
+  static partial void LogOutstandingUnmeasurable(ILogger logger);
 }
 
 /// <summary>Configuration for <see cref="ClaimWorker"/>.</summary>

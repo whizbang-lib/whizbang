@@ -359,8 +359,11 @@ BEGIN
         AND (instance_id IS NULL OR lease_expiry < v_now)
       LIMIT 1
     ) THEN
+      -- Bounded for the same reason as the inbox call below: without a limit this acquires the whole
+      -- eligible backlog in one statement, and the caller's claim limit never reaches the flood.
       PERFORM __SCHEMA__.claim_orphaned_outbox(
-        p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
+        p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff,
+        p_max_streams
       );
     END IF;
 
@@ -634,7 +637,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_outbox(
   p_lease_expiry TIMESTAMPTZ,
   p_now TIMESTAMPTZ,
   p_partition_count INTEGER,
-  p_stale_cutoff TIMESTAMPTZ
+  p_stale_cutoff TIMESTAMPTZ,
+  p_max_rows INTEGER DEFAULT NULL
 ) RETURNS TABLE(
   message_id UUID,
   stream_id UUID
@@ -642,21 +646,20 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_outbox(
 #variable_conflict use_column
 BEGIN
   RETURN QUERY
-  WITH claimed AS (
-    UPDATE __SCHEMA__.wh_outbox o
-    SET instance_id = p_instance_id,
-        lease_expiry = p_lease_expiry,
-        -- Phase H step 8 slice D: see claim_orphaned_inbox (mig 025). Single-source
-        -- attempt counting; first claim → 1, every re-claim bumps; failures don't bump.
-        attempts = o.attempts + 1
+  -- Bound ACQUISITION — see claim_orphaned_inbox (mig 025) for the full rationale. Unbounded, this
+  -- statement leases every eligible row at once and charges an attempt to each, so the caller's
+  -- claim limit governs only what comes back out, never how much gets taken. LIMIT NULL is
+  -- unlimited in Postgres, so the default preserves the previous behavior for untaught callers.
+  WITH candidates AS (
+    -- Full predicate, under a row lock: selecting by age and filtering for ownership afterwards
+    -- would let another instance's rows permanently fill this instance's window.
+    SELECT o.message_id AS cand_message_id
+    FROM __SCHEMA__.wh_outbox o
     WHERE (o.instance_id IS NULL OR o.lease_expiry < p_now)
       AND (o.scheduled_for IS NULL OR o.scheduled_for <= p_now)
       AND o.processed_at IS NULL
-      AND o.coalesce_group IS NULL  -- 115: coalesce-pending singles are never leased by the pump
+      AND o.coalesce_group IS NULL
       AND (
-        -- OWNER PATH — if this instance owns the stream (live, non-expired lease),
-        -- it always claims. Partition modulo is IGNORED. Prevents the rank-churn
-        -- wedge described in migration 025.
         EXISTS (
           SELECT 1 FROM __SCHEMA__.wh_active_streams ast
           WHERE ast.stream_id = o.stream_id
@@ -664,8 +667,6 @@ BEGIN
             AND ast.lease_expiry > p_now
         )
         OR
-        -- UNOWNED / ABANDONED PATH — partition-based load balancing for streams
-        -- with no live owner.
         (
           (o.partition_number IS NULL
            OR (o.partition_number % p_active_instance_count) = p_instance_rank)
@@ -677,11 +678,6 @@ BEGIN
               AND EXISTS (
                 SELECT 1 FROM __SCHEMA__.wh_service_instances si
                 WHERE si.instance_id = ast.assigned_instance_id
-                  -- Slice 2b of zero-idle-polling — owner counts as alive if
-                  -- EITHER its heartbeat is fresh OR a Whizbang LISTEN
-                  -- connection is currently registered in pg_stat_activity
-                  -- (the latter is TCP-fresh regardless of heartbeat cadence).
-                  -- Additive — existing heartbeat-only semantics preserved.
                   AND (
                     si.last_heartbeat_at >= p_stale_cutoff
                     OR EXISTS (
@@ -693,8 +689,6 @@ BEGIN
           )
         )
       )
-      -- STREAM ORDERING CHECK: Don't claim if there's an earlier message in the same stream
-      -- that's scheduled for future retry (blocks later messages until retry time passes)
       AND NOT EXISTS (
         SELECT 1 FROM __SCHEMA__.wh_outbox earlier
         WHERE earlier.stream_id = o.stream_id
@@ -703,6 +697,34 @@ BEGIN
           AND earlier.scheduled_for > p_now
           AND earlier.processed_at IS NULL
       )
+    ORDER BY o.created_at
+    LIMIT p_max_rows
+    FOR UPDATE OF o SKIP LOCKED
+  ),
+  claimed AS (
+    UPDATE __SCHEMA__.wh_outbox o
+    SET instance_id = p_instance_id,
+        lease_expiry = p_lease_expiry,
+        -- Phase H step 8 slice D: see claim_orphaned_inbox (mig 025). Single-source
+        -- attempt counting; first claim → 1, every re-claim bumps; failures don't bump.
+        attempts = o.attempts + 1
+    FROM candidates c
+    WHERE o.message_id = c.cand_message_id
+      AND (o.instance_id IS NULL OR o.lease_expiry < p_now)
+      AND (o.scheduled_for IS NULL OR o.scheduled_for <= p_now)
+      AND o.processed_at IS NULL
+      AND o.coalesce_group IS NULL  -- 115: coalesce-pending singles are never leased by the pump
+    -- Ownership, partition routing and the stream-ordering check were all resolved in `candidates`
+    -- above, under a row lock. Only the cheap invariants are re-asserted here, against a lease that
+    -- lapsed between selection and write. The predicate deliberately lives in ONE place: two copies
+    -- of a 40-line ownership rule is exactly the kind of pair that drifts.
+    --
+    --   OWNER PATH — a stream's live owner always claims its messages, partition modulo ignored,
+    --   which prevents the rank-churn wedge described in migration 025.
+    --   UNOWNED / ABANDONED PATH — partition-based load balancing for streams with no live owner;
+    --   "live" means a fresh heartbeat OR a registered LISTEN connection in pg_stat_activity.
+    --   STREAM ORDERING — an earlier message in the same stream awaiting a future retry blocks the
+    --   later ones, so per-stream order survives a scheduled retry.
     RETURNING o.message_id AS c_message_id, o.stream_id AS c_stream_id, o.partition_number AS c_partition_number
   ),
   -- 2026-06-02: split the wh_active_streams ledger maintenance into two paths to
@@ -761,4 +783,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_outbox IS
-'Claims orphaned outbox messages with expired or null leases. Owner-preferring: a stream''s live owner always claims its messages (FIFO per-stream, immune to rank churn from scale events). Partition-modulo load balancing applies only to streams with no live owner. An abandoned (non-heartbeating) instance''s lease does NOT block cross-instance claims, giving SIGKILL-tolerant recovery bounded by the stale threshold rather than the 300 s active-streams lease. Returns claimed message IDs for Orphaned flag in orchestrator response. 115: coalesce-pending rows (coalesce_group IS NOT NULL) are never claimed or leased — the coalesce worker owns them until fold or release.';
+'Claims orphaned outbox messages with expired or null leases. Owner-preferring: a stream''s live owner always claims its messages (FIFO per-stream, immune to rank churn from scale events). Partition-modulo load balancing applies only to streams with no live owner. An abandoned (non-heartbeating) instance''s lease does NOT block cross-instance claims, giving SIGKILL-tolerant recovery bounded by the stale threshold rather than the 300 s active-streams lease. Returns claimed message IDs for Orphaned flag in orchestrator response. 115: coalesce-pending rows (coalesce_group IS NOT NULL) are never claimed or leased — the coalesce worker owns them until fold or release. p_max_rows bounds ACQUISITION (oldest-first, FOR UPDATE SKIP LOCKED); NULL means unlimited.';

@@ -72,6 +72,21 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
+  public async ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
+      Guid instanceId, CancellationToken cancellationToken = default) {
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    var row = await connection.QuerySingleAsync<(long InboxRows, long OutboxRows, long PerspectiveRows)>(
+      "SELECT inbox_rows AS InboxRows, outbox_rows AS OutboxRows, perspective_rows AS PerspectiveRows "
+      + "FROM count_outstanding_work(@instanceId)", new { instanceId });
+    return new OutstandingWork {
+      InboxRows = row.InboxRows,
+      OutboxRows = row.OutboxRows,
+      PerspectiveRows = row.PerspectiveRows
+    };
+  }
+
+  /// <inheritdoc />
   public async Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) {
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
