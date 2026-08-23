@@ -371,8 +371,13 @@ BEGIN
         AND (instance_id IS NULL OR lease_expiry < v_now)
       LIMIT 1
     ) THEN
+      -- p_max_streams bounds ACQUISITION here, not just the re-emission below. Omitting it let this
+      -- call lease the entire eligible backlog in one statement — charging an attempt to every row —
+      -- while the caller's claim window and outstanding budget bounded only what came back out of
+      -- eligible_inbox. Both throttles sat downstream of the flood, so neither could ever have held.
       PERFORM __SCHEMA__.claim_orphaned_inbox(
-        p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff
+        p_instance_id, v_rank, v_count, v_lease_expiry, v_now, p_partition_count, v_stale_cutoff,
+        p_max_streams
       );
     END IF;
 

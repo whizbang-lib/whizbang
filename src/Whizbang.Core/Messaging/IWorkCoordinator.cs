@@ -23,6 +23,40 @@ public sealed record PartitionRecomputeResult {
 }
 
 /// <summary>
+/// Work this instance currently holds a live lease on and has not finished, counted in the store
+/// independently of any claim limit.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The independence is the entire point. A claim response cannot report this figure, because the
+/// claim applies <c>LIMIT p_max_streams</c> to its eligible set — so counting the rows it returns
+/// measures the limit, not the backlog. A worker that sized its claim from its own last batch would
+/// observe at most what it just asked for, conclude it had headroom, and claim again, holding more
+/// and more work while the number it watched sat pinned at the limit.
+/// </para>
+/// <para>
+/// It is also read from the store rather than accumulated in memory. A counter the worker maintains
+/// itself can be stranded by a hung or cancelled task and then never recovers without a restart —
+/// a failure mode this claim path has already produced in production once.
+/// </para>
+/// </remarks>
+/// <docs>operations/workers/claim-backpressure</docs>
+public sealed record OutstandingWork {
+  /// <summary>Leased, unprocessed rows in <c>wh_inbox</c>.</summary>
+  public long InboxRows { get; init; }
+  /// <summary>Leased, unprocessed rows in <c>wh_outbox</c>.</summary>
+  public long OutboxRows { get; init; }
+  /// <summary>Leased, unapplied rows in the perspective work table.</summary>
+  public long PerspectiveRows { get; init; }
+
+  /// <summary>
+  /// Every leased row this instance holds. All three kinds count: each is leased and each charges
+  /// an attempt, so bounding one column would leave the same arithmetic free to recur in another.
+  /// </summary>
+  public long Total => InboxRows + OutboxRows + PerspectiveRows;
+}
+
+/// <summary>
 /// Coordinates work processing across multiple service instances using virtual partition assignment with consistent hashing.
 /// Provides atomic operations for heartbeat updates, message completion tracking,
 /// event store integration, and orphaned work recovery.
@@ -46,6 +80,34 @@ public interface IWorkCoordinator {
   /// Called by WhizbangShutdownService.StopAsync on SIGTERM.
   /// </summary>
   Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Counts the work this instance holds a live lease on and has not finished — the figure the
+  /// claim-outstanding budget is sized against.
+  /// </summary>
+  /// <param name="instanceId">The instance whose held work is being counted.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>
+  /// The current counts, or <see langword="null"/> when this backend cannot measure them.
+  /// </returns>
+  /// <remarks>
+  /// <para>
+  /// Defaulted to <see langword="null"/> rather than <c>0</c>, and the distinction is load-bearing.
+  /// Zero is a measurement meaning "this instance holds nothing", which would license a full-size
+  /// claim; <see langword="null"/> means "unmeasured", and the budget declines to engage rather
+  /// than bound against a number it did not read. Returning zero from a backend that cannot count
+  /// would disable the bound while looking exactly like a healthy idle worker.
+  /// </para>
+  /// <para>
+  /// Defaulted at all — rather than added to the interface outright — because implementations are
+  /// numerous and mostly test doubles that have no store to count. Forcing each to supply a body
+  /// would produce a wave of <c>0</c> and <c>throw</c> stubs, and the <c>0</c>s are precisely the
+  /// silent-disable this method exists to make impossible.
+  /// </para>
+  /// </remarks>
+  ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
+      Guid instanceId, CancellationToken cancellationToken = default)
+    => ValueTask.FromResult<OutstandingWork?>(null);
 
   /// <summary>
   /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
