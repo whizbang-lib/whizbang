@@ -164,8 +164,18 @@ public class AzureServiceBusTransportPublishPathTests {
     await Assert.That(messageA.SessionId).IsEqualTo(expectedSessionId);
     await Assert.That(messageA.ApplicationProperties["EnvelopeType"])
       .IsEqualTo(typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName);
+    // DELIBERATELY INVERTED. This previously asserted a streamless item carries NO session id, which
+    // is exactly the behavior that made control-plane broadcasts unpublishable: a session-enabled
+    // entity rejects a null session id ("Session id is null."), so those messages were dead-lettered
+    // by the broker before any consumer saw them. A streamless item now gets a bounded synthetic
+    // session instead — see AsbSessionKey for why it is neither a GUID nor a shared constant.
     var messageNoStream = _findBatchedMessage(sender, itemNoStream.MessageId);
-    await Assert.That(string.IsNullOrEmpty(messageNoStream.SessionId)).IsTrue();
+    await Assert.That(string.IsNullOrEmpty(messageNoStream.SessionId)).IsFalse()
+      .Because("a streamless message still needs a session id — without one the broker refuses it "
+             + "outright, which is how control-plane broadcasts were silently lost");
+    await Assert.That(messageNoStream.SessionId).StartsWith(AsbSessionKey.STREAMLESS_PREFIX)
+      .Because("the streamless key must be recognizable and non-GUID so inbound paths that recover "
+             + "StreamId by Guid-parsing the session id correctly yield null");
   }
 
   /// <summary>

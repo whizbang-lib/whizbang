@@ -537,14 +537,22 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
         ContentType = "application/json"
       };
 
-      // Set SessionId for FIFO ordering when StreamId is carried in destination metadata
-      // TransportPublishStrategy adds StreamId to metadata for transports that support ordering
+      // Session id for FIFO ordering. TransportPublishStrategy adds StreamId to metadata for
+      // transports that support ordering.
+      //
+      // A session id is set ALWAYS, not only when a stream exists: a session-enabled entity rejects
+      // a null session id outright ("Session id is null."), so a stream-only rule made control-plane
+      // broadcasts — which have no stream — unpublishable. They were dead-lettered by the broker
+      // before any consumer saw them. See AsbSessionKey for why the streamless key is neither a GUID
+      // nor a shared constant.
+      Guid? singleStreamId = null;
       if (destination.Metadata?.TryGetValue("StreamId", out var streamIdElement) == true) {
         var streamIdStr = _convertJsonElementToAmqpValue(streamIdElement)?.ToString();
-        if (!string.IsNullOrEmpty(streamIdStr)) {
-          message.SessionId = streamIdStr;
+        if (!string.IsNullOrEmpty(streamIdStr) && Guid.TryParse(streamIdStr, out var parsedStream)) {
+          singleStreamId = parsedStream;
         }
       }
+      message.SessionId = AsbSessionKey.For(singleStreamId, envelope.MessageId.Value);
 
       if (_logger.IsEnabled(LogLevel.Debug)) {
         _logger.LogDebug(
@@ -665,12 +673,18 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       destination.Address, cancellationToken,
       requireExistingEntity: CommandInboxNaming.RequiresProvisionedEntity(destination));
 
-    // Group items by StreamId to ensure messages in the same session go into the same batch.
-    // ASB requires all messages in a ServiceBusMessageBatch to have the same SessionId
-    // when sessions are enabled. Null StreamId items group together (no session requirement).
+    // Group by the SESSION KEY, not by StreamId. ASB requires every message in a
+    // ServiceBusMessageBatch to carry the same SessionId, so the grouping key must be exactly what
+    // gets stamped on the message.
+    //
+    // Grouping by StreamId was correct only while streamless items all received a null session:
+    // they collapsed into one group that happened to be uniform. Now that streamless items are
+    // spread across bounded synthetic sessions (see AsbSessionKey), grouping by StreamId would put
+    // differing session ids in one batch and the broker would reject the whole batch — trading one
+    // rejection bug for another.
     var streamGroups = items
       .Select((item, index) => (Item: item, OriginalIndex: index))
-      .GroupBy(x => x.Item.StreamId)
+      .GroupBy(x => AsbSessionKey.For(x.Item.StreamId, x.Item.Envelope.MessageId.Value))
       .ToList();
 
     // Parallelize across stream groups. ServiceBusSender is thread-safe, and each group's
@@ -785,11 +799,11 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       ContentType = "application/json"
     };
 
-    // Set SessionId for FIFO ordering when StreamId is present
-    // ASB delivers messages with the same SessionId in order to a single consumer
-    if (item.StreamId.HasValue) {
-      message.SessionId = item.StreamId.Value.ToString();
-    }
+    // Session id for FIFO ordering — ASB delivers same-session messages in order to one consumer.
+    // Always set, never conditional: a session-enabled entity rejects a null session id, which is
+    // what silently dead-lettered streamless control-plane broadcasts. Same rule as the single
+    // publish path above, deliberately sharing one implementation so the two cannot drift.
+    message.SessionId = AsbSessionKey.For(item.StreamId, envelope.MessageId.Value);
 
     message.ApplicationProperties[ENVELOPE_TYPE_PROPERTY] = envelopeTypeName;
 
