@@ -17,6 +17,77 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 [Category("Workers")]
 public sealed class InboxHandlerWorkerTests {
+  // ── Killswitch visibility (B) ────────────────────────────────────────────────────────────────
+  // A commit accepted and then never applied is the worst shape a durable path can take: the caller
+  // believes the row is finished, it is not, and nothing says so. It sits unprocessed, is re-claimed
+  // on every lease expiry, and spends a retry attempt each time until its budget is gone.
+  //
+  // Disabling commits is a legitimate operator action. Losing the work silently is not: the enqueue
+  // had no Enabled guard at all (it wrote into a channel nothing would drain) and the flush dropped
+  // its batch with a bare return. Neither logged.
+
+  private sealed class _visibilityLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
+    public List<string> Messages { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (Messages) { Messages.Add(formatter(state, exception)); }
+    }
+  }
+
+  private static HandlerCommitRequest _visibilityRequest() => new(
+    HandlerId: Guid.CreateVersion7(),
+    InstanceId: Guid.CreateVersion7(),
+    ServiceName: "test",
+    HostName: "test-host",
+    ProcessId: 1,
+    PartitionCount: 10_000,
+    InboxCompletion: new HandlerInboxCompletion(Guid.CreateVersion7(), 2));
+
+  [Test]
+  public async Task DisabledCommits_EnqueueSaysSo_RatherThanSilentlyAcceptingWorkAsync() {
+    var log = new _visibilityLogger();
+    var worker = new InboxHandlerWorker(
+      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(),
+      new SchemaReadyGate(),
+      Options.Create(new InboxHandlerWorkerOptions { Enabled = false }), log);
+
+    await worker.EnqueueAsync(_visibilityRequest());
+
+    var said = log.Messages.Any(m =>
+      m.Contains("commit", StringComparison.OrdinalIgnoreCase)
+      && m.Contains("disabled", StringComparison.OrdinalIgnoreCase));
+
+    await Assert.That(said).IsTrue()
+      .Because("accepting a commit while disabled and saying nothing leaves the caller believing the "
+             + "row is durable — it is not, and it will be re-claimed until its retry budget is gone");
+  }
+
+  [Test]
+  public async Task DisabledCommits_MessageNamesTheConsequenceNotJustTheStateAsync() {
+    var log = new _visibilityLogger();
+    var worker = new InboxHandlerWorker(
+      new StubScopeFactory(new StubCoordinator()), new CapturingFailureChannel(),
+      new SchemaReadyGate(),
+      Options.Create(new InboxHandlerWorkerOptions { Enabled = false }), log);
+
+    await worker.EnqueueAsync(_visibilityRequest());
+
+    // "commits are disabled" is a STATE. What an operator needs is what it COSTS — the rows will not
+    // complete and will be re-claimed. A message that reports only its own state reads as
+    // informational and gets filtered out of exactly the incident it was meant to explain.
+    var namesConsequence = log.Messages.Any(m =>
+      m.Contains("re-claim", StringComparison.OrdinalIgnoreCase)
+      || m.Contains("never complete", StringComparison.OrdinalIgnoreCase)
+      || m.Contains("not be committed", StringComparison.OrdinalIgnoreCase));
+
+    await Assert.That(namesConsequence).IsTrue()
+      .Because("a killswitch warning naming only its own state is indistinguishable from noise; the "
+             + "operator needs to know the rows will not complete");
+  }
+
   private static InboxHandlerWorkerOptions _enabledOptions() => new() {
     Enabled = true,
     Flusher = new BatchFlusherOptions {
