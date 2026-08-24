@@ -298,7 +298,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
           IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
           HasFireDuringReplayAttribute: hasFireDuringReplayAttribute,
-          IsIdempotent: isIdempotent
+          IsIdempotent: isIdempotent,
+          SuppressesRegistration: _suppressesRegistration(classSymbol),
+          LikelyNotInjectableParameter: _likelyNotInjectableParameter(classSymbol)
       );
     }
 
@@ -704,6 +706,81 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// including already-processed ones". Used to stamp the AlwaysFireOnReplay flag on
   /// ReceptorInfo so the invoker can branch without runtime reflection.
   /// </summary>
+  /// <summary>
+  /// Returns true when the receptor declares that its owner constructs it by hand, via
+  /// <c>[SuppressReceptorRegistration]</c>.
+  /// </summary>
+  /// <remarks>
+  /// Only DI REGISTRATION is suppressed. The receptor is still discovered and still routed — the
+  /// attribute says "I own this one's lifetime", not "ignore this type". The distinction matters
+  /// because such a receptor's constructor takes arguments the container cannot supply (a callback,
+  /// a value chosen at runtime, state owned by the caller), and registering it anyway leaves an
+  /// un-constructible descriptor. Under container validation ONE of those aborts construction of
+  /// the entire service provider, not merely that receptor.
+  /// </remarks>
+  /// <summary>
+  /// Returns <c>"name|type"</c> for the first constructor parameter dependency injection is unlikely
+  /// to supply, or <c>null</c> when the constructor looks resolvable.
+  /// </summary>
+  /// <remarks>
+  /// This is a HEURISTIC and cannot be anything else. A generator has no view of what an application
+  /// registers, so it cannot distinguish <c>Action&lt;T&gt;</c> from <c>ILogger&lt;T&gt;</c> by
+  /// constructibility — only by shape. Delegates and bare primitives are the shapes essentially never
+  /// registered in a container, and they are what a hand-constructed receptor takes. Everything else
+  /// is left alone, because guessing more aggressively would warn on legitimate code and train people
+  /// to ignore the warning.
+  /// </remarks>
+  private static string? _likelyNotInjectableParameter(INamedTypeSymbol classSymbol) {
+    // Widest accessible constructor is the one the container would choose.
+    IMethodSymbol? candidate = null;
+    foreach (var ctor in classSymbol.InstanceConstructors) {
+      if (ctor.DeclaredAccessibility == Accessibility.Private || ctor.IsStatic) {
+        continue;
+      }
+      if (candidate is null || ctor.Parameters.Length > candidate.Parameters.Length) {
+        candidate = ctor;
+      }
+    }
+
+    if (candidate is null) {
+      return null;
+    }
+
+    foreach (var parameter in candidate.Parameters) {
+      // A parameter with a default value is not a hazard: the container can omit it.
+      if (parameter.HasExplicitDefaultValue) {
+        continue;
+      }
+
+      var type = parameter.Type;
+      var isDelegate = type.TypeKind == TypeKind.Delegate;
+      var isBarePrimitive = type.SpecialType is SpecialType.System_String
+          or SpecialType.System_Boolean
+          or SpecialType.System_Int32
+          or SpecialType.System_Int64
+          or SpecialType.System_Double
+          or SpecialType.System_Decimal;
+
+      if (isDelegate || isBarePrimitive) {
+        return parameter.Name + "|" + type.ToDisplayString();
+      }
+    }
+
+    return null;
+  }
+
+  private static bool _suppressesRegistration(INamedTypeSymbol classSymbol) {
+    const string SUPPRESS_REGISTRATION_ATTRIBUTE = "Whizbang.Core.SuppressReceptorRegistrationAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() == SUPPRESS_REGISTRATION_ATTRIBUTE) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private static bool _hasFireDuringReplayAttribute(INamedTypeSymbol classSymbol) {
     const string FIRE_DURING_REPLAY_ATTRIBUTE = "Whizbang.Core.Messaging.FireDuringReplayAttribute";
     const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
@@ -1121,6 +1198,42 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           handlerNames
       ));
     }
+
+    _reportLikelyNotInjectableReceptors(context, receptors);
+  }
+
+  /// <summary>
+  /// Reports WHIZ014 for receptors that will be registered but take a constructor parameter DI is
+  /// unlikely to supply.
+  /// </summary>
+  /// <remarks>
+  /// Receptors that opt out via <c>[SuppressReceptorRegistration]</c> are skipped: they are not
+  /// registered, so their constructor is nobody's problem, and warning about a shape the author has
+  /// already declared deliberate would be noise. The warning exists to catch the case where the
+  /// author has NOT declared it — where an un-constructible receptor is about to be registered and
+  /// take the whole service provider down with it at startup.
+  /// </remarks>
+  private static void _reportLikelyNotInjectableReceptors(
+      SourceProductionContext context,
+      ImmutableArray<ReceptorInfo> receptors) {
+    foreach (var receptor in receptors) {
+      if (receptor.SuppressesRegistration || receptor.LikelyNotInjectableParameter is null) {
+        continue;
+      }
+
+      var parts = receptor.LikelyNotInjectableParameter.Split('|');
+      if (parts.Length != 2) {
+        continue;
+      }
+
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.ReceptorLikelyNotInjectable,
+          Location.None,
+          TypeNameUtilities.GetSimpleName(receptor.ClassName),
+          parts[0],
+          parts[1]
+      ));
+    }
   }
 
   /// <summary>
@@ -1166,9 +1279,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "VOID_SYNC_RECEPTOR_REGISTRATION_SNIPPET"
     );
 
-    // Generate registration calls using appropriate snippet
+    // Generate registration calls using appropriate snippet.
+    //
+    // Receptors marked [SuppressReceptorRegistration] are skipped HERE and only here — they remain
+    // discovered and routed, because the attribute declares who owns construction, not that the type
+    // should be ignored. Their constructors take arguments DI cannot supply, so registering them
+    // would leave un-constructible descriptors; under container validation a single one of those
+    // aborts the entire service provider, taking down every service in the assembly.
     var registrations = new StringBuilder();
-    foreach (var receptor in receptors) {
+    foreach (var receptor in receptors.Where(r => !r.SuppressesRegistration)) {
       var generatedCode = _generateRegistrationCode(
           receptor, registrationSnippet, voidRegistrationSnippet,
           syncRegistrationSnippet, voidSyncRegistrationSnippet);
