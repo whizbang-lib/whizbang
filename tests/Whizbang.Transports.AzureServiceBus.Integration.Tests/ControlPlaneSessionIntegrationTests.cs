@@ -200,17 +200,26 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
       "topic-fifo-02", "sub-fifo-session",
       new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+    // Proving ABSENCE needs different mechanics from proving presence. The original loop polled
+    // until a long token fired, which was fine while a dead-letter was guaranteed to arrive; now
+    // that none ever does, spinning to the deadline just kills the test with TaskCanceledException
+    // before it reaches its assertion. Drain what is actually there, stop when the queue is empty,
+    // and treat the deadline as the expected outcome rather than a failure.
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
     ServiceBusReceivedMessage? dead = null;
-    while (dead is null && !cts.IsCancellationRequested) {
-      var candidate = await dlqReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10), cts.Token);
-      if (candidate is null) {
-        continue;
+    try {
+      while (dead is null && !cts.IsCancellationRequested) {
+        var candidate = await dlqReceiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5), cts.Token);
+        if (candidate is null) {
+          break;  // nothing waiting — the dead-letter queue is empty, which is the point
+        }
+        if (candidate.MessageId == envelope.MessageId.Value.ToString()) {
+          dead = candidate;
+        }
+        await dlqReceiver.CompleteMessageAsync(candidate, CancellationToken.None);
       }
-      if (candidate.MessageId == envelope.MessageId.Value.ToString()) {
-        dead = candidate;
-      }
-      await dlqReceiver.CompleteMessageAsync(candidate, cts.Token);
+    } catch (OperationCanceledException) {
+      // Expected. Nothing was dead-lettered within the window, which is exactly the assertion below.
     }
 
     // INVERTED, and this inversion IS the point of the fix. This test was written to characterise a
