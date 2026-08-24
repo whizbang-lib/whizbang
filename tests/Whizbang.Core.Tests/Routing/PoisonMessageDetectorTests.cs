@@ -130,10 +130,14 @@ public class PoisonMessageDetectorTests {
     var options = new PoisonMessageOptions { MaxDurableObservations = 5 };
     var detector = _detector(options);
 
+    // ProcessingAttempts is now REQUIRED evidence: the observation counter counts DELIVERIES, so
+    // crossing the bound proves redelivery, not failure. A genuine loop is one that has been
+    // ATTEMPTED and keeps returning — modelled here. Without it, broadcast fan-out to more
+    // subscriptions than the bound would be quarantined despite never having been processed.
     var verdict = detector.Evaluate(_context(
       firstEnqueuedAt: null,
       brokerDeliveryCount: 1,
-      durableObservationCount: 5));
+      durableObservationCount: 5) with { ProcessingAttempts = 5 });
 
     await Assert.That(verdict.ShouldQuarantine).IsTrue();
     await Assert.That(verdict.Reason).IsEqualTo(PoisonQuarantineReason.ObservationCountExceeded);

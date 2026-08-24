@@ -791,7 +791,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         FirstEnqueuedAt: null,
         BrokerDeliveryCount: null,
         DurableObservationCount: observation.ObservationCount,
-        Now: now);
+        Now: now) { ProcessingAttempts = observation.ProcessingAttempts };
 
       var verdict = poisonDetector.Evaluate(context);
       if (!verdict.ShouldQuarantine) {

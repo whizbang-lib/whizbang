@@ -16,6 +16,18 @@ namespace Whizbang.Core.Messaging;
 public readonly record struct InboxRedeliveryObservation(Guid MessageId, int ObservationCount) {
 
   /// <summary>
+  /// How many times a receptor has ATTEMPTED this message, or <see langword="null"/> when the store
+  /// has no inbox row for it (never stored, or already processed and removed).
+  /// </summary>
+  /// <remarks>
+  /// Distinct from <see cref="ObservationCount"/>, which counts DELIVERIES. A broadcast fanned out to
+  /// more subscriptions than the poison bound crosses that bound with an attempt count of zero — no
+  /// receptor ever saw it — so quarantining on deliveries alone destroys messages that never failed.
+  /// Null means UNMEASURED and is never read as "zero failures so far".
+  /// </remarks>
+  public int? ProcessingAttempts { get; init; }
+
+  /// <summary>
   /// Parses the compact JSON projection both Postgres coordinators fetch from
   /// <c>store_inbox_messages</c>: <c>[{"m":"&lt;uuid&gt;","o":3}, …]</c>. A single scalar keeps the
   /// read engine-agnostic (Dapper scalar / EF raw command) and avoids adding a keyless entity type

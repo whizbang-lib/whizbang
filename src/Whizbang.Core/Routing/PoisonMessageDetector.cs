@@ -64,7 +64,19 @@ public readonly record struct PoisonEvaluationContext(
   DateTimeOffset? FirstEnqueuedAt,
   int? BrokerDeliveryCount,
   int? DurableObservationCount,
-  DateTimeOffset Now);
+  DateTimeOffset Now) {
+
+  /// <summary>
+  /// How many times a receptor has actually ATTEMPTED this message, when the caller can supply it.
+  /// </summary>
+  /// <remarks>
+  /// Distinct from <c>DurableObservationCount</c>, which counts DELIVERIES. A broadcast fanned out to
+  /// more subscriptions than the observation bound crosses that bound without any receptor having
+  /// tried it, so quarantining on deliveries alone destroys messages that never failed.
+  /// <see langword="null"/> means UNMEASURED — never treated as "zero failures".
+  /// </remarks>
+  public int? ProcessingAttempts { get; init; }
+}
 
 /// <summary>
 /// Outcome of a poison evaluation. <see cref="Reason"/> is <see cref="PoisonQuarantineReason.None"/>
@@ -209,12 +221,25 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
 
     // Layer 2 — durable redelivery observations. Bounds the loop where no trustworthy timestamp
     // exists, and catches poison that dies mid-processing rather than mid-lock.
+    // The bound alone is NOT sufficient. The observation counter counts DELIVERIES, so a message
+    // broadcast to more subscriptions than the bound crosses it without any receptor having tried
+    // it — quarantining then destroys a message that never failed. Not hypothetical: this
+    // dead-lettered control-plane broadcasts on a healthy system, clustered exactly one past the
+    // bound with an attempt count of zero.
+    //
+    // "Redelivery is not making progress" is a claim about PROCESSING, so processing evidence is
+    // required before it can be made. Null attempts means UNMEASURED, never "zero failures so far" —
+    // destroying a message on the strength of a reading nobody took is the dangerous direction to be
+    // wrong in.
     if (context.DurableObservationCount is { } observations
-        && observations >= _options.MaxDurableObservations) {
+        && observations >= _options.MaxDurableObservations
+        && context.ProcessingAttempts is { } attempts
+        && attempts > 0) {
       return PoisonVerdict.Quarantine(
         PoisonQuarantineReason.ObservationCountExceeded,
         $"Message '{context.MessageId}' has been durably observed {observations} times, at or past the "
-        + $"{_options.MaxDurableObservations} bound; redelivery is not making progress.");
+        + $"{_options.MaxDurableObservations} bound, after {attempts} processing attempt(s); "
+        + "redelivery is not making progress.");
     }
 
     return PoisonVerdict.Proceed();
