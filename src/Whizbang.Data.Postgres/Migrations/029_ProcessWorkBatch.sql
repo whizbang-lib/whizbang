@@ -893,9 +893,26 @@ BEGIN
     RETURN;
   END IF;
 
+  -- DETERMINISTIC LOCK ORDER. jsonb_array_elements preserves the CALLER's array order, so without
+  -- this ORDER BY the row locks are taken in whatever order the flusher happened to assemble the
+  -- batch — which differs between instances and between batches on the same instance. Two concurrent
+  -- batches whose handler sets overlap then acquire the same rows in opposite orders and block each
+  -- other; observed in production as a circular wait (pg_blocking_pids showing each of two backends
+  -- blocked by the other on wait_event=transactionid) with commits degrading to ~100-166ms apiece.
+  --
+  -- Ordering by the inbox completion's MessageId is what matters because that is the column
+  -- process_inbox_completions locks wh_inbox by. handler_id is the tiebreaker for elements carrying
+  -- no inbox_completion. NULLS FIRST is stated explicitly rather than left to the default so the
+  -- order is pinned by this text and cannot drift with a server setting.
+  --
+  -- This changes ONLY the order of operations within one batch: the same set of handler results is
+  -- applied, with the same effects. Tier 2 below MUST sort identically — a fallback that used a
+  -- different order would reintroduce exactly the cycle this prevents.
   FOR r IN
     SELECT elem
     FROM jsonb_array_elements(p_results) AS elem
+    ORDER BY (elem -> 'inbox_completion' ->> 'MessageId') ASC NULLS FIRST,
+             (elem ->> 'handler_id') ASC NULLS FIRST
   LOOP
     -- NO BEGIN..EXCEPTION wrapper: any error from commit_handler_result raises
     -- straight out of the function, aborting the whole batch atomically. The
@@ -963,9 +980,18 @@ BEGIN
   -- Tier 2: per-handler SAVEPOINT loop (rare path). Identical to the
   -- pre-Option-D body — preserves the per-handler success/failure isolation
   -- contract for the C# flusher.
+  -- Same deterministic lock order as Tier 1 (see commit_handler_batch_bulk). The fallback loop takes
+  -- the same row locks, so it must take them in the same sequence; sorting only the fast path would
+  -- leave the rare path free to deadlock against a concurrent bulk batch.
+  --
+  -- Reordering is safe for the caller: the flusher maps results by the handler_id carried in each
+  -- returned row (`rows.Select(r => new HandlerBatchResult(r.HandlerId, ...))`), never positionally,
+  -- so per-handler success/failure reporting is unaffected by emission order.
   FOR r IN
     SELECT elem
     FROM jsonb_array_elements(p_results) AS elem
+    ORDER BY (elem -> 'inbox_completion' ->> 'MessageId') ASC NULLS FIRST,
+             (elem ->> 'handler_id') ASC NULLS FIRST
   LOOP
     v_handler_id := (r.elem ->> 'handler_id')::UUID;
 
