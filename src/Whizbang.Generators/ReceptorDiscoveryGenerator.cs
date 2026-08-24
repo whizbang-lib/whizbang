@@ -298,7 +298,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           IsMessageAnEvent: _implementsIEvent(messageTypeSymbol),
           IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
           HasFireDuringReplayAttribute: hasFireDuringReplayAttribute,
-          IsIdempotent: isIdempotent
+          IsIdempotent: isIdempotent,
+          SuppressesRegistration: _suppressesRegistration(classSymbol)
       );
     }
 
@@ -704,6 +705,30 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// including already-processed ones". Used to stamp the AlwaysFireOnReplay flag on
   /// ReceptorInfo so the invoker can branch without runtime reflection.
   /// </summary>
+  /// <summary>
+  /// Returns true when the receptor declares that its owner constructs it by hand, via
+  /// <c>[SuppressReceptorRegistration]</c>.
+  /// </summary>
+  /// <remarks>
+  /// Only DI REGISTRATION is suppressed. The receptor is still discovered and still routed — the
+  /// attribute says "I own this one's lifetime", not "ignore this type". The distinction matters
+  /// because such a receptor's constructor takes arguments the container cannot supply (a callback,
+  /// a value chosen at runtime, state owned by the caller), and registering it anyway leaves an
+  /// un-constructible descriptor. Under container validation ONE of those aborts construction of
+  /// the entire service provider, not merely that receptor.
+  /// </remarks>
+  private static bool _suppressesRegistration(INamedTypeSymbol classSymbol) {
+    const string SUPPRESS_REGISTRATION_ATTRIBUTE = "Whizbang.Core.SuppressReceptorRegistrationAttribute";
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() == SUPPRESS_REGISTRATION_ATTRIBUTE) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private static bool _hasFireDuringReplayAttribute(INamedTypeSymbol classSymbol) {
     const string FIRE_DURING_REPLAY_ATTRIBUTE = "Whizbang.Core.Messaging.FireDuringReplayAttribute";
     const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
@@ -1166,9 +1191,15 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "VOID_SYNC_RECEPTOR_REGISTRATION_SNIPPET"
     );
 
-    // Generate registration calls using appropriate snippet
+    // Generate registration calls using appropriate snippet.
+    //
+    // Receptors marked [SuppressReceptorRegistration] are skipped HERE and only here — they remain
+    // discovered and routed, because the attribute declares who owns construction, not that the type
+    // should be ignored. Their constructors take arguments DI cannot supply, so registering them
+    // would leave un-constructible descriptors; under container validation a single one of those
+    // aborts the entire service provider, taking down every service in the assembly.
     var registrations = new StringBuilder();
-    foreach (var receptor in receptors) {
+    foreach (var receptor in receptors.Where(r => !r.SuppressesRegistration)) {
       var generatedCode = _generateRegistrationCode(
           receptor, registrationSnippet, voidRegistrationSnippet,
           syncRegistrationSnippet, voidSyncRegistrationSnippet);
