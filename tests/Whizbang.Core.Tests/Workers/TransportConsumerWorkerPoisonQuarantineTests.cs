@@ -39,9 +39,16 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
 
   [Test]
   public async Task Batch_RedeliveryObservationsPastBound_MovesTheInboxRowToDeadLettersAsync() {
-    // The lock: the store reports the same message id observed 10 times; layer 2 quarantines it
-    // into the EXISTING dead-letter store, from which the existing recovery flow replays it.
-    var coordinator = new ObservingWorkCoordinator([new InboxRedeliveryObservation(_hostage, 10)]);
+    // The lock: the store reports the same message id observed 10 times AND attempted 10 times;
+    // layer 2 quarantines it into the EXISTING dead-letter store, from which the existing recovery
+    // flow replays it.
+    //
+    // ProcessingAttempts is required evidence now. The observation counter counts DELIVERIES, so a
+    // broadcast fanned out to more subscriptions than the bound crosses it without any receptor
+    // having tried the message — quarantining that destroys a message that never failed. A genuine
+    // loop, modelled here, has been attempted and keeps coming back.
+    var coordinator = new ObservingWorkCoordinator(
+      [new InboxRedeliveryObservation(_hostage, 10) { ProcessingAttempts = 10 }]);
     var deadLetters = new RecordingDeadLetterStore();
     var (worker, transport, sp) = _buildWorker(coordinator, deadLetters, maxDurableObservations: 10);
 

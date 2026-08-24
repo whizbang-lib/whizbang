@@ -29,16 +29,25 @@ public static class InboxRedeliveryObservationSql {
   /// excluding the schema-qualified table name.
   /// </summary>
   public const string OBSERVATION_QUERY_PREFIX =
-    "SELECT COALESCE(jsonb_agg(jsonb_build_object('m', d.message_id, 'o', d.observation_count)), '[]'::jsonb)::text FROM ";
+    "SELECT COALESCE(jsonb_agg(jsonb_build_object('m', d.message_id, 'o', d.observation_count, 'a', i.attempts)), '[]'::jsonb)::text FROM ";
 
-  /// <summary>Tail of the observation query, following the schema-qualified table name.</summary>
+  /// <summary>
+  /// Middle of the query: joins the inbox so the projection can carry the row's PROCESSING ATTEMPT
+  /// count alongside the delivery count. LEFT, deliberately — a message with no inbox row (never
+  /// stored, or already processed and removed) must yield null rather than a fabricated zero.
+  /// </summary>
+  public const string OBSERVATION_QUERY_MIDDLE =
+    "wh_message_deduplication d LEFT JOIN ";
+
+  /// <summary>Tail of the observation query, following the second schema-qualified table name.</summary>
   public const string OBSERVATION_QUERY_SUFFIX =
-    "wh_message_deduplication d WHERE d.observation_count > 1 AND d.message_id = ANY(@observedIds)";
+    "wh_inbox i ON i.message_id = d.message_id "
+    + "WHERE d.observation_count > 1 AND d.message_id = ANY(@observedIds)";
 #pragma warning restore CA1707
 
   /// <summary>Builds the observation query for a schema prefix (<c>""</c> or <c>"schema."</c>).</summary>
   /// <param name="schemaPrefix">Schema prefix including the trailing dot, or empty.</param>
   /// <returns>The ready-to-execute observation query.</returns>
   public static string ObservationQuery(string schemaPrefix) =>
-    OBSERVATION_QUERY_PREFIX + schemaPrefix + OBSERVATION_QUERY_SUFFIX;
+    OBSERVATION_QUERY_PREFIX + schemaPrefix + OBSERVATION_QUERY_MIDDLE + schemaPrefix + OBSERVATION_QUERY_SUFFIX;
 }

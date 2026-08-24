@@ -81,7 +81,11 @@ public sealed class AdaptiveClaimWindow {
   /// </summary>
   /// <param name="claimedRows">Rows returned by the claim.</param>
   /// <param name="reclaimedRows">Of those, how many arrived with <c>attempts &gt; 1</c>.</param>
-  public void Observe(int claimedRows, int reclaimedRows) {
+  /// <param name="drainMeasured">
+  /// Whether the outstanding budget has actually MEASURED drain yet. Growth is gated on it;
+  /// shrinking never is.
+  /// </param>
+  public void Observe(int claimedRows, int reclaimedRows, bool drainMeasured = true) {
     // An empty claim says nothing about capacity — the queue was simply empty. Treating it as a
     // clean cycle would inflate the window during idle periods and guarantee an overshoot the
     // moment work arrived.
@@ -98,7 +102,16 @@ public sealed class AdaptiveClaimWindow {
 
     // Only a completely clean cycle earns growth. Creeping up while any churn persists is how a
     // control loop settles into permanent low-grade overload.
-    if (reclaimedRows == 0) {
+    //
+    // Growth is ALSO gated on drain having been measured at all. At cold start the outstanding
+    // budget sits at its floor because it has no history — but this window ramps from its own
+    // feedback, so during that blind period two adaptive controls ramp independently while only one
+    // of them measures anything. A restart onto a large backlog then commits to more than it can
+    // drain inside one lease, and the excess lapses and spends a retry attempt it never used.
+    //
+    // Note the asymmetry, which is deliberate: SHRINKING above is never gated. Backing off is always
+    // safe, and a guard that blocked it would deepen the very over-commit it exists to prevent.
+    if (reclaimedRows == 0 && drainMeasured) {
       _current = Math.Min(_ceiling, _current + _additiveStep);
     }
   }

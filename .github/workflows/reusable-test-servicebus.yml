@@ -83,8 +83,11 @@ jobs:
         run: |
           echo "Starting coverage collection server with session: $SESSION_ID"
           mkdir -p TestResults
+          # Shard-unique for the same reason as the postgres job: merge-multiple flattens all
+          # coverage-* artifacts into one directory, so a fixed filename loses every shard but
+          # one. This job is sharded too (ecommerce / whizbang).
           dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
-            -f cobertura -o TestResults/servicebus.cobertura.xml
+            -f cobertura -o TestResults/servicebus${{ inputs.shard-name != '' && format('-{0}', inputs.shard-name) || '' }}.cobertura.xml
 
       - name: Run Azure Service Bus Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''

@@ -480,6 +480,81 @@ public class CompositeInboxFanoutTests {
 
   private static JsonElement _raw(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
+  // ── Hypothesis battery: malformed raw composites must FAIL, never THROW ──────────────────────
+  // The dispatch path handles a RETURNED failure correctly (dead-letter, then a terminal completion
+  // so the row never re-claims). A THROWN failure takes a different path, so any shape that throws
+  // instead of returning is a candidate for leaving a composite unprocessed and re-claimed forever —
+  // the shape of a production incident where composites sat at status=1 with attempts climbing.
+  // The type documents its parallel-array contract as STRICT and a mismatch as "a producer bug,
+  // never data"; a producer bug in the wild still has to fail safely.
+
+  [Test]
+  public async Task TryExpand_RawComposite_MoreTypeNamesThanPayloads_FailsWithoutThrowingAsync() {
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{\"n\":1}")],
+      InnerTypeNames = ["Contracts.A, Contracts", "Contracts.B, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(composite.StreamId), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed)
+      .Because("a desynced parallel array must be REPORTED so the caller dead-letters the row; a "
+             + "throw takes a different path and is how a composite ends up neither completed nor "
+             + "dead-lettered, re-claimed on every lease expiry");
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_MorePayloadsThanTypeNames_FailsWithoutThrowingAsync() {
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{\"n\":1}"), _raw("{\"n\":2}")],
+      InnerTypeNames = ["Contracts.A, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(composite.StreamId), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed)
+      .Because("desync in the other direction must fail identically — an asymmetry means one of the "
+             + "two orderings strands the row");
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_EmptyTypeName_FailsWithoutThrowingAsync() {
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{\"n\":1}")],
+      InnerTypeNames = [""],
+      InnerEventIds = [Guid.NewGuid()],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(composite.StreamId), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed)
+      .Because("an empty wire type name cannot address a receptor — the child would be undeliverable, "
+             + "so the composite must fail loudly rather than emit an unroutable row");
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_NoInnerEvents_StillReachesADecisionAsync() {
+    var composite = new RedeliveryComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [],
+      InnerTypeNames = [],
+      InnerEventIds = [],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(composite.StreamId), _provider());
+
+    // Whatever the verdict, it must be a DECISION the dispatch path can act on. NotComposite would
+    // send an actual composite down the non-composite branch, which commits nothing for a row that
+    // has no payload to handle — the shape of a row that sits and is re-claimed.
+    await Assert.That(result.Outcome).IsNotEqualTo(CompositeInboxFanout.FanoutOutcome.NotComposite)
+      .Because("an empty composite is still a composite; misrouting it leaves the row uncommitted");
+  }
+
   private static ServiceProvider _provider() =>
     new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())

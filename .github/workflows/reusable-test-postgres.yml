@@ -88,8 +88,13 @@ jobs:
         run: |
           echo "Starting coverage collection server with session: $SESSION_ID"
           mkdir -p TestResults
+          # Filename MUST be shard-unique. reusable-quality.yml downloads every coverage-*
+          # artifact with merge-multiple:true, which FLATTENS them into one directory — so a
+          # fixed name means the shards overwrite each other and only ONE survives. That
+          # silently discarded 4 of 5 postgres shards' coverage, understating the reported
+          # figure repo-wide and hiding genuinely untested code behind a passing gate.
           dotnet-coverage collect --session-id "$SESSION_ID" --server-mode --background \
-            -f cobertura -o TestResults/postgres.cobertura.xml
+            -f cobertura -o TestResults/postgres${{ inputs.shard-name != '' && format('-{0}', inputs.shard-name) || '' }}.cobertura.xml
 
       - name: Run PostgreSQL Integration Tests (with pre-built coverage)
         if: inputs.artifact-name != ''

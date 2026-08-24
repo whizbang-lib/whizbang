@@ -157,8 +157,18 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     await Assert.That(received[envelopeA1.MessageId.Value.ToString()].SessionId).IsEqualTo(streamA.ToString());
     await Assert.That(received[envelopeA2.MessageId.Value.ToString()].SessionId).IsEqualTo(streamA.ToString());
     await Assert.That(received[envelopeB1.MessageId.Value.ToString()].SessionId).IsEqualTo(streamB.ToString());
-    await Assert.That(string.IsNullOrEmpty(received[envelopeNull.MessageId.Value.ToString()].SessionId)).IsTrue()
-      .Because("items without a StreamId must not get a SessionId");
+    // DELIBERATELY INVERTED. This previously required a streamless item to carry NO session id,
+    // which is the defect: a session-enabled entity REJECTS a null session id outright, so
+    // control-plane broadcasts (which have no stream) were dead-lettered by the broker before any
+    // consumer saw them. Streamless items now get a bounded synthetic session instead — see
+    // AsbSessionKey for why it is neither a GUID nor a single shared constant.
+    var streamlessSession = received[envelopeNull.MessageId.Value.ToString()].SessionId;
+    await Assert.That(string.IsNullOrEmpty(streamlessSession)).IsFalse()
+      .Because("a streamless item still needs a session id — without one the broker refuses it and "
+             + "the message never reaches a consumer");
+    await Assert.That(Guid.TryParse(streamlessSession, out _)).IsFalse()
+      .Because("the streamless key must not be GUID-shaped: inbound paths recover StreamId by "
+             + "Guid-parsing the session id and would otherwise invent a stream that does not exist");
   }
 
   [Test]

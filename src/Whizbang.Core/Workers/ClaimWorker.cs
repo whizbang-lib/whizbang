@@ -689,7 +689,13 @@ public sealed partial class ClaimWorker : BackgroundService {
         }
       }
       var previous = _claimWindow.Current;
-      _claimWindow.Observe(batch.InboxWork.Count, reclaimed);
+      // Gate growth on measured drain ONLY while the budget is the governing control. When the
+      // budget is not engaged at all (disabled, or no meter to measure with) it will never produce
+      // a sample, and gating on one would freeze the window at its floor forever — turning a
+      // cold-start guard into a permanent throughput ceiling for every deployment without a meter.
+      // Unmeasured must not silently disable an unrelated control. See AdaptiveClaimWindow.Observe.
+      var drainMeasured = !_budgetEngaged || _outstandingBudget.HasDrainSample;
+      _claimWindow.Observe(batch.InboxWork.Count, reclaimed, drainMeasured);
       if (_claimWindow.Current != previous) {
         LogClaimWindowResized(_logger, previous, _claimWindow.Current, reclaimed, batch.InboxWork.Count);
       }

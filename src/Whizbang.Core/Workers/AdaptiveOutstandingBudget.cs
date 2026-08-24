@@ -79,6 +79,18 @@ public sealed class AdaptiveOutstandingBudget {
   /// <summary>The smoothed drain rate, in rows per second.</summary>
   public double DrainRatePerSecond => _drainRatePerSecond;
 
+  /// <summary>
+  /// Whether drain has ever actually been MEASURED. False until the first <see cref="Observe"/>.
+  /// </summary>
+  /// <remarks>
+  /// Read by the claim window as a growth gate. At cold start this budget correctly sits at its
+  /// floor because it has no history — but the window ramps from its own feedback, so during the
+  /// blind period two adaptive controls ramp independently while only one of them is measuring
+  /// anything. That is how a restart onto a large backlog commits to more than it can drain inside
+  /// one lease. Defaulting this to true anywhere would silently disable the gate.
+  /// </remarks>
+  public bool HasDrainSample => _hasSample;
+
   /// <summary>Feeds a completion sample and recomputes the budget.</summary>
   /// <param name="completed">Rows that finished processing during the sample.</param>
   /// <param name="elapsed">Wall time the sample covers.</param>
