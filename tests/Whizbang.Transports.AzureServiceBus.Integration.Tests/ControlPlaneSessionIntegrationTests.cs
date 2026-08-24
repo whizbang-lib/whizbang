@@ -161,7 +161,7 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
   }
 
   [Test]
-  public async Task BarePublish_SessionRequiredSubscription_IsDeadLetteredAsync() {
+  public async Task StreamlessPublish_SessionRequiredSubscription_IsDeliveredNotDeadLetteredAsync() {
     // The pre-fix shape: a direct publish with NO session metadata. The broker must dead-letter
     // it on a session-required subscription — asserting the DLQ arrival is the deterministic
     // positive signal (never a negative timeout on the main queue).
@@ -213,8 +213,18 @@ public class ControlPlaneSessionIntegrationTests(ServiceBusEmulatorFixtureSource
       await dlqReceiver.CompleteMessageAsync(candidate, cts.Token);
     }
 
-    await Assert.That(dead).IsNotNull()
-      .Because("a sessionless publish to a session-REQUIRED subscription is broker-dead-lettered — " +
-               "the live failure mode this suite exists to keep impossible to reintroduce silently.");
+    // INVERTED, and this inversion IS the point of the fix. This test was written to characterise a
+    // live failure: a streamless control-plane publish reached a session-REQUIRED subscription with
+    // no session id and the broker dead-lettered it before any consumer saw it. The transport now
+    // stamps a session id on EVERY message, so that failure can no longer be produced through the
+    // publish path at all — the message is delivered instead of destroyed.
+    //
+    // Keeping the original assertion would lock the defect in as expected behavior. The property
+    // worth guarding is the one below: the publish path must never emit a message a session-enabled
+    // entity will refuse.
+    await Assert.That(dead).IsNull()
+      .Because("the publish path now stamps a session id on every message, so a control-plane "
+             + "broadcast can no longer be broker-dead-lettered for a null session — this test "
+             + "characterised the live failure, and the fix makes that failure unreachable");
   }
 }
