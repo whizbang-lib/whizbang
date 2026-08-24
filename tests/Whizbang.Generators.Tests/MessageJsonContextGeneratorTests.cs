@@ -89,6 +89,52 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
     await Assert.That(code).Contains("CreateMessageEnvelope");
   }
 
+  /// <summary>
+  /// A composite implements <c>IMessage</c>, never <c>IEvent</c> — so any filter written as
+  /// "command or event" silently drops it. That is not cosmetic: the envelope type-check dispatch
+  /// covers composites, so omitting the lazy envelope field leaves the resolver returning null and
+  /// the receive side unable to bind that envelope type at all. A composite arriving on the wire
+  /// then fails typed binding permanently, and it surfaces at the broker as repeated delivery
+  /// attempts against missing JsonTypeInfo rather than as anything resembling a serialization bug.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithCompositeEvent_GeneratesMessageEnvelopeAsync() {
+    // Arrange — a composite declared in a CONSUMER assembly, the case that fails in the field. The
+    // framework's own composites are unaffected because they are registered in its own context.
+    const string source = @"
+using System.Collections.Generic;
+using Whizbang.Core;
+using Whizbang.Core.Minting;
+
+namespace MyApp.Events;
+
+public record ProductBatchComposite(string BatchId) : ICompositeEvent {
+  public IEnumerable<IMessage> InnerEvents => System.Array.Empty<IMessage>();
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Assert on the LAZY FIELD specifically, not merely on the type name appearing somewhere. The
+    // type-check dispatch table already emits "MessageEnvelope<...Composite>" for composites, so a
+    // bare Contains() on that string passes even when the field is missing — it matches the very
+    // dispatch that has nothing to dispatch TO. Verified: the looser assertion passed against the
+    // unfixed generator, i.e. it was vacuous.
+    await Assert.That(code)
+      .Contains("private JsonTypeInfo<MessageEnvelope<global::MyApp.Events.ProductBatchComposite>>?")
+      .Because("the lazy envelope FIELD must be emitted for composites; without it the resolver "
+             + "returns null for an envelope the type-check table already advertises, and the "
+             + "receiver can never bind a composite off the wire");
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleMessages_GeneratesAllFactoriesAsync() {
