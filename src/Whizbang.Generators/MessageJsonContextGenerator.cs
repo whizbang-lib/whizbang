@@ -867,8 +867,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
     sb.AppendLine();
 
-    // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
-    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
+    // MessageEnvelope<T> for actual message types (commands/events/composites), not nested types.
+    // Composites MUST be included. They implement IMessage rather than IEvent, so an IsCommand||IsEvent
+    // filter silently drops them — no lazy envelope field is emitted, while _appendEnvelopeTypeChecks
+    // below still dispatches for them, so the resolver returns null and the receive side can never bind
+    // that envelope type. A composite arriving on the wire then fails typed binding permanently, which
+    // surfaces at the broker as repeated delivery attempts against missing JsonTypeInfo rather than as
+    // anything that looks like a serialization bug. This filter must stay in step with the set covered
+    // by _appendEnvelopeTypeChecks and the RegisterTypeName envelope map.
+    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent || t.IsComposite)) {
       var field = envelopeFieldSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
           .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);

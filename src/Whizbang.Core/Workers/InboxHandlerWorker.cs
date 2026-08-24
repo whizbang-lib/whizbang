@@ -166,10 +166,20 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
             + "Those rows will NOT complete and will be re-claimed until their retry budget is gone.")]
   static partial void LogCommitsDisabledOnFlush(ILogger logger, int batchCount);
 
+  // The first wording of this message named the shared WorkCoordinatorGate as the likely culprit for a
+  // slow 'coordinator-commit'. That sent two separate investigations at the wrong subsystem: when the
+  // stall was finally reproduced under load, the gate was completely uncontended in every sample
+  // (permits sat at 47 of 48, never approaching zero, with no waiters) while the commit itself blocked
+  // on DATABASE row locks — concurrent commit batches touching overlapping stream-bookkeeping rows in
+  // inconsistent order, to the point of blocking each other mutually. A diagnostic that names a
+  // plausible-but-wrong cause is worse than one that names none, so this now points at the check that
+  // actually discriminates.
   [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
     Message = "InboxHandlerWorker flush phase '{Phase}' took {ElapsedMs}ms for {BatchCount} commit(s) "
-            + "— commits are stalling in this phase. 'coordinator-commit' also covers the shared "
-            + "WorkCoordinatorGate, where a commit can starve behind claim/dispatch traffic.")]
+            + "— commits are stalling in this phase. Check database lock contention FIRST "
+            + "(pg_stat_activity wait_event_type='Lock', and pg_blocking_pids for batches blocking each "
+            + "other); the in-process coordinator gate is the less likely cause and is worth ruling out "
+            + "by confirming it actually has waiters before assuming it.")]
   static partial void LogFlushPhaseSlow(ILogger logger, string phase, long elapsedMs, int batchCount);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "InboxHandlerWorker disabled via options — handler-batch commits skipped")]
