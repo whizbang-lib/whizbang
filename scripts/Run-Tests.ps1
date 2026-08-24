@@ -1285,17 +1285,39 @@ try {
 
     # Helper function to ensure build exists for dynamic DLL discovery
     function Ensure-BuildExists {
-        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
-        $anyDll = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
-            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
-            Select-Object -First 1
+        # Discovery maps a BUILT DLL back to its .csproj and only then reads <WhizbangTestType>, so a
+        # project with no build output is invisible — its type is never read and it can never be
+        # selected. "Does ANY test DLL exist?" is therefore the wrong question: a previous run of a
+        # different mode leaves that mode's DLLs on disk, which satisfies an any-DLL check while every
+        # project belonging to the REQUESTED mode remains unbuilt. Observed: after a -Mode AiUnit run,
+        # -Mode AiIntegrations found zero of the nine projects declaring
+        # <WhizbangTestType>Integration</WhizbangTestType> and reported it as a missing-property
+        # problem — sending the operator to inspect metadata that was already correct, while the real
+        # cause was simply that those projects had never been built in that working tree.
+        #
+        # Compare DECLARED test projects against build output instead, so any unbuilt test project
+        # triggers the build regardless of which mode asked.
+        $declaredProjects = @(
+            Get-ChildItem -Path $repoRoot -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName.Substring($repoRoot.Length) -notmatch "[/\\]\.worktrees[/\\]" } |
+                Where-Object { $_.FullName -notmatch "[/\\](bin|obj)[/\\]" } |
+                Where-Object { (Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue) -match '<WhizbangTestType>' }
+        )
 
-        if (-not $anyDll) {
+        $unbuilt = @(
+            $declaredProjects | Where-Object {
+                $projectName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+                $expectedDll = [System.IO.Path]::Combine(
+                    $_.DirectoryName, "bin", $Configuration, "net10.0", "$projectName.dll")
+                -not (Test-Path $expectedDll)
+            }
+        )
+
+        if ($unbuilt.Count -gt 0) {
             if (-not $useAiOutput) {
-                Write-Host "No test DLLs found. Building solution first..." -ForegroundColor Yellow
+                Write-Host "$($unbuilt.Count) declared test project(s) have no $Configuration build output; building solution first..." -ForegroundColor Yellow
             } else {
-                Write-Host "Building solution..." -ForegroundColor Gray
+                Write-Host "Building solution ($($unbuilt.Count) test project(s) not built)..." -ForegroundColor Gray
             }
             & dotnet build --verbosity quiet @fastBuildArgs
             if ($LASTEXITCODE -ne 0) {
@@ -1397,7 +1419,10 @@ try {
                 Write-Host "Discovered $($integrationDlls.Count) integration test projects (WhizbangTestType=Integration)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No integration test projects found. Check that projects have <WhizbangTestType>Integration</WhizbangTestType>."
+            Write-Error ("No integration test projects selected. Discovery reads <WhizbangTestType> " +
+                "from the .csproj behind each BUILT DLL, so a project with no output in " +
+                "bin/$Configuration/net10.0 is invisible even when the property is correct. " +
+                "Check for build failures first, then the property.")
             exit 1
         }
     } elseif (-not $includeIntegrationTests) {
@@ -1419,7 +1444,10 @@ try {
                 Write-Host "Discovered $($unitTestDlls.Count) unit test projects (WhizbangTestType=Unit)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No unit test projects found. Check that projects have <WhizbangTestType>Unit</WhizbangTestType>."
+            Write-Error ("No unit test projects selected. Discovery reads <WhizbangTestType> from the " +
+                ".csproj behind each BUILT DLL, so a project with no output in " +
+                "bin/$Configuration/net10.0 is invisible even when the property is correct. " +
+                "Check for build failures first, then the property.")
             exit 1
         }
     } else {
