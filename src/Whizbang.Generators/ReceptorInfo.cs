@@ -20,6 +20,7 @@ namespace Whizbang.Generators;
 /// <param name="HasFireDuringReplayAttribute">True if receptor class has [FireDuringReplay] attribute, indicating it should fire during replay/rebuild.</param>
 /// <param name="IsIdempotent">True if receptor class has [ReceptorIdempotent] (regardless of AlwaysFire value). The receptor is declaring that it is safe to re-invoke for the same event id, so the ReceptorInvoker guardrail should let it fire even when a prior invocation exists in the envelope.</param>
 /// <param name="SuppressesRegistration">True if the receptor class carries [SuppressReceptorRegistration], declaring that its owner constructs it by hand. Such a receptor is still discovered and still routed — only the DI registration is skipped, because its constructor takes arguments the container cannot supply. Registering one anyway leaves an un-constructible descriptor, and under container validation a single un-constructible descriptor aborts the ENTIRE service provider rather than just that receptor.</param>
+/// <param name="LikelyNotInjectableParameter">"name|type" of the first constructor parameter dependency injection is unlikely to supply (a delegate, or a bare primitive/string), or null when none. Carried as a STRING rather than a symbol so the record keeps value equality — incremental generator caching depends on it, and a Location or ISymbol would defeat that. Drives the WHIZ014 warning, which is suppressed when the receptor opts out of registration.</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
 public sealed record ReceptorInfo(
     string ClassName,
@@ -34,7 +35,8 @@ public sealed record ReceptorInfo(
     bool IsPolymorphicMessageType = false,
     bool HasFireDuringReplayAttribute = false,
     bool IsIdempotent = false,
-    bool SuppressesRegistration = false
+    bool SuppressesRegistration = false,
+    string? LikelyNotInjectableParameter = null
 ) {
   /// <summary>
   /// True if this is a void receptor (IReceptor&lt;TMessage&gt; or ISyncReceptor&lt;TMessage&gt;), false if it returns a response.

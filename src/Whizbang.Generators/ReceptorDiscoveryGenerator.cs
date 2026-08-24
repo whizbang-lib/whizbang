@@ -299,7 +299,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           IsPolymorphicMessageType: _isPolymorphicType(messageTypeSymbol),
           HasFireDuringReplayAttribute: hasFireDuringReplayAttribute,
           IsIdempotent: isIdempotent,
-          SuppressesRegistration: _suppressesRegistration(classSymbol)
+          SuppressesRegistration: _suppressesRegistration(classSymbol),
+          LikelyNotInjectableParameter: _likelyNotInjectableParameter(classSymbol)
       );
     }
 
@@ -717,6 +718,57 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// un-constructible descriptor. Under container validation ONE of those aborts construction of
   /// the entire service provider, not merely that receptor.
   /// </remarks>
+  /// <summary>
+  /// Returns <c>"name|type"</c> for the first constructor parameter dependency injection is unlikely
+  /// to supply, or <c>null</c> when the constructor looks resolvable.
+  /// </summary>
+  /// <remarks>
+  /// This is a HEURISTIC and cannot be anything else. A generator has no view of what an application
+  /// registers, so it cannot distinguish <c>Action&lt;T&gt;</c> from <c>ILogger&lt;T&gt;</c> by
+  /// constructibility — only by shape. Delegates and bare primitives are the shapes essentially never
+  /// registered in a container, and they are what a hand-constructed receptor takes. Everything else
+  /// is left alone, because guessing more aggressively would warn on legitimate code and train people
+  /// to ignore the warning.
+  /// </remarks>
+  private static string? _likelyNotInjectableParameter(INamedTypeSymbol classSymbol) {
+    // Widest accessible constructor is the one the container would choose.
+    IMethodSymbol? candidate = null;
+    foreach (var ctor in classSymbol.InstanceConstructors) {
+      if (ctor.DeclaredAccessibility == Accessibility.Private || ctor.IsStatic) {
+        continue;
+      }
+      if (candidate is null || ctor.Parameters.Length > candidate.Parameters.Length) {
+        candidate = ctor;
+      }
+    }
+
+    if (candidate is null) {
+      return null;
+    }
+
+    foreach (var parameter in candidate.Parameters) {
+      // A parameter with a default value is not a hazard: the container can omit it.
+      if (parameter.HasExplicitDefaultValue) {
+        continue;
+      }
+
+      var type = parameter.Type;
+      var isDelegate = type.TypeKind == TypeKind.Delegate;
+      var isBarePrimitive = type.SpecialType is SpecialType.System_String
+          or SpecialType.System_Boolean
+          or SpecialType.System_Int32
+          or SpecialType.System_Int64
+          or SpecialType.System_Double
+          or SpecialType.System_Decimal;
+
+      if (isDelegate || isBarePrimitive) {
+        return parameter.Name + "|" + type.ToDisplayString();
+      }
+    }
+
+    return null;
+  }
+
   private static bool _suppressesRegistration(INamedTypeSymbol classSymbol) {
     const string SUPPRESS_REGISTRATION_ATTRIBUTE = "Whizbang.Core.SuppressReceptorRegistrationAttribute";
 
@@ -1144,6 +1196,42 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           Location.None,
           TypeNameUtilities.GetSimpleName(messageType),
           handlerNames
+      ));
+    }
+
+    _reportLikelyNotInjectableReceptors(context, receptors);
+  }
+
+  /// <summary>
+  /// Reports WHIZ014 for receptors that will be registered but take a constructor parameter DI is
+  /// unlikely to supply.
+  /// </summary>
+  /// <remarks>
+  /// Receptors that opt out via <c>[SuppressReceptorRegistration]</c> are skipped: they are not
+  /// registered, so their constructor is nobody's problem, and warning about a shape the author has
+  /// already declared deliberate would be noise. The warning exists to catch the case where the
+  /// author has NOT declared it — where an un-constructible receptor is about to be registered and
+  /// take the whole service provider down with it at startup.
+  /// </remarks>
+  private static void _reportLikelyNotInjectableReceptors(
+      SourceProductionContext context,
+      ImmutableArray<ReceptorInfo> receptors) {
+    foreach (var receptor in receptors) {
+      if (receptor.SuppressesRegistration || receptor.LikelyNotInjectableParameter is null) {
+        continue;
+      }
+
+      var parts = receptor.LikelyNotInjectableParameter.Split('|');
+      if (parts.Length != 2) {
+        continue;
+      }
+
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.ReceptorLikelyNotInjectable,
+          Location.None,
+          TypeNameUtilities.GetSimpleName(receptor.ClassName),
+          parts[0],
+          parts[1]
       ));
     }
   }

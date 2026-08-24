@@ -28,7 +28,7 @@ namespace Whizbang.Generators.Tests;
 /// silently never fires. Opting out has to be written down, not inferred.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/dispatcher/receptors#manual-construction</docs>
+/// <docs>fundamentals/receptors/receptors#manual-construction</docs>
 public class ReceptorRegistrationSuppressionTests {
 
   private const string HAND_BUILT_SOURCE = @"
@@ -93,6 +93,57 @@ public sealed class OrdinaryReceptor : IReceptor<OrderPlaced> {
       .Because("suppression must be opt-IN — if the attribute's absence stopped registering "
              + "receptors, the guard would have silently disabled the default path it exists to "
              + "carve an exception out of");
+  }
+
+  /// <summary>Same hand-built shape, but the author never declared it — the case WHIZ014 exists for.</summary>
+  private const string UNDECLARED_SOURCE = @"
+using System;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record OrderPlaced : IEvent;
+
+public sealed class UndeclaredReceptor : IReceptor<OrderPlaced> {
+  private readonly Action<OrderPlaced> _onReceived;
+  public UndeclaredReceptor(Action<OrderPlaced> onReceived) { _onReceived = onReceived; }
+  public System.Threading.Tasks.ValueTask HandleAsync(OrderPlaced message, System.Threading.CancellationToken cancellationToken = default) {
+    _onReceived(message);
+    return default;
+  }
+}
+";
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task UndeclaredHandBuiltReceptor_IsWarnedAboutAsync() {
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(UNDECLARED_SOURCE);
+
+    await Assert.That(result.Diagnostics.Any(d => d.Id == "WHIZ014")).IsTrue()
+      .Because("this receptor WILL be registered and cannot be constructed, so it takes the entire "
+             + "service provider down at startup. Warning at the declaration site trades an "
+             + "inexplicable runtime crash for a message pointing at the cause");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task DeclaredHandBuiltReceptor_IsNotWarnedAboutAsync() {
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(HAND_BUILT_SOURCE);
+
+    await Assert.That(result.Diagnostics.Any(d => d.Id == "WHIZ014")).IsFalse()
+      .Because("the attribute already declares this construction is deliberate and the receptor is "
+             + "not registered, so its constructor is nobody's problem — warning anyway would be "
+             + "noise that trains people to ignore the diagnostic");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task OrdinaryReceptor_IsNotWarnedAboutAsync() {
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(ORDINARY_SOURCE);
+
+    await Assert.That(result.Diagnostics.Any(d => d.Id == "WHIZ014")).IsFalse()
+      .Because("a receptor with an injectable constructor must stay silent, or the heuristic is "
+             + "firing on ordinary code and is worse than nothing");
   }
 
   [Test]

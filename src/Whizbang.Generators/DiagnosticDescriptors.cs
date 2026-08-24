@@ -891,4 +891,41 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Calling WaitForStreamAsync or WaitAsync inside an Inline-stage receptor deadlocks the work coordinator. Use a Detached stage instead."
   );
+
+  /// <summary>
+  /// WHIZ014: Warning — a discovered receptor takes a constructor parameter dependency injection is
+  /// very unlikely to supply, so registering it risks an un-constructible descriptor.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deliberately a HEURISTIC, and deliberately a warning. A source generator cannot know what a
+  /// given application registers — <c>Action&lt;T&gt;</c> and <c>ILogger&lt;T&gt;</c> are both just
+  /// parameter types to it — so constructibility genuinely cannot be decided at compile time. What it
+  /// CAN spot is the shape that is essentially never registered: a delegate, or a bare
+  /// primitive/string. Those signal a receptor meant to be constructed by hand.
+  /// </para>
+  /// <para>
+  /// It earns its place because the failure is so disproportionate. The container validates every
+  /// registered descriptor when the provider is built with validation enabled, so ONE
+  /// un-constructible receptor aborts construction of the ENTIRE provider — every service in the
+  /// assembly — and the runtime error names the receptor without ever explaining why it was
+  /// registered. This trades an inexplicable startup crash for a message at the declaration site.
+  /// </para>
+  /// <para>
+  /// Silenced by <c>[SuppressReceptorRegistration]</c>, which is also the fix: it declares that the
+  /// owner constructs this receptor, skipping DI registration while leaving discovery and routing
+  /// intact.
+  /// </para>
+  /// </remarks>
+  /// <docs>fundamentals/receptors/receptors#manual-construction</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorRegistrationSuppressionTests.cs</tests>
+  public static readonly DiagnosticDescriptor ReceptorLikelyNotInjectable = new(
+      id: "WHIZ014",
+      title: "Receptor May Not Be Constructible by Dependency Injection",
+      messageFormat: "Receptor '{0}' takes constructor parameter '{1}' of type '{2}', which dependency injection is unlikely to supply. If it is constructed by hand, mark it [SuppressReceptorRegistration]; otherwise register that dependency. An un-constructible receptor aborts the ENTIRE service provider under container validation, not just itself.",
+      category: "Whizbang.ReceptorSafety",
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Receptor discovery registers every IReceptor implementation. A receptor whose constructor takes a delegate or a bare primitive is almost certainly built by its owner rather than resolved, and registering it leaves a descriptor the container cannot construct. Because container validation fails the whole provider on the first such descriptor, one of these takes down every service in the assembly. Mark it [SuppressReceptorRegistration] to declare manual construction, or register the missing dependency. This is a heuristic — a generator cannot know what an application registers — so it warns rather than errors."
+  );
 }

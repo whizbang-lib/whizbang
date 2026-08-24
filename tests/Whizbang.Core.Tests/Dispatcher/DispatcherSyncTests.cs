@@ -198,6 +198,10 @@ public class DispatcherSyncTests : DiagnosticTestBase {
     }
   }
 
+  // Constructed by hand so it can close over per-test state; the container has no way to supply
+  // that callback. Declaring it keeps the receptor out of DI, where one un-constructible
+  // descriptor would abort the whole service provider.
+  [SuppressReceptorRegistration]
   public class VoidSyncLogReceptor(Action onExecute) : ISyncReceptor<DispatcherSyncLogCommand> {
     private readonly Action _onExecute = onExecute;
 

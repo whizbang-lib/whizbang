@@ -43,7 +43,7 @@ namespace Whizbang.Core;
 /// }
 /// </code>
 /// </example>
-/// <docs>fundamentals/dispatcher/receptors#manual-construction</docs>
+/// <docs>fundamentals/receptors/receptors#manual-construction</docs>
 [AttributeUsage(
     AttributeTargets.Class |
     AttributeTargets.Struct,
