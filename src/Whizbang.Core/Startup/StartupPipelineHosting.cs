@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Startup;
@@ -65,21 +66,52 @@ public sealed class MigrateStartupStep : IStartupStep {
 /// </summary>
 /// <docs>operations/startup/startup-pipeline</docs>
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
-public sealed class StartupPipelineWorker : BackgroundService {
+public sealed partial class StartupPipelineWorker : BackgroundService {
   private readonly StartupPipelineRunner _runner;
+  private readonly ILogger<StartupPipelineWorker>? _logger;
 
   /// <summary>Creates the worker over the runner.</summary>
-  public StartupPipelineWorker(StartupPipelineRunner runner) {
+  public StartupPipelineWorker(StartupPipelineRunner runner, ILogger<StartupPipelineWorker>? logger = null) {
     ArgumentNullException.ThrowIfNull(runner);
     _runner = runner;
+    _logger = logger;
   }
 
   /// <inheritdoc />
+  /// <remarks>
+  /// Nothing that happens inside the pipeline may stop the host. This is a
+  /// <see cref="BackgroundService"/>, so anything escaping here meets the default
+  /// <c>HostOptions.BackgroundServiceExceptionBehavior</c> of <c>StopHost</c> and terminates the
+  /// process — and because that termination is a graceful stop, the process exits ZERO and logs
+  /// an orderly shutdown. A host destroyed this way is indistinguishable, to anything watching
+  /// exit codes or restart reasons, from one that was asked to stop. It can recur indefinitely
+  /// while every crash signal stays clean.
+  ///
+  /// Not stopping is also the more informative outcome, because the pipeline is fail-closed: a
+  /// run that did not complete leaves the availability filter refusing writes, so the service
+  /// stays up and reports unready with the reason in its logs. The runner already handles the
+  /// failures it can classify; this is the backstop for everything it cannot — order resolution,
+  /// for one, throws before any step runs.
+  /// </remarks>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     try {
       await _runner.RunAsync(stoppingToken).ConfigureAwait(false);
     } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
       // host shutdown while a step was still waiting — expected on a fail-closed boot
+    } catch (Exception ex) {
+      // Critical, not Error: the consequence is that this instance never becomes ready, which
+      // outlives the log line and needs to be findable from it. The exception carries its own
+      // type and message, so nothing is recomputed to say what failed.
+      if (_logger is not null) {
+        LogPipelineAbandoned(_logger, ex);
+      }
     }
   }
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Critical,
+    Message = "Startup pipeline abandoned. The pipeline did not complete, so this instance stays "
+            + "fail-closed and will NOT become ready — it is up but serving nothing. The host is "
+            + "deliberately left running: stopping it here would exit zero and look like a "
+            + "graceful shutdown to everything watching for crashes.")]
+  static partial void LogPipelineAbandoned(ILogger logger, Exception exception);
 }

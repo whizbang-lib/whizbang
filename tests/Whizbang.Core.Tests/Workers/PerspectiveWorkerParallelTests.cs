@@ -161,12 +161,21 @@ public sealed class PerspectiveWorkerParallelTests {
     // Release gate immediately so normal runners can complete
     gate.Release(2);
 
-    // Worker will propagate the exception from the throwing perspective
-    var workerTask = worker.StartAsync(cts.Token);
-
+    // Enqueue BEFORE starting the worker. The channel buffers with or without a reader, so this
+    // guarantees all three items are visible to the worker's first batch — which is the whole
+    // point of the test: the throwing group and the normal groups must be in flight TOGETHER.
+    //
+    // Enqueuing after start left that to chance. A worker that polled between writes could take
+    // the throwing item in a batch by itself, fault, and stop before the normal items were ever
+    // dequeued — so the normal runners never entered and the countdown never completed. The
+    // assertion then reported "normal perspectives did not run" for a scheduling accident rather
+    // than the invariant it exists to protect, which is why it failed only under load.
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalA" }, cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.NormalB" }, cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.ThrowingPerspective" }, cts.Token);
+
+    // Worker will propagate the exception from the throwing perspective
+    var workerTask = worker.StartAsync(cts.Token);
 
     // Wait on the completion signal with the test-lifetime bound.
     var normalEntered = allNormalEntered.Wait(TimeSpan.FromSeconds(45));

@@ -120,6 +120,16 @@ public sealed class StartupPipelineRunner {
   internal TimeSpan DutyRetryInterval { get; init; } = TimeSpan.FromSeconds(1);
 
   /// <summary>
+  /// How many CONSECUTIVE transient failures of the elector itself are absorbed before the step
+  /// is failed. The elector reaches its coordination primitive over a network, so a read timeout
+  /// there is a blip of the same kind every other worker rides out on its next tick — not a
+  /// verdict on whether the step should run. Absorbing them is what keeps one such blip from
+  /// unwinding the run; bounding them is what keeps a standing outage from waiting forever,
+  /// which is the other way to be silently broken (issue #494).
+  /// </summary>
+  internal int MaxTransientDutyFailures { get; init; } = 10;
+
+  /// <summary>
   /// Resolves the order and runs every enabled step, returning one result per step that ran.
   /// </summary>
   /// <param name="cancellationToken">Cancellation for host shutdown.</param>
@@ -198,21 +208,42 @@ public sealed class StartupPipelineRunner {
   /// </summary>
   private async ValueTask<StartupStepReport> _executeExclusiveAsync(
       IStartupStep step, StartupStepDescriptor descriptor, CancellationToken cancellationToken) {
-    var attempt = await _dutyElector!.TryAcquireAsync(descriptor.RequiredCapability, cancellationToken)
-      .ConfigureAwait(false);
-    if (attempt.Grant is null && descriptor.NonHolderBehavior == NonHolderBehavior.Skip) {
-      return new StartupStepReport(StartupStepOutcome.Skipped, "capability not held");
+    var (attempt, transient) =
+      await _tryAcquireAsync(descriptor.RequiredCapability, cancellationToken).ConfigureAwait(false);
+
+    if (attempt?.Grant is null && descriptor.NonHolderBehavior == NonHolderBehavior.Skip) {
+      // Skip is a single non-blocking attempt by definition — nobody blocks on this class of
+      // step. A transient failure must not quietly promote it into a waiter, so the outcome is
+      // still Skipped; only the reason distinguishes "lost the race" from "could not ask".
+      return new StartupStepReport(StartupStepOutcome.Skipped,
+        transient is null
+          ? "capability not held"
+          : $"capability undetermined: the elector failed with {transient.GetType().Name}: {transient.Message}");
     }
 
     var waited = TimeSpan.Zero;
     var attempts = 0;
     var nextNarration = 3;
-    while (attempt.Grant is null) {
-      if (attempt.Refusal is not DutyRefusal.Contended) {
+    var transientFailures = 0;
+    while (attempt?.Grant is null) {
+      if (transient is not null) {
+        transientFailures++;
+        if (transientFailures > MaxTransientDutyFailures) {
+          return new StartupStepReport(StartupStepOutcome.Failed,
+            $"duty '{descriptor.RequiredCapability}' could not be reached after "
+            + $"{transientFailures} consecutive failures — last was {transient.GetType().Name}: "
+            + $"{transient.Message}. Failing the step rather than waiting on it indefinitely.");
+        }
+      } else if (attempt!.Refusal is not DutyRefusal.Contended) {
         return new StartupStepReport(StartupStepOutcome.Failed,
           $"duty '{descriptor.RequiredCapability}' is unacquirable ({attempt.Refusal}): "
           + $"{attempt.Detail ?? "no detail"} — retrying cannot succeed, failing loudly instead of hanging");
+      } else {
+        // A clean refusal proves the elector is reachable, so any earlier failures were blips
+        // and not the leading edge of an outage.
+        transientFailures = 0;
       }
+
       cancellationToken.ThrowIfCancellationRequested();
       await Task.Delay(DutyRetryInterval, cancellationToken).ConfigureAwait(false);
       waited += DutyRetryInterval;
@@ -221,15 +252,41 @@ public sealed class StartupPipelineRunner {
         // Backoff: attempts 3, 10, 30, then every 60 — legible at the default 1s interval,
         // fast under test intervals, never a per-second drumbeat.
         nextNarration = nextNarration switch { 3 => 10, 10 => 30, _ => nextNarration + 60 };
+        var detail = transient is null
+          ? attempt?.Detail
+          : $"{transient.GetType().Name}: {transient.Message}";
         await _notifyAsync(o => o.OnStepWaitingAsync(
-          new StartupStepWaitContext(descriptor, descriptor.RequiredCapability, waited, attempt.Detail),
+          new StartupStepWaitContext(descriptor, descriptor.RequiredCapability, waited, detail),
           cancellationToken)).ConfigureAwait(false);
       }
-      attempt = await _dutyElector.TryAcquireAsync(descriptor.RequiredCapability, cancellationToken)
-        .ConfigureAwait(false);
+      (attempt, transient) =
+        await _tryAcquireAsync(descriptor.RequiredCapability, cancellationToken).ConfigureAwait(false);
     }
     await using (attempt.Grant.ConfigureAwait(false)) {
       return await _executeAsync(step, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// One acquisition attempt, with a transient failure RETURNED rather than thrown.
+  /// </summary>
+  /// <remarks>
+  /// The runner already refuses to let a step's body unwind the run, because "an exception that
+  /// unwinds the runner destroys exactly that record". The elector calls bracketing that body
+  /// deserve the same protection and did not have it: a read timeout on the coordination
+  /// primitive escaped through <c>RunAsync</c> into <c>StartupPipelineWorker.ExecuteAsync</c>,
+  /// where the default <c>BackgroundServiceExceptionBehavior.StopHost</c> turned it into
+  /// termination of the entire process — and, being a graceful stop, one that exits ZERO and so
+  /// reads as a normal shutdown to anything watching for crashes.
+  /// </remarks>
+  private async ValueTask<(DutyAttempt? Attempt, Exception? Transient)> _tryAcquireAsync(
+      string duty, CancellationToken cancellationToken) {
+    try {
+      return (await _dutyElector!.TryAcquireAsync(duty, cancellationToken).ConfigureAwait(false), null);
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+      throw;   // shutdown, not a transport failure — the caller unwinds deliberately
+    } catch (Exception ex) {
+      return (null, ex);
     }
   }
 
