@@ -29,7 +29,20 @@ namespace Whizbang.Core.Tests.Observability;
 [Category("Observability")]
 public class GovernorMetricsTests {
 
-  private static (GovernorMetrics Metrics, MeterListener Listener, List<(string Name, long Value, string? Tag)> Captured) _listen() {
+  /// <summary>
+  /// Starts a listener scoped to ONE governor series.
+  /// </summary>
+  /// <remarks>
+  /// The listener can only subscribe by meter NAME, and every <see cref="GovernorMetrics"/>
+  /// instance publishes under the same one. Under parallel execution that means
+  /// <c>RecordObservableInstruments</c> polls the gauges of every other live instance too, and a
+  /// test reading "the first width measurement" can read a sibling test's governor. That is a real
+  /// cross-test leak, not a flake: it failed only in CI, where these tests actually overlap.
+  ///
+  /// Each test therefore registers under its own series name and the callback drops measurements
+  /// tagged for anything else, so a test observes only what it created.
+  /// </remarks>
+  private static (GovernorMetrics Metrics, MeterListener Listener, List<(string Name, long Value, string? Direction)> Captured) _listen(string series) {
     var captured = new List<(string, long, string?)>();
     var metrics = new GovernorMetrics(new WhizbangMetrics());
     var listener = new MeterListener {
@@ -38,11 +51,17 @@ public class GovernorMetricsTests {
       },
     };
     listener.SetMeasurementEventCallback<long>((inst, val, tags, _) => {
-      string? tag = null;
+      string? governor = null;
+      string? direction = null;
       foreach (var t in tags) {
-        if (t.Key is "direction" or "governor") { tag = t.Value?.ToString(); }
+        if (t.Key == "governor") { governor = t.Value?.ToString(); }
+        if (t.Key == "direction") { direction = t.Value?.ToString(); }
       }
-      lock (captured) { captured.Add((inst.Name, val, tag)); }
+      // Someone else's series — including another test's governor on the shared meter name.
+      if (!string.Equals(governor, series, StringComparison.Ordinal)) {
+        return;
+      }
+      lock (captured) { captured.Add((inst.Name, val, direction)); }
     });
     listener.Start();
     return (metrics, listener, captured);
@@ -50,9 +69,10 @@ public class GovernorMetricsTests {
 
   [Test]
   public async Task Width_IsExportedAsAGaugeThatReflectsCurrentStateAsync() {
-    var (metrics, listener, captured) = _listen();
+    const string SERIES = "width-reflects-current-state";
+    var (metrics, listener, captured) = _listen(SERIES);
     var governor = new ThroughputGovernor(floor: 4, ceiling: 64);
-    metrics.Track("outbox-drain", governor);
+    metrics.Track(SERIES, governor);
 
     listener.RecordObservableInstruments();
 
@@ -68,9 +88,10 @@ public class GovernorMetricsTests {
 
   [Test]
   public async Task WidthGauge_FollowsTheGovernorAsItAdaptsAsync() {
-    var (metrics, listener, captured) = _listen();
+    const string SERIES = "width-gauge-follows-adaptation";
+    var (metrics, listener, captured) = _listen(SERIES);
     var governor = new ThroughputGovernor(floor: 2, ceiling: 64);
-    metrics.Track("outbox-drain", governor);
+    metrics.Track(SERIES, governor);
 
     var perCycle = 100;
     for (var i = 0; i < 12; i++) {
@@ -89,15 +110,16 @@ public class GovernorMetricsTests {
 
   [Test]
   public async Task Adjustments_AreCountedByDirectionAsync() {
-    var (metrics, listener, captured) = _listen();
+    const string SERIES = "adjustments-counted-by-direction";
+    var (metrics, listener, captured) = _listen(SERIES);
 
-    metrics.RecordAdjustment("outbox-drain", from: 4, to: 5);
-    metrics.RecordAdjustment("outbox-drain", from: 5, to: 3);
+    metrics.RecordAdjustment(SERIES, from: 4, to: 5);
+    metrics.RecordAdjustment(SERIES, from: 5, to: 3);
 
     var adjustments = captured.Where(c => c.Name.Contains("adjust", StringComparison.Ordinal)).ToList();
     await Assert.That(adjustments.Count).IsGreaterThanOrEqualTo(2);
-    await Assert.That(adjustments.Any(a => a.Tag == "grew")).IsTrue();
-    await Assert.That(adjustments.Any(a => a.Tag == "shrank")).IsTrue()
+    await Assert.That(adjustments.Any(a => a.Direction == "grew")).IsTrue();
+    await Assert.That(adjustments.Any(a => a.Direction == "shrank")).IsTrue()
       .Because("direction is the whole diagnostic: a governor shrinking far more often than it "
              + "grows is oscillating, and an undirected count cannot show that");
 

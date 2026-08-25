@@ -54,10 +54,6 @@ public sealed class ThroughputGovernor : IConcurrencyGovernor {
   // slow query, an unlucky batch. Only a run of them is evidence.
   private int _worseStreak;
 
-  // Consecutive cycles that failed to beat the best. Distinct from _worseStreak: a plateau means
-  // stop growing, whereas a decline means give width back.
-  private int _flatStreak;
-
   // A cycle must beat the best by this margin to count as improvement, and fall below it by this
   // margin to count as decline. Without a dead band the controller oscillates on measurement noise.
   private const double IMPROVE_MARGIN = 1.05;
@@ -76,7 +72,6 @@ public sealed class ThroughputGovernor : IConcurrencyGovernor {
       CurrentWidth = Math.Max(Floor, CurrentWidth / 2);
       _bestRate = 0;          // the old best was measured at a width we no longer run
       _worseStreak = 0;
-      _flatStreak = 0;
       return;
     }
 
@@ -115,7 +110,6 @@ public sealed class ThroughputGovernor : IConcurrencyGovernor {
       // expensive direction.
       _bestRate = rate;
       _worseStreak = 0;
-      _flatStreak = 0;
       CurrentWidth = Math.Min(Ceiling, CurrentWidth + 1);
       return;
     }
@@ -123,7 +117,6 @@ public sealed class ThroughputGovernor : IConcurrencyGovernor {
     if (rate <= _bestRate * DECLINE_MARGIN) {
       // Measurably worse at the same width, with work still queued. That is what contention looks
       // like from the inside: there is no other reason for the same width to accomplish less.
-      _flatStreak = 0;
       if (++_worseStreak >= DECLINE_PATIENCE) {
         CurrentWidth = Math.Max(Floor, CurrentWidth * 3 / 4);
         _worseStreak = 0;
@@ -136,8 +129,8 @@ public sealed class ThroughputGovernor : IConcurrencyGovernor {
     }
 
     // Neither better nor worse: the plateau. Stop growing — the extra width bought nothing, and
-    // continuing would consume a shared resource for no gain.
+    // continuing would consume a shared resource for no gain. Holding the width IS the action here;
+    // there is nothing to accumulate, so the decline streak simply resets.
     _worseStreak = 0;
-    _flatStreak++;
   }
 }
