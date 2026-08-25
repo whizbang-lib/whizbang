@@ -43,6 +43,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IMessagePublishStrategy? _publishStrategy;
   private readonly OutboxDrainWorkerOptions _options;
+  private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
@@ -114,7 +115,8 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IReceptorRegistry? runtimeReceptorRegistry = null,
     IDeadLetterStore? deadLetterStore = null,
     IGenerationProvider? generationProvider = null,
-    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) {
+    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
+    Whizbang.Core.Execution.IConcurrencyGovernor? governor = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
@@ -122,6 +124,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    // No governor supplied means the width is exactly the configured option, so adopting the
+    // seam is a no-op by construction and cannot smuggle a scheduling change into this change.
+    _governor = governor ?? new Whizbang.Core.Execution.FixedWidthGovernor(_options.MaxConcurrentStreams);
     _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _publishStrategy = publishStrategy;
@@ -309,12 +314,38 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// error isolation so one stream's failure never stops its siblings. The batched and fallback
   /// paths differ only in whether an entry carries a prefetched page, so both route through here.
   /// </summary>
-  private Task _drainEachAsync(
+  private async Task _drainEachAsync(
       IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work, CancellationToken ct) {
+    // Materialized so the governor learns how much was actually waiting — a count it cannot get
+    // from a lazily-enumerated sequence.
+    var batch = work as IReadOnlyCollection<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>>
+                ?? [.. work];
+
+    // Width is read PER CYCLE, never captured once: that is the granularity an adaptive strategy
+    // acts on, so a burst arriving between cycles can widen the next one.
     var parallelOpts = new ParallelOptions {
-      MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
+      MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
       CancellationToken = ct,
     };
+
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    try {
+      await _drainBatchAsync(batch, parallelOpts, ct).ConfigureAwait(false);
+    } finally {
+      // Reported even when the cycle threw: a governor that only learns from successful cycles is
+      // blind to exactly the conditions it exists to back away from.
+      _governor.Observe(new Whizbang.Core.Execution.GovernorSignal(
+        QueuedItems: batch.Count,
+        Contended: false,
+        Elapsed: System.Diagnostics.Stopwatch.GetElapsedTime(started)));
+    }
+  }
+
+  /// <summary>The drain proper, split out so the governor bookkeeping reads as one unit.</summary>
+  private Task _drainBatchAsync(
+      IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work,
+      ParallelOptions parallelOpts,
+      CancellationToken ct) {
     return Parallel.ForEachAsync(work, parallelOpts, async (entry, innerCt) => {
       try {
         await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value);

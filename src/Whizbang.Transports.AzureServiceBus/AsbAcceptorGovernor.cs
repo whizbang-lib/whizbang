@@ -28,7 +28,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorGovernorTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbAcceptorAdaptiveWiringTests.cs</tests>
-public sealed class AsbAcceptorGovernor {
+public sealed class AsbAcceptorGovernor : Whizbang.Core.Execution.IConcurrencyGovernor {
   // Growth fires when active sessions occupy ≥ 80% of the current pool — near-saturation means
   // pending sessions are probably queueing behind the acceptor cap.
   private const double GROWTH_PRESSURE_RATIO = 0.8;
@@ -79,6 +79,39 @@ public sealed class AsbAcceptorGovernor {
         return _currentConcurrency;
       }
     }
+  }
+
+  /// <summary>
+  /// The seam's name for <see cref="CurrentConcurrency"/>.
+  /// </summary>
+  /// <remarks>
+  /// This type predates <see cref="Whizbang.Core.Execution.IConcurrencyGovernor"/> and already
+  /// had the same shape — floor, ceiling, and a width it grows and decays. Implementing the
+  /// interface makes the one proven adaptive policy in the framework reusable instead of private
+  /// to this transport, without changing what it computes.
+  /// </remarks>
+  public int CurrentWidth => CurrentConcurrency;
+
+  /// <summary>
+  /// Seam entry point: folds an observation in and applies the policy.
+  /// </summary>
+  /// <remarks>
+  /// This governor derives its own pressure from session accounting rather than from the caller,
+  /// so the signal's queue depth is advisory here. What it does honor is
+  /// <see cref="Whizbang.Core.Execution.GovernorSignal.Contended"/>: an explicit report of
+  /// pushback decays immediately, without waiting out the evaluation window, because the window
+  /// exists to avoid reacting to noise — and a caller reporting contention is not noise.
+  /// </remarks>
+  /// <param name="signal">The observed cycle.</param>
+  public void Observe(Whizbang.Core.Execution.GovernorSignal signal) {
+    if (signal.Contended) {
+      lock (_sync) {
+        _currentConcurrency = Math.Max(Floor, _currentConcurrency / SCALE_FACTOR);
+        _restartWindows();
+      }
+      return;
+    }
+    _ = Evaluate();
   }
 
   /// <summary>Sessions currently held open (initialized and not yet closed).</summary>

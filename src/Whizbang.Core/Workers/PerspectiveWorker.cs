@@ -84,7 +84,10 @@ public partial class PerspectiveWorker(
   // and charge attempts like any other work, so the budget counts them — and a work kind
   // that is counted but never measured drags the drain rate down and throttles a healthy
   // service.
-  WorkCompletionMeter? completionMeter = null
+  WorkCompletionMeter? completionMeter = null,
+  // Optional, defaulted below: with none supplied the width is the configured option exactly,
+  // so adopting the seam changes no scheduling behavior.
+  Whizbang.Core.Execution.IConcurrencyGovernor? governor = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -110,6 +113,9 @@ public partial class PerspectiveWorker(
   public Task StartupScanComplete => _startupScanTcs.Task;
   private readonly PerspectiveMetrics? _metrics = metrics;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
+  private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor =
+    governor ?? new Whizbang.Core.Execution.FixedWidthGovernor(
+      (options ?? throw new ArgumentNullException(nameof(options))).Value.MaxConcurrentPerspectives);
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
     retryTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
     backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
@@ -986,7 +992,7 @@ public partial class PerspectiveWorker(
     await Parallel.ForEachAsync(
       groupedWork,
       new ParallelOptions {
-        MaxDegreeOfParallelism = _options.MaxConcurrentPerspectives,
+        MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
         CancellationToken = cancellationToken
       },
       async (group, ct) => {
@@ -1364,7 +1370,7 @@ public partial class PerspectiveWorker(
     await Parallel.ForEachAsync(
       eventsByStream,
       new ParallelOptions {
-        MaxDegreeOfParallelism = _options.MaxConcurrentPerspectives,
+        MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
         CancellationToken = cancellationToken
       },
       (streamGroup, ct) => new ValueTask(_processDrainModeStreamAsync(
