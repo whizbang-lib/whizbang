@@ -41,6 +41,7 @@ public static class WhizbangMeters {
     DeadLetterMetrics.METER_NAME,
     DispatcherMetrics.METER_NAME,
     EventCategoryMetrics.METER_NAME,
+    GovernorMetrics.METER_NAME,
     LifecycleCoordinatorMetrics.METER_NAME,
     LifecycleMetrics.METER_NAME,
     MaintenanceMetrics.METER_NAME,

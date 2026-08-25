@@ -57,9 +57,19 @@ public interface IConcurrencyGovernor {
 /// </summary>
 /// <param name="QueuedItems">Units waiting for a slot when the cycle began. Zero means the
 /// governor is already wide enough and should not grow.</param>
+/// <param name="CompletedItems">Units the cycle actually finished. Distinct from
+/// <paramref name="QueuedItems"/>, which is DEPTH — how much was waiting — and says nothing about
+/// how much got done. Throughput is only computable from work completed over elapsed time, so a
+/// governor that tunes on throughput needs this and cannot infer it from depth. Defaults to zero
+/// for callers that do not measure it; a governor requiring it should treat zero as "unknown"
+/// rather than as "nothing was accomplished".</param>
 /// <param name="Contended">True when the governed resource pushed back — connection acquisition
 /// waited, the pool saturated, the broker throttled. This is the decay signal, and it must
 /// dominate: growing while contended is how a governor turns a slow path into an outage.</param>
 /// <param name="Elapsed">Wall time the cycle took, for rate-based tuning.</param>
 /// <docs>operations/workers/concurrency-governor</docs>
-public readonly record struct GovernorSignal(int QueuedItems, bool Contended, TimeSpan Elapsed);
+public readonly record struct GovernorSignal(
+  int QueuedItems,
+  bool Contended,
+  TimeSpan Elapsed,
+  int CompletedItems = 0);
