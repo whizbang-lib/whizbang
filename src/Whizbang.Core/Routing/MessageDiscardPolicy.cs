@@ -88,6 +88,13 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly IEventMarkerResolver? _markerResolver;
 
+  // Reason+type pairs already surfaced at Information. Value is unused — this is a set.
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<(MessageDiscardReason, string), byte> _seenDiscards = new();
+
+  // Ceiling on distinct pairs tracked. Far above any real contract surface, low enough that a
+  // pathological type string cannot turn the throttle into the leak it exists to prevent.
+  private const int MAX_TRACKED_DISCARD_KEYS = 1024;
+
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
   /// <summary>OTel meter name for the discard counter.</summary>
   public const string METER_NAME = "Whizbang.Core.Routing.MessageDiscard";
@@ -220,6 +227,19 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     if (!decision.ShouldDiscard) { return; }
 
     var level = _levelFor(decision.Reason);
+
+    // Demote repeats to Debug. The FIRST discard of a given reason+type is a real signal — rows
+    // exist for a type nothing consumes now, which says something about deployment shape. Every
+    // repeat after that says the same thing again, and on a bulk backlog "again" means hundreds
+    // of lines per second: observed in production at ~735/s sustained, which drove the container
+    // to its memory limit and killed it. The work was fine; the narration was not.
+    //
+    // The counter below is unconditional, so demoting the text costs no observability — the rate
+    // and the payload type stay on the dashboard either way.
+    if (level >= LogLevel.Information && !_isFirstSighting(decision.Reason, payloadClrType)) {
+      level = LogLevel.Debug;
+    }
+
     if (_logger.IsEnabled(level)) {
 #pragma warning disable CA1848 // Diagnostic logging — level chosen at runtime by reason; LoggerMessage source-gen doesn't help here.
       _logger.Log(
@@ -238,6 +258,24 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
       foreach (var (k, v) in additionalTags) { tags.Add(k, v); }
     }
     _skippedCounter.Add(1, tags);
+  }
+
+  /// <summary>
+  /// True the first time this reason+type pair is seen, false forever after.
+  /// </summary>
+  /// <remarks>
+  /// Bounded deliberately. The natural key space is the service's contract surface — small and
+  /// fixed — but "naturally bounded" is an assumption about the caller, and this set lives for the
+  /// process lifetime. A malformed or attacker-influenced type string would otherwise make an
+  /// unbounded cache out of a component whose entire purpose here is to stop unbounded growth.
+  /// Past the cap the set stops admitting new keys, so the worst case degrades to logging those
+  /// types at Information rather than to consuming memory without limit.
+  /// </remarks>
+  private bool _isFirstSighting(MessageDiscardReason reason, string payloadClrType) {
+    if (_seenDiscards.Count >= MAX_TRACKED_DISCARD_KEYS) {
+      return false;
+    }
+    return _seenDiscards.TryAdd((reason, payloadClrType), 0);
   }
 
   private static LogLevel _levelFor(MessageDiscardReason reason) => reason switch {

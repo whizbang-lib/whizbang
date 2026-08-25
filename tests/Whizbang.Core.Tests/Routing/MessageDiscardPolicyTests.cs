@@ -263,5 +263,83 @@ public class MessageDiscardPolicyTests {
     await Assert.That(decision.ShouldDiscard).IsTrue();
     await Assert.That(decision.Reason).IsEqualTo(MessageDiscardReason.NoLocalConsumer);
   }
-}
 
+  // ---------- a per-message log on a bulk path is a memory leak with extra steps ----------
+
+  /// <summary>
+  /// RegistryChanged must not log per message at a level that is on by default.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Observed in production: a service discarding a type it no longer consumes emitted this line
+  /// ~735 times per second for a sustained bulk backlog — 22,000 log lines per 30 seconds. The
+  /// process was OOM-killed repeatedly, and the log volume was the driver, not the work.
+  /// </para>
+  /// <para>
+  /// The first occurrence per type genuinely matters: it means rows were written when a consumer
+  /// existed and that consumer is gone now, which is a real deployment-shape signal an operator
+  /// wants. The ten-thousandth occurrence carries no additional information — the counter already
+  /// tags every discard by reason and payload type, so the rate is fully observable without the
+  /// text.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task RegistryChanged_LogsOncePerType_ThenFallsToDebugAsync() {
+    var (policy, _, logger, _) = _newPolicy();
+    var decision = new MessageDiscardDecision(
+      ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
+
+    for (var i = 0; i < 500; i++) {
+      policy.RecordDiscard(MessageDiscardGate.Inbox, decision, UNCONSUMED_TYPE);
+    }
+
+    var atOrAboveInfo = logger.Entries.Count(e => e.Level >= LogLevel.Information);
+    await Assert.That(atOrAboveInfo).IsEqualTo(1)
+      .Because("500 identical discards carry exactly as much information as the first — and at "
+             + "production rates the repeats are what exhausts the container's memory");
+  }
+
+  [Test]
+  public async Task RegistryChanged_StillSurfacesTheFirstOccurrenceOfEachDistinctTypeAsync() {
+    var (policy, _, logger, _) = _newPolicy();
+    var decision = new MessageDiscardDecision(
+      ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
+
+    policy.RecordDiscard(MessageDiscardGate.Inbox, decision, "Test.Contracts.AlphaEvent");
+    policy.RecordDiscard(MessageDiscardGate.Inbox, decision, "Test.Contracts.AlphaEvent");
+    policy.RecordDiscard(MessageDiscardGate.Inbox, decision, "Test.Contracts.BetaEvent");
+
+    var surfaced = logger.Entries.Where(e => e.Level >= LogLevel.Information).ToList();
+    await Assert.That(surfaced.Count).IsEqualTo(2)
+      .Because("suppressing the repeats must not suppress a DIFFERENT type going unconsumed — "
+             + "that is a distinct deployment signal, and collapsing them would hide it");
+    await Assert.That(surfaced.Any(e => e.Message.Contains("AlphaEvent", StringComparison.Ordinal))).IsTrue();
+    await Assert.That(surfaced.Any(e => e.Message.Contains("BetaEvent", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task RegistryChanged_CounterStillCountsEveryDiscardAsync() {
+    var meter = new Meter("Whizbang.Tests.DiscardFloodCounter");
+    var measured = 0L;
+    using var listener = new MeterListener {
+      InstrumentPublished = (inst, l) => {
+        if (inst.Meter.Name == "Whizbang.Tests.DiscardFloodCounter") { l.EnableMeasurementEvents(inst); }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, v, _, _) => Interlocked.Add(ref measured, v));
+    listener.Start();
+
+    var registry = new TestRegistry { Consumed = { CONSUMED_TYPE } };
+    var policy = new MessageDiscardPolicy(registry, new RecordingLogger<MessageDiscardPolicy>(), meter);
+    var decision = new MessageDiscardDecision(
+      ShouldDiscard: true, MessageDiscardReason.RegistryChanged, Detail: "no consumer registered now");
+
+    for (var i = 0; i < 250; i++) {
+      policy.RecordDiscard(MessageDiscardGate.Inbox, decision, UNCONSUMED_TYPE);
+    }
+
+    await Assert.That(measured).IsEqualTo(250)
+      .Because("the log is throttled, the MEASUREMENT never is — otherwise quieting the flood "
+             + "would also blind the dashboard that proves it is happening");
+  }
+}
