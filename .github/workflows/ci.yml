@@ -23,9 +23,21 @@ concurrency:
   # that blocked the release merge — violating "a publish must never be cancelled
   # mid-push". Same-branch PR supersession still works: all pull_request runs for a
   # branch share one group keyed by head_ref, so a new commit cancels the older PR run.
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
-  # PRs cancel superseded runs; pushes (develop/release publishes) queue instead — a publish
-  # must never be cancelled mid-push.
+  #
+  # PUSH runs are keyed by SHA, so every pushed commit gets its OWN group and can never be
+  # displaced by a later push. cancel-in-progress: false is NOT sufficient on its own — it
+  # prevents cancelling a RUNNING run, but GitHub keeps at most ONE pending run per group, so
+  # a third push arriving while one run is executing and another is queued EVICTS the queued
+  # one. That run is cancelled before it starts (tell-tale: total_jobs = 0), and because
+  # Detect Changes scopes publish to the pushed commit, the evicted commit's packages are
+  # never published — with every workflow reporting green. Keying by SHA removes the shared
+  # queue slot that made that possible (issue #539).
+  #
+  # PULL_REQUEST runs stay keyed by head_ref so a new commit still supersedes the older run
+  # for that branch, which is the behavior supersession exists for.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  # PRs cancel superseded runs; pushes never cancel — a publish must not be lost, whether by
+  # being cancelled mid-run or evicted from the queue before it starts.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
