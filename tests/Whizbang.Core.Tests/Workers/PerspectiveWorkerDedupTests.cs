@@ -25,6 +25,22 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 [NotInParallel("PerspectiveWorkerDedup")]
 public class PerspectiveWorkerDedupTests {
+
+  /// <summary>
+  /// Liveness backstop for the completion signals in this file — NOT a pace assertion.
+  /// </summary>
+  /// <remarks>
+  /// Every wait here is gated on a <c>TaskCompletionSource</c> that the runner/coordinator
+  /// completes, so a healthy worker satisfies it immediately regardless of this value. The bound
+  /// exists only so a genuinely broken worker fails instead of hanging the suite forever.
+  ///
+  /// It was 5 seconds, which is long enough in isolation and not long enough under a full-suite
+  /// run: <c>Worker_DifferentWorkIds_BothProcessedAsync</c> failed at 5s 003ms in CI while the
+  /// invariant it asserts held perfectly. A backstop that trips on scheduler pressure reports
+  /// "the worker did not process the work" for what was really "the machine was busy", which is
+  /// worse than useless — it trains people to re-run red builds.
+  /// </remarks>
+  private static readonly TimeSpan _signalTimeout = TimeSpan.FromSeconds(60);
   // ==================== Core Dedup Tests ====================
 
   [Test]
@@ -56,10 +72,10 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await observer.WaitForDedupCallsAsync(1, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await observer.WaitForDedupCallsAsync(1, _signalTimeout);
     var runCountWhenDedupBegan = runner.RunAsyncCallCount;
-    await observer.WaitForDedupCallsAsync(2, TimeSpan.FromSeconds(5)); // further redeliveries keep deduping
+    await observer.WaitForDedupCallsAsync(2, _signalTimeout); // further redeliveries keep deduping
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -102,7 +118,7 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(2, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(2, _signalTimeout);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -154,7 +170,7 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(2, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(2, _signalTimeout);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -190,8 +206,8 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await observer.WaitForDedupCallsAsync(1, TimeSpan.FromSeconds(5)); // deterministic dedup signal, not a cycle-count proxy
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await observer.WaitForDedupCallsAsync(1, _signalTimeout); // deterministic dedup signal, not a cycle-count proxy
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -226,9 +242,9 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
     // Wait for next cycle to ensure in-flight marking is complete
-    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -263,7 +279,7 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await coordinator.WaitForClaimCallsAsync(3, TimeSpan.FromSeconds(5));
+    await coordinator.WaitForClaimCallsAsync(3, _signalTimeout);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -297,10 +313,10 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await observer.WaitForDedupCallsAsync(1, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await observer.WaitForDedupCallsAsync(1, _signalTimeout);
     var runCountWhenDedupBegan = runner.RunAsyncCallCount;
-    await observer.WaitForDedupCallsAsync(2, TimeSpan.FromSeconds(5)); // further redeliveries keep deduping
+    await observer.WaitForDedupCallsAsync(2, _signalTimeout); // further redeliveries keep deduping
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -367,8 +383,8 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
     await Task.Delay(200);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
@@ -407,8 +423,8 @@ public class PerspectiveWorkerDedupTests {
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
-    await runner.WaitForRunCallsAsync(1, TimeSpan.FromSeconds(5));
-    await coordinator.WaitForClaimCallsAsync(2, TimeSpan.FromSeconds(5));
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
     await Task.Delay(200);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
