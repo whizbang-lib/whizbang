@@ -43,6 +43,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IMessagePublishStrategy? _publishStrategy;
   private readonly OutboxDrainWorkerOptions _options;
+  private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor;
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
@@ -114,7 +115,9 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     IReceptorRegistry? runtimeReceptorRegistry = null,
     IDeadLetterStore? deadLetterStore = null,
     IGenerationProvider? generationProvider = null,
-    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null) {
+    Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
+    Whizbang.Core.Execution.IConcurrencyGovernor? governor = null,
+    Whizbang.Core.Observability.GovernorMetrics? governorMetrics = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
@@ -122,6 +125,15 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+    // No governor supplied means the width is exactly the configured option, so adopting the
+    // seam is a no-op by construction and cannot smuggle a scheduling change into this change.
+    // Turn-key observability: whatever governor is in play — the fixed-width default or a host
+    // supplied strategy — is wrapped so its decisions and their inputs reach OpenTelemetry with no
+    // consumer wiring. A concurrency controller nobody can see is one nobody can debug.
+    var chosen = governor ?? new Whizbang.Core.Execution.FixedWidthGovernor(_options.MaxConcurrentStreams);
+    _governor = governorMetrics is null
+      ? chosen
+      : new Whizbang.Core.Execution.ObservedConcurrencyGovernor("outbox-drain", chosen, governorMetrics);
     _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _publishStrategy = publishStrategy;
@@ -309,15 +321,50 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// error isolation so one stream's failure never stops its siblings. The batched and fallback
   /// paths differ only in whether an entry carries a prefetched page, so both route through here.
   /// </summary>
-  private Task _drainEachAsync(
+  private async Task _drainEachAsync(
       IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work, CancellationToken ct) {
+    // Materialized so the governor learns how much was actually waiting — a count it cannot get
+    // from a lazily-enumerated sequence.
+    var batch = work as IReadOnlyCollection<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>>
+                ?? [.. work];
+
+    // Width is read PER CYCLE, never captured once: that is the granularity an adaptive strategy
+    // acts on, so a burst arriving between cycles can widen the next one.
     var parallelOpts = new ParallelOptions {
-      MaxDegreeOfParallelism = Math.Max(1, _options.MaxConcurrentStreams),
+      MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
       CancellationToken = ct,
     };
+
+    var started = System.Diagnostics.Stopwatch.GetTimestamp();
+    var completed = 0;
+    try {
+      await _drainBatchAsync(batch, parallelOpts, () => Interlocked.Increment(ref completed), ct)
+        .ConfigureAwait(false);
+    } finally {
+      // Reported even when the cycle threw: a governor that only learns from successful cycles is
+      // blind to exactly the conditions it exists to back away from.
+      _governor.Observe(new Whizbang.Core.Execution.GovernorSignal(
+        QueuedItems: batch.Count,
+        Contended: false,
+        Elapsed: System.Diagnostics.Stopwatch.GetElapsedTime(started),
+        // Completions, not depth. Depth is what was WAITING and says nothing about what got done;
+        // a governor tuning on depth/time would be acting on a number that is not throughput.
+        CompletedItems: Volatile.Read(ref completed)));
+    }
+  }
+
+  /// <summary>The drain proper, split out so the governor bookkeeping reads as one unit.</summary>
+  private Task _drainBatchAsync(
+      IEnumerable<KeyValuePair<Guid, IReadOnlyList<OutboxBatchRow>?>> work,
+      ParallelOptions parallelOpts,
+      Action onStreamCompleted,
+      CancellationToken ct) {
     return Parallel.ForEachAsync(work, parallelOpts, async (entry, innerCt) => {
       try {
         await _drainStreamInnerAsync(entry.Key, innerCt, prefetched: entry.Value);
+        // Counted only on success: a failed stream accomplished nothing, and counting it would
+        // report healthy throughput while the drain was actually failing.
+        onStreamCompleted();
       } catch (OperationCanceledException) when (innerCt.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {

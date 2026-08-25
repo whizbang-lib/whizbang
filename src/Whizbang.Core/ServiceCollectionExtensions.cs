@@ -326,6 +326,11 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<LifecycleMetrics>();
     services.TryAddSingleton<InboxMetrics>();
     services.TryAddSingleton<LifecycleCoordinatorMetrics>();
+    // Turn-key: registered here so a governor's decisions and the evidence behind them reach
+    // OpenTelemetry with no consumer wiring. A component that silently changes concurrency and
+    // cannot be observed doing it is undebuggable in production, so the observable path must be
+    // the DEFAULT rather than something a host remembers to opt into.
+    services.TryAddSingleton<GovernorMetrics>();
     services.TryAddSingleton<EventCategoryMetrics>();
     services.TryAddSingleton<TypeRegistryMetrics>();
 
