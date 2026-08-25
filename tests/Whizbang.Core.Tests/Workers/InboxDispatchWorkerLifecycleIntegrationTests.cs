@@ -385,7 +385,14 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
     var work = _makeWork("Anything.Goes, Test");
     await inbox.WriteAsync(work, cts.Token);
 
-    await invoker.PostAllPerspectivesInlineFired.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    // Await BOTH signals, not just the first. PostLifecycleInline fires AFTER
+    // PostAllPerspectivesInline, so gating on the earlier stage alone leaves the second
+    // assertion racing the stage it is asserting — it wins most of the time, which is what
+    // makes the failure appear only under full-suite load and look like flakiness rather
+    // than the ordering bug it is.
+    await Task.WhenAll(
+      invoker.PostAllPerspectivesInlineFired.Task.WaitAsync(TimeSpan.FromSeconds(5)),
+      invoker.PostLifecycleInlineFired.Task.WaitAsync(TimeSpan.FromSeconds(5)));
 
     await Assert.That(invoker.HasStage(LifecycleStage.PostAllPerspectivesInline)).IsTrue();
     await Assert.That(invoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue();
