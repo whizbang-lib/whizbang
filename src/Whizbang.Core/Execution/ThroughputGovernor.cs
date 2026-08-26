@@ -28,13 +28,20 @@ namespace Whizbang.Core.Execution;
 /// <docs>operations/workers/concurrency-governor</docs>
 /// <tests>tests/Whizbang.Core.Tests/Execution/ThroughputGovernorTests.cs</tests>
 public sealed class ThroughputGovernor : IConcurrencyGovernor {
-  /// <summary>Creates a self-tuning governor that starts at its floor.</summary>
+  /// <summary>Creates a self-tuning governor.</summary>
   /// <param name="floor">Narrowest width; clamped to at least 1.</param>
   /// <param name="ceiling">Widest width, derived from the governed resource's budget.</param>
-  public ThroughputGovernor(int floor, int ceiling) {
+  /// <param name="start">
+  /// Width to begin at, clamped into the band. Defaults to the floor — appropriate when nothing is
+  /// known about the workload. Callers REPLACING an existing constant should pass that constant, so
+  /// the first cycle behaves exactly like the width being replaced and any change has to be earned
+  /// from a measurement. Starting an upgrade at the floor would narrow a running deployment on
+  /// restart: a throughput regression arriving disguised as an improvement.
+  /// </param>
+  public ThroughputGovernor(int floor, int ceiling, int? start = null) {
     Floor = Math.Max(1, floor);
     Ceiling = Math.Max(Floor, ceiling);
-    CurrentWidth = Floor;
+    CurrentWidth = Math.Clamp(start ?? Floor, Floor, Ceiling);
   }
 
   /// <inheritdoc />

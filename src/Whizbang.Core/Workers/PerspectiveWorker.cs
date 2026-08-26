@@ -114,8 +114,27 @@ public partial class PerspectiveWorker(
   private readonly PerspectiveMetrics? _metrics = metrics;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly Whizbang.Core.Execution.IConcurrencyGovernor _governor =
-    governor ?? new Whizbang.Core.Execution.FixedWidthGovernor(
-      (options ?? throw new ArgumentNullException(nameof(options))).Value.MaxConcurrentPerspectives);
+    governor ?? CreateDefaultGovernor(
+      (options ?? throw new ArgumentNullException(nameof(options))).Value);
+  /// <summary>
+  /// The governor a host gets when it supplies none: self-tuning, starting at the configured width.
+  /// </summary>
+  /// <remarks>
+  /// Same band construction as the outbox drain — ceiling at the configured maximum so an adaptive
+  /// default can never exceed an explicit operator bound, start at that same value so an upgrade is
+  /// not a silent narrowing, floor at a quarter so there is real room to yield. The perspective path
+  /// shares a database budget with every other worker, so the ability to give width back under
+  /// pressure is what keeps it from starving the rest of the system during a bulk replay.
+  /// </remarks>
+  internal static Whizbang.Core.Execution.IConcurrencyGovernor CreateDefaultGovernor(PerspectiveWorkerOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    var configured = Math.Max(1, options.MaxConcurrentPerspectives);
+    return new Whizbang.Core.Execution.ThroughputGovernor(
+      floor: Math.Max(1, configured / 4),
+      ceiling: configured,
+      start: configured);
+  }
+
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
     retryTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
     backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
