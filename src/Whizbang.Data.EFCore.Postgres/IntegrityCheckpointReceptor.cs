@@ -53,6 +53,16 @@ public sealed partial class IntegrityCheckpointReceptor(
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
+
+    // Settledness is measured ONCE per checkpoint, service-wide. A consumer that is merely BEHIND
+    // reports the same deficit on both confirmation cycles and confirms a gap while nothing has
+    // been lost — the events are queued, not missing. Repairing then re-delivers work that is
+    // already coming, which lengthens the queue that produced the false gap.
+    //
+    // null means the backend cannot answer. That is UNMEASURED, never settled: "nothing
+    // outstanding" and "nobody looked" are the same value and opposite facts.
+    var backlog = await coordinator.CountServiceBacklogAsync(cancellationToken).ConfigureAwait(false);
+    var settled = backlog is not null && backlog.IsSettled;
     var gapReportCap = Math.Max(1, options.MaxGapReportsPerCheckpoint);
     var gapReportsPublished = 0;
     var confirmedGaps = 0;
@@ -67,7 +77,13 @@ public sealed partial class IntegrityCheckpointReceptor(
         continue;   // healed in flight — the straggler arrived between checkpoints
       }
 
-      var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped && repairBudget > 0;
+      // Gated on the SERVICE having settled, not this instance. A service runs many instances
+      // against one shared inbox; an instance that finished its own claimed streams looks idle from
+      // the inside while peers are still draining, and repairing off that local view re-requests
+      // events its own siblings are processing. See IntegrityRepairPolicy.
+      var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped
+                    && repairBudget > 0
+                    && settled;
       metrics?.GapsDetected.Add(1,
         new KeyValuePair<string, object?>("origin", pending.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", pending.EventType));
@@ -90,6 +106,14 @@ public sealed partial class IntegrityCheckpointReceptor(
       // instead of only the durable writes.
       LogGapConfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
         pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual, autoRepair);
+
+      // An operator seeing a confirmed gap with autoRepair=false needs to know WHY: a service
+      // deliberately withholding repair while it drains reads identically to one with repair
+      // disabled, and the two call for opposite responses.
+      if (!settled && options.RepairMode == IntegrityRepairMode.AutoRepairCapped) {
+        LogRepairWithheldConsumerBehind(logger, pending.OriginServiceName, pending.EventType,
+          backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
+      }
 
       // Opt-in: nothing consumes these and each mints its own stream. See
       // StreamIntegrityOptions.PublishReportEvents.
@@ -220,6 +244,15 @@ public sealed partial class IntegrityCheckpointReceptor(
               "(autoRepair={AutoRepairRequested})")]
   static partial void LogGapConfirmed(ILogger logger, string eventType, string? tenantScope, string originServiceName,
     long fromCommitSequence, long toCommitSequence, int expectedCount, int actualCount, bool autoRepairRequested);
+
+  [LoggerMessage(EventId = 59, Level = LogLevel.Information,
+    Message = "Auto-repair WITHHELD for '{OriginServiceName}' ({EventType}) — this service has not "
+            + "settled ({UnprocessedRows} unprocessed, {LeasedRows} leased by any instance). The "
+            + "events are queued, not missing; repairing now would re-deliver work already in "
+            + "flight and lengthen the very queue that produced the deficit. A value of -1 means "
+            + "the backend could not report, which is treated as NOT settled.")]
+  static partial void LogRepairWithheldConsumerBehind(ILogger logger, string originServiceName,
+    string eventType, long unprocessedRows, long leasedRows);
 
   [LoggerMessage(EventId = 51, Level = LogLevel.Warning,
     Message = "Auto-repair request to '{OriginServiceName}' skipped — missing infrastructure " +
