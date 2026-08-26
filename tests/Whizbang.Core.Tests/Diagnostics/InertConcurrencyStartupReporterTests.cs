@@ -37,10 +37,11 @@ public class InertConcurrencyStartupReporterTests {
     var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
     var reporter = new InertConcurrencyStartupReporter(
       logger,
-      Options.Create(new WorkCoordinatorOptions { ParallelizeStreams = false }),
-      Options.Create(new OrderedStreamProcessorOptions { ParallelizeStreams = false }),
-      Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 }),
-      Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 64 }));
+      services: null,
+      coordinator: Options.Create(new WorkCoordinatorOptions { ParallelizeStreams = false }),
+      orderedStream: Options.Create(new OrderedStreamProcessorOptions { ParallelizeStreams = false }),
+      outboxDrain: Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 }),
+      inboxDispatch: Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 64 }));
 
     await reporter.StartAsync(CancellationToken.None);
 
@@ -57,10 +58,11 @@ public class InertConcurrencyStartupReporterTests {
     var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
     var reporter = new InertConcurrencyStartupReporter(
       logger,
-      Options.Create(new WorkCoordinatorOptions { ParallelizeStreams = true }),
-      Options.Create(new OrderedStreamProcessorOptions { ParallelizeStreams = true }),
-      Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 }),
-      Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 64 }));
+      services: null,
+      coordinator: Options.Create(new WorkCoordinatorOptions { ParallelizeStreams = true }),
+      orderedStream: Options.Create(new OrderedStreamProcessorOptions { ParallelizeStreams = true }),
+      outboxDrain: Options.Create(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 }),
+      inboxDispatch: Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 64 }));
 
     await reporter.StartAsync(CancellationToken.None);
 
@@ -93,5 +95,52 @@ public class InertConcurrencyStartupReporterTests {
     await Assert.That(registered).IsTrue()
       .Because("turn-key means the deployment that most needs this warning — one that never "
              + "configured anything — is exactly the one that gets it without opting in");
+  }
+
+  [Test]
+  public async Task ReadsTheOptionsTheWORKERSUse_NotADefaultConstructedIOptionsAsync() {
+    // The workers resolve GetRequiredService<WorkCoordinatorOptions>() — a plain singleton.
+    // A host that registers it that way and never calls Configure<T> leaves IOptions<T> resolvable
+    // but DEFAULT-CONSTRUCTED, so a reporter reading IOptions sees ParallelizeStreams = false on a
+    // correctly configured system and warns about a problem that does not exist.
+    //
+    // This was observed in production: both flags set true in the container, both verified in the
+    // pod spec, and the warning fired anyway. A diagnostic that cries wolf on a healthy config is
+    // worse than none — it is the exact noise this feature was written to avoid.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton(new WorkCoordinatorOptions { ParallelizeStreams = true });
+    services.AddSingleton(new OrderedStreamProcessorOptions { ParallelizeStreams = true });
+    services.AddSingleton(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 });
+    services.AddSingleton(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 64 });
+    var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
+    services.AddSingleton<ILogger<InertConcurrencyStartupReporter>>(logger);
+    services.AddSingleton<InertConcurrencyStartupReporter>();
+
+    var sp = services.BuildServiceProvider();
+    await sp.GetRequiredService<InertConcurrencyStartupReporter>().StartAsync(CancellationToken.None);
+
+    await Assert.That(logger.Entries.Count(e => e.Level >= LogLevel.Warning)).IsEqualTo(0)
+      .Because("these are the options the workers actually read; warning here reports a defect "
+             + "that is not present and trains operators to ignore the one that is");
+  }
+
+  [Test]
+  public async Task StillWarnsWhenTheSingletonOptionsAreGenuinelyInertAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton(new WorkCoordinatorOptions { ParallelizeStreams = false });
+    services.AddSingleton(new OrderedStreamProcessorOptions { ParallelizeStreams = false });
+    services.AddSingleton(new OutboxDrainWorkerOptions { MaxConcurrentStreams = 128 });
+    services.AddSingleton(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 64 });
+    var logger = new CapturingLogger<InertConcurrencyStartupReporter>();
+    services.AddSingleton<ILogger<InertConcurrencyStartupReporter>>(logger);
+    services.AddSingleton<InertConcurrencyStartupReporter>();
+
+    var sp = services.BuildServiceProvider();
+    await sp.GetRequiredService<InertConcurrencyStartupReporter>().StartAsync(CancellationToken.None);
+
+    await Assert.That(logger.Entries.Count(e => e.Level >= LogLevel.Warning)).IsEqualTo(2)
+      .Because("fixing the false positive must not disable the true positive");
   }
 }
