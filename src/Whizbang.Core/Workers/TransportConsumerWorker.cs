@@ -404,7 +404,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       _transport,
       state.Destination,
-      async (batch, ct) => await _handleMessageBatchAsync(batch, ct),
+      async (batch, ct) => await _handleBatchWithoutKillingTheHostAsync(batch, ct),
       _transportBatchOptions,
       state,
       _resilienceOptions,
@@ -482,6 +482,58 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
+  /// <summary>
+  /// Runs the batch handler so that a failed batch costs one batch, never the process.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Without this, an exception escaping the handler propagates out of the worker's
+  /// <c>ExecuteAsync</c>, and the default <c>BackgroundServiceExceptionBehavior.StopHost</c> stops
+  /// the host. Observed in production: a PostgreSQL statement timeout (SQLSTATE 57014) during the
+  /// inbox store shut down every worker in an orderly fashion and exited **zero**, with no
+  /// Error-level line anywhere in the terminated container. Crash alerting saw no crash; error-rate
+  /// alerting saw no error; the pod history was indistinguishable from a rollout.
+  /// </para>
+  /// <para>
+  /// Shutdown is decided by the stopping token alone — see
+  /// <see cref="TransportBatchFailureClassifier"/> — because the exception TYPE cannot distinguish a
+  /// database cancelling a statement from a host being asked to stop. Anything else is logged and
+  /// swallowed here: the broker still holds the messages and will redeliver them to a host that is
+  /// still alive to receive them.
+  /// </para>
+  /// </remarks>
+  private async Task _handleBatchWithoutKillingTheHostAsync(
+      IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
+    try {
+      await _handleMessageBatchAsync(messages, cancellationToken);
+    } catch (Exception ex) when (
+        TransportBatchFailureClassifier.Classify(ex, cancellationToken) == TransportBatchFailure.Transient) {
+      if (TransportBatchFailureClassifier.IsStatementCancellation(ex)) {
+        LogBatchStatementCanceled(_logger, messages.Count, ex);
+      } else {
+        LogBatchFailed(_logger, messages.Count, ex);
+      }
+      // Swallowed deliberately. The alternative is terminating the host over one batch the broker
+      // will redeliver anyway.
+    }
+  }
+
+  [LoggerMessage(
+    EventId = 90,
+    Level = LogLevel.Error,
+    Message = "Transport batch of {BatchCount} message(s) failed; the batch is abandoned and the broker "
+            + "will redeliver. The host stays up — a failed batch must not stop the process.")]
+  static partial void LogBatchFailed(ILogger logger, int batchCount, Exception ex);
+
+  [LoggerMessage(
+    EventId = 91,
+    Level = LogLevel.Error,
+    Message = "Transport batch of {BatchCount} message(s) failed because the DATABASE canceled the "
+            + "statement (SQLSTATE 57014) — typically a command timeout, not a shutdown. The batch is "
+            + "abandoned and the broker will redeliver. If this repeats, the store statement is "
+            + "exceeding its timeout, usually because the table has grown.")]
+  static partial void LogBatchStatementCanceled(ILogger logger, int batchCount, Exception ex);
+
   private async Task _handleMessageBatchAsync(
       IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
     if (messages.Count == 0) {
