@@ -404,7 +404,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       _transport,
       state.Destination,
-      async (batch, ct) => await _handleMessageBatchAsync(batch, ct),
+      async (batch, ct) => await _handleBatchWithoutKillingTheHostAsync(batch, ct),
       _transportBatchOptions,
       state,
       _resilienceOptions,
@@ -482,6 +482,20 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchOf100SubscribedMessages_StoredViaSingleBulkInsertAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:MixedBatch_DroppedTypesFilteredBeforeBulkInsertAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBulkInsertInvariantTests.cs:BatchProcessing_CreatesExactlyOneScopePerBatchAsync</tests>
+  /// <summary>
+  /// Runs the batch handler so that a failed batch costs one batch, never the process.
+  /// </summary>
+  /// <remarks>
+  /// Delegates to <see cref="TransportBatchGuard"/> so the containment behavior is testable on its
+  /// own — the guard is the part that must be proven, and proving it should not require standing up
+  /// a whole worker with a transport and a database behind it.
+  /// </remarks>
+  private Task _handleBatchWithoutKillingTheHostAsync(
+      IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken)
+    => TransportBatchGuard.RunAsync(
+         () => _handleMessageBatchAsync(messages, cancellationToken),
+         messages.Count, _logger, cancellationToken);
+
   private async Task _handleMessageBatchAsync(
       IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {
     if (messages.Count == 0) {
