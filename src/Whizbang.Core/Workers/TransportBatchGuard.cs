@@ -24,21 +24,37 @@ namespace Whizbang.Core.Workers;
 public static partial class TransportBatchGuard {
 
   /// <summary>
-  /// Invokes <paramref name="body"/>, containing any non-shutdown failure.
+  /// Invokes <paramref name="body"/>, containing any failure that is not a host shutdown.
   /// </summary>
-  /// <param name="body">The batch work to run.</param>
+  /// <remarks>
+  /// <para>
+  /// Two tokens, deliberately separate parameters. The transport supplies its own per-batch token
+  /// and cancels it for reasons unrelated to host shutdown — a lost session lock, a draining
+  /// processor, a message-level timeout. Only <paramref name="hostStoppingToken"/> answers "is this
+  /// process stopping".
+  /// </para>
+  /// <para>
+  /// The first version of this guard took a single token and the call site passed the per-batch one.
+  /// It shipped, and a host still terminated silently with the guard present in the assembly:
+  /// the transport cancelled the batch, the guard read that as a shutdown, and the exception
+  /// escaped. Splitting the parameters makes that substitution impossible to write by accident.
+  /// </para>
+  /// </remarks>
+  /// <param name="body">The batch work; receives the per-batch token.</param>
   /// <param name="batchCount">Message count, for the log line.</param>
   /// <param name="logger">Logger for the failure report.</param>
-  /// <param name="stoppingToken">The worker's stopping token — the sole shutdown authority.</param>
+  /// <param name="batchToken">The transport's per-batch cancellation — passed to the work.</param>
+  /// <param name="hostStoppingToken">The worker's stopping token — the sole shutdown authority.</param>
   public static async Task RunAsync(
-      Func<Task> body, int batchCount, ILogger logger, CancellationToken stoppingToken) {
+      Func<CancellationToken, Task> body, int batchCount, ILogger logger,
+      CancellationToken batchToken, CancellationToken hostStoppingToken) {
     ArgumentNullException.ThrowIfNull(body);
     ArgumentNullException.ThrowIfNull(logger);
 
     try {
-      await body().ConfigureAwait(false);
+      await body(batchToken).ConfigureAwait(false);
     } catch (Exception ex) when (
-        TransportBatchFailureClassifier.Classify(ex, stoppingToken) == TransportBatchFailure.Transient) {
+        TransportBatchFailureClassifier.Classify(ex, hostStoppingToken) == TransportBatchFailure.Transient) {
       if (TransportBatchFailureClassifier.IsStatementCancellation(ex)) {
         LogBatchStatementCanceled(logger, batchCount, ex);
       } else {

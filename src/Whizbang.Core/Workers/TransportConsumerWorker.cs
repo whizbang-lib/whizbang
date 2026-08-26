@@ -404,7 +404,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     await SubscriptionRetryHelper.SubscribeWithRetryAsync(
       _transport,
       state.Destination,
-      async (batch, ct) => await _handleBatchWithoutKillingTheHostAsync(batch, ct),
+      async (batch, ct) => await _handleBatchWithoutKillingTheHostAsync(batch, ct, cancellationToken),
       _transportBatchOptions,
       state,
       _resilienceOptions,
@@ -491,10 +491,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// a whole worker with a transport and a database behind it.
   /// </remarks>
   private Task _handleBatchWithoutKillingTheHostAsync(
-      IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken)
+      IReadOnlyList<TransportMessage> messages,
+      CancellationToken batchToken,
+      CancellationToken hostStoppingToken)
     => TransportBatchGuard.RunAsync(
-         () => _handleMessageBatchAsync(messages, cancellationToken),
-         messages.Count, _logger, cancellationToken);
+         ct => _handleMessageBatchAsync(messages, ct),
+         messages.Count, _logger, batchToken, hostStoppingToken);
 
   private async Task _handleMessageBatchAsync(
       IReadOnlyList<TransportMessage> messages, CancellationToken cancellationToken) {

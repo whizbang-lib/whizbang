@@ -39,7 +39,7 @@ public class TransportBatchGuardTests {
 
     Exception? escaped = null;
     try {
-      await TransportBatchGuard.RunAsync(() => throw _statementTimeout(), 50, logger, cts.Token);
+      await TransportBatchGuard.RunAsync(_ => throw _statementTimeout(), 50, logger, cts.Token, cts.Token);
     } catch (Exception ex) { escaped = ex; }
 
     await Assert.That(escaped).IsNull()
@@ -60,7 +60,7 @@ public class TransportBatchGuardTests {
     Exception? escaped = null;
     try {
       await TransportBatchGuard.RunAsync(
-        () => throw new InvalidOperationException("connection reset"), 12, logger, cts.Token);
+        _ => throw new InvalidOperationException("connection reset"), 12, logger, cts.Token, cts.Token);
     } catch (Exception ex) { escaped = ex; }
 
     await Assert.That(escaped).IsNull();
@@ -79,7 +79,7 @@ public class TransportBatchGuardTests {
     Exception? escaped = null;
     try {
       await TransportBatchGuard.RunAsync(
-        () => throw new OperationCanceledException(cts.Token), 5, logger, cts.Token);
+        _ => throw new OperationCanceledException(cts.Token), 5, logger, cts.Token, cts.Token);
     } catch (Exception ex) { escaped = ex; }
 
     await Assert.That(escaped).IsNotNull()
@@ -92,8 +92,8 @@ public class TransportBatchGuardTests {
     var logger = new CapturingLogger();
     var ran = false;
 
-    await TransportBatchGuard.RunAsync(() => { ran = true; return Task.CompletedTask; }, 3, logger,
-                                       CancellationToken.None);
+    await TransportBatchGuard.RunAsync(_ => { ran = true; return Task.CompletedTask; }, 3, logger,
+                                       CancellationToken.None, CancellationToken.None);
 
     await Assert.That(ran).IsTrue();
     await Assert.That(logger.Entries.Count).IsEqualTo(0)
@@ -107,10 +107,71 @@ public class TransportBatchGuardTests {
     Exception? nullBody = null;
     Exception? nullLogger = null;
 
-    try { await TransportBatchGuard.RunAsync(null!, 1, logger, CancellationToken.None); } catch (Exception ex) { nullBody = ex; }
-    try { await TransportBatchGuard.RunAsync(() => Task.CompletedTask, 1, null!, CancellationToken.None); } catch (Exception ex) { nullLogger = ex; }
+    try { await TransportBatchGuard.RunAsync(null!, 1, logger, CancellationToken.None, CancellationToken.None); } catch (Exception ex) { nullBody = ex; }
+    try { await TransportBatchGuard.RunAsync(_ => Task.CompletedTask, 1, null!, CancellationToken.None, CancellationToken.None); } catch (Exception ex) { nullLogger = ex; }
 
     await Assert.That(nullBody).IsTypeOf<ArgumentNullException>();
     await Assert.That(nullLogger).IsTypeOf<ArgumentNullException>();
+  }
+
+  // ---------- the two tokens are NOT interchangeable ----------
+
+  [Test]
+  public async Task ACancelledBATCHTokenIsStillContainedWhileTheHostIsAliveAsync() {
+    // The transport supplies its own per-batch token and cancels it for reasons that have nothing
+    // to do with host shutdown — a lost session lock, a draining processor, a message-level timeout.
+    // Classifying against THAT token makes every such cancellation look like a shutdown request,
+    // which lets the exception escape and stops the host.
+    //
+    // This is not hypothetical: the first version of this guard passed the per-batch token, shipped,
+    // and a host still terminated silently with the guard present in the assembly.
+    var logger = new CapturingLogger();
+    using var batchToken = new CancellationTokenSource();
+    using var hostToken = new CancellationTokenSource();
+    await batchToken.CancelAsync();          // transport cancelled this batch
+                                             // host is NOT stopping
+
+    Exception? escaped = null;
+    try {
+      await TransportBatchGuard.RunAsync(
+        _ => throw _statementTimeout(), 40, logger, batchToken.Token, hostToken.Token);
+    } catch (Exception ex) { escaped = ex; }
+
+    await Assert.That(escaped).IsNull()
+      .Because("the HOST is alive, so this is one failed batch — classifying against the batch "
+             + "token would call it a shutdown and take the process down");
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error)).IsTrue();
+  }
+
+  [Test]
+  public async Task TheBODYStillReceivesTheBatchTokenAsync() {
+    var logger = new CapturingLogger();
+    using var batchToken = new CancellationTokenSource();
+    using var hostToken = new CancellationTokenSource();
+    CancellationToken seen = default;
+
+    await TransportBatchGuard.RunAsync(
+      ct => { seen = ct; return Task.CompletedTask; }, 1, logger, batchToken.Token, hostToken.Token);
+
+    await Assert.That(seen).IsEqualTo(batchToken.Token)
+      .Because("the work itself must honor the transport's per-batch cancellation — only the "
+             + "SHUTDOWN decision belongs to the host token");
+  }
+
+  [Test]
+  public async Task AHostShutdownStillPropagatesEvenWithALiveBatchTokenAsync() {
+    var logger = new CapturingLogger();
+    using var batchToken = new CancellationTokenSource();
+    using var hostToken = new CancellationTokenSource();
+    await hostToken.CancelAsync();
+
+    Exception? escaped = null;
+    try {
+      await TransportBatchGuard.RunAsync(
+        _ => throw new OperationCanceledException(), 7, logger, batchToken.Token, hostToken.Token);
+    } catch (Exception ex) { escaped = ex; }
+
+    await Assert.That(escaped).IsNotNull()
+      .Because("a genuine stop must still unwind promptly regardless of the batch token's state");
   }
 }
