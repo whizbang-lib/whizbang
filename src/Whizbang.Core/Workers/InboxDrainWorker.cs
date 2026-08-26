@@ -39,6 +39,7 @@ namespace Whizbang.Core.Workers;
 public sealed partial class InboxDrainWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly ClaimChurnFeedback? _churnFeedback;
+  private readonly PoisonAdmissionPolicy _poisonPolicy = new(new PoisonAdmissionPolicy.Settings());
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IInboxDrainChannel _drainChannel;
   private readonly IInboxChannelWriter _inboxChannelWriter;
@@ -222,6 +223,12 @@ public sealed partial class InboxDrainWorker : BackgroundService {
               LogDeserializeFailed(_logger, row.MessageId, ex);
               continue;
             }
+            // Retried rows yield to fresh work when they already dominate the set. Deferred rows
+            // stay unprocessed and are re-fetched later; that is how healthy work gets through a
+            // working set otherwise monopolised by rows that cannot succeed.
+            if (!_admitRow(row, rowsRaw)) {
+              continue;
+            }
             await _inboxChannelWriter.WriteAsync(work, ct);
             hadAnyNew = true;
           }
@@ -302,6 +309,9 @@ public sealed partial class InboxDrainWorker : BackgroundService {
         }
         totalDeserMs += (System.Diagnostics.Stopwatch.GetTimestamp() - deserStart)
           * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+        if (!_admitRow(row, rowsRaw)) {
+          continue;
+        }
         var writeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         await _inboxChannelWriter.WriteAsync(work, ct);
         totalWriteMs += (System.Diagnostics.Stopwatch.GetTimestamp() - writeStart)
@@ -384,6 +394,13 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     Message = "Inbox drain batch failed on a transient error; the streams re-offer via the claim backstop")]
   static partial void LogBatchDrainFailed(ILogger logger, Exception exception);
 
+  [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
+    Message = "Poison admission gate would have deferred ALL {RowCount} fetched row(s); admitting "
+            + "the least-retried (attempts={Attempts}) to keep the cycle moving. A fetch made "
+            + "entirely of retried rows means the working set is saturated and healthy work is "
+            + "waiting behind it.")]
+  static partial void LogPoisonGateForcedProgress(ILogger logger, int rowCount, int attempts);
+
   [LoggerMessage(EventId = 5, Level = LogLevel.Error,
     Message = "InboxDrainWorker: failed to deserialize envelope for {MessageId}")]
   static partial void LogDeserializeFailed(ILogger logger, Guid messageId, Exception ex);
@@ -405,6 +422,82 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       attempts[i] = rows[i].Attempts;
     }
     _churnFeedback.Report(attempts);
+  }
+
+
+  /// <summary>
+  /// Decides which fetched rows may enter the dispatch working set this cycle.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Failing rows are re-claimed when their lease lapses, so they permanently occupy the working
+  /// set and the claim never reaches rows behind them. Measured side by side on identical framework
+  /// and configuration: a consumer whose set had been retried into the teens held ~10,000 leases
+  /// and drained ~29 rows/min with 95% of its inbox never claimed, while a comparison consumer at
+  /// first delivery drained the same backlog at ~8,000 rows/min.
+  /// </para>
+  /// <para>
+  /// Deferred rows are simply not written this cycle. They stay unprocessed and are re-fetched
+  /// later, which is the point: fresh work gets through while the retried population drains at its
+  /// own pace.
+  /// </para>
+  /// <para>
+  /// FORWARD PROGRESS OVERRIDES THE GATE. If every row in a fetch is high-attempt the share is 1.0
+  /// and a naive gate would defer all of them, admit nothing, and livelock — turning a starvation
+  /// problem into a full stop. At least one row is always admitted.
+  /// </para>
+  /// </remarks>
+
+  private readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, bool[]> _plans = new();
+
+  /// <summary>Applies the admission plan for the row's containing fetch, computing it once.</summary>
+  private bool _admitRow(InboxBatchRow row, IReadOnlyList<InboxBatchRow> fetch) {
+    var plan = _plans.GetValue(fetch, f => _admissionPlan((IReadOnlyList<InboxBatchRow>)f));
+    for (var i = 0; i < fetch.Count; i++) {
+      if (fetch[i].MessageId == row.MessageId) {
+        return plan[i];
+      }
+    }
+    return true;
+  }
+
+  private bool[] _admissionPlan(IReadOnlyList<InboxBatchRow> rows) {
+    var plan = new bool[rows.Count];
+    if (rows.Count == 0) {
+      return plan;
+    }
+
+    var settings = new PoisonAdmissionPolicy.Settings();
+    var high = 0;
+    for (var i = 0; i < rows.Count; i++) {
+      if (rows[i].Attempts >= settings.HighAttemptThreshold) {
+        high++;
+      }
+    }
+    var share = (double)high / rows.Count;
+
+    var admitted = 0;
+    for (var i = 0; i < rows.Count; i++) {
+      var d = _poisonPolicy.Evaluate(rows[i].Attempts, rows.Count, share);
+      plan[i] = d.Admit;
+      if (d.Admit) {
+        admitted++;
+      }
+    }
+
+    if (admitted == 0) {
+      // Everything was gated. Admit the least-retried row so the cycle still moves; a gate that can
+      // stop all progress is worse than the starvation it prevents.
+      var best = 0;
+      for (var i = 1; i < rows.Count; i++) {
+        if (rows[i].Attempts < rows[best].Attempts) {
+          best = i;
+        }
+      }
+      plan[best] = true;
+      LogPoisonGateForcedProgress(_logger, rows.Count, rows[best].Attempts);
+    }
+    return plan;
   }
 
 }
