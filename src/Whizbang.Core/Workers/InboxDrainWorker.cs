@@ -452,7 +452,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
 
   /// <summary>Applies the admission plan for the row's containing fetch, computing it once.</summary>
   private bool _admitRow(InboxBatchRow row, IReadOnlyList<InboxBatchRow> fetch) {
-    var plan = _plans.GetValue(fetch, f => _admissionPlan((IReadOnlyList<InboxBatchRow>)f));
+    var plan = _plans.GetValue(fetch, f => AdmissionPlanForTest((IReadOnlyList<InboxBatchRow>)f));
     for (var i = 0; i < fetch.Count; i++) {
       if (fetch[i].MessageId == row.MessageId) {
         return plan[i];
@@ -461,7 +461,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     return true;
   }
 
-  private bool[] _admissionPlan(IReadOnlyList<InboxBatchRow> rows) {
+  internal bool[] AdmissionPlanForTest(IReadOnlyList<InboxBatchRow> rows) {
     var plan = new bool[rows.Count];
     if (rows.Count == 0) {
       return plan;
