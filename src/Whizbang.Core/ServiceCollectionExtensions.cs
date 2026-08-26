@@ -143,6 +143,14 @@ public static class ServiceCollectionExtensions {
     // host.RunAsync() instead of shipping under a policy nobody declared.
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, TagPolicyStartupValidator>());
 
+    // Inert-concurrency report: ParallelizeStreams defaults to false on BOTH WorkCoordinatorOptions
+    // and OrderedStreamProcessorOptions, while the width options default to 16 and 8 — so the
+    // shipped default advertises concurrency the runtime will not use, and every deployment
+    // inherits that silently. Warning, never a boot failure: serial is slow, not incorrect, and a
+    // host that starts today must keep starting after an upgrade.
+    services.TryAddEnumerable(
+      ServiceDescriptor.Singleton<IHostedService, Whizbang.Core.Diagnostics.InertConcurrencyStartupReporter>());
+
     // Coalesce-group resolver: the AOT tag lookup the outbox mint seams consult to stamp
     // tag-bound coalesce groups + max-delay floors. Singleton — it caches per-type-name
     // resolution over the (post-startup immutable) tag registry and bindings. Resolution-time
