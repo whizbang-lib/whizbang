@@ -285,6 +285,17 @@ public static class ServiceCollectionExtensions {
     // engage the budget at all without measurement rather than throttle on a rate it cannot read.
     services.TryAddSingleton<Workers.WorkCompletionMeter>();
 
+    // Shared re-claim churn seam. The claim loop sizes its window from re-claim churn, but on the
+    // stream-id path the claim returns stream ids and never sees a row's attempt count — only the
+    // inbox drain, which fetches the rows, does. Without this seam the window observes zero churn
+    // for the life of the process and never adapts: a deployment using stream parallelism logged
+    // not one window resize while rows in the same inboxes reached attempt twenty-one.
+    //
+    // Registered unconditionally and consumed as OPTIONAL by both workers, so a host that
+    // constructs them directly still starts — it simply falls back to the unmeasured behavior
+    // rather than failing.
+    services.TryAddSingleton<Workers.ClaimChurnFeedback>();
+
     // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
     // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
     // but the factory lambda resolves at runtime so ordering is fine.

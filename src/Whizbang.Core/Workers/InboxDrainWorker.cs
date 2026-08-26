@@ -38,6 +38,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 public sealed partial class InboxDrainWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
+  private readonly ClaimChurnFeedback? _churnFeedback;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IInboxDrainChannel _drainChannel;
   private readonly IInboxChannelWriter _inboxChannelWriter;
@@ -77,8 +78,10 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     ISchemaReadyGate schemaReadyGate,
     IOptions<InboxDrainWorkerOptions> options,
     JsonSerializerOptions jsonOptions,
-    ILogger<InboxDrainWorker> logger) {
+    ILogger<InboxDrainWorker> logger,
+    ClaimChurnFeedback? churnFeedback = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+    _churnFeedback = churnFeedback;
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -184,6 +187,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
 
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
         streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
+      _reportChurn(rowsRaw);
       batchScopeOk = true;
 
       // Group rows by drain-key (stream_id when set, else message_id — matches the
@@ -267,6 +271,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       fetchCount++;
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
         [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
+      _reportChurn(rowsRaw);
 
       if (rowsRaw.Count == 0) {
         if (hadAnyNew) {
@@ -382,6 +387,26 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 5, Level = LogLevel.Error,
     Message = "InboxDrainWorker: failed to deserialize envelope for {MessageId}")]
   static partial void LogDeserializeFailed(ILogger logger, Guid messageId, Exception ex);
+
+  /// <summary>
+  /// Reports fetched rows' attempt counts to the claim window's feedback seam.
+  /// </summary>
+  /// <remarks>
+  /// This worker is the only place the attempt counts exist on the stream-id path: the claim
+  /// returns stream ids and never sees a row. Without this report the adaptive claim window
+  /// observes zero churn for the life of the process and never adapts.
+  /// </remarks>
+  private void _reportChurn(IReadOnlyList<InboxBatchRow> rows) {
+    if (_churnFeedback is null || rows.Count == 0) {
+      return;
+    }
+    var attempts = new int[rows.Count];
+    for (var i = 0; i < rows.Count; i++) {
+      attempts[i] = rows[i].Attempts;
+    }
+    _churnFeedback.Report(attempts);
+  }
+
 }
 
 /// <summary>Configuration for <see cref="InboxDrainWorker"/>.</summary>
@@ -436,4 +461,5 @@ public sealed class InboxDrainWorkerOptions {
   /// </summary>
   /// <docs>fundamentals/work-coordinator/per-stream-drain#sliding-window</docs>
   public SlidingWindowBatcherOptions Batcher { get; set; } = new();
+
 }

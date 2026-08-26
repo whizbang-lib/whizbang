@@ -35,6 +35,8 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IInboxDrainChannel? _inboxDrainChannel;
   private readonly ClaimWorkerOptions _options;
   private readonly AdaptiveClaimWindow _claimWindow;
+  private readonly ClaimCycleReport _cycleReport = new(repeatStreakThreshold: 8);
+  private readonly ClaimChurnFeedback? _churnFeedback;
   private readonly AdaptiveOutstandingBudget _outstandingBudget;
 
   /// <summary>Observed inbox rows per claimed stream, smoothed. Converts a row budget into streams.</summary>
@@ -103,7 +105,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     IPinnedConnectionPool? pinnedPool = null,
     ISignalBus? signalBus = null,
     SignalBusLivenessState? busLiveness = null,
-    WorkCompletionMeter? completionMeter = null) {
+    WorkCompletionMeter? completionMeter = null,
+    ClaimChurnFeedback? churnFeedback = null) {
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -131,6 +134,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     _signalBus = signalBus;
     _busLiveness = busLiveness;
     _completionMeter = completionMeter;
+    _churnFeedback = churnFeedback;
 
     // F1 unify-now: bus signals for outbox/inbox/perspective work-available replace the raw
     // WorkSignalCategory subscription for those categories. Push transport (NOTIFY) and pull
@@ -381,6 +385,12 @@ public sealed partial class ClaimWorker : BackgroundService {
         // nothing can wedge waiting on a suppressed emit. Only the wait adapts.
         var signature = _workSignature(batch);
         _lastClaimWasRepeat = hadWork && signature == _lastWorkSignature;
+
+        // A sustained run of repeats means rows are leased to this instance and are NOT completing,
+        // so the backlog cannot drain even though the process is healthy and polling. From outside
+        // that is indistinguishable from an idle service — modest CPU, no errors, no restarts — so
+        // nothing reports it today. See ClaimCycleReport.
+        _cycleReport.Record(hadWork, _lastClaimWasRepeat, _logger);
         _lastWorkSignature = signature;
 
         // Doorbell-liveness accounting (issue #505): on the empty→non-empty edge the store
@@ -682,22 +692,48 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
 
     if (_options.AdaptiveClaimWindow) {
-      var reclaimed = 0;
+      // Churn is measured across BOTH claim representations. Iterating InboxWork alone reads zero
+      // on the stream-id path — where rows arrive as stream ids and are fetched separately — so the
+      // window saw "no work, no churn" and Observe() short-circuited on claimedRows <= 0, never
+      // adapting for the life of the process. See ClaimChurnSignal.
+      var attempts = new int[batch.InboxWork.Count];
       for (var i = 0; i < batch.InboxWork.Count; i++) {
-        if (batch.InboxWork[i].Attempts > 1) {
-          reclaimed++;
+        attempts[i] = batch.InboxWork[i].Attempts;
+      }
+      // Attempts are not available at claim time on the stream-id path — the claim returns stream
+      // ids and never sees a row. The drain worker fetches them and reports what it saw, which is
+      // the ONLY place the churn signal exists. Without this the window observes zero churn forever.
+      var fed = _churnFeedback?.Take() ?? (0, 0);
+      int[]? fetchedAttempts = null;
+      if (fed.Item1 > 0) {
+        // Reconstructed as attempt counts because that is the shape the signal measures; only the
+        // re-claim COUNT is meaningful, not which specific rows churned.
+        fetchedAttempts = new int[fed.Item1];
+        for (var i = 0; i < fed.Item2 && i < fetchedAttempts.Length; i++) {
+          fetchedAttempts[i] = 2;
+        }
+        for (var i = fed.Item2; i < fetchedAttempts.Length; i++) {
+          fetchedAttempts[i] = 1;
         }
       }
+      var churn = ClaimChurnSignal.Measure(
+        materializedAttempts: attempts,
+        streamIdCount: batch.InboxStreamIds.Count,
+        fetchedAttempts: fetchedAttempts);
+      var reclaimed = churn.Reclaimed;
       var previous = _claimWindow.Current;
       // Gate growth on measured drain ONLY while the budget is the governing control. When the
       // budget is not engaged at all (disabled, or no meter to measure with) it will never produce
       // a sample, and gating on one would freeze the window at its floor forever — turning a
       // cold-start guard into a permanent throughput ceiling for every deployment without a meter.
       // Unmeasured must not silently disable an unrelated control. See AdaptiveClaimWindow.Observe.
-      var drainMeasured = !_budgetEngaged || _outstandingBudget.HasDrainSample;
-      _claimWindow.Observe(batch.InboxWork.Count, reclaimed, drainMeasured);
+      // Unmeasured churn must not read as a clean cycle. Growing on evidence nobody gathered is
+      // how a window widens on top of an unobserved thrash, so an unmeasurable cycle blocks growth
+      // exactly as an unmeasured drain does. Shrinking stays ungated — backing off is always safe.
+      var drainMeasured = (!_budgetEngaged || _outstandingBudget.HasDrainSample) && churn.IsMeasurable;
+      _claimWindow.Observe(churn.ClaimedItems, reclaimed, drainMeasured);
       if (_claimWindow.Current != previous) {
-        LogClaimWindowResized(_logger, previous, _claimWindow.Current, reclaimed, batch.InboxWork.Count);
+        LogClaimWindowResized(_logger, previous, _claimWindow.Current, reclaimed, churn.ClaimedItems);
       }
     }
 

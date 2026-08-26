@@ -188,6 +188,11 @@ public static class WorkerPipelineExtensions {
     // sp.GetServices<IHostedService>() and any other hosted service depended on
     // a channel surface, IHostedService resolution would recurse on itself.
     services.TryAddSingleton<HeartbeatWorker>();
+    // The claim window's churn signal lives here: the claim returns stream ids and never sees a
+    // row's attempt count, so the inbox drain reports what it fetched. Idempotent with the
+    // registration in AddWhizbang; present here so a host wiring only the worker pipeline still
+    // gets an adapting window rather than one frozen at its start value.
+    services.TryAddSingleton<ClaimChurnFeedback>();
     services.TryAddSingleton<ClaimWorker>();
     // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
     // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both
