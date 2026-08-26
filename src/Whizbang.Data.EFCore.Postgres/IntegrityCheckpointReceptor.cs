@@ -62,7 +62,17 @@ public sealed partial class IntegrityCheckpointReceptor(
     // null means the backend cannot answer. That is UNMEASURED, never settled: "nothing
     // outstanding" and "nobody looked" are the same value and opposite facts.
     var backlog = await coordinator.CountServiceBacklogAsync(cancellationToken).ConfigureAwait(false);
-    var settled = backlog is not null && backlog.IsSettled;
+
+    // UNMEASURED falls back to the previous behavior rather than gating. A backend that has not
+    // implemented the count would otherwise have self-healing silently switched off by a package
+    // upgrade — the same silent-disable this codebase refuses elsewhere ("the 0s are precisely the
+    // silent-disable this method exists to make impossible"). Stores that CAN report get the gate;
+    // stores that cannot get a loud one-line warning and the old behavior.
+    var measurable = backlog is not null;
+    var settled = backlog is null || backlog.IsSettled;
+    if (!measurable) {
+      LogSettlednessUnmeasurable(logger, message.OriginServiceName);
+    }
     var gapReportCap = Math.Max(1, options.MaxGapReportsPerCheckpoint);
     var gapReportsPublished = 0;
     var confirmedGaps = 0;
@@ -110,7 +120,7 @@ public sealed partial class IntegrityCheckpointReceptor(
       // An operator seeing a confirmed gap with autoRepair=false needs to know WHY: a service
       // deliberately withholding repair while it drains reads identically to one with repair
       // disabled, and the two call for opposite responses.
-      if (!settled && options.RepairMode == IntegrityRepairMode.AutoRepairCapped) {
+      if (measurable && !settled && options.RepairMode == IntegrityRepairMode.AutoRepairCapped) {
         LogRepairWithheldConsumerBehind(logger, pending.OriginServiceName, pending.EventType,
           backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
       }
@@ -244,6 +254,13 @@ public sealed partial class IntegrityCheckpointReceptor(
               "(autoRepair={AutoRepairRequested})")]
   static partial void LogGapConfirmed(ILogger logger, string eventType, string? tenantScope, string originServiceName,
     long fromCommitSequence, long toCommitSequence, int expectedCount, int actualCount, bool autoRepairRequested);
+
+  [LoggerMessage(EventId = 60, Level = LogLevel.Warning,
+    Message = "Cannot measure whether this service has settled (the store does not implement "
+            + "CountServiceBacklogAsync), so auto-repair for origin '{OriginServiceName}' proceeds "
+            + "UNGATED. A consumer that is merely behind may confirm false gaps and re-deliver work "
+            + "that is already queued. Implement the count, or set RepairMode=ReportOnly.")]
+  static partial void LogSettlednessUnmeasurable(ILogger logger, string originServiceName);
 
   [LoggerMessage(EventId = 59, Level = LogLevel.Information,
     Message = "Auto-repair WITHHELD for '{OriginServiceName}' ({EventType}) — this service has not "
