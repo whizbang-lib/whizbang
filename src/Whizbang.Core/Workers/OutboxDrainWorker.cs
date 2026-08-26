@@ -96,6 +96,51 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   /// <docs>operations/workers/publisher-worker</docs>
   public event OutboxMessagePublishedHandler? OnOutboxMessagePublished;
 
+  /// <summary>
+  /// The governor a host gets when it supplies none: self-tuning, starting at the configured width.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The band is derived from <see cref="OutboxDrainWorkerOptions.MaxConcurrentStreams"/>:
+  /// </para>
+  /// <list type="bullet">
+  ///   <item><description><b>Ceiling = the configured value.</b> The option is named MAXIMUM, and an
+  ///   adaptive default that grows past an explicit operator bound is how a slow drain becomes
+  ///   someone else's connection-pool exhaustion. Operators who want more headroom raise the
+  ///   option — the governor does not get to overrule them.</description></item>
+  ///   <item><description><b>Start = the configured value.</b> Cycle one behaves exactly like the
+  ///   constant this replaces. Starting lower would narrow every deployment on the restart that
+  ///   picks up the upgrade — a throughput regression arriving disguised as an improvement.</description></item>
+  ///   <item><description><b>Floor = a quarter of it.</b> Enough room to yield meaningfully when the
+  ///   shared resource pushes back, without collapsing to serial and taking hours to climb out.</description></item>
+  /// </list>
+  /// <para>
+  /// So adaptation is downward-first and earned in both directions: it gives width back under
+  /// sustained throughput decline and takes it back as throughput recovers. That asymmetry is
+  /// deliberate — overshoot costs a shared resource everyone depends on, while undershoot costs
+  /// only this worker's own latency.
+  /// </para>
+  /// </remarks>
+  internal static Whizbang.Core.Execution.IConcurrencyGovernor CreateDefaultGovernor(OutboxDrainWorkerOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    var configured = Math.Max(1, options.MaxConcurrentStreams);
+    return new Whizbang.Core.Execution.ThroughputGovernor(
+      floor: Math.Max(1, configured / 4),
+      ceiling: configured,
+      start: configured);
+  }
+
+  /// <summary>
+  /// An explicitly supplied governor always wins; otherwise the adaptive default applies.
+  /// </summary>
+  /// <remarks>
+  /// A host that wired a specific strategy knows something the framework does not. Changing the
+  /// default must never silently overrule that choice.
+  /// </remarks>
+  internal static Whizbang.Core.Execution.IConcurrencyGovernor ResolveGovernor(
+      Whizbang.Core.Execution.IConcurrencyGovernor? supplied, OutboxDrainWorkerOptions options)
+    => supplied ?? CreateDefaultGovernor(options);
+
   /// <summary>Constructor.</summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S107:Methods should not have too many parameters", Justification = "Worker has many cooperating DI-injected dependencies by design; bundling them into a container type would add indirection without reducing coupling.")]
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0290:Use primary constructor", Justification = "Explicit constructor required because dotnet format's IDE0290 rewrite collided with the leading [SuppressMessage] attribute + multi-paragraph XML doc, producing CS1587. Keeping explicit form.")]
@@ -125,12 +170,10 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
     _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    // No governor supplied means the width is exactly the configured option, so adopting the
-    // seam is a no-op by construction and cannot smuggle a scheduling change into this change.
-    // Turn-key observability: whatever governor is in play — the fixed-width default or a host
+    // Turn-key observability: whatever governor is in play — the adaptive default or a host
     // supplied strategy — is wrapped so its decisions and their inputs reach OpenTelemetry with no
     // consumer wiring. A concurrency controller nobody can see is one nobody can debug.
-    var chosen = governor ?? new Whizbang.Core.Execution.FixedWidthGovernor(_options.MaxConcurrentStreams);
+    var chosen = ResolveGovernor(governor, _options);
     _governor = governorMetrics is null
       ? chosen
       : new Whizbang.Core.Execution.ObservedConcurrencyGovernor("outbox-drain", chosen, governorMetrics);
