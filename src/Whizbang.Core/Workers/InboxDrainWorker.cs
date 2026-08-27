@@ -177,6 +177,54 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   private long? _byteBudget() =>
     _options.MaxBytesPerStream is > 0 ? _options.MaxBytesPerStream : null;
 
+  // Sizes the per-stream page from observed depth. Lazily built so the options are read after
+  // configuration has bound, and null when pinned so the previous fixed-cap path is untouched.
+  private AdaptiveStreamBatch? _streamBatchGovernor;
+
+  private AdaptiveStreamBatch? _streamBatch() {
+    if (!_options.AdaptivePerStreamEnabled) {
+      return null;
+    }
+    return _streamBatchGovernor ??= new AdaptiveStreamBatch(
+      ceiling: Math.Max(_options.MaxPerStream, _options.MaxPerStreamCeiling),
+      floor: _options.MaxPerStream,
+      additiveStep: _options.MaxPerStream);
+  }
+
+  /// <summary>Rows to request per stream on the next fetch.</summary>
+  private int _effectivePerStream() => _streamBatch()?.Current ?? _options.MaxPerStream;
+
+  /// <summary>Test seam: the page size the next fetch would request.</summary>
+  internal int EffectivePerStreamForTest() => _effectivePerStream();
+
+  /// <summary>Test seam: folds one fetch outcome in, exactly as the drain path does.</summary>
+  internal void ObservePageForTest(int rowsReturned, int capRequested, IReadOnlyList<InboxBatchRow> rows)
+    => _observePage(rowsReturned, capRequested, rows);
+
+  /// <summary>
+  /// Folds one stream's fetch outcome into the page size.
+  /// </summary>
+  /// <remarks>
+  /// Growth is NOT gated on the outstanding budget's drain sample here, unlike the claim window.
+  /// That gate exists because the window infers capacity indirectly and would otherwise ramp blind
+  /// at cold start. This control's growth signal is direct evidence -- a page that came back full
+  /// means the stream really held that much -- and it starts at the floor and adds one step per
+  /// clean saturated cycle, so it cannot jump ahead of what it has actually observed.
+  /// </remarks>
+  private void _observePage(int rowsReturned, int capRequested, IReadOnlyList<InboxBatchRow> rows) {
+    var governor = _streamBatch();
+    if (governor is null) {
+      return;
+    }
+    var reclaimed = 0;
+    for (var i = 0; i < rows.Count; i++) {
+      if (rows[i].Attempts > 1) {
+        reclaimed++;
+      }
+    }
+    governor.Observe(rowsReturned, capRequested, reclaimed);
+  }
+
   private async Task _drainStreamBatchAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) {
     foreach (var sid in streamIds) {
       _drainChannel.MarkDraining(sid);
@@ -186,8 +234,9 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       using var scope = _scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
+      var perStreamCap = _effectivePerStream();
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
-        streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
+        streamIds, _instanceProvider.InstanceId, perStreamCap, _byteBudget(), ct);
       ReportChurnForTest(rowsRaw);
       batchScopeOk = true;
 
@@ -197,6 +246,12 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       var perStream = rowsRaw
         .GroupBy(r => DrainKey.For(r.StreamId, r.MessageId))
         .ToDictionary(g => g.Key, g => g.OrderByMessageId().ToList());
+
+      // Observe per STREAM, not per batch: the cap applies to each stream individually, so a batch
+      // total says nothing about whether any one of them saturated.
+      foreach (var group in perStream.Values) {
+        _observePage(group.Count, perStreamCap, group);
+      }
 
       foreach (var sid in streamIds) {
         if (ct.IsCancellationRequested) {
@@ -276,9 +331,11 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     var fetchCount = 0;
     while (!ct.IsCancellationRequested) {
       fetchCount++;
+      var singleCap = _effectivePerStream();
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
-        [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
+        [streamId], _instanceProvider.InstanceId, singleCap, _byteBudget(), ct);
       ReportChurnForTest(rowsRaw);
+      _observePage(rowsRaw.Count, singleCap, rowsRaw);
 
       if (rowsRaw.Count == 0) {
         if (hadAnyNew) {
@@ -517,6 +574,25 @@ public sealed class InboxDrainWorkerOptions {
 
   /// <summary>Cap on how many leased inbox rows to drain per stream per iteration. Default 100.</summary>
   public int MaxPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Upper bound the adaptive per-stream page may grow to (default 1000). <see cref="MaxPerStream"/>
+  /// becomes the FLOOR it starts from, so existing behavior is the starting point rather than the
+  /// fixed value.
+  /// </summary>
+  /// <remarks>
+  /// A fixed page is right for the shape this drain was tuned on -- many streams holding a row or
+  /// two -- and pathological for the inverse. A stream holding thousands is otherwise walked one
+  /// capped page at a time by a single drainer, each page its own round-trip, so effective
+  /// parallelism becomes the stream COUNT and extra replicas idle.
+  /// </remarks>
+  public int MaxPerStreamCeiling { get; set; } = 1000;
+
+  /// <summary>
+  /// Whether the per-stream page adapts to observed stream depth (default true). Set false to pin
+  /// it at <see cref="MaxPerStream"/> exactly as before.
+  /// </summary>
+  public bool AdaptivePerStreamEnabled { get; set; } = true;
 
   /// <summary>
   /// Cap on the PAYLOAD BYTES a single fetch may return per stream. Default 4 MB;

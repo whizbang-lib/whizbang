@@ -228,6 +228,58 @@ public class GovernanceInteractionTests {
              + "inheriting theirs");
   }
 
+  // ---- The allocator turns the row budget into per-stream work without exceeding it. ----
+
+  [Test]
+  public async Task TheAllocatorNeverSpendsMoreThanTheBudgetGrantsAsync() {
+    var (_, _, budget) = _stack();
+    for (var i = 0; i < 50; i++) {
+      budget.Observe(completed: 400, elapsed: TimeSpan.FromSeconds(1));
+    }
+    var allocator = new StreamFairShareAllocator(new StreamFairShareAllocator.Settings());
+
+    var headroom = budget.Headroom(outstanding: 0);
+    var demands = Enumerable.Range(0, 60)
+      .Select(i => new StreamDemand(Guid.Parse($"00000000-0000-0000-0000-{i + 1:D12}"), 5_000))
+      .ToList();
+
+    var plan = allocator.Allocate(headroom, demands);
+
+    await Assert.That(plan.Sum(a => a.Rows)).IsLessThanOrEqualTo(headroom)
+      .Because("the allocator is the component that finally spends the budget, so it is the last "
+             + "place an overcommit can be introduced — everything upstream only decides how much "
+             + "MAY be spent");
+  }
+
+  [Test]
+  public async Task AStalledBudgetLeavesTheAllocatorWithNothingToSpendAsync() {
+    var (_, _, budget) = _stack();
+    budget.Observe(completed: 0, elapsed: TimeSpan.FromSeconds(30));
+    var allocator = new StreamFairShareAllocator(new StreamFairShareAllocator.Settings());
+
+    var plan = allocator.Allocate(budget.Headroom(outstanding: 500), [new StreamDemand(Guid.NewGuid(), 10_000)]);
+
+    await Assert.That(plan.Count).IsEqualTo(0)
+      .Because("a measured stall must propagate all the way through to zero fetching; an allocator "
+             + "that treated a deep stream as reason to spend anyway would defeat the stall guard "
+             + "entirely");
+  }
+
+  [Test]
+  public async Task DeepAndShallowStreamsBothProgressUnderOneBudgetAsync() {
+    var allocator = new StreamFairShareAllocator(new StreamFairShareAllocator.Settings { MinRowsPerStream = 10 });
+    var deep = Guid.Parse("00000000-0000-0000-0000-000000000001");
+    var shallow = Guid.Parse("00000000-0000-0000-0000-000000000002");
+
+    var plan = allocator.Allocate(1_000, [new StreamDemand(deep, 100_000), new StreamDemand(shallow, 6)]);
+
+    await Assert.That(plan.Single(a => a.StreamId == shallow).Rows).IsEqualTo(6)
+      .Because("the shallow stream finishes outright rather than waiting behind the deep one");
+    await Assert.That(plan.Single(a => a.StreamId == deep).Rows).IsGreaterThan(900)
+      .Because("and the deep stream still takes nearly the whole budget, so guarding breadth costs "
+             + "almost nothing in depth — the two are not actually in tension at this ratio");
+  }
+
   // ---- Housekeeping composes with the width controls through settledness. ----
 
   [Test]
