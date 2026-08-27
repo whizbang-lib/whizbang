@@ -188,7 +188,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
 
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
         streamIds, _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
-      _reportChurn(rowsRaw);
+      ReportChurnForTest(rowsRaw);
       batchScopeOk = true;
 
       // Group rows by drain-key (stream_id when set, else message_id — matches the
@@ -278,7 +278,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       fetchCount++;
       var rowsRaw = await coordinator.FetchInboxBatchAsync(
         [streamId], _instanceProvider.InstanceId, _options.MaxPerStream, _byteBudget(), ct);
-      _reportChurn(rowsRaw);
+      ReportChurnForTest(rowsRaw);
 
       if (rowsRaw.Count == 0) {
         if (hadAnyNew) {
@@ -413,7 +413,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   /// returns stream ids and never sees a row. Without this report the adaptive claim window
   /// observes zero churn for the life of the process and never adapts.
   /// </remarks>
-  private void _reportChurn(IReadOnlyList<InboxBatchRow> rows) {
+  internal void ReportChurnForTest(IReadOnlyList<InboxBatchRow> rows) {
     if (_churnFeedback is null || rows.Count == 0) {
       return;
     }

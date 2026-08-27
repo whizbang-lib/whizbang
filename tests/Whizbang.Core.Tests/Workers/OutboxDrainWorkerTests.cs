@@ -201,6 +201,67 @@ public class OutboxDrainWorkerTests {
   }
 
   /// <summary>
+  /// The escape hatch: MaxPublishBatchSize = 0 restores the legacy per-stream publish.
+  /// </summary>
+  /// <remarks>
+  /// Kept because cross-stream batching changes the shape of what reaches the broker, and an
+  /// operator hitting an unforeseen interaction needs a way back to the previous behavior without
+  /// downgrading the package. A hatch that silently does nothing is worse than none, so this locks
+  /// it to the observable it promises: one batch per stream.
+  /// </remarks>
+  [Test]
+  public async Task OutboxDrainWorker_ZeroBatchSize_RestoresPerStreamPublishAsync() {
+    const int streamCount = 6;
+    var streamIds = new Guid[streamCount];
+    var coord = new FakeWorkCoordinator();
+    for (var i = 0; i < streamCount; i++) {
+      streamIds[i] = (Guid)TrackedGuid.NewMedo();
+      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.NewMedo(), streamIds[i])];
+    }
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new _BulkCapablePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+        MaxPublishBatchSize = 0,
+      }),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    foreach (var sid in streamIds) {
+      await drainChannel.WriteAsync(sid);
+    }
+    await completion.WaitForCountAsync(streamCount, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    List<IReadOnlyList<OutboxWork>> batches;
+    lock (publish.BatchCalls) { batches = [.. publish.BatchCalls]; }
+
+    await Assert.That(batches.Sum(b => b.Count)).IsEqualTo(streamCount)
+      .Because("the hatch must not lose rows either");
+    await Assert.That(batches.All(b => b.Count == 1)).IsTrue()
+      .Because("with the hatch open every batch is one stream's rows — here one row each — which "
+             + "is exactly the legacy behavior an operator would be reaching for");
+  }
+
+  /// <summary>
   /// Cross-stream publish batching: many streams holding ONE row each must still fill a batch.
   /// </summary>
   /// <remarks>
