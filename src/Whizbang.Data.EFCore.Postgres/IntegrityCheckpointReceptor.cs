@@ -42,6 +42,15 @@ public sealed partial class IntegrityCheckpointReceptor(
       return;
     }
 
+    // Announce this cycle so the cleanup sweep defers to it. Held for the whole handler: the two
+    // walk the same tables, and overlapping them adds housekeeping-versus-housekeeping contention
+    // on top of whatever live work already competes for those locks. A refused scope (another
+    // cycle already running) is a no-op hold rather than a skip -- checkpoints arrive per origin
+    // and dropping one would trade a lock collision for a missed gap.
+    using var integrityHold =
+      services.GetService<Whizbang.Core.Workers.HousekeepingCoordinator>()?.BeginIntegrityScope()
+      ?? default;
+
     var self = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
     if (message.OriginServiceId == self) {
       // Own checkpoint: locally-originated events persist NO origin stamp, so a self-count would

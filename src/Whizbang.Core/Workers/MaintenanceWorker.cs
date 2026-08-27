@@ -22,11 +22,16 @@ public sealed partial class MaintenanceWorker(
   ISchemaReadyGate schemaReadyGate,
   IOptions<MaintenanceWorkerOptions> options,
   ILogger<MaintenanceWorker> logger,
-  Whizbang.Core.Observability.MaintenanceMetrics? metrics = null) : BackgroundService {
+  Whizbang.Core.Observability.MaintenanceMetrics? metrics = null,
+  HousekeepingCoordinator? housekeeping = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly MaintenanceWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly ILogger<MaintenanceWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+
+  // Optional by design: a host that constructs this worker directly keeps prior behavior rather
+  // than failing to start. A missing collaborator must never silently switch maintenance OFF.
+  private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -68,6 +73,52 @@ public sealed partial class MaintenanceWorker(
     var sp = scope.ServiceProvider;
     var coordinator = sp.GetRequiredService<IWorkCoordinator>();
 
+    if (_housekeeping is null) {
+      await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
+      return;
+    }
+
+    // Settledness is measured SERVICE-wide from the shared store. An instance reading its own
+    // local view sees "idle" the moment it finishes its slice, while peers still hold leases on
+    // the very rows this sweep would contend with.
+    ServiceBacklog? backlog;
+    try {
+      backlog = await coordinator.CountServiceBacklogAsync(ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      // Unmeasured, not busy. Falling through as null keeps prior behavior; treating a failed
+      // read as "busy" would let one broken query disable cleanup for the life of the process.
+      LogSettlednessProbeFailed(_logger, ex);
+      backlog = null;
+    }
+
+    var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog);
+    if (!decision.Granted) {
+      LogMaintenanceDeferred(
+        _logger, decision.Reason,
+        backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
+      return;
+    }
+
+    if (decision.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit) {
+      // Reaching this branch means the service did not settle once across the whole deferral
+      // window — worth surfacing on its own, separately from the sweep it is about to run.
+      LogMaintenanceForcedAfterDeferrals(
+        _logger, backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
+    }
+
+    try {
+      await _runMaintenanceCycleAsync(coordinator, sp, ct).ConfigureAwait(false);
+    } finally {
+      // In a finally: a sweep that throws and never releases its slot would disable maintenance
+      // for the lifetime of the process.
+      _housekeeping.End(HousekeepingCoordinator.Activity.Maintenance);
+    }
+  }
+
+  private async Task _runMaintenanceCycleAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     // Reap-driven ephemeral snapshots — run BEFORE perform_maintenance so a snapshot rewind-floor exists for
     // every (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is
     // about to delete. This is what makes the coverage gate safe on low-volume / idle streams.
@@ -672,6 +723,18 @@ public sealed partial class MaintenanceWorker(
       LogStuckInboxRow(_logger, row.MessageId, row.MessageType, row.StreamId, row.Attempts, row.ClaimedSince);
     }
   }
+
+  [LoggerMessage(EventId = 47, Level = LogLevel.Debug,
+    Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed row(s) and {ActiveLeases} active lease(s). The sweep contends with the statement that marks work complete, so it waits for the service to settle. -1 means unmeasured.")]
+  static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases);
+
+  [LoggerMessage(EventId = 48, Level = LogLevel.Warning,
+    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed row(s), {ActiveLeases} active lease(s)). Cleanup has no deadline but it does have a limit — space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
+  static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases);
+
+  [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
+    Message = "Service-settledness probe failed; maintenance proceeds UNGATED for this cycle rather than deferring, so a failing probe cannot disable cleanup.")]
+  static partial void LogSettlednessProbeFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "MaintenanceWorker started: intervalMinutes={IntervalMinutes}")]
