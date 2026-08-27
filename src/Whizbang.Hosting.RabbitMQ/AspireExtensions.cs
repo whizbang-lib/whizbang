@@ -57,19 +57,7 @@ public static class AspireExtensions {
 /// </summary>
 /// <param name="Name">Exchange name</param>
 /// <param name="Type">Exchange type (topic, direct, fanout, headers)</param>
-internal sealed record RabbitMQExchangeAnnotation(string Name, string Type) : IResourceAnnotation {
-  public override bool Equals(object obj) {
-    return Equals(obj as RabbitMQExchangeAnnotation);
-  }
-
-  public override bool Equals(object obj) {
-    return Equals(obj as RabbitMQExchangeAnnotation);
-  }
-
-  public override bool Equals(object obj) {
-    return Equals(obj as RabbitMQExchangeAnnotation);
-  }
-}
+internal sealed record RabbitMQExchangeAnnotation(string Name, string Type) : IResourceAnnotation;
 
 /// <summary>
 /// Annotation for RabbitMQ queue binding metadata.
@@ -78,16 +66,4 @@ internal sealed record RabbitMQExchangeAnnotation(string Name, string Type) : IR
 /// <param name="Queue">Queue name</param>
 /// <param name="Exchange">Exchange name to bind to</param>
 /// <param name="RoutingKey">Routing key pattern</param>
-internal sealed record RabbitMQBindingAnnotation(string Queue, string Exchange, string RoutingKey) : IResourceAnnotation {
-  public override bool Equals(object obj) {
-    return Equals(obj as RabbitMQBindingAnnotation);
-  }
-
-  public override bool Equals(object obj) {
-    return Equals(obj as RabbitMQBindingAnnotation);
-  }
-
-  public override bool Equals(object obj) {
-    return Equals(obj as RabbitMQBindingAnnotation);
-  }
-}
+internal sealed record RabbitMQBindingAnnotation(string Queue, string Exchange, string RoutingKey) : IResourceAnnotation;

@@ -55,7 +55,7 @@ public static class DbContextInitializationRegistry {
       CancellationToken cancellationToken = default) {
     if (Interlocked.CompareExchange(ref _initialized, 1, 0) == 1) {
       if (logger is not null) {
-        DbContextInitializationLog.AlreadyInitialized((ILogger)logger);
+        DbContextInitializationLog.AlreadyInitialized(logger);
       }
       return;
     }
@@ -68,19 +68,19 @@ public static class DbContextInitializationRegistry {
 
     var count = initializersCopy.Count;
     if (logger is not null) {
-      DbContextInitializationLog.StartingInitialization((ILogger)logger, count);
+      DbContextInitializationLog.StartingInitialization(logger, count);
     }
 
     foreach (var initializer in initializersCopy) {
       var dbContextName = initializer.DbContextType.Name;
       if (logger is not null) {
-        DbContextInitializationLog.InitializingDbContext((ILogger)logger, dbContextName);
+        DbContextInitializationLog.InitializingDbContext(logger, dbContextName);
       }
       await initializer.Callback(serviceProvider, logger, cancellationToken);
     }
 
     if (logger is not null) {
-      DbContextInitializationLog.InitializationComplete((ILogger)logger);
+      DbContextInitializationLog.InitializationComplete(logger);
     }
   }
 

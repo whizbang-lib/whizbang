@@ -103,7 +103,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     optionsBuilder.UseNpgsql(_consumerDataSource, o => o.UseWhizbangFunctions())
       .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
     _consumerDbOptions = optionsBuilder.Options;
-    await using var ctx = new WorkCoordinationDbContext((DbContextOptions<WorkCoordinationDbContext>)_consumerDbOptions);
+    await using var ctx = new WorkCoordinationDbContext(_consumerDbOptions);
     await ctx.EnsureWhizbangDatabaseInitializedAsync();
     return _consumerDbOptions;
   }

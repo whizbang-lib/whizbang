@@ -211,7 +211,7 @@ public class DapperSqliteEventStore(
     foreach (var row in rows) {
       var envelope = _tryDeserializeRow(row.Envelope, fromEventId, eventTypes);
       if (envelope != null) {
-        results.Add((MessageEnvelope<IEvent>)envelope);
+        results.Add(envelope);
       }
     }
 
@@ -389,18 +389,6 @@ public class DapperSqliteEventStore(
     WHERE stream_id = @StreamId";
 
   protected override string GetEventsBetweenSql() {
-    throw new NotImplementedException();
-  }
-
-  public override Task AppendAsync<TMessage>(Guid streamId, Whizbang.Core.Observability.MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
-  public override Task AppendAsync<TMessage>(Guid streamId, Whizbang.Core.Observability.MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
-    throw new NotImplementedException();
-  }
-
-  public override Task AppendAsync<TMessage>(Guid streamId, Whizbang.Core.Observability.MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 

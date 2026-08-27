@@ -91,7 +91,7 @@ public static class SharedFixtureSource {
 
         // Step 3: Warmup emulator with timeout protection
         Console.WriteLine("[SharedFixture] Warming up emulator (may take 30-60 seconds)...");
-        await _sharedEmulator.WarmupWithClientAsync((ServiceBusClient)_sharedServiceBusClient, ct);
+        await _sharedEmulator.WarmupWithClientAsync(_sharedServiceBusClient, ct);
         Console.WriteLine("[SharedFixture] ✓ Emulator warmed up successfully");
 
         Console.WriteLine("================================================================================");

@@ -983,7 +983,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     await _transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
-          await _handleMessageForHostAsync((IHost)_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
+          await _handleMessageForHostAsync(_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
         }
       },
       new TransportDestination("topic-00", "inventory-worker"),
@@ -994,7 +994,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     await _transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
-          await _handleMessageForHostAsync((IHost)_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
+          await _handleMessageForHostAsync(_inventoryHost!, msg.Envelope, msg.EnvelopeType, ct);
         }
       },
       new TransportDestination("topic-01", "inventory-worker"),
@@ -1009,7 +1009,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     await _transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
-          await _handleMessageForHostAsync((IHost)_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
+          await _handleMessageForHostAsync(_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
         }
       },
       new TransportDestination("topic-00", "bff-service"),
@@ -1020,7 +1020,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     await _transport.SubscribeBatchAsync(
       async (batch, ct) => {
         foreach (var msg in batch) {
-          await _handleMessageForHostAsync((IHost)_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
+          await _handleMessageForHostAsync(_bffHost!, msg.Envelope, msg.EnvelopeType, ct);
         }
       },
       new TransportDestination("topic-01", "bff-service"),

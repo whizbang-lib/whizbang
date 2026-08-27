@@ -26,7 +26,7 @@ public class DapperRequestResponseStoreTests : RequestResponseStoreContractTests
   protected override Task<IRequestResponseStore> CreateStoreAsync() {
     var jsonOptions = JsonOptionsHelper.CreateOptions();
     var store = new DapperSqliteRequestResponseStore(_testBase.ConnectionFactory, _testBase.Executor, jsonOptions);
-    return Task.FromResult<IRequestResponseStore>((IRequestResponseStore)store);
+    return Task.FromResult<IRequestResponseStore>(store);
   }
 
   public void Dispose() {

@@ -417,7 +417,7 @@ public static class ServiceCollectionExtensions {
     var registryQuery = sp.GetService<Whizbang.Core.Messaging.IReceptorRegistryQuery>();
 
     return new NamespaceRoutingTransport(
-      defaultTransport, peers, () => _activeConsumeNamespaceKeys((Core.Tags.TransportNamespaceResolver?)resolver, (Core.Messaging.IReceptorRegistryQuery?)registryQuery));
+      defaultTransport, peers, () => _activeConsumeNamespaceKeys(resolver, registryQuery));
   }
 
   /// <summary>

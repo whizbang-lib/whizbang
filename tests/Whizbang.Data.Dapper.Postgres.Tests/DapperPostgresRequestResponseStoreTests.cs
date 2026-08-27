@@ -34,7 +34,7 @@ public class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContr
   protected override Task<IRequestResponseStore> CreateStoreAsync() {
     var jsonOptions = JsonOptionsHelper.CreateOptions();
     var store = new DapperPostgresRequestResponseStore(_testBase.ConnectionFactory, _testBase.Executor, jsonOptions);
-    return Task.FromResult<IRequestResponseStore>((IRequestResponseStore)store);
+    return Task.FromResult<IRequestResponseStore>(store);
   }
 
   private sealed class TestFixture : PostgresTestBase;
