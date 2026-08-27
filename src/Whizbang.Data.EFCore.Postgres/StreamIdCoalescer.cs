@@ -79,7 +79,7 @@ internal static partial class StreamIdCoalescer {
       return false;
     }
     if (isEmptyNotNull && logger is not null) {
-      LogEmptyStreamIdFallback(logger, r.WorkId ?? Guid.Empty, source);
+      LogEmptyStreamIdFallback((ILogger)logger, r.WorkId ?? Guid.Empty, source);
     }
     streamId = fallback;
     return true;

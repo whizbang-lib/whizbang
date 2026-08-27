@@ -99,7 +99,7 @@ public sealed partial class RabbitMQConnectionRetry {
   /// </summary>
   private void _logConnectionAttempt(int attempt) {
     if (_logger is not null) {
-      LogConnectionAttempt(_logger, attempt);
+      LogConnectionAttempt((ILogger)_logger, attempt);
     }
   }
 
@@ -108,7 +108,7 @@ public sealed partial class RabbitMQConnectionRetry {
   /// </summary>
   private void _logConnectionSuccess(int attempt) {
     if (attempt > 1 && _logger is not null) {
-      LogConnectionEstablished(_logger, attempt);
+      LogConnectionEstablished((ILogger)_logger, attempt);
     }
   }
 
@@ -149,7 +149,7 @@ public sealed partial class RabbitMQConnectionRetry {
   /// </summary>
   private void _logIndefiniteRetry(int attempt, TimeSpan currentDelay) {
     if (_logger is not null && attempt % 10 == 0) {
-      LogStillRetrying(_logger, attempt, currentDelay.TotalMilliseconds);
+      LogStillRetrying((ILogger)_logger, attempt, currentDelay.TotalMilliseconds);
     }
   }
 

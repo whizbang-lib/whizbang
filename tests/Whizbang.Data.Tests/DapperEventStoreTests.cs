@@ -28,7 +28,7 @@ public class DapperEventStoreTests : EventStoreContractTests, IDisposable {
     var jsonOptions = JsonOptionsHelper.CreateOptions();
     var policyEngine = new PolicyEngine();
     var eventStore = new DapperSqliteEventStore(_testBase.ConnectionFactory, _testBase.Executor, jsonOptions, policyEngine);
-    return Task.FromResult<IEventStore>(eventStore);
+    return Task.FromResult<IEventStore>((IEventStore)eventStore);
   }
 
   public void Dispose() {

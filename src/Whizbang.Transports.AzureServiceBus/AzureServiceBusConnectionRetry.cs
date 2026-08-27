@@ -62,7 +62,7 @@ public sealed partial class AzureServiceBusConnectionRetry {
 
       try {
         if (_logger is not null) {
-          LogConnectionAttempt(_logger, attempt);
+          LogConnectionAttempt((ILogger)_logger, attempt);
         }
 
         // Create client and admin client
@@ -74,7 +74,7 @@ public sealed partial class AzureServiceBusConnectionRetry {
         _ = await adminClient.GetNamespacePropertiesAsync(cancellationToken).ConfigureAwait(false);
 
         if (attempt > 1 && _logger is not null) {
-          LogConnectionEstablished(_logger, attempt);
+          LogConnectionEstablished((ILogger)_logger, attempt);
         }
 
         return client;
@@ -92,16 +92,16 @@ public sealed partial class AzureServiceBusConnectionRetry {
   private void _handleRetryOrRethrow(Exception ex, int attempt, TimeSpan currentDelay) {
     if (attempt <= _options.InitialRetryAttempts) {
       if (_logger is not null) {
-        LogRetrying(_logger, ex, attempt, currentDelay.TotalMilliseconds);
+        LogRetrying((ILogger)_logger, ex, attempt, currentDelay.TotalMilliseconds);
       }
     } else if (!_options.RetryIndefinitely) {
       if (_logger is not null) {
-        LogConnectionFailed(_logger, ex, _options.InitialRetryAttempts);
+        LogConnectionFailed((ILogger)_logger, ex, _options.InitialRetryAttempts);
       }
       ExceptionDispatchInfo.Throw(ex);
     } else {
       if (_logger is not null && attempt % 10 == 0) {
-        LogStillRetrying(_logger, attempt, currentDelay.TotalMilliseconds);
+        LogStillRetrying((ILogger)_logger, attempt, currentDelay.TotalMilliseconds);
       }
     }
   }

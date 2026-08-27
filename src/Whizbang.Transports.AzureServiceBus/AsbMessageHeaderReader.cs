@@ -83,6 +83,7 @@ public sealed class AsbMessageHeaderReader {
     if (message.ApplicationProperties.TryGetValue(MESSAGE_ID_PROPERTY_KEY, out var idObj)
         && idObj is string idStr
         && Guid.TryParse(idStr, out messageId)) {
+      messageId = default;
       return true;
     }
 

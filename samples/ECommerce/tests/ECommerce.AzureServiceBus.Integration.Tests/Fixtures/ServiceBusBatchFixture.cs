@@ -75,7 +75,7 @@ public sealed class ServiceBusBatchFixture(int batchIndex) : IAsyncDisposable {
     await InitializeEmulatorAsync(cancellationToken);
 
     if (sharedClient != null) {
-      await WarmupWithClientAsync(sharedClient, cancellationToken);
+      await WarmupWithClientAsync((ServiceBusClient)sharedClient, cancellationToken);
     } else {
       // Create temporary client for warmup
       Console.WriteLine($"[Batch {_batchIndex}] No shared client provided, creating temporary one for warmup");

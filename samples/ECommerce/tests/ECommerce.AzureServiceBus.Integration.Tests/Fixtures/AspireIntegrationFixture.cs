@@ -134,7 +134,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Create Aspire app (PostgreSQL container)
     Console.WriteLine("[AspireFixture] Creating PostgreSQL container...");
     _aspireApp = await _createAspireAppAsync(cancellationToken);
-    _postgresConnection = await _getPostgresConnectionStringAsync(_aspireApp, cancellationToken);
+    _postgresConnection = await _getPostgresConnectionStringAsync((DistributedApplication)_aspireApp, cancellationToken);
     Console.WriteLine("[AspireFixture] PostgreSQL ready.");
 
     // Drain stale messages from ServiceBus subscriptions BEFORE starting hosts
