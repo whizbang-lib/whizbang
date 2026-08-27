@@ -203,6 +203,51 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  /// <summary>
+  /// Publishes the host's debug-retention option into <c>wh_settings</c>, where the maintenance
+  /// sweep reads it.
+  /// </summary>
+  /// <remarks>
+  /// The sweep already guards its purge on <c>debug_mode</c>, but nothing wrote that row — so the
+  /// documented option marked rows in process and the sweep deleted them anyway on its next pass.
+  /// Both values are written: leaving a stale true would disable the purge permanently.
+  /// </remarks>
+  /// <param name="debugMode">Whether completed rows should be retained.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the setting is stored.</returns>
+  public async Task SyncDebugRetentionSettingAsync(
+      bool debugMode, CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var settings = BuildSchemaQualifiedName(schema, "wh_settings");
+
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = scope.Connection;
+    await using var cmd = conn.CreateCommand();
+#pragma warning disable S2077
+    // value_type is NOT NULL and updated_at records when the host last published its option, so a
+    // stale value is visible rather than indistinguishable from a fresh one.
+    cmd.CommandText = $@"
+      INSERT INTO {settings} (setting_key, setting_value, value_type, description, updated_at, updated_by)
+      VALUES (@k, @v, 'boolean', 'Retain completed messages for debugging; published from WorkCoordinatorOptions.DebugMode', NOW(), 'whizbang')
+      ON CONFLICT (setting_key) DO UPDATE
+        SET setting_value = EXCLUDED.setting_value,
+            value_type    = EXCLUDED.value_type,
+            updated_at    = NOW(),
+            updated_by    = EXCLUDED.updated_by";
+#pragma warning restore S2077
+    var pk = cmd.CreateParameter(); pk.ParameterName = "k";
+    pk.Value = Whizbang.Core.Workers.DebugRetentionBridge.SettingKey;
+    cmd.Parameters.Add(pk);
+    var pv = cmd.CreateParameter(); pv.ParameterName = "v";
+    pv.Value = Whizbang.Core.Workers.DebugRetentionBridge.SettingValueFor(debugMode);
+    cmd.Parameters.Add(pv);
+    await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+  }
+
   public async ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
     var schema = GetSchemaWithFallback(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),

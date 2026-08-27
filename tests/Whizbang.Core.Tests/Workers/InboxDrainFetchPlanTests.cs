@@ -171,6 +171,45 @@ public class InboxDrainFetchPlanTests {
   }
 
   [Test]
+  public async Task ADeepStreamGetsAWiderCapEvenAmongManyShallowOnesAsync() {
+    // The shape that exposed the defect: a realistic stream count, one genuinely deep stream.
+    // The default budget was streams x floor, which the breadth pass consumed exactly, leaving
+    // nothing for depth — so the deep stream got the same page as a one-row stream and drained in
+    // ceiling/floor sequential round-trips while the fleet sat idle.
+    // UNKNOWN depth is the production case: a stream nobody has measured is assumed floor-deep, so
+    // the breadth pass reserves a full floor for every one of them and consumes the whole budget.
+    // Known-shallow streams take only what they hold and leave room, which is why the defect hides
+    // unless the streams are unmeasured.
+    var worker = _worker(_opts(floor: 100, ceiling: 1000));
+    var streams = _ids.Take(60).ToList();
+    var deep = streams[0];
+    worker.RecordObservedDepthForTest(deep, 16_000);
+
+    var plan = worker.PlanFetchesForTest(streams);
+    var deepCap = plan.Single(p => p.Streams.Contains(deep)).Cap;
+    var shallowCap = plan.First(p => !p.Streams.Contains(deep)).Cap;
+
+    await Assert.That(deepCap).IsGreaterThan(shallowCap)
+      .Because("depth weighting has to survive a realistic stream count — engaging only when few "
+             + "streams are active is precisely backwards, because a single deep stream among many "
+             + "is the case that serializes and needs the wider page");
+  }
+
+  [Test]
+  public async Task BreadthIsStillGuaranteedWhenOneStreamIsDeepAsync() {
+    var worker = _worker(_opts(floor: 100, ceiling: 1000));
+    var streams = _ids.Take(60).ToList();
+    worker.RecordObservedDepthForTest(streams[0], 16_000);
+
+    var plan = worker.PlanFetchesForTest(streams);
+    var covered = plan.SelectMany(p => p.Streams).ToHashSet();
+
+    await Assert.That(covered.Count).IsGreaterThan(40)
+      .Because("funding depth must not starve breadth — one deep stream absorbing the budget is "
+             + "the opposite failure, and the floor exists to prevent it");
+  }
+
+  [Test]
   public async Task EveryPlannedCapIsAtLeastTheFloorAsync() {
     var worker = _worker(_opts(floor: 100, ceiling: 1000, cycle: 150));
     var streams = _ids.Take(40).ToList();

@@ -94,7 +94,13 @@ public sealed partial class SubscriptionExpansionWorker(
       return;
     }
 
-    if (!_options.BackfillOnSubscriptionGrowth) {
+    // Gated on BOTH the dedicated flag and RepairMode. Every other repair emitter honors
+    // RepairMode, and the diagnostics recommend ReportOnly by name to stop repair traffic; a path
+    // that ignored it left an operator following that advice watching the traffic continue. A
+    // package upgrade changes the consumed-type catalog, so this fires on every service at once
+    // from a version bump alone — which is how it became a storm rather than a one-off repair.
+    if (!SubscriptionBackfillGate.ShouldRequestBackfill(
+          _options.BackfillOnSubscriptionGrowth, _options.RepairMode)) {
       // Recorded, not repaired — the audit reports "pending backfill", never silent divergence.
       LogBackfillDisabled(_logger, pending.Count);
       return;

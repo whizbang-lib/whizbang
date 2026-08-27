@@ -154,6 +154,29 @@ public interface IWorkCoordinator {
     => ValueTask.FromResult<ServiceBacklog?>(null);
 
   /// <summary>
+  /// Publishes the host's debug-retention setting to the store, where the maintenance sweep reads it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Debug retention is decided in two places. The completion path honors
+  /// <c>WorkCoordinatorOptions.DebugMode</c> in process; the maintenance sweep reads a stored
+  /// setting instead. Nothing wrote that setting, so enabling the documented option produced
+  /// retention that the sweep silently undid within one interval — the counts it exists to enable
+  /// fell while being read.
+  /// </para>
+  /// <para>
+  /// Default is a no-op so engines without a settings table are unaffected. Implementations must
+  /// write BOTH values: leaving a stale true behind would disable the purge permanently and grow
+  /// the inbox without bound.
+  /// </para>
+  /// </remarks>
+  /// <param name="debugMode">Whether completed rows should be retained.</param>
+  /// <param name="cancellationToken">Cancellation.</param>
+  /// <returns>A task that completes when the setting is stored.</returns>
+  Task SyncDebugRetentionSettingAsync(bool debugMode, CancellationToken cancellationToken = default)
+    => Task.CompletedTask;
+
+  /// <summary>
   /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.
   /// Sub-millisecond UPSERT against <c>wh_service_instances</c>. Default impl throws so existing
   /// non-Postgres backends (test fakes, in-memory) only opt in when ready.
