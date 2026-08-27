@@ -61,6 +61,10 @@ internal sealed record RabbitMQExchangeAnnotation(string Name, string Type) : IR
   public override bool Equals(object obj) {
     return Equals(obj as RabbitMQExchangeAnnotation);
   }
+
+  public override bool Equals(object obj) {
+    return Equals(obj as RabbitMQExchangeAnnotation);
+  }
 }
 
 /// <summary>
@@ -71,6 +75,10 @@ internal sealed record RabbitMQExchangeAnnotation(string Name, string Type) : IR
 /// <param name="Exchange">Exchange name to bind to</param>
 /// <param name="RoutingKey">Routing key pattern</param>
 internal sealed record RabbitMQBindingAnnotation(string Queue, string Exchange, string RoutingKey) : IResourceAnnotation {
+  public override bool Equals(object obj) {
+    return Equals(obj as RabbitMQBindingAnnotation);
+  }
+
   public override bool Equals(object obj) {
     return Equals(obj as RabbitMQBindingAnnotation);
   }

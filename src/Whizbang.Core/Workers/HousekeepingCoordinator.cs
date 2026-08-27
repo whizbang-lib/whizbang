@@ -96,6 +96,13 @@ public sealed class HousekeepingCoordinator {
   private bool _maintenanceRunning;
   private int _consecutiveDeferrals;
 
+  /// <summary>
+  /// Initializes a new instance of the <see cref="HousekeepingCoordinator"/> class with default
+  /// tuning. This is the constructor container registration uses; a host wanting different tuning
+  /// registers its own instance, which the framework's TryAdd defers to.
+  /// </summary>
+  public HousekeepingCoordinator() : this(new Settings()) { }
+
   /// <summary>Initializes a new instance of the <see cref="HousekeepingCoordinator"/> class.</summary>
   /// <param name="settings">Tuning; defaults are production-safe.</param>
   public HousekeepingCoordinator(Settings settings) {
@@ -151,6 +158,58 @@ public sealed class HousekeepingCoordinator {
       _maintenanceRunning = true;
       return new Decision(true, Verdict.Proceed);
     }
+  }
+
+  /// <summary>
+  /// Claims the slot for integrity work for the lifetime of the returned scope.
+  /// </summary>
+  /// <remarks>
+  /// Exclusion only exists if the higher-priority activity actually announces itself, and a manual
+  /// begin/end pair around a cycle that can throw is a slot leak waiting to happen — a leaked slot
+  /// disables the cleanup sweep for the life of the process. Disposing a REFUSED scope is a no-op,
+  /// so a second concurrent cycle cannot hand away the slot the first one still holds.
+  /// </remarks>
+  /// <returns>A scope that releases the slot on dispose.</returns>
+  public IntegrityScope BeginIntegrityScope() {
+    var decision = TryBegin(Activity.Integrity, backlog: null);
+    return new IntegrityScope(this, decision.Granted);
+  }
+
+  /// <summary>A scoped hold on the integrity slot.</summary>
+  public readonly struct IntegrityScope : IDisposable, IEquatable<IntegrityScope> {
+    private readonly HousekeepingCoordinator? _owner;
+
+    internal IntegrityScope(HousekeepingCoordinator owner, bool granted) {
+      _owner = granted ? owner : null;
+      Granted = granted;
+    }
+
+    /// <summary>Whether this caller actually took the slot.</summary>
+    public bool Granted { get; }
+
+    /// <summary>Releases the slot, if this scope holds it.</summary>
+    public void Dispose() => _owner?.End(Activity.Integrity);
+
+    /// <inheritdoc />
+    public bool Equals(IntegrityScope other) => ReferenceEquals(_owner, other._owner) && Granted == other.Granted;
+
+    /// <inheritdoc />
+    public override bool Equals(object? obj) => obj is IntegrityScope other && Equals(other);
+
+    /// <inheritdoc />
+    public override int GetHashCode() => HashCode.Combine(_owner, Granted);
+
+    /// <summary>Equality operator.</summary>
+    /// <param name="left">Left operand.</param>
+    /// <param name="right">Right operand.</param>
+    /// <returns>True when equal.</returns>
+    public static bool operator ==(IntegrityScope left, IntegrityScope right) => left.Equals(right);
+
+    /// <summary>Inequality operator.</summary>
+    /// <param name="left">Left operand.</param>
+    /// <param name="right">Right operand.</param>
+    /// <returns>True when not equal.</returns>
+    public static bool operator !=(IntegrityScope left, IntegrityScope right) => !left.Equals(right);
   }
 
   /// <summary>Releases the slot held by <paramref name="activity"/>.</summary>

@@ -396,6 +396,10 @@ public class DapperSqliteEventStore(
     throw new NotImplementedException();
   }
 
+  public override Task AppendAsync<TMessage>(Guid streamId, Whizbang.Core.Observability.MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
+    throw new NotImplementedException();
+  }
+
   /// <summary>
   /// Internal row structure for Dapper mapping.
   /// </summary>

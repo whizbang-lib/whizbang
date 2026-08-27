@@ -296,6 +296,15 @@ public static class ServiceCollectionExtensions {
     // rather than failing.
     services.TryAddSingleton<Workers.ClaimChurnFeedback>();
 
+    // Housekeeping arbitration. The heavy maintenance sweep runs on a fixed timer and takes locks
+    // the completion path also needs, so a sweep landing mid-drain queues every worker's commit
+    // behind it — throughput collapses until it finishes, then recovers in a burst. This gates the
+    // sweep on SERVICE-wide settledness and keeps it from overlapping integrity work.
+    //
+    // Registered unconditionally and consumed as OPTIONAL, so a host that constructs the worker
+    // directly still starts — it simply keeps the ungated behavior it has today.
+    services.TryAddSingleton<Workers.HousekeepingCoordinator>();
+
     // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
     // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
     // but the factory lambda resolves at runtime so ordering is fine.

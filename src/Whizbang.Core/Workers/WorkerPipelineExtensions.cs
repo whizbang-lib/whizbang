@@ -193,6 +193,15 @@ public static class WorkerPipelineExtensions {
     // registration in AddWhizbang; present here so a host wiring only the worker pipeline still
     // gets an adapting window rather than one frozen at its start value.
     services.TryAddSingleton<ClaimChurnFeedback>();
+
+    // Housekeeping arbitration. The heavy maintenance sweep runs on a fixed timer and takes locks
+    // the completion path also needs, so a sweep landing mid-drain queues every worker's commit
+    // behind it — throughput collapses until it finishes, then recovers in a burst. This gates the
+    // sweep on SERVICE-wide settledness and keeps it from overlapping integrity work.
+    //
+    // Registered unconditionally and consumed as OPTIONAL, so a host that constructs the worker
+    // directly still starts — it simply keeps the ungated behavior it has today.
+    services.TryAddSingleton<HousekeepingCoordinator>();
     services.TryAddSingleton<ClaimWorker>();
     // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
     // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both

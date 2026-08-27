@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -221,6 +222,23 @@ public class HousekeepingCoordinatorTests {
     await Assert.That(decision.Granted).IsFalse()
       .Because("releasing a slot you do not hold must not cancel the exclusion protecting the "
              + "activity that does");
+  }
+
+  [Test]
+  public async Task TheContainerRegistersItSoTheGateIsOnByDefaultAsync() {
+    var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+    Whizbang.Core.Workers.WorkerPipelineExtensions.AddWhizbangWorkers(services);
+    var provider = services.BuildServiceProvider();
+
+    var first = provider.GetService<HousekeepingCoordinator>();
+    var second = provider.GetService<HousekeepingCoordinator>();
+
+    await Assert.That(first).IsNotNull()
+      .Because("the gate has to arrive with the framework — an opt-in fix ships as a fix nobody "
+             + "turns on, and the contention it prevents is the default configuration's problem");
+    await Assert.That(second).IsSameReferenceAs(first)
+      .Because("exclusion across two workers only works if both resolve the SAME instance; a "
+             + "transient registration gives each its own slot and excludes nothing");
   }
 
   [Test]
