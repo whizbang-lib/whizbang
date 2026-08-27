@@ -57,12 +57,28 @@ public class OutboxPublishWorkerErrorPathTests {
     public void SignalNewPerspectiveWorkAvailable() => OnNewPerspectiveWorkAvailable?.Invoke();
   }
 
-  private sealed class _RecordingCompletionChannel : IOutboxCompletionChannel {
+  private sealed class _RecordingCompletionChannel : IOutboxCompletionChannel, IDisposable {
+    private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
     public ConcurrentBag<Guid> Completed { get; } = [];
     public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
       Completed.Add(id);
+      _signal.Release();
       return ValueTask.CompletedTask;
     }
+    /// <summary>Signal-based wait for N completion enqueues — no polling.</summary>
+    /// <remarks>
+    /// The publish signal fires INSIDE the transport call; the completion is enqueued after that
+    /// call returns. Asserting on the bag straight after awaiting the publish therefore races the
+    /// worker and fails intermittently — the assertion has to wait for its own signal.
+    /// </remarks>
+    public async Task WaitForCountAsync(int count, TimeSpan timeout) {
+      for (var i = 0; i < count; i++) {
+        if (!await _signal.WaitAsync(timeout)) {
+          throw new TimeoutException($"Only saw {i} of {count} completion enqueues within {timeout}");
+        }
+      }
+    }
+    public void Dispose() => _signal.Dispose();
   }
 
   private sealed class _RecordingFailureChannel : IFailureChannel, IDisposable {
@@ -468,6 +484,10 @@ public class OutboxPublishWorkerErrorPathTests {
     var published = await strategy.Published.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(published.MessageId).IsEqualTo(work.MessageId)
       .Because("After the configured retry delay elapses, the re-buffered row must be published.");
+
+    // The publish signal fires inside the transport call, before the worker enqueues the
+    // completion — wait for the completion's own signal rather than racing it.
+    await fx.Completion.WaitForCountAsync(1, TimeSpan.FromSeconds(5));
     await Assert.That(fx.Completion.Completed).Contains(work.MessageId)
       .Because("A successful retry publish must enqueue the outbox completion for the DB flush worker.");
 

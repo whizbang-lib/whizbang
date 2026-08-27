@@ -194,6 +194,106 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   /// <summary>Rows to request per stream on the next fetch.</summary>
   private int _effectivePerStream() => _streamBatch()?.Current ?? _options.MaxPerStream;
 
+  // What each stream was last seen holding. Bounded by pruning to the streams actually being
+  // drained: an unbounded map keyed by stream id would grow for the life of the process on a
+  // workload that keeps minting new streams.
+  private readonly Dictionary<Guid, int> _observedDepth = [];
+  private StreamFairShareAllocator? _allocator;
+
+  private StreamFairShareAllocator _fairShare() =>
+    _allocator ??= new StreamFairShareAllocator(new StreamFairShareAllocator.Settings {
+      MinRowsPerStream = Math.Max(1, _options.MinRowsPerStream),
+      MaxRowsPerStream = Math.Max(_options.MaxPerStream, _options.MaxPerStreamCeiling),
+    });
+
+  /// <summary>One fetch: a cap, and the streams that share it.</summary>
+  /// <param name="Cap">Rows to request per stream in this call.</param>
+  /// <param name="Streams">Streams travelling together at that cap.</param>
+  internal readonly record struct FetchGroup(int Cap, IReadOnlyList<Guid> Streams);
+
+  /// <summary>
+  /// Turns a global row budget into the fetches that will actually be issued.
+  /// </summary>
+  /// <remarks>
+  /// A fetch takes ONE cap for every stream in the call, so per-stream allocations cannot be issued
+  /// directly. Each allocation is quantized DOWN to a multiple of the floor and streams sharing a
+  /// quantized cap travel together: that bounds the call count to ceiling/floor however many
+  /// streams are active, and rounding down keeps the total inside the budget instead of drifting
+  /// over it every cycle.
+  /// </remarks>
+  private List<FetchGroup> _planFetches(IReadOnlyList<Guid> streamIds) {
+    if (streamIds.Count == 0) {
+      return [];
+    }
+
+    var floor = Math.Max(1, _options.MaxPerStream);
+    var ceiling = Math.Max(floor, _options.MaxPerStreamCeiling);
+
+    // Default budget is what the previous fixed cap implied, so redistribution never costs total
+    // throughput -- it only changes WHERE the rows go.
+    // At least the ceiling, so one deep stream can actually reach full width: with a budget of
+    // streams x floor alone, no stream can ever be granted more than the floor when few streams are
+    // active, and the depth half of the allocation could never express itself.
+    var budget = _options.MaxRowsPerCycle > 0
+      ? _options.MaxRowsPerCycle
+      : Math.Max(streamIds.Count * floor, ceiling);
+
+    var demands = new List<StreamDemand>(streamIds.Count);
+    for (var i = 0; i < streamIds.Count; i++) {
+      // A stream nobody has measured is assumed floor-deep: enough to be admitted and produce the
+      // observation that sizes it properly next cycle.
+      var depth = _observedDepth.TryGetValue(streamIds[i], out var d) && d > 0 ? d : floor;
+      demands.Add(new StreamDemand(streamIds[i], depth));
+    }
+
+    var groups = new Dictionary<int, List<Guid>>();
+    foreach (var a in _fairShare().Allocate(budget, demands)) {
+      // Quantize DOWN to a floor multiple, never below the floor: a thinner slice fetches a
+      // uselessly small page and guarantees another round-trip.
+      var quantized = Math.Clamp(a.Rows / floor * floor, floor, ceiling);
+      if (!groups.TryGetValue(quantized, out var list)) {
+        list = [];
+        groups[quantized] = list;
+      }
+      list.Add(a.StreamId);
+    }
+
+    var plan = new List<FetchGroup>(groups.Count);
+    foreach (var kv in groups) {
+      plan.Add(new FetchGroup(kv.Key, kv.Value));
+    }
+    return plan;
+  }
+
+  private void _recordDepth(Guid streamId, int rowsReturned, int capRequested) {
+    // A saturated fetch proves only a LOWER bound, so credit the stream with more than it returned
+    // or the allocation can never climb past the cap that limited it.
+    _observedDepth[streamId] = rowsReturned >= capRequested ? capRequested * 2 : rowsReturned;
+  }
+
+  private void _pruneDepth(IReadOnlyList<Guid> keep) {
+    if (_observedDepth.Count <= 4096) {
+      return;
+    }
+    var live = new HashSet<Guid>(keep);
+    var stale = new List<Guid>();
+    foreach (var k in _observedDepth.Keys) {
+      if (!live.Contains(k)) {
+        stale.Add(k);
+      }
+    }
+    for (var i = 0; i < stale.Count; i++) {
+      _observedDepth.Remove(stale[i]);
+    }
+  }
+
+  /// <summary>Test seam: the fetches that would be issued for these streams.</summary>
+  internal IReadOnlyList<FetchGroup> PlanFetchesForTest(IReadOnlyList<Guid> streamIds)
+    => _planFetches(streamIds);
+
+  /// <summary>Test seam: seeds what a stream was last seen holding.</summary>
+  internal void RecordObservedDepthForTest(Guid streamId, int depth) => _observedDepth[streamId] = depth;
+
   /// <summary>Test seam: the page size the next fetch would request.</summary>
   internal int EffectivePerStreamForTest() => _effectivePerStream();
 
@@ -225,7 +325,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     governor.Observe(rowsReturned, capRequested, reclaimed);
   }
 
-  private async Task _drainStreamBatchAsync(IReadOnlyList<Guid> streamIds, CancellationToken ct) {
+  private async Task _drainStreamBatchAsync(List<Guid> streamIds, CancellationToken ct) {
     foreach (var sid in streamIds) {
       _drainChannel.MarkDraining(sid);
     }
@@ -234,9 +334,24 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       using var scope = _scopeFactory.CreateScope();
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-      var perStreamCap = _effectivePerStream();
-      var rowsRaw = await coordinator.FetchInboxBatchAsync(
-        streamIds, _instanceProvider.InstanceId, perStreamCap, _byteBudget(), ct);
+      // One fetch takes a single cap, so the allocation is issued as one fetch per quantized cap:
+      // deep streams travel together at a wide page, shallow ones at the floor. Bounded to
+      // ceiling/floor calls however many streams are active.
+      var plan = _planFetches(streamIds);
+      var capByStream = new Dictionary<Guid, int>(streamIds.Count);
+      var collected = new List<InboxBatchRow>();
+      foreach (var group in plan) {
+        if (ct.IsCancellationRequested) {
+          break;
+        }
+        var part = await coordinator.FetchInboxBatchAsync(
+          group.Streams, _instanceProvider.InstanceId, group.Cap, _byteBudget(), ct);
+        collected.AddRange(part);
+        for (var i = 0; i < group.Streams.Count; i++) {
+          capByStream[group.Streams[i]] = group.Cap;
+        }
+      }
+      IReadOnlyList<InboxBatchRow> rowsRaw = collected;
       ReportChurnForTest(rowsRaw);
       batchScopeOk = true;
 
@@ -247,11 +362,18 @@ public sealed partial class InboxDrainWorker : BackgroundService {
         .GroupBy(r => DrainKey.For(r.StreamId, r.MessageId))
         .ToDictionary(g => g.Key, g => g.OrderByMessageId().ToList());
 
-      // Observe per STREAM, not per batch: the cap applies to each stream individually, so a batch
-      // total says nothing about whether any one of them saturated.
-      foreach (var group in perStream.Values) {
-        _observePage(group.Count, perStreamCap, group);
+      // Observe per STREAM against the cap THAT stream was actually fetched with — a stream in the
+      // floor bucket and one in the ceiling bucket saturate at very different widths, so a single
+      // shared cap would misreport both.
+      foreach (var kv in perStream) {
+        var cap = capByStream.TryGetValue(kv.Key, out var c) ? c : _effectivePerStream();
+        _observePage(kv.Value.Count, cap, kv.Value);
+        // Feeds the NEXT cycle's allocation. Only recorded for streams that returned rows: a stream
+        // that came back empty may simply have been drained, and writing zero would drop it from
+        // the next plan even though a notify had just said it had work.
+        _recordDepth(kv.Key, kv.Value.Count, cap);
       }
+      _pruneDepth(streamIds);
 
       foreach (var sid in streamIds) {
         if (ct.IsCancellationRequested) {
@@ -293,7 +415,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
           // afresh from where we left off (the batched fetch consumed up to MaxPerStream
           // rows from this stream); its seen-set is independent but redundant fetches
           // can only happen on real races, dedupped downstream by wh_message_deduplication.
-          if (rows.Count >= _options.MaxPerStream) {
+          if (rows.Count >= capByStream.GetValueOrDefault(sid, _options.MaxPerStream)) {
             await _drainStreamInnerAsync(sid, ct);
           } else if (hadAnyNew) {
             _inboxChannelWriter.SignalNewInboxWorkAvailable();
@@ -593,6 +715,32 @@ public sealed class InboxDrainWorkerOptions {
   /// it at <see cref="MaxPerStream"/> exactly as before.
   /// </summary>
   public bool AdaptivePerStreamEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Rows this drain cycle may fetch in TOTAL across all streams. Zero (default) derives it from
+  /// the stream count times <see cref="MaxPerStream"/> -- the same total the previous fixed-cap
+  /// behavior implied, so nothing shrinks on upgrade and the allocator only REDISTRIBUTES it.
+  /// </summary>
+  /// <remarks>
+  /// Throughput is a property of total rows moved, so the budget is denominated globally. A
+  /// per-stream cap fixes the wrong quantity: the total then swings with however many streams
+  /// happen to be active, and no single value suits both a thousand one-row streams and one stream
+  /// holding thousands.
+  /// </remarks>
+  public int MaxRowsPerCycle { get; set; }
+
+  /// <summary>
+  /// Rows guaranteed to each admitted stream when the budget is divided (default 100, matching
+  /// <see cref="MaxPerStream"/>).
+  /// </summary>
+  /// <remarks>
+  /// This must not sit below the quantization floor. An allocation smaller than the floor cannot be
+  /// issued -- a fetch page thinner than the floor is a uselessly small slice -- so it would be
+  /// rounded back UP, spending more rows than the budget granted. Keeping the guarantee equal to
+  /// the floor means the budget instead seats FEWER streams this cycle, which is the honest
+  /// response, and the allocator's rotation gives the rest their turn next cycle.
+  /// </remarks>
+  public int MinRowsPerStream { get; set; } = 100;
 
   /// <summary>
   /// Cap on the PAYLOAD BYTES a single fetch may return per stream. Default 4 MB;
