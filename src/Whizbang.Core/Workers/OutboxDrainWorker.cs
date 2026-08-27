@@ -393,11 +393,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // Ship the remainder even when the cycle threw. Rows already accumulated have been claimed
       // and leased; stranding them in memory would let their leases lapse and spend a retry attempt
       // they never used.
-      try {
-        await _flushPublishBatchAsync(ct).ConfigureAwait(false);
-      } catch (Exception ex) when (!ct.IsCancellationRequested) {
-        LogPublishFlushFailed(_logger, ex);
-      }
+      //
+      // Deliberately NOT wrapped in a catch. PublishBulkAsync routes every failure to the failure
+      // channel itself and propagates only OperationCanceledException on cancellation — which must
+      // keep propagating so a stopping host unwinds promptly. A catch here would be unreachable
+      // for anything else and would swallow the one exception that should escape.
+      await _flushPublishBatchAsync(ct).ConfigureAwait(false);
       // Reported even when the cycle threw: a governor that only learns from successful cycles is
       // blind to exactly the conditions it exists to back away from.
       _governor.Observe(new Whizbang.Core.Execution.GovernorSignal(
@@ -1157,11 +1158,6 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     };
   }
 
-  [LoggerMessage(EventId = 72, Level = LogLevel.Error,
-    Message = "Failed to flush the cross-stream publish batch at the end of a drain cycle. Those "
-            + "rows are claimed and leased; their leases will lapse and each will spend a retry "
-            + "attempt it never used.")]
-  static partial void LogPublishFlushFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "OutboxDrainWorker started: maxPerStream={MaxPerStream}")]
