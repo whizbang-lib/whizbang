@@ -21,6 +21,29 @@ public sealed record PartitionRecomputeResult {
   /// <summary>True if any row in any table was recomputed (i.e. the database was previously inconsistent with the supplied PartitionCount).</summary>
   public bool AnyRecomputed => InboxRowsRecomputed > 0 || OutboxRowsRecomputed > 0 || ActiveStreamsRowsRecomputed > 0;
 }
+/// <summary>
+/// Work outstanding across an entire service, used to decide whether the service has SETTLED.
+/// </summary>
+/// <remarks>
+/// Distinct from <see cref="OutstandingWork"/>, which is scoped to one instance. An instance that
+/// finished its own claimed streams reads zero locally while peers are still draining, so an
+/// instance-scoped count cannot answer "has this service settled".
+/// </remarks>
+/// <docs>resilience/stream-integrity</docs>
+public sealed record ServiceBacklog {
+  /// <summary>Unprocessed inbox rows across the whole service.</summary>
+  public long UnprocessedInboxRows { get; init; }
+
+  /// <summary>
+  /// Rows currently leased by ANY instance. Non-zero means a peer is mid-dispatch, so rows counted
+  /// as missing may simply be in that peer's hands.
+  /// </summary>
+  public long ActiveLeasedRows { get; init; }
+
+  /// <summary>True when nothing is queued and no instance holds a live lease.</summary>
+  public bool IsSettled => UnprocessedInboxRows == 0 && ActiveLeasedRows == 0;
+}
+
 
 /// <summary>
 /// Work this instance currently holds a live lease on and has not finished, counted in the store
@@ -108,6 +131,27 @@ public interface IWorkCoordinator {
   ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
       Guid instanceId, CancellationToken cancellationToken = default)
     => ValueTask.FromResult<OutstandingWork?>(null);
+
+  /// <summary>
+  /// Counts work outstanding across the WHOLE service, not just the calling instance.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Settledness is a service property. A service runs many instances against one shared store, and
+  /// an instance that has finished its own claimed streams looks completely idle from the inside
+  /// while peers are still draining. A control deciding from its LOCAL view acts on events its own
+  /// siblings are actively processing.
+  /// </para>
+  /// <para>
+  /// Returns null when the backend cannot answer. Callers must treat null as UNMEASURED — never as
+  /// settled — because "nothing outstanding" and "nobody looked" are the same value and opposite
+  /// facts, and defaulting to settled re-enables exactly the behavior the caller is gating.
+  /// </para>
+  /// </remarks>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Service-wide outstanding work, or null when unmeasurable.</returns>
+  ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default)
+    => ValueTask.FromResult<ServiceBacklog?>(null);
 
   /// <summary>
   /// Records a heartbeat for this instance. Fired on its own cadence by the C# HeartbeatWorker can fire on its own cadence (5 s default) independent of polling.

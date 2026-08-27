@@ -203,6 +203,45 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) {
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var inbox = BuildSchemaQualifiedName(schema, "wh_inbox");
+
+    await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = scope.Connection;
+    await using var cmd = conn.CreateCommand();
+
+    // BOUNDED counts, deliberately. The caller needs to know whether these are zero, not their
+    // exact size, and this runs on the checkpoint cadence against a table that can hold a million
+    // rows during a bulk operation. An unbounded count(*) there would make a gate meant to protect
+    // the store into a periodic full scan of it. The cap is high enough that the logged number is
+    // still useful ("at least N") and low enough to stay cheap.
+#pragma warning disable S2077
+    cmd.CommandText = $@"
+      SELECT
+        (SELECT count(*) FROM (SELECT 1 FROM {inbox} WHERE processed_at IS NULL LIMIT 1000) a),
+        (SELECT count(*) FROM (SELECT 1 FROM {inbox}
+           WHERE instance_id IS NOT NULL AND lease_expiry > now() LIMIT 1000) b)";
+#pragma warning restore S2077
+
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    if (!await reader.ReadAsync(cancellationToken)) {
+      // No row means the query answered nothing, which is NOT the same as "the service is settled".
+      // Null keeps the caller's gate closed rather than licensing action off a measurement that was
+      // never taken.
+      return null;
+    }
+    return new ServiceBacklog {
+      UnprocessedInboxRows = reader.GetInt64(0),
+      ActiveLeasedRows = reader.GetInt64(1),
+    };
+  }
+
+  /// <inheritdoc />
   public async Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(request);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);

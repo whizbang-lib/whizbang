@@ -519,6 +519,36 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider),
     };
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
+      // MaxInnerEventsAllowed is declared by the COMPOSITE, so a composite carrying a hundred
+      // thousand inner events simply declares a cap that large and passes. The consumer had no say,
+      // and expansion happens after admission control has already accepted the message — so one
+      // accepted message can add six figures of inbox rows, invalidating every downstream bound
+      // (claim windows, outstanding budgets and lease sizing are all calibrated in rows).
+      //
+      // Observed: single composites expanding past 200,000 children, and a consumer's inbox
+      // climbing for hours against an empty broker with no upstream producer. Producers in the same
+      // deployment emitted composites of at most 16 rows, so composites inflate in transit.
+      var verdict = EvaluateExpansionBudgetForTest(
+        result.Children.Count, _options.MaxCompositeChildrenPerExpansion,
+        _options.EnforceCompositeExpansionBudget);
+      if (verdict.OverBudget) {
+        LogCompositeExceedsConsumerBudget(
+          _logger, compositeTypeName ?? "(unknown)", result.Children.Count,
+          _options.MaxCompositeChildrenPerExpansion, verdict.Chunks);
+
+        if (verdict.Refuse) {
+          // Dead-lettered rather than expanded. The DLQ is recoverable, so this defers the work for
+          // an operator instead of discarding it — and it keeps one message from burying a consumer.
+          var overReason = Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded;
+          LogCompositeFanoutFailed(_logger, work.MessageId, overReason.ToString(),
+            $"consumer budget {_options.MaxCompositeChildrenPerExpansion} exceeded by {result.Children.Count} children");
+          await _deadLetterCompositeAsync(work, overReason,
+            $"Composite '{compositeTypeName}' expanded to {result.Children.Count} children, "
+            + $"exceeding this consumer's budget of {_options.MaxCompositeChildrenPerExpansion}.", ct).ConfigureAwait(false);
+          return;
+        }
+      }
+
       var commitRequest = _buildCommitRequest(
         work, status: (int)MessageProcessingStatus.EventStored,
         newInboxMessages: result.Children, newOutboxMessages: preFanoutOutbox);
@@ -555,6 +585,62 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
     await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
+  }
+
+
+  /// <summary>One expansion's budget verdict.</summary>
+  /// <param name="OverBudget">Whether the expansion exceeds this consumer's budget.</param>
+  /// <param name="Refuse">Whether to refuse it (report-only unless enforcement is enabled).</param>
+  /// <param name="Chunks">Steps a chunked expansion would need, for the report.</param>
+  internal readonly record struct ExpansionVerdict(bool OverBudget, bool Refuse, int Chunks);
+
+  /// <summary>
+  /// Decides whether one composite expansion exceeds this consumer's budget.
+  /// </summary>
+  /// <remarks>
+  /// Separated so the decision can be proven without standing up a dispatch worker and its DLQ
+  /// collaborators. Reporting is unconditional once over budget; REFUSAL is opt-in, because
+  /// refusing an expansion changes delivery for workloads that function today.
+  /// </remarks>
+  internal static ExpansionVerdict EvaluateExpansionBudgetForTest(int childCount, int budget, bool enforce) {
+    if (budget <= 0 || childCount <= budget) {
+      return new ExpansionVerdict(false, false, 0);
+    }
+    var plan = new Whizbang.Core.Messaging.CompositeExpansionBudget(budget).Plan(childCount);
+    return new ExpansionVerdict(true, enforce, plan.Chunks);
+  }
+
+  /// <summary>
+  /// Moves a composite to the dead-letter store, falling back to a terminal completion.
+  /// </summary>
+  /// <remarks>
+  /// Mirrors the max-attempts and fan-out-failure branches: the DLQ move is best-effort, and if it
+  /// fails the row is still marked terminal so it can never re-claim. Dead-lettering is recoverable,
+  /// so this defers oversized work for an operator rather than discarding it.
+  /// </remarks>
+  private async Task _deadLetterCompositeAsync(
+      InboxWork work, Whizbang.Core.Messaging.MessageFailureReason reason, string detail, CancellationToken ct) {
+    if (_deadLetterStore is not null && _generationProvider is not null) {
+      try {
+        await _deadLetterStore.MoveAsync(
+          deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
+          sourceTable: DeadLetterSourceTable.INBOX,
+          sourceId: work.MessageId,
+          failureReason: reason,
+          errorText: detail,
+          instanceId: _instanceProvider.InstanceId,
+          generation: _generationProvider.GetGeneration(),
+          ct: ct).ConfigureAwait(false);
+        _dlqMetrics?.Added.Add(1,
+          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+          new KeyValuePair<string, object?>("reason", reason.ToString()));
+        return;
+      } catch (Exception ex) {
+        LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
+      }
+    }
+    var terminal = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
+    await _handlerCommitChannel.EnqueueAsync(terminal, ct);
   }
 
   /// <summary>
@@ -807,6 +893,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   // Logging
   // ============================================================
 
+  [LoggerMessage(EventId = 71, Level = LogLevel.Warning,
+    Message = "Composite '{CompositeType}' expanded to {ChildCount} child row(s), exceeding this "
+            + "consumer's budget of {Budget} (would need {Chunks} steps). Expansion happens AFTER "
+            + "admission control, so one accepted message added this many inbox rows — every "
+            + "downstream bound (claim window, outstanding budget, lease sizing) is calibrated in "
+            + "rows and cannot see it coming.")]
+  static partial void LogCompositeExceedsConsumerBudget(
+    ILogger logger, string compositeType, int childCount, int budget, int chunks);
+
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "InboxDispatchWorker started: maxInboxAttempts={MaxInboxAttempts}")]
   static partial void LogStarted(ILogger logger, int maxInboxAttempts);
@@ -938,6 +1033,29 @@ public sealed class InboxDispatchWorkerOptions {
   /// Modulo partition count carried into <see cref="HandlerCommitRequest"/>. Default 10000.
   /// </summary>
   public int PartitionCount { get; set; } = 10_000;
+
+  /// <summary>
+  /// Children one composite expansion may add to this consumer's inbox before it is reported
+  /// (default 5000). Zero disables the check entirely.
+  /// </summary>
+  /// <remarks>
+  /// Distinct from a composite's own <c>MaxInnerEventsAllowed</c>, which the MESSAGE declares —
+  /// a composite carrying a hundred thousand inner events simply declares a cap that large and
+  /// passes. This is the CONSUMER's bound on what it will absorb in one step.
+  /// </remarks>
+  public int MaxCompositeChildrenPerExpansion { get; set; } = 5000;
+
+  /// <summary>
+  /// Whether exceeding <see cref="MaxCompositeChildrenPerExpansion"/> dead-letters the composite
+  /// (default false — report only).
+  /// </summary>
+  /// <remarks>
+  /// Off by default because enforcing it changes delivery for workloads that function today.
+  /// Reporting is always on, since the absence of any signal at expansion is what made an inbox
+  /// growing by tens of thousands of rows per minute impossible to attribute from its own logs.
+  /// When enabled the composite is dead-lettered, which is recoverable, rather than discarded.
+  /// </remarks>
+  public bool EnforceCompositeExpansionBudget { get; set; }
 
   /// <summary>
   /// Slice 14: number of parallel internal dispatch consumers. Same-stream messages always

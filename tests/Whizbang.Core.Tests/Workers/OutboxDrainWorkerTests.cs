@@ -35,9 +35,30 @@ public class OutboxDrainWorkerTests {
 
   private sealed class FakeOutboxCompletionChannel : IOutboxCompletionChannel {
     public ConcurrentBag<Guid> AllIds { get; } = [];
+    private readonly object _gate = new();
+    private int _target = -1;
+    private TaskCompletionSource _reached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public ValueTask EnqueueAsync(Guid id, CancellationToken ct = default) {
       AllIds.Add(id);
+      lock (_gate) {
+        if (_target > 0 && AllIds.Count >= _target) {
+          _reached.TrySetResult();
+        }
+      }
       return ValueTask.CompletedTask;
+    }
+
+    /// <summary>Completion SIGNAL, not a poll — the drain is asynchronous and timing-based waits
+    /// make these tests flaky on a loaded machine.</summary>
+    public Task WaitForCountAsync(int count, TimeSpan timeout) {
+      lock (_gate) {
+        _target = count;
+        if (AllIds.Count >= count) {
+          return Task.CompletedTask;
+        }
+      }
+      return _reached.Task.WaitAsync(timeout);
     }
   }
 
@@ -176,6 +197,214 @@ public class OutboxDrainWorkerTests {
         Success = true,
         CompletedStatus = MessageProcessingStatus.Published,
       };
+    }
+  }
+
+  /// <summary>
+  /// The escape hatch: MaxPublishBatchSize = 0 restores the legacy per-stream publish.
+  /// </summary>
+  /// <remarks>
+  /// Kept because cross-stream batching changes the shape of what reaches the broker, and an
+  /// operator hitting an unforeseen interaction needs a way back to the previous behavior without
+  /// downgrading the package. A hatch that silently does nothing is worse than none, so this locks
+  /// it to the observable it promises: one batch per stream.
+  /// </remarks>
+  [Test]
+  public async Task OutboxDrainWorker_ZeroBatchSize_RestoresPerStreamPublishAsync() {
+    const int streamCount = 6;
+    var streamIds = new Guid[streamCount];
+    var coord = new FakeWorkCoordinator();
+    for (var i = 0; i < streamCount; i++) {
+      streamIds[i] = (Guid)TrackedGuid.NewMedo();
+      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.NewMedo(), streamIds[i])];
+    }
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new _BulkCapablePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+        MaxPublishBatchSize = 0,
+      }),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    foreach (var sid in streamIds) {
+      await drainChannel.WriteAsync(sid);
+    }
+    await completion.WaitForCountAsync(streamCount, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    List<IReadOnlyList<OutboxWork>> batches;
+    lock (publish.BatchCalls) { batches = [.. publish.BatchCalls]; }
+
+    await Assert.That(batches.Sum(b => b.Count)).IsEqualTo(streamCount)
+      .Because("the hatch must not lose rows either");
+    await Assert.That(batches.All(b => b.Count == 1)).IsTrue()
+      .Because("with the hatch open every batch is one stream's rows — here one row each — which "
+             + "is exactly the legacy behavior an operator would be reaching for");
+  }
+
+  /// <summary>
+  /// Cross-stream publish batching: many streams holding ONE row each must still fill a batch.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The drain assembled its publish batch from a single stream's rows. Measured on a producer
+  /// mid-import, 88% of "bulk" publishes carried exactly one message against a cap of 25, because
+  /// 98% of streams held exactly one pending row — about 1.4 rows per stream across ~18,000
+  /// streams. The drain sustained roughly five broker round trips per second while tens of
+  /// thousands of rows waited.
+  /// </para>
+  /// <para>
+  /// Raising stream concurrency cannot fix it: more concurrency yields more simultaneous
+  /// SINGLE-message publishes, spending broker connections without changing messages per round
+  /// trip, which is the quantity that binds.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task OutboxDrainWorker_ManySingleRowStreams_FillsBatchesAcrossStreamsAsync() {
+    const int streamCount = 20;
+    var streamIds = new Guid[streamCount];
+    var coord = new FakeWorkCoordinator();
+    for (var i = 0; i < streamCount; i++) {
+      streamIds[i] = (Guid)TrackedGuid.NewMedo();
+      // The production shape: one pending row per stream.
+      coord.RowsByStream[streamIds[i]] = [_row((Guid)TrackedGuid.NewMedo(), streamIds[i])];
+    }
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new _BulkCapablePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+        MaxPublishBatchSize = 25,
+      }),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    foreach (var sid in streamIds) {
+      await drainChannel.WriteAsync(sid);
+    }
+    await completion.WaitForCountAsync(streamCount, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    List<IReadOnlyList<OutboxWork>> batches;
+    lock (publish.BatchCalls) { batches = [.. publish.BatchCalls]; }
+
+    var published = batches.Sum(b => b.Count);
+    await Assert.That(published).IsEqualTo(streamCount)
+      .Because("batching must not lose or duplicate rows — every claimed row publishes exactly once");
+
+    var largest = batches.Count == 0 ? 0 : batches.Max(b => b.Count);
+    await Assert.That(largest).IsGreaterThan(1)
+      .Because($"{streamCount} streams of one row each produced {batches.Count} batches with a "
+             + "largest of " + largest + "; batching PER STREAM makes every batch a singleton, "
+             + "which is the measured 88%-singleton defect");
+
+    await Assert.That(batches.Count).IsLessThan(streamCount)
+      .Because("the whole point is fewer round trips than rows — one batch per row is the "
+             + "behavior being replaced");
+  }
+
+  /// <summary>
+  /// Cross-stream batching must not break per-stream FIFO, which IS a real invariant.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_CrossStreamBatching_PreservesPerStreamOrderAsync() {
+    const int streamCount = 6;
+    const int rowsPerStream = 4;
+    var streamIds = new Guid[streamCount];
+    var expected = new Dictionary<Guid, List<Guid>>();
+    var coord = new FakeWorkCoordinator();
+    for (var i = 0; i < streamCount; i++) {
+      var sid = (Guid)TrackedGuid.NewMedo();
+      streamIds[i] = sid;
+      var rows = new List<OutboxBatchRow>();
+      var ids = new List<Guid>();
+      for (var r = 0; r < rowsPerStream; r++) {
+        var mid = (Guid)TrackedGuid.NewMedo();
+        ids.Add(mid);
+        rows.Add(_row(mid, sid));
+      }
+      coord.RowsByStream[sid] = rows;
+      expected[sid] = ids;
+    }
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new _BulkCapablePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 100,
+        MaxConcurrentStreams = streamCount,
+        MaxPublishBatchSize = 5,
+      }),
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(),
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    foreach (var sid in streamIds) {
+      await drainChannel.WriteAsync(sid);
+    }
+    await completion.WaitForCountAsync(streamCount, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    List<IReadOnlyList<OutboxWork>> batches;
+    lock (publish.BatchCalls) { batches = [.. publish.BatchCalls]; }
+    var flat = batches.SelectMany(b => b).ToList();
+
+    foreach (var (sid, want) in expected) {
+      var got = flat.Where(w => w.StreamId == sid).Select(w => w.MessageId).ToList();
+      await Assert.That(got).IsEquivalentTo(want)
+        .Because("mixing streams into one publish is safe ONLY while each stream keeps its own "
+               + "order — batches publish in emission order, so a stream split across two batches "
+               + "must still arrive in sequence");
     }
   }
 
