@@ -528,22 +528,23 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // Observed: single composites expanding past 200,000 children, and a consumer's inbox
       // climbing for hours against an empty broker with no upstream producer. Producers in the same
       // deployment emitted composites of at most 16 rows, so composites inflate in transit.
-      var budget = _options.MaxCompositeChildrenPerExpansion;
-      if (budget > 0 && result.Children.Count > budget) {
-        var plan = new Whizbang.Core.Messaging.CompositeExpansionBudget(budget)
-          .Plan(result.Children.Count);
+      var verdict = EvaluateExpansionBudgetForTest(
+        result.Children.Count, _options.MaxCompositeChildrenPerExpansion,
+        _options.EnforceCompositeExpansionBudget);
+      if (verdict.OverBudget) {
         LogCompositeExceedsConsumerBudget(
-          _logger, compositeTypeName ?? "(unknown)", result.Children.Count, budget, plan.Chunks);
+          _logger, compositeTypeName ?? "(unknown)", result.Children.Count,
+          _options.MaxCompositeChildrenPerExpansion, verdict.Chunks);
 
-        if (_options.EnforceCompositeExpansionBudget) {
+        if (verdict.Refuse) {
           // Dead-lettered rather than expanded. The DLQ is recoverable, so this defers the work for
           // an operator instead of discarding it — and it keeps one message from burying a consumer.
           var overReason = Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded;
           LogCompositeFanoutFailed(_logger, work.MessageId, overReason.ToString(),
-            $"consumer budget {budget} exceeded by {result.Children.Count} children");
+            $"consumer budget {_options.MaxCompositeChildrenPerExpansion} exceeded by {result.Children.Count} children");
           await _deadLetterCompositeAsync(work, overReason,
             $"Composite '{compositeTypeName}' expanded to {result.Children.Count} children, "
-            + $"exceeding this consumer's budget of {budget}.", ct).ConfigureAwait(false);
+            + $"exceeding this consumer's budget of {_options.MaxCompositeChildrenPerExpansion}.", ct).ConfigureAwait(false);
           return;
         }
       }
@@ -584,6 +585,29 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     }
     var terminalRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
     await _handlerCommitChannel.EnqueueAsync(terminalRequest, ct);
+  }
+
+
+  /// <summary>One expansion's budget verdict.</summary>
+  /// <param name="OverBudget">Whether the expansion exceeds this consumer's budget.</param>
+  /// <param name="Refuse">Whether to refuse it (report-only unless enforcement is enabled).</param>
+  /// <param name="Chunks">Steps a chunked expansion would need, for the report.</param>
+  internal readonly record struct ExpansionVerdict(bool OverBudget, bool Refuse, int Chunks);
+
+  /// <summary>
+  /// Decides whether one composite expansion exceeds this consumer's budget.
+  /// </summary>
+  /// <remarks>
+  /// Separated so the decision can be proven without standing up a dispatch worker and its DLQ
+  /// collaborators. Reporting is unconditional once over budget; REFUSAL is opt-in, because
+  /// refusing an expansion changes delivery for workloads that function today.
+  /// </remarks>
+  internal static ExpansionVerdict EvaluateExpansionBudgetForTest(int childCount, int budget, bool enforce) {
+    if (budget <= 0 || childCount <= budget) {
+      return new ExpansionVerdict(false, false, 0);
+    }
+    var plan = new Whizbang.Core.Messaging.CompositeExpansionBudget(budget).Plan(childCount);
+    return new ExpansionVerdict(true, enforce, plan.Chunks);
   }
 
   /// <summary>
