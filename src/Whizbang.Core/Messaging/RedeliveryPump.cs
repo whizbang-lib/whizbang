@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -140,7 +142,11 @@ public sealed class RedeliveryPump {
     // rides as the broker session key, so redelivered bundles keep stream FIFO.
     var plans = _compositeFactory.Create(new CompositeMintRequest<RedeliveryEvent> {
       Constituents = events,
-      GroupKey = CompositeGroupKey.FromKey<RedeliveryEvent>(e => e.StreamId.ToString()),
+      // Grouped by stream AND scope. A composite carries ONE hop scope, so a bundle spanning two
+      // scopes could only be stamped with one of them — repairing one tenant's event under another
+      // tenant's authority. A stream is single-tenant in practice, which makes this a no-op split
+      // that costs nothing and forecloses the mis-attribution when it is not.
+      GroupKey = CompositeGroupKey.FromKey<RedeliveryEvent>(e => $"{e.StreamId}|{e.Scope}"),
       MaxConstituentsPerComposite = _options.MaxInnerEventsPerComposite,
       MaxBytesPerComposite = _options.MaxBytesPerComposite,
       ConstituentSizeBytes = e => e.EventData.Length + (e.Metadata?.Length ?? 0),
@@ -149,7 +155,9 @@ public sealed class RedeliveryPump {
 
     var published = 0;
     foreach (var plan in plans) {
-      await _publishPlanAsync((RedeliveryComposite)plan.Composite, topic, target, stateOnly, cancellationToken).ConfigureAwait(false);
+      // Scope-uniform by construction (see GroupKey), so any constituent answers for the bundle.
+      var scope = _scopeDeltaFor(plan.Constituents.Count > 0 ? plan.Constituents[0].Scope : null);
+      await _publishPlanAsync((RedeliveryComposite)plan.Composite, topic, target, stateOnly, scope, cancellationToken).ConfigureAwait(false);
       published++;
     }
     return published;
@@ -181,6 +189,7 @@ public sealed class RedeliveryPump {
       string topic,
       string? target,
       bool stateOnly,
+      ScopeDelta? scope,
       CancellationToken cancellationToken) {
     var wireEnvelope = new MessageEnvelope<RedeliveryComposite> {
       MessageId = new MessageId(TrackedGuid.NewMedo()),
@@ -189,7 +198,13 @@ public sealed class RedeliveryPump {
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
+          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          // The original events' scope, carried forward. Fan-out at the consumer derives every
+          // child's scope from this hop, and the children are then WRITTEN to the event store with
+          // whatever it holds. Publishing unscoped therefore does not merely inconvenience the
+          // consumer -- it persists copies that no later read can repair, and a perspective
+          // requiring a security context rejects them until they park.
+          Scope = scope
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
@@ -223,4 +238,42 @@ public sealed class RedeliveryPump {
       }
     }
   }
+  /// <summary>
+  /// Builds the hop's <see cref="ScopeDelta"/> from an event's stored scope JSON.
+  /// </summary>
+  /// <remarks>
+  /// Reads the wire short keys the scope column stores. Not caught: the column is <c>jsonb</c>, so
+  /// the database has already guaranteed well-formed JSON, and a parse failure here means the
+  /// stored bytes are corrupt -- which should surface rather than be quietly downgraded to
+  /// "unscoped", the one outcome indistinguishable from an event that legitimately had no scope.
+  /// </remarks>
+  /// <param name="scopeJson">Stored scope JSON, or null when the event carried no scope.</param>
+  /// <returns>The delta, or null when nothing was stored.</returns>
+  private static ScopeDelta? _scopeDeltaFor(string? scopeJson) {
+    if (string.IsNullOrEmpty(scopeJson)) {
+      return null;
+    }
+
+    using var doc = System.Text.Json.JsonDocument.Parse(scopeJson);
+    // A jsonb column can hold the JSON null LITERAL, which arrives as the four-character string
+    // "null" -- not empty, so the guard above does not catch it.
+    if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) {
+      return null;
+    }
+
+    var scope = new PerspectiveScope {
+      TenantId = _scopeValue(doc.RootElement, "t"),
+      UserId = _scopeValue(doc.RootElement, "u"),
+      CustomerId = _scopeValue(doc.RootElement, "c"),
+      OrganizationId = _scopeValue(doc.RootElement, "o"),
+    };
+
+    // Returns null when every field is empty, so an empty object never becomes a hollow authority.
+    return ScopeDelta.FromPerspectiveScope(scope);
+  }
+
+  private static string? _scopeValue(System.Text.Json.JsonElement element, string key) =>
+    element.TryGetProperty(key, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String
+      ? value.GetString()
+      : null;
 }

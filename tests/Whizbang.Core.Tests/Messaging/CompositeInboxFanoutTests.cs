@@ -587,6 +587,53 @@ public class CompositeInboxFanoutTests {
   /// A source inbox envelope whose first hop carries the composite's StreamId as AggregateId — the
   /// shape <c>_extractStreamId</c> reads to inherit the stream onto each child.
   /// </summary>
+  [Test]
+  public async Task TryExpand_ChildrenInheritTheCompositesSecurityScopeAsync() {
+    // Pins existing behavior rather than fixing it, because the whole repair chain rests on it.
+    // Fan-out is where a bundle's scope becomes each child's PERSISTED scope: the child's stored
+    // scope column and its lineage hop are both derived from the composite's hop here. If that
+    // derivation ever silently stops, the children are written unscoped and no later read can
+    // recover them -- a perspective requiring a security context rejects every one until it parks.
+    // The producers were fixed to carry the scope this far; this locks the other half.
+    var streamId = Guid.NewGuid();
+    var composite = new RedeliveryComposite {
+      StreamId = streamId,
+      InnerPayloads = [_raw("{\"v\":\"A\"}")],
+      InnerTypeNames = ["Contracts.Repaired, Contracts"],
+      InnerEventIds = [Guid.NewGuid()],
+    };
+    var source = _scopedSourceEnvelope(streamId, "tenant-a", "user-a");
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(1);
+
+    var child = result.Children[0];
+    await Assert.That(child.Scope).IsNotNull()
+      .Because("this value becomes the child's scope COLUMN in the event store; a null here is "
+             + "written to disk and is indistinguishable from an event that never had a scope");
+    await Assert.That(child.Scope!.TenantId).IsEqualTo("tenant-a");
+    await Assert.That(child.Metadata!.Hops[0].Scope).IsNotNull()
+      .Because("the lineage hop must carry it too — the security extractor reads the hop chain, "
+             + "not the column");
+  }
+
+  private static MessageEnvelope<JsonElement> _scopedSourceEnvelope(Guid streamId, string tenantId, string userId) {
+    var source = _sourceEnvelope(streamId);
+    return new MessageEnvelope<JsonElement> {
+      DispatchContext = source.DispatchContext,
+      MessageId = source.MessageId,
+      Payload = source.Payload,
+      Hops = [source.Hops![0] with {
+        Scope = Whizbang.Core.Security.ScopeDelta.FromPerspectiveScope(
+          new Whizbang.Core.Lenses.PerspectiveScope { TenantId = tenantId, UserId = userId }),
+      }],
+      SourceServiceId = source.SourceServiceId,
+      SourceCommitSequence = source.SourceCommitSequence,
+    };
+  }
+
   private static MessageEnvelope<JsonElement> _sourceEnvelope(Guid streamId) {
     var aggregateMeta = new Dictionary<string, JsonElement> {
       ["AggregateId"] = JsonSerializer.SerializeToElement(streamId.ToString()),

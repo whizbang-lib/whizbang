@@ -5,9 +5,11 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Dispatch;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
 using Whizbang.Core.ValueObjects;
@@ -333,6 +335,82 @@ public class CoalesceShipWorkerTests {
     OldestCreatedAt = _testNow.AddSeconds(-oldestAge),
     NewestCreatedAt = _testNow.AddSeconds(-newestAge)
   };
+
+  // === Scope carry ===
+  //
+  // Same defect class as the re-delivery pump: the composite's wire hop was built without a scope,
+  // so a folded bundle arrived unscoped and the consumer's fan-out gave every child a null scope.
+  // The children are then PERSISTED that way, which no later read can repair.
+
+  [Test]
+  public async Task RunOnce_CarriesTheSinglesScopeOntoTheCompositeHopAsync() {
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    var singles = new List<OutboxMessage> { _scopedSingle("test-topic", "tenant-a"), _scopedSingle("test-topic", "tenant-a") };
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. singles];
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composite = coordinator.CompletedFolds[0].Composites[0];
+    var hop = composite.Metadata.Hops[0];
+    await Assert.That(hop.Scope).IsNotNull()
+      .Because("the folded singles carried a scope; dropping it here persists every fanned-out "
+             + "child unscoped, and a perspective requiring a security context parks them all");
+    await Assert.That(hop.Scope!.ApplyTo(null).Scope.TenantId).IsEqualTo("tenant-a");
+  }
+
+  [Test]
+  public async Task RunOnce_NeverFoldsDifferentScopesIntoOneCompositeAsync() {
+    // One composite carries ONE hop scope. Folding two tenants together could only stamp one of
+    // them, shipping one tenant's event under the other's authority.
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    var singles = new List<OutboxMessage> { _scopedSingle("test-topic", "tenant-a"), _scopedSingle("test-topic", "tenant-b") };
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. singles];
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composites = coordinator.CompletedFolds.SelectMany(f => f.Composites).ToList();
+    await Assert.That(composites.Count).IsEqualTo(2)
+      .Because("two scopes cannot share one bundle without mis-attributing one of them");
+    var tenants = composites
+      .Select(c => c.Metadata.Hops[0].Scope?.ApplyTo(null).Scope.TenantId ?? "<unscoped>")
+      .OrderBy(t => t, StringComparer.Ordinal).ToList();
+    await Assert.That(tenants).IsEquivalentTo(["tenant-a", "tenant-b"]);
+  }
+
+  [Test]
+  public async Task RunOnce_LeavesTheCompositeUnscopedWhenSinglesHadNoScopeAsync() {
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. _singles(2)];
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composite = coordinator.CompletedFolds[0].Composites[0];
+    await Assert.That(composite.Metadata.Hops[0].Scope).IsNull()
+      .Because("unscoped singles must fold into an unscoped composite — inventing an authority "
+             + "here would be worse than the failure it hides");
+  }
+
+  private static OutboxMessage _scopedSingle(string destination, string tenantId) {
+    var single = _single(destination);
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      Timestamp = _testNow,
+      ServiceInstance = ServiceInstanceInfo.Unknown,
+      Scope = ScopeDelta.FromPerspectiveScope(new PerspectiveScope { TenantId = tenantId, UserId = "user-1" }),
+    };
+    return single with {
+      Envelope = new MessageEnvelope<JsonElement> {
+        MessageId = single.Envelope.MessageId,
+        Payload = single.Envelope.Payload,
+        Hops = [hop],
+        DispatchContext = single.Envelope.DispatchContext,
+      },
+      Metadata = new EnvelopeMetadata { MessageId = single.Envelope.MessageId, Hops = [hop] },
+    };
+  }
 
   private static List<OutboxMessage> _singles(int count) =>
     [.. Enumerable.Range(0, count).Select(_ => _single("test-topic"))];

@@ -5,6 +5,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
 
@@ -191,7 +192,11 @@ public sealed partial class CoalesceShipWorker(
       // documents the bound at the splitter.
       var plans = _compositeFactory.Create(new CompositeMintRequest<OutboxMessage> {
         Constituents = singles,
-        GroupKey = CompositeGroupKey.FromKey<OutboxMessage>(m => m.Destination),
+        // Destination AND scope. A composite carries ONE hop scope, so folding two scopes into one
+        // bundle could only stamp it with one of them -- shipping one tenant's event under another
+        // tenant's authority. Note the destination is now read from the constituents rather than
+        // from GroupKey, which this split would otherwise corrupt.
+        GroupKey = CompositeGroupKey.FromKey<OutboxMessage>(m => $"{m.Destination}|{_scopeKey(m)}"),
         MaxConstituentsPerComposite = binding.MaxBatchCount,
         BuildComposite = batch => (binding.CompositeFactory ?? BuildDefaultComposite)(new CoalesceFoldBatch {
           Group = group,
@@ -201,7 +206,11 @@ public sealed partial class CoalesceShipWorker(
       });
 
       foreach (var plan in plans) {
-        var compositeMessage = _buildCompositeOutboxMessage(serializer, plan.Composite, plan.GroupKey);
+        // Scope-uniform and destination-uniform by construction (see GroupKey), so any constituent
+        // answers for the bundle.
+        var first = plan.Constituents[0];
+        var compositeMessage = _buildCompositeOutboxMessage(
+          serializer, plan.Composite, first.Destination, _scopeOf(first));
 
         await coordinator.CompleteCoalesceFoldAsync(
           [.. plan.Constituents.Select(m => m.MessageId)],
@@ -240,7 +249,8 @@ public sealed partial class CoalesceShipWorker(
   private OutboxMessage _buildCompositeOutboxMessage(
       IEnvelopeSerializer serializer,
       CompositeEventBase composite,
-      string? destination) {
+      string? destination,
+      ScopeDelta? scope) {
     var envelope = new MessageEnvelope<CompositeEventBase> {
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = composite,
@@ -248,7 +258,11 @@ public sealed partial class CoalesceShipWorker(
         new MessageHop {
           ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
-          Timestamp = _timeProvider.GetUtcNow()
+          Timestamp = _timeProvider.GetUtcNow(),
+          // The folded singles' scope, carried forward. The consumer's fan-out derives every
+          // child's scope from this hop and PERSISTS it, so an unscoped bundle leaves behind
+          // children that no later read can repair.
+          Scope = scope
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
@@ -319,4 +333,22 @@ public sealed partial class CoalesceShipWorker(
   [LoggerMessage(EventId = 6, Level = LogLevel.Error,
     Message = "CoalesceShipWorker startup recovery release failed; per-tick backstop will retry")]
   static partial void LogRecoveryFailed(ILogger logger, Exception ex);
+  /// <summary>The scope carried by a pending single, or null when it had none.</summary>
+  private static ScopeDelta? _scopeOf(OutboxMessage message) =>
+    message.Metadata.Hops.Count > 0 ? message.Metadata.Hops[0].Scope : null;
+
+  /// <summary>
+  /// Stable grouping key for a single's scope, so a fold never spans two of them.
+  /// </summary>
+  /// <remarks>
+  /// Compares the RESOLVED scope values rather than the delta itself: two deltas can be structurally
+  /// different and still resolve to the same authority, and splitting those apart would fragment
+  /// folds for no benefit.
+  /// </remarks>
+  private static string _scopeKey(OutboxMessage message) {
+    var scope = _scopeOf(message)?.ApplyTo(null).Scope;
+    return scope is null
+      ? string.Empty
+      : $"{scope.TenantId}|{scope.UserId}|{scope.CustomerId}|{scope.OrganizationId}";
+  }
 }
