@@ -2487,11 +2487,14 @@ public abstract partial class Dispatcher(
   /// Priority: IMessageContext (UserId/TenantId) first, then ambient AsyncLocal.
   /// This ensures context flows correctly even when AsyncLocal scope has ended.
   /// </summary>
-  private static ScopeDelta? _getScopeDeltaForHop(IMessageContext context) =>
+  private static ScopeDelta? _getScopeDeltaForHop(IMessageContext context, Type? messageType = null) =>
     // Priority 1: the explicit IMessageContext scope; Priority 2: ambient AsyncLocal scope. Both via the shared
     // CascadeContext helpers so scope-from-context / scope-from-ambient are resolved the ONE way everywhere.
+    // Priority 3: control-plane traffic has no ambient user by design — say so explicitly, so that a
+    // scope that is simply MISSING stays a detectable fault rather than looking intentional.
     CascadeContext.ScopeDeltaFromMessageContext(context)
-      ?? ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient());
+      ?? ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient())
+      ?? Security.SystemScopeResolver.ForUnscoped(messageType);
 
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
@@ -2524,7 +2527,7 @@ public abstract partial class Dispatcher(
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
-      Scope = _getScopeDeltaForHop(context),
+      Scope = _getScopeDeltaForHop(context, typeof(TMessage)),
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 
@@ -2580,7 +2583,7 @@ public abstract partial class Dispatcher(
       CallerFilePath = callerFilePath,
       CallerLineNumber = callerLineNumber,
       Metadata = hopMetadata,
-      Scope = _getScopeDeltaForHop(context),
+      Scope = _getScopeDeltaForHop(context, messageType),
       TraceParent = System.Diagnostics.Activity.Current?.Id
     };
 

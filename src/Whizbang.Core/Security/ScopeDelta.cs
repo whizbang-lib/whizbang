@@ -133,9 +133,12 @@ public sealed class ScopeDelta {
       return null;
     }
 
+    // An all-empty scope is neither an authority nor a statement of intent, so it stays
+    // indistinguishable from nothing. A system marker IS a statement of intent, and collapsing it
+    // to null here would restore the very ambiguity the marker exists to remove.
     if (string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)
         && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)
-        && scope.Extensions.Count == 0) {
+        && scope.Extensions.Count == 0 && !scope.IsSystem) {
       return null;
     }
 
@@ -145,6 +148,19 @@ public sealed class ScopeDelta {
       }
     };
   }
+
+  /// <summary>
+  /// The well-known scope for messages that carry NO user authority by design — control-plane
+  /// traffic published by background workers.
+  /// </summary>
+  /// <remarks>
+  /// Marks intent, not permission: it resolves to no tenant, no user and no principal. Stamping it
+  /// is what makes an absent scope unambiguous, so that "this event has no scope" can be asserted
+  /// as a defect rather than investigated as one.
+  /// </remarks>
+  public static ScopeDelta System { get; } =
+    FromPerspectiveScope(new PerspectiveScope { IsSystem = true })!;
+
 
   /// <summary>
   /// Creates a ScopeDelta from the old SecurityContext type.
@@ -373,6 +389,11 @@ public sealed class ScopeDelta {
     _appendJsonStringProperty(sb, "u", scope.UserId, ref first);
     _appendJsonStringProperty(sb, "c", scope.CustomerId, ref first);
     _appendJsonStringProperty(sb, "o", scope.OrganizationId, ref first);
+    if (scope.IsSystem) {
+      if (!first) { sb.Append(','); }
+      sb.Append("\"sys\":true");
+      first = false;
+    }
     _appendAllowedPrincipals(sb, scope.AllowedPrincipals, ref first);
     _appendExtensions(sb, scope.Extensions, ref first);
 
@@ -437,6 +458,9 @@ public sealed class ScopeDelta {
   private static PerspectiveScope _deserializeScope(JsonElement element) {
     var scope = new PerspectiveScope();
 
+    if (element.TryGetProperty("sys", out var sys) && sys.ValueKind == JsonValueKind.True) {
+      scope.IsSystem = true;
+    }
     if (element.TryGetProperty("t", out var t) && t.ValueKind != JsonValueKind.Null) {
       scope.TenantId = t.GetString();
     }
