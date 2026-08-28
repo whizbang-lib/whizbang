@@ -213,11 +213,7 @@ public sealed partial class IntegrityCheckpointWorker(
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = checkpoint,
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityCheckpoint), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     };

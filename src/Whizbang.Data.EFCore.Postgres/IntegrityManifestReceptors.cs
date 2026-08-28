@@ -153,11 +153,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           OriginGeneration = originGeneration,
         },
         Hops = [
-          new MessageHop {
-            Type = HopType.Current,
-            Timestamp = DateTimeOffset.UtcNow,
-            ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-          }
+          Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
         ],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Target = message.RequesterService,
@@ -609,11 +605,7 @@ public sealed partial class IntegrityManifestReceptor(
         ResumeAfterStreamId = cursor,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = now,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, now)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = message.OriginServiceName,
@@ -782,11 +774,7 @@ public sealed partial class IntegrityManifestReceptor(
         MaxDigests = windowed ? options.MaxDigestsPerManifest : null,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = message.OriginServiceName,
@@ -869,11 +857,7 @@ public sealed partial class IntegrityManifestReceptor(
         StateOnly = true,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = manifest.OriginServiceName,
@@ -924,11 +908,7 @@ public sealed partial class IntegrityManifestReceptor(
         ToCommitSequence = manifest.ComputedThrough is long through ? through - 1 : null,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = manifest.OriginServiceName,

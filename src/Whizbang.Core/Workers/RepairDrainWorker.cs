@@ -149,11 +149,7 @@ public sealed partial class RepairDrainWorker(
           ToCommitSequence = toSeq,
         },
         Hops = [
-          new MessageHop {
-            Type = HopType.Current,
-            Timestamp = now,
-            ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown
-          }
+          Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, now)
         ],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Target = origin.OriginServiceName,
