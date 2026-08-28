@@ -157,6 +157,102 @@ public class RedeliveryPumpTests {
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
+  // === Scope carry ===
+  //
+  // The pump reads each event's persisted scope (SelectRedeliveryEventsAsync selects
+  // es.scope::text into RedeliveryEvent.Scope) and used to publish without it. Every repaired
+  // event then arrived unscoped, CompositeInboxFanout derived each child's scope from the
+  // composite's hop and found none, and the children were WRITTEN to the event store with a null
+  // scope. From there nothing can recover it: a perspective requiring a security context throws on
+  // each one, retries to its attempt limit, and parks it. Repair, whose whole purpose is
+  // convergence, manufactured events that can never converge.
+
+  [Test]
+  public async Task Publish_CarriesTheStoredScopeOntoTheWireHopAsync() {
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
+    var pump = new RedeliveryPump(transport, serializer);
+
+    await pump.PublishAsync(
+      [_scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, _scopeJson("tenant-a", "user-a"))],
+      topic: "repair-topic", target: "svc-x");
+
+    var hop = serializer.Captured[0].Hops[0];
+    await Assert.That(hop.Scope).IsNotNull()
+      .Because("the pump HAS the original scope on every RedeliveryEvent it selected; publishing "
+             + "without it is what persists the repaired copies unscoped and unprocessable");
+    await Assert.That(hop.Scope!.ApplyTo(null).Scope.TenantId).IsEqualTo("tenant-a");
+  }
+
+  [Test]
+  public async Task Publish_NeverMixesDifferentScopesIntoOneBundleAsync() {
+    // Same stream, two scopes. A single composite carries ONE hop scope, so bundling these
+    // together would stamp one tenant's scope onto the other tenant's event — a cross-tenant
+    // mis-attribution created by the repair path itself. Splitting is the only safe answer.
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
+    var pump = new RedeliveryPump(transport, serializer);
+
+    var published = await pump.PublishAsync([
+        _scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, _scopeJson("tenant-a", "user-a")),
+        _scopedEvt(stream, TrackedGuid.NewMedo().Value, 2, _scopeJson("tenant-b", "user-b")),
+      ], topic: "repair-topic", target: "svc-x");
+
+    await Assert.That(published).IsEqualTo(2)
+      .Because("one bundle cannot represent two scopes; merging them would repair one tenant's "
+             + "data under another tenant's authority");
+
+    var tenants = serializer.Captured
+      .Select(c => c.Hops[0].Scope?.ApplyTo(null).Scope.TenantId ?? "<unscoped>")
+      .OrderBy(t => t, StringComparer.Ordinal)
+      .ToList();
+    await Assert.That(tenants).IsEquivalentTo(["tenant-a", "tenant-b"]);
+  }
+
+  [Test]
+  public async Task Publish_LeavesTheHopUnscopedWhenTheEventHadNoScopeAsync() {
+    // The other half of the contract: carrying what was stored must never become inventing what
+    // was not. An event persisted without a scope stays without one.
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
+    var pump = new RedeliveryPump(transport, serializer);
+
+    await pump.PublishAsync(
+      [_evt(stream, TrackedGuid.NewMedo().Value, 1)],
+      topic: "repair-topic", target: "svc-x");
+
+    await Assert.That(serializer.Captured[0].Hops[0].Scope).IsNull()
+      .Because("fabricating a scope for an unscoped event would hand it an authority nobody "
+             + "granted, which is worse than the exception it would silence");
+  }
+
+  [Test]
+  public async Task Publish_TreatsAJsonNullScopeAsNoScopeAsync() {
+    // The stored column holds the JSON null LITERAL, not SQL NULL, so the string reaching the pump
+    // is "null" — four characters, not empty. A null-or-empty guard does not fire on it.
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var serializer = new _captureSerializer();
+    var pump = new RedeliveryPump(transport, serializer);
+
+    await pump.PublishAsync(
+      [_scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, "null")],
+      topic: "repair-topic", target: "svc-x");
+
+    await Assert.That(serializer.Captured[0].Hops[0].Scope).IsNull()
+      .Because("\"null\" is not an empty string, so it reaches the deserializer; treating the "
+             + "result as a scope would attach an empty authority to every repaired event");
+  }
+
+  private static string _scopeJson(string tenantId, string userId) =>
+    $$"""{"t": "{{tenantId}}", "u": "{{userId}}"}""";
+
+  private static RedeliveryEvent _scopedEvt(Guid streamId, Guid eventId, long version, string? scopeJson) =>
+    _evt(streamId, eventId, version) with { Scope = scopeJson };
+
   private static RedeliveryEvent _evt(Guid streamId, Guid eventId, long version) => new() {
     EventId = eventId,
     StreamId = streamId,
