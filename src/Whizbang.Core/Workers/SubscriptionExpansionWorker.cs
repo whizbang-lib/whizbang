@@ -148,17 +148,8 @@ public sealed partial class SubscriptionExpansionWorker(
         StateOnly = true,
       },
       Hops = [
-        new MessageHop {
-          Type = HopType.Current,
-          Timestamp = DateTimeOffset.UtcNow,
-          // instanceProvider is non-null here: requester is read from it above and an empty
-          // requester returns early, so the conditional access was dead.
-          ServiceInstance = instanceProvider.ToInfo(),
-          // Control-plane traffic has no ambient user by design. Saying so explicitly is what
-          // keeps an ABSENT scope meaningful: without it, an intentional blank and a business
-          // event that lost its scope are the same bytes in storage.
-          Scope = Whizbang.Core.Security.SystemScopeResolver.ForUnscoped(typeof(RequestRedeliveryCommand)),
-        }
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(
+          typeof(RequestRedeliveryCommand), instanceProvider.ToInfo(), DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     };

@@ -265,15 +265,8 @@ public sealed partial class IntegrityAuditWorker(
           SinceSequence = since,
         },
         Hops = [
-          new MessageHop {
-            Type = HopType.Current,
-            Timestamp = DateTimeOffset.UtcNow,
-            ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
-          // Control-plane traffic has no ambient user by design. Saying so explicitly is what
-          // keeps an ABSENT scope meaningful: without it, an intentional blank and a business
-          // event that lost its scope are the same bytes in storage.
-          Scope = Whizbang.Core.Security.SystemScopeResolver.ForUnscoped(typeof(RequestIntegrityManifest)),
-        }
+          Whizbang.Core.Messaging.ControlPlaneHop.Create(
+          typeof(RequestIntegrityManifest), instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown, DateTimeOffset.UtcNow)
         ],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Target = originName,
