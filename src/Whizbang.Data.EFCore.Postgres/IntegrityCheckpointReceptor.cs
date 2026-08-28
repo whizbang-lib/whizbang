@@ -215,7 +215,7 @@ public sealed partial class IntegrityCheckpointReceptor(
         Topic = topic,
       },
       Hops = [
-        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), services.GetService<IServiceInstanceProvider>()?.ToInfo() ?? ServiceInstanceInfo.Unknown, DateTimeOffset.UtcNow)
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), services.GetService<IServiceInstanceProvider>(), DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = pending.OriginServiceName,

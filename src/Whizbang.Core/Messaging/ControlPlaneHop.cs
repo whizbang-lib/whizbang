@@ -26,15 +26,19 @@ public static class ControlPlaneHop {
 
   /// <summary>Creates the creation hop for a control-plane message.</summary>
   /// <param name="payloadType">The message's CLR type, used to decide the system marker.</param>
-  /// <param name="serviceInstance">The publishing instance.</param>
+  /// <param name="instanceProvider">
+  /// The publishing instance's provider, or null when none is registered. Resolving the fallback
+  /// here rather than at each call site keeps ten copies of the same conditional from existing —
+  /// copies are how the scope came to be omitted at every one of those sites to begin with.
+  /// </param>
   /// <param name="timestamp">Hop timestamp.</param>
   /// <returns>A <see cref="HopType.Current"/> hop carrying the resolved scope.</returns>
   public static MessageHop Create(
-      Type payloadType, ServiceInstanceInfo serviceInstance, DateTimeOffset timestamp) {
+      Type payloadType, IServiceInstanceProvider? instanceProvider, DateTimeOffset timestamp) {
     return new MessageHop {
       Type = HopType.Current,
       Timestamp = timestamp,
-      ServiceInstance = serviceInstance,
+      ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
       Scope = SystemScopeResolver.ForUnscoped(payloadType),
     };
   }

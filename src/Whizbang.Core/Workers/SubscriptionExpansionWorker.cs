@@ -130,9 +130,7 @@ public sealed partial class SubscriptionExpansionWorker(
     var requester = instanceProvider?.ServiceName;
     var topic = _options.RepairTopic
       ?? services.GetService<TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    // instanceProvider is guarded directly, not just via the value derived from it, so both the
-    // compiler and the analyzer can see the later use cannot be null.
-    if (instanceProvider is null || transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       LogBackfillSkipped(_logger,
         transport is null, serializer is null, string.IsNullOrEmpty(requester), string.IsNullOrEmpty(topic));
       return false;
@@ -147,7 +145,7 @@ public sealed partial class SubscriptionExpansionWorker(
         StateOnly = true,
       },
       Hops = [
-        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider.ToInfo(), DateTimeOffset.UtcNow)
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
     };
