@@ -231,12 +231,18 @@ public sealed partial class InboxDrainWorker : BackgroundService {
 
     // Default budget is what the previous fixed cap implied, so redistribution never costs total
     // throughput -- it only changes WHERE the rows go.
-    // At least the ceiling, so one deep stream can actually reach full width: with a budget of
-    // streams x floor alone, no stream can ever be granted more than the floor when few streams are
-    // active, and the depth half of the allocation could never express itself.
+    // The breadth pass reserves a floor for EVERY stream, so a budget of exactly streams x floor is
+    // consumed before depth weighting runs — every stream, one row deep or ten thousand, then gets
+    // the same page. That made the adaptation engage only at LOW stream counts, which is backwards:
+    // a deep stream among many is precisely the case that serializes.
+    //
+    // DepthHeadroomFactor funds depth on top of breadth. The ceiling term additionally lets a
+    // single deep stream reach full width when few streams are active. Growth stays bounded by the
+    // per-stream ceiling and by what a lease window can drain.
+    var headroom = Math.Max(1, _options.DepthHeadroomFactor);
     var budget = _options.MaxRowsPerCycle > 0
       ? _options.MaxRowsPerCycle
-      : Math.Max(streamIds.Count * floor, ceiling);
+      : Math.Max(streamIds.Count * floor * headroom, ceiling);
 
     var demands = new List<StreamDemand>(streamIds.Count);
     for (var i = 0; i < streamIds.Count; i++) {
@@ -741,6 +747,19 @@ public sealed class InboxDrainWorkerOptions {
   /// response, and the allocator's rotation gives the rest their turn next cycle.
   /// </remarks>
   public int MinRowsPerStream { get; set; } = 100;
+
+  /// <summary>
+  /// Multiplier applied to the derived per-cycle budget so depth weighting has headroom above the
+  /// breadth guarantee (default 4). Ignored when <see cref="MaxRowsPerCycle"/> is set explicitly.
+  /// </summary>
+  /// <remarks>
+  /// The breadth pass reserves <see cref="MinRowsPerStream"/> for every admitted stream. Without
+  /// headroom above that, the budget is exhausted before depth is weighted and every stream
+  /// receives the floor regardless of how much it holds — so a stream holding thousands drains in
+  /// ceiling/floor sequential round-trips, by one worker, while the rest of the fleet is idle.
+  /// Raising this funds depth; the per-stream ceiling still bounds any single fetch.
+  /// </remarks>
+  public int DepthHeadroomFactor { get; set; } = 4;
 
   /// <summary>
   /// Cap on the PAYLOAD BYTES a single fetch may return per stream. Default 4 MB;

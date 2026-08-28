@@ -119,6 +119,20 @@ public sealed partial class MaintenanceWorker(
 
   private async Task _runMaintenanceCycleAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    // Publish debug retention BEFORE the sweep reads it. The sweep decides from a stored setting,
+    // not from this process's options, and nothing used to write it — so enabling debug retention
+    // marked rows that the sweep then deleted anyway. Synced every cycle rather than at startup so
+    // a configuration change takes effect without a restart, and so a stale value cannot outlive
+    // the option that set it.
+    try {
+      await coordinator.SyncDebugRetentionSettingAsync(_coordinatorDebugMode(sp), ct).ConfigureAwait(false);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      // Never fail a maintenance cycle over a settings write; the sweep keeps its previous value.
+      LogDebugRetentionSyncFailed(_logger, ex);
+    }
+
     // Reap-driven ephemeral snapshots — run BEFORE perform_maintenance so a snapshot rewind-floor exists for
     // every (stream, perspective) whose consumed, aged-past-grace ephemeral bodies the reaper (Task 8) is
     // about to delete. This is what makes the coverage gate safe on low-volume / idle streams.
@@ -723,6 +737,14 @@ public sealed partial class MaintenanceWorker(
       LogStuckInboxRow(_logger, row.MessageId, row.MessageType, row.StreamId, row.Attempts, row.ClaimedSince);
     }
   }
+
+  private static bool _coordinatorDebugMode(IServiceProvider sp) =>
+    sp.GetService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>()
+      ?.Value.DebugMode ?? false;
+
+  [LoggerMessage(EventId = 50, Level = LogLevel.Warning,
+    Message = "Failed to publish the debug-retention setting to the store; the maintenance sweep keeps its previous value. If debug retention was just enabled, completed rows may still be purged.")]
+  static partial void LogDebugRetentionSyncFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 47, Level = LogLevel.Debug,
     Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed row(s) and {ActiveLeases} active lease(s). The sweep contends with the statement that marks work complete, so it waits for the service to settle. -1 means unmeasured.")]
