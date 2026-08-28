@@ -130,6 +130,27 @@ public class PerspectiveScope {
   public List<string> AllowedPrincipals { get; set; } = [];
 
   /// <summary>
+  /// Marks a scope as SYSTEM-originated: published by the framework or a background worker with no
+  /// ambient user, by design.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This states INTENT, never permission. A system scope grants no tenant, no user and no
+  /// principal — treating it as authority would turn a diagnostic marker into privilege escalation.
+  /// </para>
+  /// <para>
+  /// It exists so that an ABSENT scope means exactly one thing. Control-plane traffic legitimately
+  /// carries no user, and previously stored a null scope — identical in storage to a business event
+  /// that had lost its scope. With the two indistinguishable, "scope is null" could not be asserted
+  /// as a fault, and an audit of stored scope reported healthy data while a large population of
+  /// events had silently lost theirs.
+  /// </para>
+  /// </remarks>
+  [JsonPropertyName("sys")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+  public bool IsSystem { get; set; }
+
+  /// <summary>
   /// Additional scope values as key-value pairs.
   /// Enables extensibility without schema changes.
   /// </summary>
