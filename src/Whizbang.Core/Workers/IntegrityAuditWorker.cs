@@ -265,8 +265,7 @@ public sealed partial class IntegrityAuditWorker(
           SinceSequence = since,
         },
         Hops = [
-          Whizbang.Core.Messaging.ControlPlaneHop.Create(
-          typeof(RequestIntegrityManifest), instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown, DateTimeOffset.UtcNow)
+          Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown, DateTimeOffset.UtcNow)
         ],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Target = originName,

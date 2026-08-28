@@ -153,8 +153,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
           OriginGeneration = originGeneration,
         },
         Hops = [
-          Whizbang.Core.Messaging.ControlPlaneHop.Create(
-          typeof(IntegrityManifest), instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown, DateTimeOffset.UtcNow)
+          Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(IntegrityManifest), instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown, DateTimeOffset.UtcNow)
         ],
         DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
         Target = message.RequesterService,
@@ -573,10 +572,9 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = options.RepairTopic
       ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    // Guard the SOURCE, not just the value derived from it: testing instanceProvider directly is
-    // what lets both the compiler and the analyzer see that the later use cannot be null.
-    if (instanceProvider is null || transport is null || serializer is null
-        || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    // instanceProvider is guarded directly, not just via the value derived from it, so both the
+    // compiler and the analyzer can see the later use cannot be null.
+    if (instanceProvider is null || transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;
     }
     // Directed or not at all — the same rule as the repair request and the drill-down.
@@ -609,8 +607,7 @@ public sealed partial class IntegrityManifestReceptor(
         ResumeAfterStreamId = cursor,
       },
       Hops = [
-        Whizbang.Core.Messaging.ControlPlaneHop.Create(
-          typeof(RequestIntegrityManifest), instanceProvider.ToInfo(), now)
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider.ToInfo(), now)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = message.OriginServiceName,
@@ -693,10 +690,7 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = options.RepairTopic
       ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    // Guard the SOURCE, not just the value derived from it: testing instanceProvider directly is
-    // what lets both the compiler and the analyzer see that the later use cannot be null.
-    if (instanceProvider is null || transport is null || serializer is null
-        || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    if (instanceProvider is null || transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // no drill-down infrastructure — the mismatch re-audits next cycle.
     }
 
@@ -782,8 +776,7 @@ public sealed partial class IntegrityManifestReceptor(
         MaxDigests = windowed ? options.MaxDigestsPerManifest : null,
       },
       Hops = [
-        Whizbang.Core.Messaging.ControlPlaneHop.Create(
-          typeof(RequestIntegrityManifest), instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown, DateTimeOffset.UtcNow)
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestIntegrityManifest), instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown, DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = message.OriginServiceName,
@@ -840,10 +833,7 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = options.RepairTopic
       ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    // Guard the SOURCE, not just the value derived from it: testing instanceProvider directly is
-    // what lets both the compiler and the analyzer see that the later use cannot be null.
-    if (instanceProvider is null || transport is null || serializer is null
-        || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    if (instanceProvider is null || transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;
     }
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
@@ -869,8 +859,7 @@ public sealed partial class IntegrityManifestReceptor(
         StateOnly = true,
       },
       Hops = [
-        Whizbang.Core.Messaging.ControlPlaneHop.Create(
-          typeof(RequestRedeliveryCommand), instanceProvider.ToInfo(), DateTimeOffset.UtcNow)
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider.ToInfo(), DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = manifest.OriginServiceName,
@@ -891,10 +880,7 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = options.RepairTopic
       ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    // Guard the SOURCE, not just the value derived from it: testing instanceProvider directly is
-    // what lets both the compiler and the analyzer see that the later use cannot be null.
-    if (instanceProvider is null || transport is null || serializer is null
-        || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    if (instanceProvider is null || transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // report already published; the repair rides the next cycle when infra exists.
     }
     // Directed or not at all: without the origin-carried request address the ONLY other topic on
@@ -924,8 +910,7 @@ public sealed partial class IntegrityManifestReceptor(
         ToCommitSequence = manifest.ComputedThrough is long through ? through - 1 : null,
       },
       Hops = [
-        Whizbang.Core.Messaging.ControlPlaneHop.Create(
-          typeof(RequestRedeliveryCommand), instanceProvider.ToInfo(), DateTimeOffset.UtcNow)
+        Whizbang.Core.Messaging.ControlPlaneHop.Create(typeof(RequestRedeliveryCommand), instanceProvider.ToInfo(), DateTimeOffset.UtcNow)
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       Target = manifest.OriginServiceName,
