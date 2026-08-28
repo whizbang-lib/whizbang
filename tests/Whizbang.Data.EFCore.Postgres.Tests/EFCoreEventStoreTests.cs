@@ -1344,7 +1344,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
 
   [Test]
   [Category("Integration")]
-  public async Task RestoreScopeInHops_WithEmptyHopsList_ReturnsEmptyListAsync() {
+  public async Task RestoreScopeInHops_WithEmptyHopsList_SynthesizesAHopCarryingTheScopeAsync() {
     // Arrange: Insert event with scope column but empty hops list
     await using var context = CreateDbContext();
     var streamId = Guid.NewGuid();
@@ -1386,9 +1386,23 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       envelopes.Add(env);
     }
 
-    // Assert: Empty hops returned (scope column ignored when no hops to attach to)
+    // Assert: the persisted scope is carried on a synthesized hop.
+    //
+    // This assertion was INVERTED deliberately. It previously required empty hops to stay empty,
+    // described as "scope column ignored when no hops to attach to" — a statement of what the code
+    // did, with no reason given for why it should. Production showed the cost: an event read back
+    // from the store has no envelope metadata (the row keeps scope in a column and no hops), so the
+    // scope was read, deserialized and then dropped. GetCurrentScope() walks hops, so it returned
+    // null, and a perspective requiring a security context threw on every replayed event — a retry
+    // that could not succeed, ten times per event, then a permanent park. One deployment parked
+    // thousands of events while its projection silently stopped converging.
+    //
+    // Restoring the scope onto a synthesized hop invents no authority: an event with no stored
+    // scope still yields none, which the sibling test below pins.
     await Assert.That(envelopes).Count().IsEqualTo(1);
-    await Assert.That(envelopes[0].Hops).Count().IsEqualTo(0);
+    await Assert.That(envelopes[0].Hops).Count().IsEqualTo(1);
+    await Assert.That(envelopes[0].GetCurrentScope()).IsNotNull();
+    await Assert.That(envelopes[0].Hops[0].Scope!.ApplyTo(null).Scope.TenantId).IsEqualTo("tenant-abc");
   }
 
   [Test]

@@ -535,9 +535,9 @@ public sealed class EFCoreEventStore<TDbContext>(
   /// Restores scope from the dedicated scope column into the first hop's ScopeDelta.
   /// Returns the (possibly modified) hops list.
   /// </summary>
-  private static List<MessageHop> _restoreScopeInHops(EnvelopeMetadata metadata, PerspectiveScope? scope) {
-    var hops = metadata.Hops.ToList();
-    if (scope == null || hops.Count == 0 || hops[0].Scope != null) {
+  private static List<MessageHop> _restoreScopeInHops(EnvelopeMetadata? metadata, PerspectiveScope? scope) {
+    var hops = metadata?.Hops?.ToList() ?? [];
+    if (scope == null || (hops.Count > 0 && hops[0].Scope != null)) {
       return hops;
     }
 
@@ -546,9 +546,40 @@ public sealed class EFCoreEventStore<TDbContext>(
       return hops;
     }
 
+    if (hops.Count == 0) {
+      // No hops to hang it on. That is the normal shape when an event is read back from the store:
+      // the row keeps its scope in a column but carries no envelope metadata, so there are no hops
+      // to restore into.
+      //
+      // Returning early here dropped a scope that had already been read and deserialized.
+      // GetCurrentScope() walks hops, so it returned null, and any perspective requiring a security
+      // context threw on every replayed event — a retry that could never succeed, ten times per
+      // event, then a permanent park.
+      //
+      // Synthesizing a hop restores exactly what the store persisted. No authority is invented: an
+      // event with no stored scope still yields none, because scope == null returns above.
+      hops.Add(new MessageHop {
+        ServiceInstance = _replayInstance(),
+        Scope = scopeDelta,
+      });
+      return hops;
+    }
+
     hops[0] = hops[0] with { Scope = scopeDelta };
     return hops;
   }
+
+  /// <summary>
+  /// Identity stamped on a hop synthesized while reading an event back from the store. The
+  /// originating instance is not recorded on the row, and inventing one would misattribute the hop;
+  /// this names the reader, which is what actually produced it.
+  /// </summary>
+  private static ServiceInstanceInfo _replayInstance() => new() {
+    InstanceId = Guid.Empty,
+    ServiceName = "replay",
+    HostName = Environment.MachineName,
+    ProcessId = Environment.ProcessId,
+  };
 
   /// <summary>
   /// Checks if the exception is due to a duplicate key constraint violation.
@@ -628,30 +659,10 @@ public sealed class EFCoreEventStore<TDbContext>(
     var metadata = _deserializeMetadataIfPresent(raw.Metadata);
     var scope = _deserializeScopeIfPresent(raw.Scope);
 
-    var hops = metadata?.Hops?.ToList() ?? [];
-    // Restore scope into first hop (same pattern as _restoreScopeInHops)
-    if (scope is not null && hops.Count > 0 && hops[0].Scope is null) {
-      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
-    } else if (scope is not null && hops.Count == 0) {
-      // No hops to hang it on. That is the NORMAL shape for a replayed event: perspective work is
-      // persisted as an (event_id, perspective_name) reference and rehydrated from the event store,
-      // which keeps the scope in its own column but no envelope metadata — so there are no hops to
-      // carry it.
-      //
-      // Dropping it here is not a missing nicety. GetCurrentScope() walks hops, so it returns null,
-      // and any perspective with lifecycle receptors then throws SecurityContextRequiredException
-      // on every replayed event. The retry cannot succeed: it fails identically ten times and the
-      // event is parked. One deployment accumulated thousands of parked events while its
-      // projection silently stopped converging, with nothing visible at the inbox level.
-      //
-      // Synthesizing a hop restores exactly what the store persisted — no authority is invented,
-      // because an event with no stored scope still produces none.
-      hops.Add(new MessageHop {
-        ServiceInstance = _localInstance(),
-        Scope = ScopeDelta.FromPerspectiveScope(scope),
-      });
-    }
-
+    // Same restore path the read methods use, so drain mode and ReadPolymorphicAsync cannot
+    // drift apart on scope handling again — they previously did, and the drain-mode copy was
+    // fixed while the shared one kept dropping scope for events with no hops.
+    var hops = _restoreScopeInHops(metadata, scope);
     return new MessageEnvelope<IEvent> {
       MessageId = metadata?.MessageId ?? new Whizbang.Core.ValueObjects.MessageId(raw.EventId),
       Payload = (IEvent)eventData,
