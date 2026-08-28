@@ -580,7 +580,10 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = options.RepairTopic
       ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    // Guard the SOURCE, not just the value derived from it: testing instanceProvider directly is
+    // what lets both the compiler and the analyzer see that the later use cannot be null.
+    if (instanceProvider is null || transport is null || serializer is null
+        || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;
     }
     // Directed or not at all — the same rule as the repair request and the drill-down.
@@ -616,7 +619,9 @@ public sealed partial class IntegrityManifestReceptor(
         new MessageHop {
           Type = HopType.Current,
           Timestamp = now,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          // instanceProvider is non-null here: requester is read from it above and an empty
+          // requester returns early, so the conditional access was dead.
+          ServiceInstance = instanceProvider.ToInfo(),
           // Control-plane traffic has no ambient user by design. Saying so explicitly is what
           // keeps an ABSENT scope meaningful: without it, an intentional blank and a business
           // event that lost its scope are the same bytes in storage.
@@ -704,7 +709,10 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = options.RepairTopic
       ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    // Guard the SOURCE, not just the value derived from it: testing instanceProvider directly is
+    // what lets both the compiler and the analyzer see that the later use cannot be null.
+    if (instanceProvider is null || transport is null || serializer is null
+        || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // no drill-down infrastructure — the mismatch re-audits next cycle.
     }
 
@@ -855,7 +863,10 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = options.RepairTopic
       ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    // Guard the SOURCE, not just the value derived from it: testing instanceProvider directly is
+    // what lets both the compiler and the analyzer see that the later use cannot be null.
+    if (instanceProvider is null || transport is null || serializer is null
+        || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;
     }
     var originRequestTopic = services.GetService<IntegrityGapTracker>()?.GetRequestTopic(manifest.OriginServiceId);
@@ -884,7 +895,9 @@ public sealed partial class IntegrityManifestReceptor(
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          // instanceProvider is non-null here: requester is read from it above and an empty
+          // requester returns early, so the conditional access was dead.
+          ServiceInstance = instanceProvider.ToInfo(),
           // Control-plane traffic has no ambient user by design. Saying so explicitly is what
           // keeps an ABSENT scope meaningful: without it, an intentional blank and a business
           // event that lost its scope are the same bytes in storage.
@@ -910,7 +923,10 @@ public sealed partial class IntegrityManifestReceptor(
     var requester = instanceProvider?.ServiceName;
     var topic = options.RepairTopic
       ?? services.GetService<Whizbang.Core.Workers.TransportConsumerOptions>()?.Destinations.FirstOrDefault()?.Address;
-    if (transport is null || serializer is null || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
+    // Guard the SOURCE, not just the value derived from it: testing instanceProvider directly is
+    // what lets both the compiler and the analyzer see that the later use cannot be null.
+    if (instanceProvider is null || transport is null || serializer is null
+        || string.IsNullOrEmpty(requester) || string.IsNullOrEmpty(topic)) {
       return;   // report already published; the repair rides the next cycle when infra exists.
     }
     // Directed or not at all: without the origin-carried request address the ONLY other topic on
@@ -943,7 +959,9 @@ public sealed partial class IntegrityManifestReceptor(
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          ServiceInstance = instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          // instanceProvider is non-null here: requester is read from it above and an empty
+          // requester returns early, so the conditional access was dead.
+          ServiceInstance = instanceProvider.ToInfo(),
           // Control-plane traffic has no ambient user by design. Saying so explicitly is what
           // keeps an ABSENT scope meaningful: without it, an intentional blank and a business
           // event that lost its scope are the same bytes in storage.
