@@ -632,6 +632,24 @@ public sealed class EFCoreEventStore<TDbContext>(
     // Restore scope into first hop (same pattern as _restoreScopeInHops)
     if (scope is not null && hops.Count > 0 && hops[0].Scope is null) {
       hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
+    } else if (scope is not null && hops.Count == 0) {
+      // No hops to hang it on. That is the NORMAL shape for a replayed event: perspective work is
+      // persisted as an (event_id, perspective_name) reference and rehydrated from the event store,
+      // which keeps the scope in its own column but no envelope metadata — so there are no hops to
+      // carry it.
+      //
+      // Dropping it here is not a missing nicety. GetCurrentScope() walks hops, so it returns null,
+      // and any perspective with lifecycle receptors then throws SecurityContextRequiredException
+      // on every replayed event. The retry cannot succeed: it fails identically ten times and the
+      // event is parked. One deployment accumulated thousands of parked events while its
+      // projection silently stopped converging, with nothing visible at the inbox level.
+      //
+      // Synthesizing a hop restores exactly what the store persisted — no authority is invented,
+      // because an event with no stored scope still produces none.
+      hops.Add(new MessageHop {
+        ServiceInstance = _localInstance(),
+        Scope = ScopeDelta.FromPerspectiveScope(scope),
+      });
     }
 
     return new MessageEnvelope<IEvent> {
@@ -645,6 +663,18 @@ public sealed class EFCoreEventStore<TDbContext>(
       LocalCommitSequence = raw.CommitSequence
     };
   }
+
+  /// <summary>
+  /// Identity stamped on a hop synthesized during replay. The originating instance is not recorded
+  /// on the event row, and inventing one would misattribute the hop; this names the replayer, which
+  /// is what actually produced it.
+  /// </summary>
+  private static ServiceInstanceInfo _localInstance() => new() {
+    InstanceId = Guid.Empty,
+    ServiceName = "replay",
+    HostName = Environment.MachineName,
+    ProcessId = Environment.ProcessId,
+  };
 
   private EnvelopeMetadata? _deserializeMetadataIfPresent(string? raw) {
     if (string.IsNullOrEmpty(raw)) {
