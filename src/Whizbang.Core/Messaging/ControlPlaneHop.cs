@@ -20,7 +20,7 @@ namespace Whizbang.Core.Messaging;
 /// composite, whose scope becomes its children's — is left genuinely unscoped rather than marked.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/security/message-scope</docs>
+/// <docs>fundamentals/security/message-security#scope-markers</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ControlPlaneHopTests.cs</tests>
 public static class ControlPlaneHop {
 

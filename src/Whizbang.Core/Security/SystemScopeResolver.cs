@@ -18,7 +18,7 @@ namespace Whizbang.Core.Security;
 /// permission: <see cref="ScopeDelta.System"/> resolves to no tenant, no user, no principal.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/security/message-scope</docs>
+/// <docs>fundamentals/security/message-security#scope-markers</docs>
 /// <tests>tests/Whizbang.Core.Tests/Security/SystemScopeSentinelTests.cs</tests>
 public static class SystemScopeResolver {
 
