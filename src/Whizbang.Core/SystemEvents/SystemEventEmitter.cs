@@ -34,12 +34,17 @@ namespace Whizbang.Core.SystemEvents;
 public sealed class SystemEventEmitter(
     IOptions<SystemEventOptions> options,
     IEventStore systemEventStore,
-    ILogger<SystemEventEmitter>? logger = null) : ISystemEventEmitter {
+    ILogger<SystemEventEmitter>? logger = null,
+    IServiceInstanceProvider? instanceProvider = null) : ISystemEventEmitter {
   private const string SCOPE_TENANT_ID = "TenantId";
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IEventStore _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
   private readonly ILogger<SystemEventEmitter> _logger = logger ?? NullLogger<SystemEventEmitter>.Instance;
+
+  // Optional by design: a service with no telemetry identity wired must still produce audit
+  // records. Losing the audit entirely would be a far worse failure than an unnamed writer.
+  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(
@@ -178,11 +183,18 @@ public sealed class SystemEventEmitter(
       Payload = systemEvent,
       Hops = [
         new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          // Names the instance that wrote the record. Unknown is not a safe default here: it is
+          // indistinguishable from an instance that genuinely could not be identified, so a
+          // divergence between instances cannot be attributed to either of them.
+          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id,
-          Scope = _auditRecordScope(systemEvent),
+          Scope = AuditRecordScope.For(systemEvent switch {
+              EventAudited e => e.TenantId,
+              CommandAudited c => c.TenantId,
+              _ => null,
+            }),
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
@@ -203,44 +215,4 @@ public sealed class SystemEventEmitter(
   }
 
 
-  /// <summary>
-  /// The scope stamped on an audit record's own envelope.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// The scope column is an ACCESS-CONTROL key — reads filter on <c>scope-&gt;&gt;'t'</c> and
-  /// <c>scope-&gt;&gt;'u'</c> — so what goes in it decides who can reach the row, not merely how it
-  /// is labelled. That splits the audited event's identity in two.
-  /// </para>
-  /// <list type="bullet">
-  ///   <item>
-  ///     The audited TENANT is carried: an audit record belongs to the tenant whose action it
-  ///     describes, so tenant-scoped reads, exports and deletions must reach it. Audit rows hold
-  ///     personal data, and leaving them outside every tenant partition is a retention problem.
-  ///   </item>
-  ///   <item>
-  ///     The acting USER is deliberately NOT carried. Putting it here would hand the subject of an
-  ///     audit record a key to their own audit trail. Their identity is already on the payload,
-  ///     where it is evidence rather than a permission.
-  ///   </item>
-  ///   <item>
-  ///     The record is marked system-emitted. That is a separate field from the tenant, so
-  ///     "framework-emitted AND belonging to this tenant" is stated directly, not traded off.
-  ///   </item>
-  /// </list>
-  /// <para>
-  /// Auditing an event that had no tenant yields no tenant here: the audit of a control-plane event
-  /// legitimately belongs to none, and inventing one would be worse than leaving it out.
-  /// </para>
-  /// </remarks>
-  private static Whizbang.Core.Security.ScopeDelta? _auditRecordScope<TSystemEvent>(TSystemEvent systemEvent) {
-    var tenantId = systemEvent switch {
-      EventAudited e => e.TenantId,
-      CommandAudited c => c.TenantId,
-      _ => null,
-    };
-
-    return Whizbang.Core.Security.ScopeDelta.FromPerspectiveScope(
-      new Whizbang.Core.Lenses.PerspectiveScope { TenantId = tenantId, IsSystem = true });
-  }
 }

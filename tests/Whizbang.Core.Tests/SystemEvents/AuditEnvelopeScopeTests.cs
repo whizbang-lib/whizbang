@@ -132,6 +132,54 @@ public class AuditEnvelopeScopeTests {
     await Assert.That(scope.Scope.IsSystem).IsTrue();
   }
 
+
+  [Test]
+  public async Task TheAuditEnvelopeNamesTheEmittingInstanceAsync() {
+    // An audit trail that cannot say which instance wrote a record is missing the one field that
+    // makes it forensically useful when instances disagree. ServiceInstanceInfo.Unknown is not a
+    // safe default here: it is indistinguishable from an instance that genuinely could not be
+    // identified, so every record looks equally untraceable.
+    var store = new _captureStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, store, instanceProvider: new _fixedInstance());
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
+
+    var instance = store.Envelopes[0].Hops[0].ServiceInstance;
+    await Assert.That(instance.ServiceName).IsEqualTo("audit-emitter-service")
+      .Because("the record must name the instance that produced it, or a divergence between "
+             + "instances cannot be attributed to either of them");
+  }
+
+  [Test]
+  public async Task TheAuditEnvelopeStillEmitsWithoutAnInstanceProviderAsync() {
+    // The provider is optional: a service with no telemetry identity wired must still produce
+    // audit records. Losing the audit entirely would be a far worse failure than an unknown writer.
+    var store = new _captureStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, store);
+
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
+
+    await Assert.That(store.Envelopes).IsNotEmpty()
+      .Because("an unwired instance provider must not cost the audit record itself");
+    await Assert.That(store.Envelopes[0].Hops[0].ServiceInstance).IsEqualTo(ServiceInstanceInfo.Unknown);
+  }
+
+  private sealed class _fixedInstance : IServiceInstanceProvider {
+    public Guid InstanceId => Guid.Parse("00000000-0000-0000-0000-0000000000a1");
+    public string ServiceName => "audit-emitter-service";
+    public string HostName => "host-1";
+    public int ProcessId => 42;
+
+    public ServiceInstanceInfo ToInfo() => new() {
+      InstanceId = Guid.Parse("00000000-0000-0000-0000-0000000000a1"),
+      ServiceName = "audit-emitter-service",
+      HostName = "host-1",
+      ProcessId = 42,
+    };
+  }
+
   private sealed class _captureStore : IEventStore {
     public List<MessageEnvelope<EventAudited>> Envelopes { get; } = [];
 
