@@ -3823,7 +3823,10 @@ public abstract partial class Dispatcher(
     // Scope + identity are carried on the SOURCE HOP captured at the calling site — hop-FIRST — falling back to
     // ambient only when no source hop was threaded (see CascadeContext.ResolveHopFirstScope /
     // ResolveHopFirstIdentity — the single place the hop-first precedence lives, shared by every hop builder).
-    var finalScope = CascadeContext.ResolveHopFirstScope(sourceEnvelope);
+    // Hop-first, then ambient, then the marker recording why there is no scope at all. The
+    // publish path does not share _createEnvelope, so without this the marker covered every
+    // path EXCEPT the one control-plane traffic actually uses.
+    var finalScope = Security.OutboxHopScope.Resolve(sourceEnvelope, eventType, _declaredUnscopedTypes);
 
     var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope);
 
@@ -3963,11 +3966,11 @@ public abstract partial class Dispatcher(
       _propagateStreamIdFromSource(eventData, eventType, sourceEnvelope);
 
       // Serialize and create envelope
-      var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId, new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Local });
+      var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId, new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Local }, _declaredUnscopedTypes);
 
       // Add hop with metadata and scope
       var hopMetadata = _createHopMetadata(eventData, eventType);
-      _addOutboxHop(jsonEnvelope, destination, hopMetadata, sourceEnvelope);
+      _addOutboxHop(jsonEnvelope, destination, hopMetadata, sourceEnvelope, eventType);
 
       // Build and queue the outbox message
       var streamId = _streamIdExtractor?.ExtractStreamId(eventData, eventType)
@@ -4020,7 +4023,7 @@ public abstract partial class Dispatcher(
   /// <summary>
   /// Serializes event data to a JsonElement envelope using the runtime type's JSON type info.
   /// </summary>
-  private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext) {
+  private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext, IReadOnlySet<Type>? declaredUnscopedTypes = null) {
     var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
     var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
     var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
@@ -4044,7 +4047,8 @@ public abstract partial class Dispatcher(
     MessageEnvelope<JsonElement> jsonEnvelope,
     string? destination,
     Dictionary<string, JsonElement>? hopMetadata,
-    IMessageEnvelope? sourceEnvelope) {
+    IMessageEnvelope? sourceEnvelope,
+      Type? payloadType) {
     // Hop-FIRST scope + identity: the source hop captured at the calling site is authoritative (survives
     // detached/worker boundaries); ambient is only the fallback. Shared helpers — the single place the rule lives.
     var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope);
@@ -4055,7 +4059,7 @@ public abstract partial class Dispatcher(
       Topic = destination ?? "(event-store)",
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = hopMetadata,
-      Scope = CascadeContext.ResolveHopFirstScope(sourceEnvelope),
+      Scope = Security.OutboxHopScope.Resolve(sourceEnvelope, payloadType, _declaredUnscopedTypes),
       CorrelationId = correlation,
       CausationId = causation,
       TraceParent = System.Diagnostics.Activity.Current?.Id
@@ -5111,7 +5115,7 @@ public abstract partial class Dispatcher(
     // 3. Add hop indicating message is being deferred. Scope + identity ride the SOURCE HOP captured at the
     // calling site — hop-FIRST — via the SAME shared helpers as _createOutboxEnvelopeWithHop/_addOutboxHop, so the
     // deferred path can't drift to ambient-first (the boundary bug: a detached/worker defer has no ambient).
-    var finalScope3 = CascadeContext.ResolveHopFirstScope(sourceEnvelope);
+    var finalScope3 = Security.OutboxHopScope.Resolve(sourceEnvelope, typeof(TEvent), _declaredUnscopedTypes);
     var (correlation3, causation3) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope);
 
     var hop = new MessageHop {

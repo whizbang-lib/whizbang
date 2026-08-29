@@ -231,3 +231,56 @@ public class DeclaredUnscopedMarkerTests {
     await Assert.That(System.Text.Json.JsonSerializer.Deserialize<PerspectiveScope>(json)!.IsDeclaredUnscoped).IsTrue();
   }
 }
+
+/// <summary>
+/// The publish path must mark control-plane traffic too, not just the send path.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The marker was wired into the envelope builder used by Send and LocalInvoke. PublishAsync does
+/// not use it: it captures an ambient source envelope and hands that to the outbox hop builder,
+/// which resolves scope hop-first then falls back to ambient — with no system fallback at all.
+/// </para>
+/// <para>
+/// Control-plane events are PUBLISHED, so that was the path that mattered most, and it was the one
+/// left uncovered. Observed on a deployment running the marker build: one hundred coverage-gap
+/// events written in a single burst, every one with a null scope and no scope on its hop, while
+/// the invariant reported them as defects. The marking looked complete because the send path
+/// worked.
+/// </para>
+/// </remarks>
+/// <code-under-test>src/Whizbang.Core/Security/OutboxHopScope.cs</code-under-test>
+[Category("Security")]
+public class PublishPathSystemScopeTests {
+
+  private sealed record _controlSignal : Whizbang.Core.IEvent, Whizbang.Core.Messaging.IControlPlaneMessage;
+
+  private sealed record _plainEvent : Whizbang.Core.IEvent;
+
+  [Test]
+  public async Task ControlPlaneIsMarkedWhenNothingElseResolvesAsync() {
+    var resolved = OutboxHopScope.Resolve(sourceEnvelope: null, typeof(_controlSignal), declaredUnscopedTypes: null);
+
+    await Assert.That(resolved).IsNotNull()
+      .Because("control-plane events are PUBLISHED, so a marker wired only into the send path "
+             + "leaves the traffic it was built for unmarked and the invariant unusable");
+    await Assert.That(resolved!.ApplyTo(null).Scope.IsSystem).IsTrue();
+  }
+
+  [Test]
+  public async Task AnOrdinaryEventStaysUnmarkedOnThePublishPathAsync() {
+    await Assert.That(OutboxHopScope.Resolve(sourceEnvelope: null, typeof(_plainEvent), null)).IsNull()
+      .Because("the fallback must not fire for domain events, or a scope dropped on the publish "
+             + "path would start looking intentional");
+  }
+
+  [Test]
+  public async Task ADeclaredTypeIsMarkedOnThePublishPathAsync() {
+    var declared = new HashSet<Type> { typeof(_plainEvent) };
+    var resolved = OutboxHopScope.Resolve(sourceEnvelope: null, typeof(_plainEvent), declared);
+
+    await Assert.That(resolved!.ApplyTo(null).Scope.IsDeclaredUnscoped).IsTrue()
+      .Because("an author's declaration has to hold on the publish path too, or their exempted "
+             + "events read as defects");
+  }
+}
