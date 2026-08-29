@@ -302,6 +302,12 @@ public abstract partial class Dispatcher(
   // Whizbang options for runtime configuration (auto-generate StreamIds, etc.)
 #pragma warning disable S4487, S1144 // Pre-resolved for use by subclasses and future features
   private readonly WhizbangOptions _whizbangOptions = serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<WhizbangOptions>>()?.Value ?? new WhizbangOptions();
+
+  // The application author's own declaration that a message type carries no authority (a
+  // pre-authentication event, a health check). Stamped so those stay distinguishable from an event
+  // that simply LOST its scope — without it, the missing-scope invariant flags them as defects.
+  private readonly IReadOnlySet<Type>? _declaredUnscopedTypes =
+    serviceProvider.GetService<Microsoft.Extensions.Options.IOptions<Security.MessageSecurityOptions>>()?.Value?.ExemptMessageTypes;
 #pragma warning restore S4487, S1144
   // Core options for tag processing configuration
   private readonly WhizbangCoreOptions _coreOptions = serviceProvider.GetService<WhizbangCoreOptions>() ?? new WhizbangCoreOptions();
@@ -2487,14 +2493,14 @@ public abstract partial class Dispatcher(
   /// Priority: IMessageContext (UserId/TenantId) first, then ambient AsyncLocal.
   /// This ensures context flows correctly even when AsyncLocal scope has ended.
   /// </summary>
-  private static ScopeDelta? _getScopeDeltaForHop(IMessageContext context, Type? messageType = null) =>
+  private ScopeDelta? _getScopeDeltaForHop(IMessageContext context, Type? messageType = null) =>
     // Priority 1: the explicit IMessageContext scope; Priority 2: ambient AsyncLocal scope. Both via the shared
     // CascadeContext helpers so scope-from-context / scope-from-ambient are resolved the ONE way everywhere.
     // Priority 3: control-plane traffic has no ambient user by design — say so explicitly, so that a
     // scope that is simply MISSING stays a detectable fault rather than looking intentional.
     CascadeContext.ScopeDeltaFromMessageContext(context)
       ?? ScopeDelta.FromSecurityContext(CascadeContext.GetSecurityFromAmbient())
-      ?? Security.SystemScopeResolver.ForUnscoped(messageType);
+      ?? Security.SystemScopeResolver.ForUnscoped(messageType, _declaredUnscopedTypes);
 
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.

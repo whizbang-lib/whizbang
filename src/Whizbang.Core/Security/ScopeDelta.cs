@@ -138,7 +138,7 @@ public sealed class ScopeDelta {
     // to null here would restore the very ambiguity the marker exists to remove.
     if (string.IsNullOrEmpty(scope.TenantId) && string.IsNullOrEmpty(scope.UserId)
         && string.IsNullOrEmpty(scope.CustomerId) && string.IsNullOrEmpty(scope.OrganizationId)
-        && scope.Extensions.Count == 0 && !scope.IsSystem) {
+        && scope.Extensions.Count == 0 && !scope.IsSystem && !scope.IsDeclaredUnscoped) {
       return null;
     }
 
@@ -160,6 +160,17 @@ public sealed class ScopeDelta {
   /// </remarks>
   public static ScopeDelta System { get; } =
     FromPerspectiveScope(new PerspectiveScope { IsSystem = true })!;
+
+  /// <summary>
+  /// The well-known scope for an event whose AUTHOR declared it carries no authority — a
+  /// pre-authentication event, a health check, an anonymous action.
+  /// </summary>
+  /// <remarks>
+  /// Kept separate from <see cref="System"/> so provenance survives: an auditor can tell framework
+  /// infrastructure from a human's assertion, and application code cannot claim the framework's.
+  /// </remarks>
+  public static ScopeDelta DeclaredUnscoped { get; } =
+    FromPerspectiveScope(new PerspectiveScope { IsDeclaredUnscoped = true })!;
 
 
   /// <summary>
@@ -394,6 +405,11 @@ public sealed class ScopeDelta {
       sb.Append("\"sys\":true");
       first = false;
     }
+    if (scope.IsDeclaredUnscoped) {
+      if (!first) { sb.Append(','); }
+      sb.Append("\"dec\":true");
+      first = false;
+    }
     _appendAllowedPrincipals(sb, scope.AllowedPrincipals, ref first);
     _appendExtensions(sb, scope.Extensions, ref first);
 
@@ -460,6 +476,9 @@ public sealed class ScopeDelta {
 
     if (element.TryGetProperty("sys", out var sys) && sys.ValueKind == JsonValueKind.True) {
       scope.IsSystem = true;
+    }
+    if (element.TryGetProperty("dec", out var dec) && dec.ValueKind == JsonValueKind.True) {
+      scope.IsDeclaredUnscoped = true;
     }
     if (element.TryGetProperty("t", out var t) && t.ValueKind != JsonValueKind.Null) {
       scope.TenantId = t.GetString();

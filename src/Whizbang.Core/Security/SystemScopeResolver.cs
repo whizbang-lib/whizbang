@@ -27,7 +27,19 @@ public static class SystemScopeResolver {
   /// </summary>
   /// <param name="messageType">The message's CLR type, or null when it is not known.</param>
   /// <returns><see cref="ScopeDelta.System"/> for control-plane traffic; otherwise null.</returns>
-  public static ScopeDelta? ForUnscoped(Type? messageType) {
+  public static ScopeDelta? ForUnscoped(Type? messageType) => ForUnscoped(messageType, declaredUnscopedTypes: null);
+
+  /// <summary>
+  /// The scope to stamp on a message that resolved none, honoring the caller's declared exemptions.
+  /// </summary>
+  /// <param name="messageType">The message's CLR type, or null when it is not known.</param>
+  /// <param name="declaredUnscopedTypes">
+  /// Types the application author declared as carrying no authority — in practice
+  /// <c>MessageSecurityOptions.ExemptMessageTypes</c>. These get their own marker rather than the
+  /// framework's, so an auditor can tell an author's assertion from the framework's own traffic.
+  /// </param>
+  /// <returns>The marker to stamp, or null to leave the message genuinely unscoped.</returns>
+  public static ScopeDelta? ForUnscoped(Type? messageType, IReadOnlySet<Type>? declaredUnscopedTypes) {
     if (messageType is null) {
       // An unknown type is not evidence of intent. Guessing would mark real traffic as system and
       // exempt it from the invariant.
@@ -43,8 +55,18 @@ public static class SystemScopeResolver {
       return null;
     }
 
-    return typeof(IControlPlaneMessage).IsAssignableFrom(messageType)
-      ? ScopeDelta.System
+    // Control-plane wins over any declaration. Framework traffic is framework traffic whether or
+    // not a consumer also listed the type, and the provenance an auditor sees must not depend on
+    // one service's configuration.
+    if (typeof(IControlPlaneMessage).IsAssignableFrom(messageType)) {
+      return ScopeDelta.System;
+    }
+
+    // An event the author declared unscoped is intentional, but it is THEIR assertion, not the
+    // framework's — so it carries its own marker. Anything else stays blank, which is what keeps a
+    // dropped scope detectable.
+    return declaredUnscopedTypes?.Contains(messageType) == true
+      ? ScopeDelta.DeclaredUnscoped
       : null;
   }
 }

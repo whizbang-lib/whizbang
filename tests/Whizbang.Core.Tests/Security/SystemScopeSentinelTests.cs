@@ -144,3 +144,90 @@ public class SystemScopeResolverTests {
       .Because("an unknown type is not evidence of intent, and guessing would mark real traffic");
   }
 }
+
+/// <summary>
+/// Separating a developer's intentionally-unscoped event from one that LOST its scope.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The system marker covers framework infrastructure only. It does not cover the other legitimate
+/// reason an event carries no scope: the application author knows there is none. A login attempt
+/// has no authenticated user YET; a health check has none ever. Those are ordinary domain events,
+/// not control-plane traffic, so they stayed null — indistinguishable from an event whose scope was
+/// dropped, which is the exact ambiguity the marker was introduced to remove.
+/// </para>
+/// <para>
+/// The two must not share a marker. "The framework published this" and "an author asserted this"
+/// deserve different scrutiny in a security review, and if application code could claim the system
+/// marker it would become a blanket way to silence the invariant.
+/// </para>
+/// </remarks>
+/// <code-under-test>src/Whizbang.Core/Security/SystemScopeResolver.cs</code-under-test>
+[Category("Security")]
+public class DeclaredUnscopedMarkerTests {
+
+  private sealed record _loginAttempt : Whizbang.Core.IEvent;
+
+  private sealed record _ordinaryEvent : Whizbang.Core.IEvent;
+
+  private sealed record _controlSignal : Whizbang.Core.IEvent, Whizbang.Core.Messaging.IControlPlaneMessage;
+
+  private static readonly HashSet<Type> _declared = [typeof(_loginAttempt)];
+
+  [Test]
+  public async Task ADeclaredTypeIsMarkedDeclaredRatherThanLeftBlankAsync() {
+    var scope = SystemScopeResolver.ForUnscoped(typeof(_loginAttempt), _declared);
+
+    await Assert.That(scope).IsNotNull()
+      .Because("a login attempt has no authenticated user by design; leaving it blank makes it "
+             + "identical to an event that lost its scope and turns the invariant into noise");
+    await Assert.That(scope!.ApplyTo(null).Scope.IsDeclaredUnscoped).IsTrue();
+  }
+
+  [Test]
+  public async Task ADeclaredTypeIsNotMarkedSystemAsync() {
+    var scope = SystemScopeResolver.ForUnscoped(typeof(_loginAttempt), _declared);
+
+    await Assert.That(scope!.ApplyTo(null).Scope.IsSystem).IsFalse()
+      .Because("the system marker means framework infrastructure. If application code could claim "
+             + "it, it would become a blanket way to silence the invariant, and an auditor could "
+             + "no longer tell what the framework did from what an author asserted");
+  }
+
+  [Test]
+  public async Task ControlPlaneStillWinsOverADeclarationAsync() {
+    var scope = SystemScopeResolver.ForUnscoped(typeof(_controlSignal), new HashSet<Type> { typeof(_controlSignal) });
+
+    await Assert.That(scope!.ApplyTo(null).Scope.IsSystem).IsTrue()
+      .Because("framework traffic is framework traffic whether or not someone also listed it; the "
+             + "provenance an auditor sees must not depend on a consumer's configuration");
+  }
+
+  [Test]
+  public async Task AnUndeclaredDomainEventIsStillLeftBlankAsync() {
+    await Assert.That(SystemScopeResolver.ForUnscoped(typeof(_ordinaryEvent), _declared)).IsNull()
+      .Because("this is the case the whole invariant exists to catch — if an undeclared event were "
+             + "marked, a dropped scope would look intentional");
+  }
+
+  [Test]
+  public async Task ADeclaredUnscopedScopeGrantsNoAuthorityAsync() {
+    var resolved = SystemScopeResolver.ForUnscoped(typeof(_loginAttempt), _declared)!.ApplyTo(null).Scope;
+
+    await Assert.That(resolved.TenantId).IsNull()
+      .Because("declaring an event unscoped states that no authority exists, so the marker must "
+             + "never resolve to one — least of all on a pre-authentication event");
+    await Assert.That(resolved.UserId).IsNull();
+  }
+
+  [Test]
+  public async Task TheDeclaredMarkerRoundTripsOnTheWireAsync() {
+    var json = System.Text.Json.JsonSerializer.Serialize(
+      new PerspectiveScope { IsDeclaredUnscoped = true });
+
+    await Assert.That(json).Contains("\"dec\"")
+      .Because("an operator separates intended-unscoped rows from broken ones by querying stored "
+             + "jsonb, so the marker has to survive serialization to be worth anything");
+    await Assert.That(System.Text.Json.JsonSerializer.Deserialize<PerspectiveScope>(json)!.IsDeclaredUnscoped).IsTrue();
+  }
+}

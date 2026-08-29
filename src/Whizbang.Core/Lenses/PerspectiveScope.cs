@@ -151,6 +151,27 @@ public class PerspectiveScope {
   public bool IsSystem { get; set; }
 
   /// <summary>
+  /// Marks a scope the APPLICATION AUTHOR declared absent: a pre-authentication event, a health
+  /// check, an anonymous or public action.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Distinct from <see cref="IsSystem"/> on purpose. That one means framework infrastructure and
+  /// is stamped by the framework; this one records that a human asserted the event needs no scope.
+  /// The two warrant different scrutiny in a security review, and if application code could claim
+  /// the system marker it would become a blanket way to silence the missing-scope invariant.
+  /// </para>
+  /// <para>
+  /// Like the system marker it states intent, never permission: it resolves to no tenant and no
+  /// user, which matters most here — a login attempt is exactly where a fabricated authority would
+  /// do the most damage.
+  /// </para>
+  /// </remarks>
+  [JsonPropertyName("dec")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+  public bool IsDeclaredUnscoped { get; set; }
+
+  /// <summary>
   /// Additional scope values as key-value pairs.
   /// Enables extensibility without schema changes.
   /// </summary>
