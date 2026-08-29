@@ -79,16 +79,24 @@ public static partial class AuditOutboxMessageBuilder {
     // Serialize EventAudited to JsonElement
     var auditJson = AuditJsonSerializer.SerializeToJsonElement(auditEvent);
 
-    // Build envelope — copy hops from the original event so security context (TenantId, UserId, claims)
-    // propagates to the consuming service (BFF). The hops carry scope metadata that the
-    // DefaultMessageSecurityContextProvider uses to establish security context.
-    var sourceHops = eventMessage.Envelope.Hops?.ToList() ?? [];
-    // Add a new hop indicating this is an audit relay
-    sourceHops.Add(new MessageHop {
+    // The audit record's OWN hop carries its scope: the audited tenant plus the system marker, via
+    // the same helper every audit path uses. Not the acting user — scope is an access-control key,
+    // so carrying the actor would hand the SUBJECT of an audit record a key to their own trail.
+    //
+    // The source hops were previously copied wholesale for exactly that security context, which is
+    // what brought the user along. They are kept for their LINEAGE and demoted to Causation: scope
+    // resolution merges Current hops only, so the trace back to the audited event survives while
+    // its authority does not. The consumer still establishes a context, because the extractor needs
+    // either a tenant or a user and the tenant is present.
+    var sourceHops = (eventMessage.Envelope.Hops ?? [])
+      .Select(h => h with { Type = HopType.Causation })
+      .ToList();
+    sourceHops.Insert(0, new MessageHop {
       ServiceInstance = ServiceInstanceInfo.Unknown,
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
-      TraceParent = System.Diagnostics.Activity.Current?.Id
+      TraceParent = System.Diagnostics.Activity.Current?.Id,
+      Scope = AuditRecordScope.For(eventMessage.Scope?.TenantId),
     });
 
     var auditEnvelope = new MessageEnvelope<JsonElement> {

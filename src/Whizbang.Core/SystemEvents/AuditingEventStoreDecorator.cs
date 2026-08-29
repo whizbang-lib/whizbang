@@ -43,7 +43,8 @@ public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
     IDeferredOutboxChannel outboxChannel,
     IOptions<SystemEventOptions> options,
-    ILogger<AuditingEventStoreDecorator>? logger = null) : ForwardingEventStoreDecorator(inner) {
+    ILogger<AuditingEventStoreDecorator>? logger = null,
+      Whizbang.Core.Observability.IServiceInstanceProvider? instanceProvider = null) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -55,6 +56,9 @@ public sealed class AuditingEventStoreDecorator(
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly JsonSerializerOptions _jsonOptions = JsonContextRegistry.CreateCombinedOptions();
   private readonly ILogger<AuditingEventStoreDecorator> _logger = logger ?? NullLogger<AuditingEventStoreDecorator>.Instance;
+
+  // Optional: a service with no telemetry identity wired must still produce audit records.
+  private readonly Whizbang.Core.Observability.IServiceInstanceProvider? _instanceProvider = instanceProvider;
 
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(
@@ -180,10 +184,14 @@ public sealed class AuditingEventStoreDecorator(
       Payload = auditEvent,
       Hops = [
         new MessageHop {
-          ServiceInstance = ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id,
+          // The audited TENANT plus the system marker. Not the acting user: scope is an
+          // access-control key, so writing the actor here would hand the SUBJECT of an audit
+          // record a key to their own audit trail.
+          Scope = AuditRecordScope.For(auditEvent.TenantId),
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
