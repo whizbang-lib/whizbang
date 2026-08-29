@@ -146,6 +146,7 @@ public class PerspectiveScope {
   /// events had silently lost theirs.
   /// </para>
   /// </remarks>
+  /// <docs>fundamentals/security/message-security#scope-markers</docs>
   [JsonPropertyName("sys")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
   public bool IsSystem { get; set; }
@@ -167,6 +168,7 @@ public class PerspectiveScope {
   /// do the most damage.
   /// </para>
   /// </remarks>
+  /// <docs>fundamentals/security/message-security#declaring-unscoped</docs>
   [JsonPropertyName("dec")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
   public bool IsDeclaredUnscoped { get; set; }
