@@ -182,6 +182,7 @@ public sealed class SystemEventEmitter(
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id,
+          Scope = _auditRecordScope(systemEvent),
         }
       ],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox }
@@ -201,4 +202,45 @@ public sealed class SystemEventEmitter(
     return attribute?.Exclude == true;
   }
 
+
+  /// <summary>
+  /// The scope stamped on an audit record's own envelope.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The scope column is an ACCESS-CONTROL key — reads filter on <c>scope-&gt;&gt;'t'</c> and
+  /// <c>scope-&gt;&gt;'u'</c> — so what goes in it decides who can reach the row, not merely how it
+  /// is labelled. That splits the audited event's identity in two.
+  /// </para>
+  /// <list type="bullet">
+  ///   <item>
+  ///     The audited TENANT is carried: an audit record belongs to the tenant whose action it
+  ///     describes, so tenant-scoped reads, exports and deletions must reach it. Audit rows hold
+  ///     personal data, and leaving them outside every tenant partition is a retention problem.
+  ///   </item>
+  ///   <item>
+  ///     The acting USER is deliberately NOT carried. Putting it here would hand the subject of an
+  ///     audit record a key to their own audit trail. Their identity is already on the payload,
+  ///     where it is evidence rather than a permission.
+  ///   </item>
+  ///   <item>
+  ///     The record is marked system-emitted. That is a separate field from the tenant, so
+  ///     "framework-emitted AND belonging to this tenant" is stated directly, not traded off.
+  ///   </item>
+  /// </list>
+  /// <para>
+  /// Auditing an event that had no tenant yields no tenant here: the audit of a control-plane event
+  /// legitimately belongs to none, and inventing one would be worse than leaving it out.
+  /// </para>
+  /// </remarks>
+  private static Whizbang.Core.Security.ScopeDelta? _auditRecordScope<TSystemEvent>(TSystemEvent systemEvent) {
+    var tenantId = systemEvent switch {
+      EventAudited e => e.TenantId,
+      CommandAudited c => c.TenantId,
+      _ => null,
+    };
+
+    return Whizbang.Core.Security.ScopeDelta.FromPerspectiveScope(
+      new Whizbang.Core.Lenses.PerspectiveScope { TenantId = tenantId, IsSystem = true });
+  }
 }
