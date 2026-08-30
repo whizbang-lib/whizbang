@@ -178,6 +178,9 @@ namespace Whizbang.Core.Generated {
       services.TryAddSingleton<IReceptorDedupStore, EnvelopeReceptorDedupStore>();
       // ChaosInjectorInvoker resolves an optional IChaosInjector and gates it behind
       // WhizbangOptions.Guardrails.EnableChaosHooks. No production cost when disabled.
+      // Turnkey default: injects nothing and reports so, which is what an unregistered injector
+      // used to mean. A test registers its own injector first and TryAdd stands aside.
+      services.TryAddSingleton<IChaosInjector, NoChaosInjector>();
       services.TryAddSingleton<ChaosInjectorInvoker>();
       return services;
     }
