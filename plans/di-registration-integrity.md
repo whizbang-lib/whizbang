@@ -237,6 +237,45 @@ real default exists, `TryAdd` it in the owning `Add*` extension, update every co
 break. Pre-1.0, so acceptable, but it is a real break and belongs in release notes rather than being
 described as an internal refactor.
 
+## `ISchemaReadyGate`: why Pattern B needs its own pass
+
+Attempted and reverted. Recording the shape so the next attempt does not rediscover it.
+
+**The defect is real and the codebase names it.** Every site carries a comment reading, in
+substance, *"Optional only so existing fixtures construct unchanged; DI always supplies it."* The
+optionality exists to avoid updating tests, and it is exactly what allows a worker to be constructed
+with no gate and begin work without waiting for the schema. Ten types are affected, each guarding
+the wait behind `if (_schemaReadyGate is not null)`.
+
+**Why it is harder than the Pattern A conversions.** The gate parameter sits after other optional
+parameters, so making it required forces a position change in the signature. Call sites then break
+in a way that appending an argument cannot fix:
+
+```csharp
+new PerspectiveWorker(
+  instanceProvider, scopeFactory, options,
+  tracingOptions: null,      // named
+  strategy,                  // positional, and now bound to a different parameter
+  ...)
+```
+
+Calls mix named and positional arguments, so the new argument has to be inserted **positionally at
+a per-constructor index**, not appended. Three mechanical passes failed on this: appending produces
+CS8323, and a generic reorder produces malformed parameter lists.
+
+**Scale:** 528 call sites across 7 test projects.
+
+**Additional risk unique to this one:** tests that previously passed no gate skipped the wait. Once
+a real gate is required they will actually wait, and any fixture that never marks it ready will
+hang rather than fail. Supplying an already-open gate is therefore part of the conversion, not an
+afterthought. `SchemaReadyGate.AlreadyReady()` is the right shape for that and is legitimate
+production API: a host with no schema step to wait on needs a way to say "nothing to wait for" that
+is distinguishable from forgetting to supply a gate.
+
+**What the next attempt should do:** derive each constructor's new parameter index, rewrite call
+sites positionally per constructor rather than with one generic rule, and convert one type at a
+time with its tests green before moving to the next.
+
 ## Documentation
 
 Mirrors the existing `operations/configuration/` structure, including its frontmatter contract
