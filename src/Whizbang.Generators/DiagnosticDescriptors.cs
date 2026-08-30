@@ -947,4 +947,22 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "A service built with new inside a DI factory silently defaults any omitted parameter. Supply it from the provider, or pass null explicitly so the omission is a visible decision rather than an oversight."
   );
+
+  /// <summary>
+  /// WHIZ501: Info - a constructor declares an optional injected (interface-typed) parameter.
+  /// </summary>
+  /// <remarks>
+  /// This declaration is what makes silent omission possible at a construction site. Reported as
+  /// information rather than a warning because the existing surface is large, and a rule that turns
+  /// an established codebase red on first build gets suppressed globally and then catches nothing.
+  /// </remarks>
+  public static readonly DiagnosticDescriptor OptionalInjectedParameter = new(
+      id: "WHIZ501",
+      title: "Optional injected dependency",
+      messageFormat: "'{0}' is an optional injected dependency of '{1}' and will be null wherever it is not passed",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Make the parameter required and register a default with TryAdd, so a construction site cannot drop the dependency and a missing registration fails loudly instead of silently."
+  );
 }

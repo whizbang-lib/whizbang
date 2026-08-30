@@ -149,9 +149,27 @@ Compile-time cover for failure mode 1, scoped to the framework's own `Add*` clos
 
 | Id | Rule | Severity |
 |---|---|---|
-| `WHIZ2001` | Constructor parameter of a registered type is satisfied by no registration in the closure | Error |
-| `WHIZ2002` | Framework service declares an optional injected (interface-typed) parameter | Error after Phase 1 |
-| `WHIZ2003` | `new <framework service>(...)` inside a DI factory lambda; use the generated factory | Warning, then Error |
+| `WHIZ500` | A service constructed inside a DI factory omits an injectable parameter | Warning (shipped) |
+| `WHIZ501` | A constructor declares an optional injected (interface-typed) parameter | Info (shipped) |
+| ~~`WHIZ502`~~ | A dependency no registration satisfies | **Not built, deliberately** |
+
+`WHIZ501` is informational on purpose. The existing surface is around 150 parameters, and a rule
+that turns an established codebase red on first build gets suppressed globally, after which it
+catches nothing. Growth is held by the ratchet test; the rule exists to put the reason in front of
+whoever is editing the constructor.
+
+### Why `WHIZ502` is not worth building
+
+A static "nothing registers this" rule cannot see what the runtime validator sees, and would be
+wrong in the one direction that matters. Storage and transport drivers register their services after
+`AddWhizbang` returns, on the builder chain, and often from a different assembly. An analyzer
+examining one compilation would report every driver-supplied service as unregistered.
+
+That is the same failure that forced validation to move from the end of `AddWhizbang` to startup:
+a guard that fires on correct compositions gets switched off, and takes the real failures with it.
+The startup validator already performs this check against the graph that was actually composed,
+which is the only place the answer exists. Building a static approximation would add false positives
+and no coverage.
 
 `WHIZ2003` is syntactic, so it has no annotation surface and cannot be silently un-armed.
 
