@@ -40,58 +40,70 @@ in exactly the same way as a guard that found nothing wrong.
 | Types declaring at least one | 72 |
 | Distinct interfaces involved | 58 |
 | Of those, `ILogger` parameters | 36 |
-| Non-logger service parameters | 125 |
 
-## Confirmed defects
+### Triage by backing-field nullability
 
-### F-001: audit decorator built with three of six arguments
+Optionality alone does not mean a dependency is ever absent. Two patterns look identical in a
+constructor signature and differ completely in risk:
 
-**Status:** fixed, PR #614. **Impact: shipped.**
+```csharp
+// SAFE: optional, but a real default is constructed when none is supplied
+governor ?? CreateDefaultGovernor(options.Value)
+ResolveGovernor(governor, _options)
 
-Both DI registration sites constructed `AuditingEventStoreDecorator` by hand and passed three of its
-six constructor arguments, so `ILogger` and `IServiceInstanceProvider` were null in every composed
-application. The instance provider had been added earlier specifically so audit records could name
-the instance that wrote them; that never took effect outside unit tests, which supplied the argument
-themselves and therefore could not observe its absence.
+// SILENT NULL: optional, stored nullable, and simply absent when nobody passes it
+private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+```
 
-**Deployment impact to assess:** audit records written by any deployed version after the instance
-provider was introduced carry no writer identity. They are not wrong, but they cannot be attributed
-to an instance, so any forensic question of the form "which replica wrote this" is unanswerable for
-that period.
+The discriminator is whether the backing field is nullable. A non-nullable field proves a fallback
+exists; a nullable one means the dependency can genuinely be absent at run time.
 
-## Candidates: registered only by generated driver code
+| Classification | Count |
+|---|---|
+| Nullable backing field, can be silently null | 118 |
+| Non-nullable backing field, a fallback exists | 32 |
+| No matching field found, needs manual review | 11 |
 
-Registered solely by code emitted from a data-driver generator, not by the framework's own `Add*`
-extensions. A composition that does not include that driver, or in which the generator did not run,
-lacks them with no error at registration time. This is the shape of the recurring multi-assembly
-failure, so both warrant confirmation.
+This classification is a heuristic over source text and matches both known ground truths: it flags
+`AuditingEventStoreDecorator.instanceProvider`, the confirmed defect, and clears
+`OutboxDrainWorker.governor`, which resolves its default through a named helper. It is triage, not
+proof. Confirm any individual item before acting on it.
 
-| Interface | Registered by | Risk |
+### Counting corrections made during this investigation
+
+Three figures in this work were wrong before they were right, all from search patterns that could
+not see what they were looking for. Recorded because the pattern matters more than the numbers:
+
+| Reported | Actual | Cause |
 |---|---|---|
-| `ILibraryVersionProvider` | driver registration generator (`TryAddSingleton`) | absent without that driver |
-| `IWorkChannelWriter` | driver snippet template (`AddSingleton`, guarded by an `Any` check) | absent without that driver |
+| 0 unsatisfied dependencies | 162 | audit read only `ImplementationType`, which is null for factory-lambda registrations |
+| 25 unregistered interfaces | 12 | pattern missed namespace-qualified registrations (`TryAddSingleton<Messaging.IFoo, …>`) |
+| 125 silently-null parameters | 118 | `??` heuristic missed named resolver helpers such as `ResolveGovernor(...)` |
 
-## Candidates: no registration found anywhere
+Each first number was reassuring and wrong. A zero from a check that could not look is not a clean
+result.
 
-No registration in `src/`, generated or otherwise. Each needs classification before it counts as a
-defect. Expected outcomes are a mix of genuine gaps, consumer-supplied extension points that are
-optional by design, and types never resolved from a container at all.
+## Clusters worth investigating as a group
 
-| Interface | Implementations in `src/` | Note |
+The same dependency is optional-and-nullable at many sites. The confirmed defect is one instance of
+the first cluster, which is the reason to treat the others as candidates rather than noise.
+
+| Dependency | Nullable sites | Consequence if absent |
 |---|---|---|
-| `ICallerInfo` | none found | may be a data/context type, not a service |
-| `IChaosInjector` | none found | likely a test-only injection point |
-| `ICommandInboxAddressResolver` | none found | consumer-supplied routing override? |
-| `IConcurrencyGovernor` | 3+ (`FixedWidthGovernor`, `AdaptiveConcurrencyGovernor`, `ObservedConcurrencyGovernor`) | several implementations, none registered; highest-priority item here |
-| `IDestructionHook` | none found | consumer extension point? |
-| `IEnvelopeRegistry` | 1 | confirm whether it is resolved or constructed directly |
-| `IEventNamespaceRegistry` | none found | generator-backed registry? |
-| `IInstanceAliveLockSource` | none found | confirm |
-| `IPerspectiveCompletionStrategy` | none found | confirm |
-| `IProcessedEventCacheObserver` | 1 | observer, plausibly optional by design |
+| `IServiceInstanceProvider` | 9 | records and telemetry cannot name the instance that produced them |
+| `ISchemaReadyGate` | 8 | work may begin before schema readiness is established |
+| `ILifecycleMessageDeserializer` | 7 | lifecycle messages silently not deserialized |
+| `IWorkChannelWriter` | 5 | work not handed to the channel |
+| `IReceptorRegistryQuery` | 5 | receptor lookups fall back or find nothing |
 
-`IConcurrencyGovernor` is the one to look at first: three implementations exist, so something was
-meant to select among them, and nothing registers any of them.
+### `IServiceInstanceProvider`, all nine sites
+
+`AuditingEventStoreDecorator` (confirmed, fixed), `CoalesceShipWorker`, `InstanceStateRunControl`,
+`OutboxPublishWorker`, `RedeliveryPump`, `SignalBusHostedService`, `StandbyWatcher`,
+`SystemEventEmitter`, `TransportManager`.
+
+One of these nine was verified null in every composed application. The same question is open for the
+other eight, and each should be checked against the registration sites that construct it.
 
 ## Next actions
 
