@@ -928,4 +928,23 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Receptor discovery registers every IReceptor implementation. A receptor whose constructor takes a delegate or a bare primitive is almost certainly built by its owner rather than resolved, and registering it leaves a descriptor the container cannot construct. Because container validation fails the whole provider on the first such descriptor, one of these takes down every service in the assembly. Mark it [SuppressReceptorRegistration] to declare manual construction, or register the missing dependency. This is a heuristic — a generator cannot know what an application registers — so it warns rather than errors."
   );
+
+  /// <summary>
+  /// WHIZ500: Warning - a service constructed inside a DI factory omits an injectable parameter.
+  /// </summary>
+  /// <remarks>
+  /// The container is not building this object; the registration is. Anything the author does not
+  /// pass is defaulted by the compiler, so the dependency is null at run time with no error
+  /// anywhere. That is how a decorator shipped with its logger and instance provider absent in
+  /// every composed application while every unit test passed.
+  /// </remarks>
+  public static readonly DiagnosticDescriptor DiFactoryOmitsDependency = new(
+      id: "WHIZ500",
+      title: "Hand-constructed service omits an injectable dependency",
+      messageFormat: "'{0}' is constructed without '{1}' ({2}), which will be null at run time",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A service built with new inside a DI factory silently defaults any omitted parameter. Supply it from the provider, or pass null explicitly so the omission is a visible decision rather than an oversight."
+  );
 }
