@@ -11,11 +11,6 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// Integration tests for <see cref="PostgresHealthCheck"/>. The healthy path is only
 /// meaningful against a real server — the check exists to prove the database answers a
 /// query, so faking the connection would assert nothing about the thing it reports on.
-/// <para>
-/// Note there is no cancellation test: the check accepts a token and passes it to
-/// CreateConnectionAsync, but the probe query itself is issued without one, so a cancelled
-/// token does not shorten the call. Asserting the current behaviour would enshrine that.
-/// </para>
 /// </summary>
 [Category("Integration")]
 public class PostgresHealthCheckTests : PostgresTestBase {
@@ -54,5 +49,22 @@ public class PostgresHealthCheckTests : PostgresTestBase {
   [Test]
   public async Task Constructor_WithNullFactory_ThrowsAsync() {
     await Assert.That(() => new PostgresHealthCheck(null!)).ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task CheckHealthAsync_WithACancelledToken_ReportsUnhealthyAsync() {
+    // Regression lock. The probe query used to be issued through Dapper's string overload,
+    // which takes no token, so a cancelled probe ran to completion regardless — during
+    // shutdown that means waiting on a server that may already be unreachable, with the
+    // health pipeline held open behind it. Opening the connection alone is not enough of a
+    // check: a pooled connection is handed back synchronously and never observes the token.
+    var check = new PostgresHealthCheck(ConnectionFactory);
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    var result = await check.CheckHealthAsync(new HealthCheckContext(), cts.Token);
+
+    await Assert.That(result.Status).IsEqualTo(HealthStatus.Unhealthy);
+    await Assert.That(result.Exception).IsNotNull();
   }
 }

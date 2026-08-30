@@ -68,7 +68,9 @@ public partial class DapperWorkCoordinator(
   public async Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) {
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    await connection.ExecuteAsync("SELECT deregister_instance(@instanceId)", new { instanceId });
+    await connection.ExecuteAsync(
+      new CommandDefinition(
+        "SELECT deregister_instance(@instanceId)", new { instanceId }, cancellationToken: cancellationToken));
   }
 
   /// <inheritdoc />
