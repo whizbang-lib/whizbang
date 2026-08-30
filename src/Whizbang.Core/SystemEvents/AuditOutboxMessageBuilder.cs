@@ -24,14 +24,19 @@ public static partial class AuditOutboxMessageBuilder {
   /// <param name="options">System event options controlling audit behavior.</param>
   /// <param name="logger">Optional logger; a resolution failure is logged rather than silently defaulting.</param>
   /// <returns>An audit outbox message, or null if the event should not be audited.</returns>
-  public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options, ILogger? logger = null) {
+  public static OutboxMessage? TryBuildAuditMessage(OutboxMessage eventMessage, SystemEventOptions options, ILogger? logger = null, IAuditDecisionHook? auditDecisionHook = null) {
     if (!eventMessage.IsEvent || !options.EventAuditEnabled) {
       return null;
     }
 
     // Check if this event type should be audited based on AuditMode
+    // One place decides, shared with the decorator: the attribute gates the TYPE, the hook may
+    // veto or name the OCCURRENCE. These two call sites previously each had their own copy.
     var eventType = _resolveEventType(eventMessage.MessageType, logger ?? NullLogger.Instance);
-    if (eventType != null && !_shouldAudit(eventType, options)) {
+    var auditDecision = eventType != null
+      ? AuditEligibility.Decide(eventMessage.Envelope.Payload, eventType, options.AuditMode, auditDecisionHook)
+      : AuditDecision.Record();
+    if (eventType != null && !auditDecision.ShouldAudit) {
       return null;
     }
 
@@ -70,6 +75,8 @@ public static partial class AuditOutboxMessageBuilder {
       OriginalStreamPosition = 0, // Position not available from outbox message
       OriginalBody = eventMessage.Envelope.Payload,
       Timestamp = DateTimeOffset.UtcNow,
+      ActivityName = auditDecision.Name,
+      ActivityDescription = auditDecision.Description,
       TenantId = eventMessage.Scope?.TenantId,
       UserId = eventMessage.Scope?.UserId,
       CorrelationId = correlationId,
