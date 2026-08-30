@@ -229,6 +229,18 @@ public static class ServiceCollectionExtensions {
     // Auto-invoke WhizbangId provider DI callbacks if any were registered
     WhizbangIdProviderRegistry.InvokeDICallbacks(services);
 
+    // Registration validation runs at STARTUP, not here. Storage and transport drivers register
+    // their services afterwards on the builder chain, so checking now would report every
+    // driver-supplied service as missing. A guard that fails on correct compositions gets
+    // switched off, and takes the real failures with it.
+    if (coreOptions.ValidateRegistrations) {
+      services.AddSingleton<Microsoft.Extensions.Hosting.IHostedService>(
+        new DependencyInjection.RegistrationValidationStartup(
+          services,
+          DependencyInjection.WhizbangServiceRequirements.All,
+          enabled: true));
+    }
+
     return new WhizbangBuilder(services);
   }
 
