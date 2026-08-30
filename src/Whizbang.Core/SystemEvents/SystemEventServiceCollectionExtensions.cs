@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Pipeline;
@@ -87,7 +88,13 @@ public static class SystemEventServiceCollectionExtensions {
               }
               var channel = sp.GetRequiredService<IDeferredOutboxChannel>();
               var opts = sp.GetRequiredService<IOptions<SystemEventOptions>>();
-              return new AuditingEventStoreDecorator(inner, channel, opts);
+              // Optional dependencies must be resolved explicitly: this decorator is constructed by
+              // hand, so anything not passed here is silently null however it is registered.
+              return new AuditingEventStoreDecorator(
+                inner, channel, opts,
+                sp.GetService<ILogger<AuditingEventStoreDecorator>>(),
+                sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+                sp.GetService<IAuditDecisionHook>());
             },
             captured.Lifetime));
       }
@@ -191,7 +198,13 @@ public static class SystemEventServiceCollectionExtensions {
           }
           var channel = sp.GetRequiredService<IDeferredOutboxChannel>();
           var opts = sp.GetRequiredService<IOptions<SystemEventOptions>>();
-          return new AuditingEventStoreDecorator(inner, channel, opts);
+          // Optional dependencies must be resolved explicitly: this decorator is constructed by
+          // hand, so anything not passed here is silently null however it is registered.
+          return new AuditingEventStoreDecorator(
+            inner, channel, opts,
+            sp.GetService<ILogger<AuditingEventStoreDecorator>>(),
+            sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+            sp.GetService<IAuditDecisionHook>());
         },
         descriptor.Lifetime));
 
