@@ -209,4 +209,35 @@ public class PostgresTypeMapperTests {
     // Assert
     await Assert.That(result).IsEqualTo("NULL");
   }
+
+  // --- Unknown-input guards -------------------------------------------------
+  // Each mapper switch ends in a throwing default arm. They are unreachable through
+  // the public enums today, but they are the contract for a value added to an enum
+  // (or a DefaultValue subtype added) without a matching Postgres mapping: fail loudly
+  // rather than emit silently wrong DDL.
+
+  /// <summary>A DefaultValue subtype the mapper has no arm for.</summary>
+  private sealed record UnmappedDefault : DefaultValue;
+
+  [Test]
+  public async Task MapDataType_UnknownDataType_ThrowsArgumentOutOfRangeAsync() {
+    var unknown = (WhizbangDataType)9999;
+
+    await Assert.That(() => PostgresTypeMapper.MapDataType(unknown))
+        .ThrowsExactly<ArgumentOutOfRangeException>();
+  }
+
+  [Test]
+  public async Task MapDefaultValue_UnknownSubtype_ThrowsArgumentOutOfRangeAsync() {
+    await Assert.That(() => PostgresTypeMapper.MapDefaultValue(new UnmappedDefault()))
+        .ThrowsExactly<ArgumentOutOfRangeException>();
+  }
+
+  [Test]
+  public async Task MapDefaultValue_UnknownFunction_ThrowsArgumentOutOfRangeAsync() {
+    var unknown = DefaultValue.Function((DefaultValueFunction)9999);
+
+    await Assert.That(() => PostgresTypeMapper.MapDefaultValue(unknown))
+        .ThrowsExactly<ArgumentOutOfRangeException>();
+  }
 }

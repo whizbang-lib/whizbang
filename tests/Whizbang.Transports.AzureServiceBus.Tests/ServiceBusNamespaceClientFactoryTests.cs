@@ -8,10 +8,9 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// Unit tests for the internal <see cref="ServiceBusNamespaceClientFactory"/>.
 /// </summary>
 /// <remarks>
-/// Only the admin-client branch is fully exercised here. CreateClient verifies
-/// connectivity through GetNamespacePropertiesAsync before it returns, so a
-/// successful call needs a live namespace and belongs in the integration suite;
-/// the guard path below reaches the call site without touching the network.
+/// Only the admin-client branch is covered here. CreateClient verifies connectivity
+/// through GetNamespacePropertiesAsync before it returns, so every test that calls it
+/// lives in ServiceBusNamespaceClientFactoryIntegrationTests against the emulator.
 /// </remarks>
 public class ServiceBusNamespaceClientFactoryTests {
   private const string FAKE_CONNECTION_STRING =
@@ -45,13 +44,5 @@ public class ServiceBusNamespaceClientFactoryTests {
     var admin = factory.CreateAdminClient("default", FAKE_CONNECTION_STRING, new AzureServiceBusOptions());
 
     await Assert.That(admin).IsNotNull();
-  }
-
-  [Test]
-  public async Task CreateClient_WithEmptyConnectionString_ThrowsBeforeContactingTheBrokerAsync() {
-    var factory = new ServiceBusNamespaceClientFactory(retryLogger: null);
-
-    await Assert.That(() => factory.CreateClient("default", string.Empty, new AzureServiceBusOptions()))
-        .ThrowsExactly<ArgumentException>();
   }
 }
