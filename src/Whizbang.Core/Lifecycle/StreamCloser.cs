@@ -31,10 +31,10 @@ public interface IStreamCloser {
 public sealed partial class StreamCloser : IStreamCloser {
   private readonly IWorkCoordinator _coordinator;
   private readonly ILogger<StreamCloser> _logger;
-  private readonly IDestructionHook? _hook;
+  private readonly IDestructionHook _hook;
 
-  /// <summary>Creates a closer over the coordinator, with an optional destruction hook.</summary>
-  public StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook? hook = null) {
+  /// <summary>Creates a closer over the coordinator, with its destruction hook; the default proceeds and observes nothing.</summary>
+  public StreamCloser(IWorkCoordinator coordinator, ILogger<StreamCloser> logger, IDestructionHook hook) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _hook = hook;
@@ -66,7 +66,7 @@ public sealed partial class StreamCloser : IStreamCloser {
     // truncate. Cancel or Defer vetoes the close (nothing is truncated). A THROWING pre-hook aborts the
     // close — durable Sourced detail must never be truncated when the preserve-work failed (no fail-open,
     // unlike the ephemeral reaper whose retry-then-forced-delete can't leak durable data).
-    if (_hook is not null) {
+    {
       DestructionResult decision;
       try {
         decision = await _hook.OnBeforeDestructionAsync(context, cancellationToken).ConfigureAwait(false);
@@ -98,7 +98,7 @@ public sealed partial class StreamCloser : IStreamCloser {
 
     // PostDestruction (after the truncate committed): notify / metrics / cascade. Non-fatal, and only on an
     // actual close (not a gate-blocked / no-carry-forward / debug-skipped outcome).
-    if (_hook is not null && string.Equals(result.Status, "closed", StringComparison.Ordinal)) {
+    if (string.Equals(result.Status, "closed", StringComparison.Ordinal)) {
       try {
         await _hook.OnAfterDestructionAsync(context, cancellationToken).ConfigureAwait(false);
       } catch (OperationCanceledException) {

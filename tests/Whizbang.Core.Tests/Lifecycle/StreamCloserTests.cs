@@ -91,7 +91,7 @@ public class StreamCloserTests {
   }
 
   private static StreamCloser _closer(FakeCloseCoordinator coord, IDestructionHook? hook) =>
-    new(coord, NullLogger<StreamCloser>.Instance, hook);
+    new(coord, NullLogger<StreamCloser>.Instance, hook ?? NoOpDestructionHook.Instance);
 
   [Test]
   public async Task Close_NoHook_PassesThroughToCoordinatorAsync() {

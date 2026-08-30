@@ -282,7 +282,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamCloser>(sp => new Whizbang.Core.Lifecycle.StreamCloser(
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),
-      sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>()));
+      sp.GetRequiredService<Whizbang.Core.Lifecycle.IDestructionHook>()));
     // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
     // reusing the snapshot store + event store + the A1 closer. On-demand, like IStreamCloser.
     services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(
