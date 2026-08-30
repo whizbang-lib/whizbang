@@ -209,9 +209,19 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
   // ========================================
 
   [Test]
-  public async Task ReadPolymorphicAsync_MetadataWithoutHops_YieldsEnvelopeWithEmptyHopsAsync() {
-    // Arrange - metadata has only message_id; the scope column HAS values but with
-    // zero hops there is nowhere to restore it (covers the hops.Count == 0 scope arm)
+  public async Task ReadPolymorphicAsync_MetadataWithoutHops_StillRestoresTheStoredScopeAsync() {
+    // Arrange - metadata has only message_id, and the scope column HAS values.
+    //
+    // This assertion was INVERTED deliberately. It previously required empty hops to stay empty,
+    // described as "with zero hops there is nowhere to restore it" -- a statement of what the code
+    // did, with no reason given for why it should. An event read back from the store has exactly
+    // this shape: scope in its column, no envelope metadata. Dropping the scope there left the
+    // event unprocessable for any perspective requiring a security context -- a retry that could
+    // never succeed, then a permanent park. Fixed first for the EF Core store; the Dapper stores
+    // carried the same guard.
+    //
+    // Synthesizing a hop invents no authority: the sibling test below, where scope is SQL NULL,
+    // still yields empty hops.
     var store = _createStore();
     var streamId = (Guid)TrackedGuid.NewMedo();
     var messageId = (Guid)TrackedGuid.NewMedo();
@@ -225,7 +235,11 @@ public class DapperPostgresEventStoreEdgeCaseTests : PostgresTestBase {
     // Assert
     await Assert.That(events).Count().IsEqualTo(1);
     await Assert.That(events[0].MessageId.Value).IsEqualTo(messageId);
-    await Assert.That(events[0].Hops).Count().IsEqualTo(0);
+    await Assert.That(events[0].Hops).Count().IsEqualTo(1)
+      .Because("the stored scope needs a hop to live on; GetCurrentScope() walks hops, so a scope "
+             + "with nowhere to sit is a scope that does not exist");
+    await Assert.That(events[0].GetCurrentScope()).IsNotNull();
+    await Assert.That(events[0].GetCurrentScope()!.Scope.TenantId).IsEqualTo("tenant-x");
     await Assert.That(events[0].DispatchContext.Mode).IsEqualTo(DispatchModes.Outbox);
     await Assert.That(events[0].DispatchContext.Source).IsEqualTo(MessageSource.Local);
   }

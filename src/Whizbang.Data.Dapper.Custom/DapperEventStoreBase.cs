@@ -294,7 +294,9 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// hops must exist, and the first hop must not already have a scope.
   /// </summary>
   private static bool _shouldRestoreScope(string? scopeJson, List<MessageHop> hops) {
-    return !string.IsNullOrEmpty(scopeJson) && hops.Count > 0 && hops[0].Scope == null;
+    // No hop is not a reason to discard a stored scope: an event read back from the store
+    // keeps its scope in a column and carries no envelope metadata to restore into.
+    return !string.IsNullOrEmpty(scopeJson) && (hops.Count == 0 || hops[0].Scope == null);
   }
 
   /// <summary>
@@ -310,9 +312,21 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// </summary>
   private static void _applyScopeToFirstHop(Dictionary<string, JsonElement?> scopeDict, List<MessageHop> hops) {
     var scope = _buildPerspectiveScope(scopeDict);
-    if (scope != null) {
-      hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
+    if (scope == null) {
+      return;
     }
+
+    // Give the restored scope somewhere to live when the event came back without hops.
+    // GetCurrentScope() walks hops, so a scope with no hop is a scope that does not exist.
+    if (hops.Count == 0) {
+      hops.Add(new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+      });
+    }
+
+    hops[0] = hops[0] with { Scope = ScopeDelta.FromPerspectiveScope(scope) };
   }
 
   /// <summary>
