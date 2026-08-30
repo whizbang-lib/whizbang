@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Messaging;
 
@@ -32,7 +33,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
 public partial class OrderedStreamProcessor(bool parallelizeStreams = false, ILogger<OrderedStreamProcessor>? logger = null) {
   private readonly bool _parallelizeStreams = parallelizeStreams;
-  private readonly ILogger<OrderedStreamProcessor>? _logger = logger;
+  private readonly ILogger<OrderedStreamProcessor> _logger = logger ?? NullLogger<OrderedStreamProcessor>.Instance;
 
   /// <summary>
   /// Processes inbox work maintaining stream order.

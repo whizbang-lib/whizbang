@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 
@@ -48,7 +49,7 @@ public sealed class HandledReceptorTypeSnapshot {
 public sealed class OrphanInboxJanitor : BackgroundService {
   private readonly IServiceProvider _services;
   private readonly HandledReceptorTypeSnapshot _receptorSnapshot;
-  private readonly ILogger<OrphanInboxJanitor>? _logger;
+  private readonly ILogger<OrphanInboxJanitor> _logger;
   private readonly ISchemaReadyGate? _schemaReadyGate;
 
   /// <summary>Constructs the janitor with required services and snapshot.</summary>
@@ -61,7 +62,7 @@ public sealed class OrphanInboxJanitor : BackgroundService {
     ArgumentNullException.ThrowIfNull(receptorSnapshot);
     _services = services;
     _receptorSnapshot = receptorSnapshot;
-    _logger = logger;
+    _logger = logger ?? NullLogger<OrphanInboxJanitor>.Instance;
     _schemaReadyGate = schemaReadyGate;
   }
 

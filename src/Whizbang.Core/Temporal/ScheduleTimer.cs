@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Core.Temporal;
 
@@ -15,7 +16,7 @@ namespace Whizbang.Core.Temporal;
 public sealed partial class ScheduleTimer : IDisposable {
   private readonly TimeProvider _timeProvider;
   private readonly Func<ValueTask> _onDue;
-  private readonly ILogger<ScheduleTimer>? _logger;
+  private readonly ILogger<ScheduleTimer> _logger;
   private readonly Lock _gate = new();
   private ITimer? _timer;
   private DateTimeOffset? _armedFor;
@@ -26,7 +27,7 @@ public sealed partial class ScheduleTimer : IDisposable {
   public ScheduleTimer(TimeProvider timeProvider, Func<ValueTask> onDue, ILogger<ScheduleTimer>? logger = null) {
     _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     _onDue = onDue ?? throw new ArgumentNullException(nameof(onDue));
-    _logger = logger;
+    _logger = logger ?? NullLogger<ScheduleTimer>.Instance;
   }
 
   /// <summary>The current armed fire time, or <c>null</c> when disarmed. For diagnostics/tests.</summary>

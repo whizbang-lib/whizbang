@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
@@ -54,7 +55,7 @@ public sealed partial class CoalesceShipWorker(
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
-  private readonly ILogger<CoalesceShipWorker>? _logger = logger;
+  private readonly ILogger<CoalesceShipWorker> _logger = logger ?? NullLogger<CoalesceShipWorker>.Instance;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly ICompositeFactory _compositeFactory = compositeFactory ?? new CompositeFactory();

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Workers;
@@ -49,7 +50,7 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
   private readonly InboxBulkFlushCallback _flush;
   private readonly SlidingWindowInboxOptions _options;
   private readonly TimeProvider _timeProvider;
-  private readonly ILogger? _logger;
+  private readonly ILogger _logger;
 
   private readonly ConcurrentDictionary<Guid, StreamBuffer> _streams = new();
   private readonly CancellationTokenSource _stopCts = new();
@@ -72,7 +73,7 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
     _flush = flush;
     _options = options ?? new SlidingWindowInboxOptions();
     _timeProvider = timeProvider ?? TimeProvider.System;
-    _logger = logger;
+    _logger = (ILogger?)logger ?? NullLogger.Instance;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
       static state => ((SlidingWindowInboxBatchStrategy)state!)._fireAndForgetIdleSweep(),
