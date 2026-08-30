@@ -90,7 +90,12 @@ public static class SystemEventServiceCollectionExtensions {
               if (captured.ImplementationFactory != null) {
                 inner = (IEventStore)captured.ImplementationFactory(sp);
               } else if (captured.ImplementationType != null) {
-                inner = (IEventStore)ActivatorUtilities.CreateInstance(sp, captured.ImplementationType);
+                throw new InvalidOperationException(
+                "IEventStore is registered by implementation type, which this framework cannot "
+                + "construct without reflection. Register it with a factory instead: "
+                + "services.AddScoped<IEventStore>(sp => new YourEventStore(...)). The decoration "
+                + "path has to rebuild the inner store in order to wrap it, and a type-based "
+                + "registration leaves it no reflection-free way to do so.");
               } else {
                 inner = (IEventStore)captured.ImplementationInstance!;
               }
@@ -206,7 +211,12 @@ public static class SystemEventServiceCollectionExtensions {
           if (descriptor.ImplementationFactory != null) {
             inner = (IEventStore)descriptor.ImplementationFactory(sp);
           } else if (descriptor.ImplementationType != null) {
-            inner = (IEventStore)ActivatorUtilities.CreateInstance(sp, descriptor.ImplementationType);
+            throw new InvalidOperationException(
+                "IEventStore is registered by implementation type, which this framework cannot "
+                + "construct without reflection. Register it with a factory instead: "
+                + "services.AddScoped<IEventStore>(sp => new YourEventStore(...)). The decoration "
+                + "path has to rebuild the inner store in order to wrap it, and a type-based "
+                + "registration leaves it no reflection-free way to do so.");
           } else {
             inner = (IEventStore)descriptor.ImplementationInstance!;
           }

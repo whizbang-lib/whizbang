@@ -531,8 +531,14 @@ public static class ServiceCollectionExtensions {
         services.AddScoped<InnerEventStoreHolder>(sp =>
             new InnerEventStoreHolder(descriptor.ImplementationFactory(sp)));
       } else if (descriptor.ImplementationType != null) {
-        services.AddScoped<InnerEventStoreHolder>(sp =>
-            new InnerEventStoreHolder(ActivatorUtilities.CreateInstance(sp, descriptor.ImplementationType)));
+        // Thrown at registration, not deferred into the factory: the mistake is in the
+        // composition, so it should surface where it was made rather than at first resolution.
+        throw new InvalidOperationException(
+                "IEventStore is registered by implementation type, which this framework cannot "
+                + "construct without reflection. Register it with a factory instead: "
+                + "services.AddScoped<IEventStore>(sp => new YourEventStore(...)). The decoration "
+                + "path has to rebuild the inner store in order to wrap it, and a type-based "
+                + "registration leaves it no reflection-free way to do so.");
       }
 
       // Register the decorator stack
@@ -578,8 +584,12 @@ public static class ServiceCollectionExtensions {
       } else if (descriptor.ImplementationFactory != null) {
         services.AddSingleton(sp => new InnerEventStoreHolder(descriptor.ImplementationFactory(sp)));
       } else if (descriptor.ImplementationType != null) {
-        services.AddSingleton(sp => new InnerEventStoreHolder(
-            ActivatorUtilities.CreateInstance(sp, descriptor.ImplementationType)));
+        throw new InvalidOperationException(
+                "IEventStore is registered by implementation type, which this framework cannot "
+                + "construct without reflection. Register it with a factory instead: "
+                + "services.AddScoped<IEventStore>(sp => new YourEventStore(...)). The decoration "
+                + "path has to rebuild the inner store in order to wrap it, and a type-based "
+                + "registration leaves it no reflection-free way to do so.");
       }
 
       // Register the decorator stack
