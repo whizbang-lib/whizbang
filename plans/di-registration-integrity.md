@@ -155,6 +155,75 @@ Compile-time cover for failure mode 1, scoped to the framework's own `Add*` clos
 
 `WHIZ2003` is syntactic, so it has no annotation surface and cannot be silently un-armed.
 
+## The conversion pattern
+
+Every injected constructor parameter becomes **required**, and every default moves to a
+**registration**. One rule, no optional injected parameters left, so a hand-construction that misses
+one cannot compile and the validator needs no exception list.
+
+Which registration to write is decided by one question:
+
+> **Is there a behavior that is correct when this capability is absent?**
+
+### Pattern A: inert default, when absence has a correct behavior
+
+```csharp
+// Nothing to do when no telemetry identity is configured. Reporting "unknown" is honest.
+public sealed class NullServiceInstanceProvider : IServiceInstanceProvider { /* inert */ }
+
+services.TryAddSingleton<IServiceInstanceProvider, NullServiceInstanceProvider>();
+
+public CoalesceShipWorker(..., IServiceInstanceProvider instanceProvider)   // required
+```
+
+Turnkey and overridable: a developer registering their own before `AddWhizbang()` wins, because
+`TryAdd` no-ops.
+
+Fits: `IServiceInstanceProvider`, `IChaosInjector`, `IProcessedEventCacheObserver`, `ILogger<T>`
+(via `AddLogging()`, whose `NullLogger` fallback is already the framework convention).
+
+### Pattern B: required with no default, when absence has no correct behavior
+
+```csharp
+// A no-op gate would report "ready" and let work begin against a schema that is not there.
+public PerspectiveMigrationWorker(..., ISchemaReadyGate schemaReadyGate)   // required, no default
+```
+
+**Do not write a Null-object for these.** A `NullSchemaReadyGate` that answers "ready" converts a
+silent null into a silent *false assertion*, which is strictly worse: null at least fails somewhere
+eventually, whereas a fake that satisfies the invariant lets work proceed on a premise nobody
+checked. The whole purpose of this work is to make absence loud, and a permissive stub makes it
+quieter than it is today.
+
+Composition fails at `AddWhizbang()` naming the service, which is the correct outcome.
+
+Fits: `ISchemaReadyGate`, `IWorkChannelWriter`, `ILifecycleMessageDeserializer`, the channel writers
+and drain channels, `IReceptorRegistryQuery`.
+
+### Pattern C: computed default, when the default depends on configuration
+
+The 32 parameters that already resolve a default inline (`governor ?? CreateDefaultGovernor(...)`,
+`ResolveGovernor(governor, options)`) keep their logic, but it moves into the registration so the
+parameter can become required:
+
+```csharp
+services.TryAddSingleton<IConcurrencyGovernor>(sp =>
+    CreateDefaultGovernor(sp.GetRequiredService<IOptions<PerspectiveWorkerOptions>>().Value));
+```
+
+**Open complication:** some of these need a *different* default per consumer. The perspective worker
+and the outbox drain both take an `IConcurrencyGovernor` and want different widths, which a single
+registration cannot express. Keyed services solve it; so does keeping a per-worker factory. This
+needs a decision before Pattern C is applied to that interface, and it is the reason Pattern C is
+listed last rather than treated as the general case.
+
+### Staging risk
+
+Pattern B changes latent absence into a hard composition failure. Where a dependency is null in a
+deployed system today and nothing has obviously broken, making it required will stop that
+composition from starting. That is the point, but it means Pattern B conversions land with a
+migration note and want their own release, not a quiet inclusion in a batch.
+
 ## Migration
 
 **One pass, converting all optional injected parameters** (~141 candidates in `Whizbang.Core`,
