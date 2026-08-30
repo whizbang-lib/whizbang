@@ -309,6 +309,19 @@ New folder: `src/assets/docs/v1.0.0/operations/dependency-injection/`
 | `registration-validation.md` | What `ValidateWhizbangRegistrations` checks, how to read its exception, how to disable it for partial composition |
 | `<service>.md` (one per injectable service) | Responsibility, the shipped default's behavior, when to replace it, a worked example |
 
+**Status: written** (in the docs repo, uncommitted). `_folder.md`, `injectable-services.md`,
+`overriding-defaults.md`, `registration-validation.md`, plus `diagnostics/whiz500.md` and
+`diagnostics/whiz501.md`. Cross-links added from `configuration/all-services.md`, and
+`ValidateRegistrations` documented on `configuration/whizbang-options.md`.
+
+Per-service pages are deliberately not written yet: with four services carrying a shipped default,
+the index table says everything a page would, and a page per service would be padding that then has
+to be maintained. Worth adding when a service needs a worked example longer than a table row.
+
+All four `<docs>` paths were verified to resolve by regenerating the map against this worktree. The
+map itself was then restored to the main checkout's state, because the docs repo is on an unrelated
+branch with its own pending changes; it needs regenerating once this branch lands.
+
 Cross-link from `operations/configuration/all-services.md` and `service-registration-options.md`,
 which currently cover registration but not injectability.
 
