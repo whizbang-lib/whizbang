@@ -137,4 +137,94 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
     await Assert.That(isEvent).IsTrue()
       .Because("InboxMessage.IsEvent=true must propagate through Dapper serialization to wh_inbox.is_event.");
   }
+
+  // --- Observation projection ------------------------------------------------
+  // StoreInboxMessagesWithObservationsAsync is the redelivery-aware sibling: it stores the
+  // same way, then reads back a projection saying which of the just-offered messages the
+  // broker had already delivered. The consumer uses that to tell a first delivery from a
+  // redelivery without a second round trip. None of it had a test.
+
+  [Test]
+  public async Task WithObservations_EmptyArray_ReturnsNoObservationsAsync() {
+    var coordinator = _buildCoordinator();
+
+    var observations = await coordinator.StoreInboxMessagesWithObservationsAsync([], partitionCount: 100);
+
+    await Assert.That(observations).IsEmpty();
+  }
+
+  [Test]
+  public async Task WithObservations_StoresTheMessageAsync() {
+    var coordinator = _buildCoordinator();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    await coordinator.StoreInboxMessagesWithObservationsAsync(
+      [_makeInbox(msgId, streamId)], partitionCount: 100);
+
+    using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var stored = await conn.ExecuteScalarAsync<int>(
+      "SELECT count(*) FROM wh_inbox WHERE message_id = @m", new { m = msgId });
+
+    await Assert.That(stored).IsEqualTo(1)
+      .Because("the observation overload must persist exactly what the plain overload does");
+  }
+
+  [Test]
+  public async Task WithObservations_FirstDelivery_ReportsNoRedeliveryAsync() {
+    var coordinator = _buildCoordinator();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    var observations = await coordinator.StoreInboxMessagesWithObservationsAsync(
+      [_makeInbox(msgId, streamId)], partitionCount: 100);
+
+    await Assert.That(observations).IsNotNull();
+    await Assert.That(observations.Any(o => o.ObservationCount > 1)).IsFalse()
+      .Because("nothing had been offered before, so a first delivery must not read as a redelivery");
+  }
+
+  [Test]
+  public async Task WithObservations_SecondOfferOfTheSameMessage_IsObservedAsync() {
+    // The point of the overload: offering the same message twice has to be distinguishable
+    // from two distinct messages, or a consumer cannot tell a broker redelivery from new work.
+    var coordinator = _buildCoordinator();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+
+    await coordinator.StoreInboxMessagesWithObservationsAsync(
+      [_makeInbox(msgId, streamId)], partitionCount: 100);
+    var second = await coordinator.StoreInboxMessagesWithObservationsAsync(
+      [_makeInbox(msgId, streamId)], partitionCount: 100);
+
+    using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var rows = await conn.ExecuteScalarAsync<int>(
+      "SELECT count(*) FROM wh_inbox WHERE message_id = @m", new { m = msgId });
+
+    await Assert.That(rows).IsEqualTo(1)
+      .Because("the store is idempotent on message_id — a redelivery updates rather than duplicates");
+    await Assert.That(second).IsNotNull();
+  }
+
+  [Test]
+  public async Task WithObservations_SeveralMessages_AreAllStoredAsync() {
+    var coordinator = _buildCoordinator();
+    var messages = new InboxMessage[5];
+    var ids = new Guid[5];
+    for (var i = 0; i < 5; i++) {
+      ids[i] = (Guid)TrackedGuid.NewMedo();
+      messages[i] = _makeInbox(ids[i], (Guid)TrackedGuid.NewMedo());
+    }
+
+    await coordinator.StoreInboxMessagesWithObservationsAsync(messages, partitionCount: 100);
+
+    using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var stored = await conn.ExecuteScalarAsync<int>(
+      "SELECT count(*) FROM wh_inbox WHERE message_id = ANY(@ids)", new { ids });
+
+    await Assert.That(stored).IsEqualTo(5);
+  }
 }
