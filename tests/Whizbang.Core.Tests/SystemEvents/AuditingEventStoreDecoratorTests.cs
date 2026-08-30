@@ -29,7 +29,7 @@ public class AuditingEventStoreDecoratorTests {
     var options = Options.Create(new SystemEventOptions());
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(null!, channel, options, new Whizbang.Core.Observability.ServiceInstanceProvider()))
+    await Assert.That(() => new AuditingEventStoreDecorator(null!, channel, options, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -40,7 +40,7 @@ public class AuditingEventStoreDecoratorTests {
     var options = Options.Create(new SystemEventOptions());
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(inner, null!, options, new Whizbang.Core.Observability.ServiceInstanceProvider()))
+    await Assert.That(() => new AuditingEventStoreDecorator(inner, null!, options, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -51,7 +51,7 @@ public class AuditingEventStoreDecoratorTests {
     var channel = new MockDeferredOutboxChannel();
 
     // Act & Assert
-    await Assert.That(() => new AuditingEventStoreDecorator(inner, channel, null!, new Whizbang.Core.Observability.ServiceInstanceProvider()))
+    await Assert.That(() => new AuditingEventStoreDecorator(inner, channel, null!, new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -498,7 +498,7 @@ public class AuditingEventStoreDecoratorTests {
     configure?.Invoke(options);
     var inner = new MockEventStore();
     var channel = new MockDeferredOutboxChannel();
-    var decorator = new AuditingEventStoreDecorator(inner, channel, Options.Create(options), new Whizbang.Core.Observability.ServiceInstanceProvider());
+    var decorator = new AuditingEventStoreDecorator(inner, channel, Options.Create(options), new Whizbang.Core.Observability.ServiceInstanceProvider(), Whizbang.Core.SystemEvents.NoOpinionAuditDecisionHook.Instance);
     return (decorator, inner, channel);
   }
 

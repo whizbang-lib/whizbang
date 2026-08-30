@@ -44,8 +44,8 @@ public sealed class AuditingEventStoreDecorator(
     IDeferredOutboxChannel outboxChannel,
     IOptions<SystemEventOptions> options,
     Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
-    ILogger<AuditingEventStoreDecorator>? logger = null,
-    IAuditDecisionHook? auditDecisionHook = null) : ForwardingEventStoreDecorator(inner) {
+    IAuditDecisionHook auditDecisionHook,
+    ILogger<AuditingEventStoreDecorator>? logger = null) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -62,7 +62,7 @@ public sealed class AuditingEventStoreDecorator(
   private readonly Whizbang.Core.Observability.IServiceInstanceProvider _instanceProvider = instanceProvider;
 
   // Optional per-occurrence decision. Without one, behavior is exactly the attribute's.
-  private readonly IAuditDecisionHook? _auditDecisionHook = auditDecisionHook;
+  private readonly IAuditDecisionHook _auditDecisionHook = auditDecisionHook;
 
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(

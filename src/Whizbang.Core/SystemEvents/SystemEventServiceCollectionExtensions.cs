@@ -68,6 +68,9 @@ public static class SystemEventServiceCollectionExtensions {
     // name the instance that wrote them. Assuming a fuller composition supplies it is what
     // left that field null in every composed application.
     services.AddWhizbangInstanceIdentity();
+    // Turnkey default: no opinion, which is exactly how auditing behaved before hooks existed.
+    // TryAdd lets an application's own hook win by simply being registered.
+    services.TryAddSingleton<IAuditDecisionHook, NoOpinionAuditDecisionHook>();
     services.TryAddSingleton<ITransportPublishFilter, SystemEventTransportFilter>();
 
     // Decorate the IEventStore with auditing if event audit is enabled
@@ -99,8 +102,8 @@ public static class SystemEventServiceCollectionExtensions {
               return new AuditingEventStoreDecorator(
                 inner, channel, opts,
                 sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-                sp.GetService<ILogger<AuditingEventStoreDecorator>>(),
-                sp.GetService<IAuditDecisionHook>());
+                sp.GetRequiredService<IAuditDecisionHook>(),
+                sp.GetService<ILogger<AuditingEventStoreDecorator>>());
             },
             captured.Lifetime));
       }
@@ -183,6 +186,9 @@ public static class SystemEventServiceCollectionExtensions {
       this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
     services.AddWhizbangInstanceIdentity();
+    // Turnkey default: no opinion, which is exactly how auditing behaved before hooks existed.
+    // TryAdd lets an application's own hook win by simply being registered.
+    services.TryAddSingleton<IAuditDecisionHook, NoOpinionAuditDecisionHook>();
     // Find existing IEventStore registration
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IEventStore))
       ?? throw new InvalidOperationException(
@@ -212,8 +218,8 @@ public static class SystemEventServiceCollectionExtensions {
           return new AuditingEventStoreDecorator(
             inner, channel, opts,
             sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
-            sp.GetService<ILogger<AuditingEventStoreDecorator>>(),
-            sp.GetService<IAuditDecisionHook>());
+            sp.GetRequiredService<IAuditDecisionHook>(),
+            sp.GetService<ILogger<AuditingEventStoreDecorator>>());
         },
         descriptor.Lifetime));
 

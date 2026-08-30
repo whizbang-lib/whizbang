@@ -90,3 +90,28 @@ public interface IAuditDecisionHook {
   /// </returns>
   AuditDecision Decide(object payload, Type eventType);
 }
+
+/// <summary>
+/// The shipped default hook: no opinion on any occurrence.
+/// </summary>
+/// <remarks>
+/// <para>
+/// An audit decision hook has a genuinely correct behavior when an application supplies none:
+/// express no opinion and let the attribute decide, which is exactly how auditing behaved before
+/// hooks existed. That makes this a safe inert default, so the constructor parameter can be
+/// required and a hand-construction can no longer silently drop the hook.
+/// </para>
+/// <para>
+/// Registered with TryAdd, so an application's own hook wins simply by being registered.
+/// </para>
+/// </remarks>
+/// <docs>operations/dependency-injection/injectable-services</docs>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/AuditDecisionHookTests.cs</tests>
+public sealed class NoOpinionAuditDecisionHook : IAuditDecisionHook {
+
+  /// <summary>A shared instance; the type is stateless.</summary>
+  public static readonly NoOpinionAuditDecisionHook Instance = new();
+
+  /// <inheritdoc />
+  public AuditDecision Decide(object payload, Type eventType) => AuditDecision.NoOpinion;
+}
