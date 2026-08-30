@@ -221,4 +221,103 @@ public class PerStreamSerializerTests {
     // Stream B kept processing despite stream A throwing.
     await Assert.That(bProcessed).IsEqualTo(2);
   }
+
+  // ===== Guards and shutdown =====
+
+  [Test]
+  public async Task Constructor_WithNullSelector_ThrowsAsync() {
+    await Assert.That(() => new PerStreamSerializer<StreamItem>(
+        streamIdSelector: null!,
+        processor: (_, _) => Task.CompletedTask))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullProcessor_ThrowsAsync() {
+    await Assert.That(() => new PerStreamSerializer<StreamItem>(
+        streamIdSelector: i => i.StreamId,
+        processor: null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ActiveStreamCount_TracksDistinctStreamsAsync() {
+    await using var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (_, _) => Task.CompletedTask);
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+
+    await sut.EnqueueAsync(new StreamItem(_idProvider.NewGuid(), _idProvider.NewGuid()));
+    await sut.EnqueueAsync(new StreamItem(_idProvider.NewGuid(), _idProvider.NewGuid()));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task EnqueueAsync_AfterStop_ThrowsObjectDisposedAsync() {
+    var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (_, _) => Task.CompletedTask);
+
+    await sut.FlushAndStopAsync(CancellationToken.None);
+
+    await Assert.That(async () =>
+        await sut.EnqueueAsync(new StreamItem(null, _idProvider.NewGuid())))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task FlushAndStopAsync_CalledTwice_IsIdempotentAsync() {
+    // DisposeAsync routes here too, so an explicit stop inside a using-block must not
+    // double-dispose the stop token source.
+    var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (_, _) => Task.CompletedTask);
+
+    await sut.FlushAndStopAsync(CancellationToken.None);
+    await sut.FlushAndStopAsync(CancellationToken.None);
+    await sut.DisposeAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FlushAndStopAsync_WithCancelledToken_AbandonsTheDrainAsync() {
+    // Shutdown deadline reached with a processor still running: the drain is abandoned
+    // and the stop token cancelled, rather than waiting on it forever.
+    var releaseProcessor = new TaskCompletionSource();
+    var processorEntered = new TaskCompletionSource();
+
+    var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: async (_, _) => {
+        processorEntered.TrySetResult();
+        await releaseProcessor.Task;
+      });
+
+    await sut.EnqueueAsync(new StreamItem(_idProvider.NewGuid(), _idProvider.NewGuid()));
+    await processorEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    await sut.FlushAndStopAsync(cts.Token);
+
+    releaseProcessor.TrySetResult();
+  }
+
+  [Test]
+  public async Task NullStreamId_SharesOneChannelAsync() {
+    // A null stream id is not "no stream": those items still serialise against each
+    // other, so they share the default keyed channel rather than one channel each.
+    await using var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (_, _) => Task.CompletedTask);
+
+    await sut.EnqueueAsync(new StreamItem(null, _idProvider.NewGuid()));
+    await sut.EnqueueAsync(new StreamItem(null, _idProvider.NewGuid()));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1);
+  }
 }
