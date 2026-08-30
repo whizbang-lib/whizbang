@@ -204,4 +204,36 @@ public class ServiceRequirementsGeneratorTests {
     await Assert.That(result.Diagnostics.Where(d =>
         d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)).IsEmpty();
   }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AFactoryRegistrationContributesWhatItResolvesAsync() {
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IHook { }
+      public interface ICloser { }
+      public sealed class Closer : ICloser {
+        public Closer(IHook hook) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<ICloser>(sp => new Closer(sp.GetRequiredService<IHook>()));
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    // A factory registration has no ImplementationType, so recording only type-based registrations
+    // misses it entirely. That is not a small gap: factory lambdas are where services are
+    // hand-constructed, which is the population this whole check exists for. A required dependency
+    // resolved by a factory that nothing registers throws only when something first resolves the
+    // service, which may be never in tests and always in production.
+    await Assert.That(generated).Contains("IHook")
+      .Because("what a factory resolves with GetRequiredService is a hard requirement of that "
+             + "registration, and is invisible to a type-based scan");
+  }
 }

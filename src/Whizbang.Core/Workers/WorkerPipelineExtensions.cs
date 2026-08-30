@@ -278,7 +278,10 @@ public static class WorkerPipelineExtensions {
       sp.GetService<Whizbang.Core.IMessageTypeCatalog>()));
     services.TryAddSingleton<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>();
     // A1 "close the books" (StreamCloser): fires the E2 destruction hook around a Sourced-stream close.
-    // Factory-resolved so the IDestructionHook is optional (null = a thin pass-through to the gated truncate).
+    // The hook is required; the shipped default proceeds and observes nothing, which is what an
+    // unregistered hook used to do. TryAdd lets an application's own hook win.
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.IDestructionHook,
+      Whizbang.Core.Lifecycle.NoOpDestructionHook>();
     services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamCloser>(sp => new Whizbang.Core.Lifecycle.StreamCloser(
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),

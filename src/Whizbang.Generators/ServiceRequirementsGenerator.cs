@@ -46,12 +46,26 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
 
   /// <inheritdoc/>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    var registrations = context.SyntaxProvider.CreateSyntaxProvider(
+    var typeRegistrations = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => _isCandidateRegistration(node),
         transform: static (ctx, ct) => _extractRequirement(ctx, ct))
       .Where(static r => r is not null)
-      .Select(static (r, _) => r!)
-      .Collect();
+      .Select(static (r, _) => r!);
+
+    // A factory registration has no implementation type, so a type-based scan cannot see it at all.
+    // That is where services are hand-constructed, which is exactly the population this check
+    // exists for: a required dependency that a factory resolves and nothing registers throws only
+    // when something first resolves the service, which may be never in a test run and always in
+    // production. What the factory resolves IS the requirement.
+    var factoryRegistrations = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => _isFactoryRegistration(node),
+        transform: static (ctx, ct) => _extractFactoryRequirement(ctx, ct))
+      .Where(static r => r is not null)
+      .Select(static (r, _) => r!);
+
+    var registrations = typeRegistrations.Collect()
+      .Combine(factoryRegistrations.Collect())
+      .Select(static (pair, _) => pair.Left.AddRange(pair.Right));
 
     // The manifest is emitted into every compilation that runs this generator, so its namespace is
     // derived from the assembly. A fixed namespace would give two assemblies the same
@@ -149,6 +163,86 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Cheap syntactic filter: a registration invocation whose argument is a lambda.
+  /// </summary>
+  private static bool _isFactoryRegistration(SyntaxNode node) {
+    if (node is not InvocationExpressionSyntax invocation) {
+      return false;
+    }
+    if (invocation.Expression is not MemberAccessExpressionSyntax member) {
+      return false;
+    }
+
+    var name = member.Name is GenericNameSyntax g ? g.Identifier.ValueText : member.Name.Identifier.ValueText;
+    var known = false;
+    for (var i = 0; i < _registrationMethods.Length; i++) {
+      if (string.Equals(name, _registrationMethods[i], System.StringComparison.Ordinal)) {
+        known = true;
+        break;
+      }
+    }
+    if (!known) {
+      return false;
+    }
+
+    foreach (var arg in invocation.ArgumentList.Arguments) {
+      if (arg.Expression is SimpleLambdaExpressionSyntax or ParenthesizedLambdaExpressionSyntax) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
+  /// Records the services a registration factory resolves as requirements of that registration.
+  /// </summary>
+  private static RequirementInfo? _extractFactoryRequirement(GeneratorSyntaxContext ctx, CancellationToken ct) {
+    ct.ThrowIfCancellationRequested();
+
+    var invocation = (InvocationExpressionSyntax)ctx.Node;
+    var member = (MemberAccessExpressionSyntax)invocation.Expression;
+
+    // Name the requirement after the service being registered, so a failure says which
+    // registration is unsatisfiable rather than naming a lambda.
+    string owner;
+    if (member.Name is GenericNameSyntax generic && generic.TypeArgumentList.Arguments.Count > 0) {
+      if (ctx.SemanticModel.GetSymbolInfo(generic.TypeArgumentList.Arguments[0], ct).Symbol
+          is not INamedTypeSymbol serviceType || !_isReferenceable(serviceType)) {
+        return null;
+      }
+      owner = serviceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    } else {
+      return null;
+    }
+
+    var dependencies = new List<string>();
+    foreach (var call in invocation.DescendantNodes().OfType<InvocationExpressionSyntax>()) {
+      if (call.Expression is not MemberAccessExpressionSyntax { Name: GenericNameSyntax resolve }) {
+        continue;
+      }
+      // Only GetRequiredService is a hard requirement. GetService returning null is a documented
+      // outcome the caller has already accounted for, and demanding a registration for it would
+      // fail correct compositions.
+      if (!string.Equals(resolve.Identifier.ValueText, "GetRequiredService", System.StringComparison.Ordinal)) {
+        continue;
+      }
+      if (resolve.TypeArgumentList.Arguments.Count != 1) {
+        continue;
+      }
+      if (ctx.SemanticModel.GetSymbolInfo(resolve.TypeArgumentList.Arguments[0], ct).Symbol
+          is not INamedTypeSymbol dep || dep.TypeKind != TypeKind.Interface || !_isReferenceable(dep)) {
+        continue;
+      }
+      dependencies.Add(dep.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+    }
+
+    if (dependencies.Count == 0) {
+      return null;
+    }
+    return new RequirementInfo(owner, dependencies);
+  }
+
+  /// <summary>
   /// True when generated source in the same assembly can name this type.
   /// </summary>
   private static bool _isReferenceable(INamedTypeSymbol type) {
@@ -157,6 +251,16 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
         return false;
       }
     }
+
+    // A generic argument can be inaccessible even when the constructed type's own declaration is
+    // fine: ILensQuery<PrivateTestModel> names a type the generated file cannot see, and emitting
+    // it turns this guard into a build break for everyone.
+    foreach (var argument in type.TypeArguments) {
+      if (argument is INamedTypeSymbol named && !_isReferenceable(named)) {
+        return false;
+      }
+    }
+
     return true;
   }
 
