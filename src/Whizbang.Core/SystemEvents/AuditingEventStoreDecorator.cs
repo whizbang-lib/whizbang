@@ -43,9 +43,9 @@ public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
     IDeferredOutboxChannel outboxChannel,
     IOptions<SystemEventOptions> options,
+    Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
     ILogger<AuditingEventStoreDecorator>? logger = null,
-      Whizbang.Core.Observability.IServiceInstanceProvider? instanceProvider = null,
-      IAuditDecisionHook? auditDecisionHook = null) : ForwardingEventStoreDecorator(inner) {
+    IAuditDecisionHook? auditDecisionHook = null) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -59,7 +59,7 @@ public sealed class AuditingEventStoreDecorator(
   private readonly ILogger<AuditingEventStoreDecorator> _logger = logger ?? NullLogger<AuditingEventStoreDecorator>.Instance;
 
   // Optional: a service with no telemetry identity wired must still produce audit records.
-  private readonly Whizbang.Core.Observability.IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly Whizbang.Core.Observability.IServiceInstanceProvider _instanceProvider = instanceProvider;
 
   // Optional per-occurrence decision. Without one, behavior is exactly the attribute's.
   private readonly IAuditDecisionHook? _auditDecisionHook = auditDecisionHook;
@@ -195,7 +195,7 @@ public sealed class AuditingEventStoreDecorator(
       Payload = auditEvent,
       Hops = [
         new MessageHop {
-          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfo(),
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id,

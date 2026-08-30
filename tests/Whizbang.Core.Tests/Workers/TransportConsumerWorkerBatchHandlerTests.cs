@@ -162,8 +162,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
       routingOptions: sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RoutingOptions>>(),
-      serviceInstanceProvider: new StubServiceInstanceProvider(serviceName)
-    );
+      serviceInstanceProvider: new StubServiceInstanceProvider(serviceName));
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -275,8 +274,8 @@ public class TransportConsumerWorkerBatchHandlerTests {
       _buildScopeFactory(), new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   private static TransportConsumerWorker _createWorkerWithScope(
@@ -286,8 +285,8 @@ public class TransportConsumerWorkerBatchHandlerTests {
       scopeFactory, new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   private static IServiceScopeFactory _buildScopeFactory() {

@@ -48,8 +48,8 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
 
@@ -88,8 +88,8 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
 
@@ -139,8 +139,8 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
 
@@ -186,8 +186,8 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
 
@@ -234,8 +234,8 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
 
@@ -283,8 +283,8 @@ public class TransportConsumerWorkerTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);

@@ -177,7 +177,8 @@ public class UngatedWorkerAdoptionTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      schemaReadyGate: gate);
+      schemaReadyGate: gate,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

@@ -246,7 +246,8 @@ public class TransportConsumerWorkerControlClassReceiveTests {
       NullLogger<TransportConsumerWorker>.Instance,
       receptorRegistry: new AlwaysConsumedRegistry(),
       controlClass: Options.Create(new ControlClassOptions { NonDurableReceive = nonDurableReceive }),
-      controlClassResolver: _resolver());
+      controlClassResolver: _resolver(),
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     return (worker, transport, sp);
   }

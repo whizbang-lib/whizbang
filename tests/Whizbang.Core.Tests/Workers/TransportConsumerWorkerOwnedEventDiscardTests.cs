@@ -224,8 +224,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
-      serviceInstanceProvider: instanceProvider
-    );
+      serviceInstanceProvider: instanceProvider);
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }

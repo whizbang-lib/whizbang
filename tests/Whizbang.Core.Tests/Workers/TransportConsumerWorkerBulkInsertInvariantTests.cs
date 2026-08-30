@@ -139,7 +139,8 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     return (worker, transport, coordinator, sp);
   }
@@ -262,7 +263,8 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);

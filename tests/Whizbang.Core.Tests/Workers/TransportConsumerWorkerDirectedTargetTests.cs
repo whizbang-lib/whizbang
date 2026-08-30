@@ -147,8 +147,7 @@ public class TransportConsumerWorkerDirectedTargetTests {
       metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
-      serviceInstanceProvider: serviceName is null ? null : new StubServiceInstanceProvider(serviceName)
-    );
+      serviceInstanceProvider: serviceName is null ? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance : new StubServiceInstanceProvider(serviceName));
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }

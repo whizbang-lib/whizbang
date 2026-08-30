@@ -97,7 +97,8 @@ public class TransportConsumerWorkerKnownEventFilterTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
-      routingOptions: Options.Create(routing));
+      routingOptions: Options.Create(routing),
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -132,7 +133,8 @@ public class TransportConsumerWorkerKnownEventFilterTests {
       serviceProvider.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: metrics,
-      NullLogger<TransportConsumerWorker>.Instance);
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   private static string _envelopeTypeFor(Type payloadType) =>

@@ -193,7 +193,7 @@ public class TransportConsumerWorkerResilienceEdgeTests {
       metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
       routingOptions: routingOptions,
-      serviceInstanceProvider: instanceProvider);
+      serviceInstanceProvider: instanceProvider ?? new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   private static TransportConsumerOptions _oneDestination(string address = "edge-topic") {

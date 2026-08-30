@@ -105,6 +105,40 @@ the first cluster, which is the reason to treat the others as candidates rather 
 One of these nine was verified null in every composed application. The same question is open for the
 other eight, and each should be checked against the registration sites that construct it.
 
+## Pattern A conversion: `IServiceInstanceProvider` (complete)
+
+All ten sites converted to a required, non-nullable dependency. Baseline dropped 162 to 152.
+
+**What the conversion surfaced, which is the point of doing it:**
+
+1. **Registrations that were not self-contained.** Four extensions registered a type requiring the
+   identity without guaranteeing the identity existed: the worker pipeline's run control, the
+   signal bus hosted service, the transport consumer builder, and system event auditing. Each
+   worked only because a fuller composition happened to register it first. `AddWhizbangInstanceIdentity()`
+   now makes each stand alone.
+
+2. **A fail-open gate that would have become fail-closed.** `TransportConsumerWorker` treats a null
+   service name as "this service cannot know who it is" and accepts targeted messages rather than
+   discarding them. Expressing the absent identity as a value made `"Unknown"` look like a real
+   service name, so every targeted message would have been read as foreign and discarded. An
+   existing test caught it. Without that test the change would have silently converted fail-open
+   into fail-closed for precisely the hosts least able to notice.
+
+3. **The four behavior-carrying null checks are now unreachable.** `InstanceStateRunControl`,
+   `StandbyWatcher`, `OutboxPublishWorker`, and the Postgres work coordinator each had
+   `if (_instanceProvider is null) return;`, meaning "no identity, skip identity-dependent work".
+   Since the provider is registered unconditionally, those branches never fired in a composed
+   application; they only protected direct construction. They are dead now and should be removed.
+
+**`UnknownServiceInstanceProvider` was added, and deliberately not registered.** "This host has no
+identity" is a real state with real behavior attached, so it needs to be expressible. Registering it
+as a default would let a real composition quietly run anonymous, which is the outcome this work
+exists to prevent, so it is available only to callers that construct these types directly.
+
+**Cost:** 253 call sites updated, almost all in tests. Direct construction without an identity is
+now a compile error, which was the deliberate intent of the original optional parameter and also
+the reason the defect shipped.
+
 ## Next actions
 
 1. Classify each candidate: genuine gap, extension point optional by design, or not a DI service.

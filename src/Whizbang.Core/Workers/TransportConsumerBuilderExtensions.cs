@@ -225,6 +225,9 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience). Singleton +
     // hosted forward so the SAME instance is also visible as a readiness contributor — Ready
     // composes its SubscriptionsReady signal, which previously existed but nothing consumed.
+    // Self-contained: this worker requires the instance identity, so the extension that
+    // registers it must guarantee the identity exists rather than assume a fuller composition.
+    builder.Services.AddWhizbangInstanceIdentity();
     builder.Services.TryAddSingleton<TransportConsumerWorker>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
     builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(
@@ -375,6 +378,9 @@ public static class TransportConsumerBuilderExtensions {
     // Register TransportConsumerWorker as hosted service (always with resilience). Singleton +
     // hosted forward so the SAME instance is also visible as a readiness contributor — Ready
     // composes its SubscriptionsReady signal, which previously existed but nothing consumed.
+    // Self-contained: this worker requires the instance identity, so the extension that
+    // registers it must guarantee the identity exists rather than assume a fuller composition.
+    builder.Services.AddWhizbangInstanceIdentity();
     builder.Services.TryAddSingleton<TransportConsumerWorker>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<TransportConsumerWorker>());
     builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupReadinessContributor, TransportConsumerWorker>(

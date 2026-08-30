@@ -78,6 +78,8 @@ public class TransportConsumerWorkerDiWiringTests {
       services.AddSingleton(new SubscriptionResilienceOptions());
       services.AddSingleton(new JsonSerializerOptions());
       services.AddSingleton(new OrderedStreamProcessor(parallelizeStreams: false, logger: null));
+      // The worker requires an instance identity, as it does in production composition.
+      services.AddWhizbangInstanceIdentity();
       services.AddSingleton<ILoggerFactory>(NullLoggerFactory.Instance);
       services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
       // Production registers both of these in AddWhizbang (ServiceCollectionExtensions) — they are

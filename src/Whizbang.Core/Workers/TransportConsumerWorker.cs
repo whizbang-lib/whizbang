@@ -151,8 +151,8 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger,
+    IServiceInstanceProvider serviceInstanceProvider,
     Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
-    IServiceInstanceProvider? serviceInstanceProvider = null,
     MessageProcessingOptions? messageProcessingOptions = null,
     TransportBatchOptions? transportBatchOptions = null,
     IWorkChannelWriter? workChannelWriter = null,
@@ -189,7 +189,16 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _metrics = metrics;
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
-    _serviceName = serviceInstanceProvider?.ServiceName;
+    // An unknown identity is not a service name. The three gates below (self-echo, foreign
+    // target, hop attribution) all treat a null name as "this service cannot know who it is" and
+    // fail open. Passing "Unknown" through as if it were a real name would make every targeted
+    // message look foreign and be discarded, turning fail-open into fail-closed for exactly the
+    // hosts that cannot defend themselves against it.
+    var resolvedServiceName = serviceInstanceProvider.ServiceName;
+    _serviceName = string.Equals(
+        resolvedServiceName, ServiceInstanceInfo.Unknown.ServiceName, StringComparison.Ordinal)
+      ? null
+      : resolvedServiceName;
     _receptorRegistry = receptorRegistry;
     _ephemeralModeResolver = ephemeralModeResolver;
     _eventMarkerResolver = eventMarkerResolver;

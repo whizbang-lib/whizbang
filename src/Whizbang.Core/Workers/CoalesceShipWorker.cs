@@ -46,17 +46,17 @@ namespace Whizbang.Core.Workers;
 public sealed partial class CoalesceShipWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
+  IServiceInstanceProvider instanceProvider,
   CoalesceGroupResolver? coalesceResolver = null,
   ILogger<CoalesceShipWorker>? logger = null,
   TimeProvider? timeProvider = null,
-  IServiceInstanceProvider? instanceProvider = null,
   ICompositeFactory? compositeFactory = null) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly CoalesceGroupResolver? _coalesceResolver = coalesceResolver;
   private readonly ILogger<CoalesceShipWorker>? _logger = logger;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
-  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly ICompositeFactory _compositeFactory = compositeFactory ?? new CompositeFactory();
 
   /// <inheritdoc />
@@ -256,7 +256,7 @@ public sealed partial class CoalesceShipWorker(
       Payload = composite,
       Hops = [
         new MessageHop {
-          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = _timeProvider.GetUtcNow(),
           // The folded singles' scope, carried forward. The consumer's fan-out derives every

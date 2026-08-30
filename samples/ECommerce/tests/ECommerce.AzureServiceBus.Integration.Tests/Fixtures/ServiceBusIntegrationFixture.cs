@@ -528,7 +528,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
-      )
+      ,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider())
     );
 
     // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor
@@ -708,7 +709,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
-      )
+      ,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider())
     );
 
     // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor

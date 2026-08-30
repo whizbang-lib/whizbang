@@ -415,8 +415,8 @@ public class TransportConsumerWorkerResilienceTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   #endregion

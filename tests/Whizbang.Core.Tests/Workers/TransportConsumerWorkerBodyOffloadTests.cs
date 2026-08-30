@@ -340,7 +340,8 @@ public class TransportConsumerWorkerBodyOffloadTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: metrics,
       logger ?? NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: receptorRegistry);
+      receptorRegistry: receptorRegistry,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   /// <summary>Registry that consumes NOTHING — mirrors a real service that has no receptor for the

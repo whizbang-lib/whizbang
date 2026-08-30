@@ -56,7 +56,7 @@ public sealed class StandbyWatcherOptions {
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StandbyHandshakeE2ETests.cs</tests>
 public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly IServiceInstanceProvider? _instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider;
   private readonly ILibraryVersionProvider? _versionProvider;
   private readonly IWhizbangLifecycleState _lifecycle;
   private readonly IStartupAssessor? _assessor;
@@ -75,7 +75,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
       IServiceScopeFactory scopeFactory,
       IWhizbangLifecycleState lifecycle,
       IHostApplicationLifetime hostLifetime,
-      IServiceInstanceProvider? instanceProvider = null,
+      IServiceInstanceProvider instanceProvider,
       ILibraryVersionProvider? versionProvider = null,
       IStartupAssessor? assessor = null,
       StartupPipelineRunner? pipelineRunner = null,

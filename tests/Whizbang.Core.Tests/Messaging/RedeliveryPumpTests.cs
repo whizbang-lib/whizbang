@@ -32,7 +32,7 @@ public class RedeliveryPumpTests {
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
     var origin = TrackedGuid.NewMedo().Value;
-    var pump = new RedeliveryPump(transport, serializer);
+    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var published = await pump.PublishAsync(
       [_evt(streamA, a1, 1), _evt(streamA, a2, 2), _evt(streamB, b1, 1)],
@@ -75,6 +75,7 @@ public class RedeliveryPumpTests {
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
     var pump = new RedeliveryPump(transport, serializer,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 2 });
 
     var published = await pump.PublishAsync(
@@ -105,6 +106,7 @@ public class RedeliveryPumpTests {
     // crossed by every single event, so each flushes alone — a count-only bound would build one
     // 3-event composite here.
     var pump = new RedeliveryPump(transport, serializer,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       options: new RedeliveryPumpOptions { MaxInnerEventsPerComposite = 500, MaxBytesPerComposite = 100 });
     var bigBody = "{\"pad\":\"" + new string('x', 90) + "\"}";
 
@@ -127,6 +129,7 @@ public class RedeliveryPumpTests {
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
     var pump = new RedeliveryPump(transport, serializer,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       options: new RedeliveryPumpOptions { MaxBytesPerComposite = 10 });
 
     var published = await pump.PublishAsync(
@@ -145,7 +148,7 @@ public class RedeliveryPumpTests {
     // never left the origin.
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer);
+    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var published = await pump.PublishAsync(
       [_evt(TrackedGuid.NewMedo().Value, TrackedGuid.NewMedo().Value, 1) with { EventType = "Totally.Unregistered.Type, Nowhere" }],
@@ -172,7 +175,7 @@ public class RedeliveryPumpTests {
     var stream = TrackedGuid.NewMedo().Value;
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer);
+    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     await pump.PublishAsync(
       [_scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, _scopeJson("tenant-a", "user-a"))],
@@ -193,7 +196,7 @@ public class RedeliveryPumpTests {
     var stream = TrackedGuid.NewMedo().Value;
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer);
+    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var published = await pump.PublishAsync([
         _scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, _scopeJson("tenant-a", "user-a")),
@@ -218,7 +221,7 @@ public class RedeliveryPumpTests {
     var stream = TrackedGuid.NewMedo().Value;
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer);
+    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     await pump.PublishAsync(
       [_evt(stream, TrackedGuid.NewMedo().Value, 1)],
@@ -236,7 +239,7 @@ public class RedeliveryPumpTests {
     var stream = TrackedGuid.NewMedo().Value;
     var transport = new _captureTransport();
     var serializer = new _captureSerializer();
-    var pump = new RedeliveryPump(transport, serializer);
+    var pump = new RedeliveryPump(transport, serializer, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     await pump.PublishAsync(
       [_scopedEvt(stream, TrackedGuid.NewMedo().Value, 1, "null")],
@@ -301,7 +304,7 @@ public class RedeliveryPumpTests {
     var streamA = TrackedGuid.NewMedo().Value;
     var streamB = TrackedGuid.NewMedo().Value;
     var transport = new _flakyTransport { FailFirst = 2 };
-    var pump = new RedeliveryPump(transport, new _captureSerializer(), options: new RedeliveryPumpOptions {
+    var pump = new RedeliveryPump(transport, new _captureSerializer(), new Whizbang.Core.Observability.ServiceInstanceProvider(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 5,
       PublishRetryBaseDelayMs = 0,
     });
@@ -321,7 +324,7 @@ public class RedeliveryPumpTests {
   [Test]
   public async Task Publish_ExhaustedRetries_RethrowsAfterTheConfiguredAttemptsAsync() {
     var transport = new _flakyTransport { FailFirst = int.MaxValue };
-    var pump = new RedeliveryPump(transport, new _captureSerializer(), options: new RedeliveryPumpOptions {
+    var pump = new RedeliveryPump(transport, new _captureSerializer(), new Whizbang.Core.Observability.ServiceInstanceProvider(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 3,
       PublishRetryBaseDelayMs = 0,
     });
@@ -338,7 +341,7 @@ public class RedeliveryPumpTests {
   [Test]
   public async Task Publish_Cancellation_PropagatesWithoutRetryAsync() {
     var transport = new _flakyTransport { FailFirst = int.MaxValue, ThrowCancellation = true };
-    var pump = new RedeliveryPump(transport, new _captureSerializer(), options: new RedeliveryPumpOptions {
+    var pump = new RedeliveryPump(transport, new _captureSerializer(), new Whizbang.Core.Observability.ServiceInstanceProvider(), options: new RedeliveryPumpOptions {
       PublishRetryAttempts = 5,
       PublishRetryBaseDelayMs = 0,
     });

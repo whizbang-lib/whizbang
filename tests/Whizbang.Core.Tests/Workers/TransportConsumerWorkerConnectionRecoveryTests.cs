@@ -52,8 +52,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Assert - recovery handler was registered
     await Assert.That(transport.RecoveryHandlerRegistered).IsTrue()
@@ -88,8 +88,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
 
@@ -138,8 +138,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act & Assert - StopAsync should not throw even without StartAsync
     await Assert.That(async () => await worker.StopAsync(CancellationToken.None))
@@ -168,8 +168,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -216,8 +216,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Assert
     await Assert.That(worker.SubscriptionStates.Count).IsEqualTo(3)
@@ -251,8 +251,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
 
@@ -291,8 +291,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act & Assert - should not throw when subscription objects are null
     await Assert.That(async () => await worker.PauseAllSubscriptionsAsync())
@@ -319,8 +319,8 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act & Assert
     await Assert.That(async () => await worker.ResumeAllSubscriptionsAsync())

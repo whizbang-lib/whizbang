@@ -121,7 +121,8 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: new AlwaysConsumedRegistry());
+      receptorRegistry: new AlwaysConsumedRegistry(),
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     await using (sp) {
       using var cts = new CancellationTokenSource();

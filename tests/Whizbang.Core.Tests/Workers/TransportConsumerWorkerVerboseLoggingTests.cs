@@ -54,7 +54,8 @@ public class TransportConsumerWorkerVerboseLoggingTests {
       transport, options, new SubscriptionResilienceOptions(),
       sp.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null, logger);
+      lifecycleMessageDeserializer: null, metrics: null, logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -94,7 +95,8 @@ public class TransportConsumerWorkerVerboseLoggingTests {
       transport, options, new SubscriptionResilienceOptions(),
       sp.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null, logger);
+      lifecycleMessageDeserializer: null, metrics: null, logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

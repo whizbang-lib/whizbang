@@ -48,8 +48,8 @@ public class TransportConsumerWorkerCoverageTests {
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
         metrics: null,
-        logger: NullLogger<TransportConsumerWorker>.Instance
-      );
+        logger: NullLogger<TransportConsumerWorker>.Instance,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
       await Task.CompletedTask;
     });
   }
@@ -66,8 +66,8 @@ public class TransportConsumerWorkerCoverageTests {
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
         metrics: null,
-        logger: NullLogger<TransportConsumerWorker>.Instance
-      );
+        logger: NullLogger<TransportConsumerWorker>.Instance,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
       await Task.CompletedTask;
     });
   }
@@ -84,8 +84,8 @@ public class TransportConsumerWorkerCoverageTests {
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
         metrics: null,
-        logger: NullLogger<TransportConsumerWorker>.Instance
-      );
+        logger: NullLogger<TransportConsumerWorker>.Instance,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
       await Task.CompletedTask;
     });
   }
@@ -102,8 +102,8 @@ public class TransportConsumerWorkerCoverageTests {
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
         metrics: null,
-        logger: NullLogger<TransportConsumerWorker>.Instance
-      );
+        logger: NullLogger<TransportConsumerWorker>.Instance,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
       await Task.CompletedTask;
     });
   }
@@ -120,8 +120,8 @@ public class TransportConsumerWorkerCoverageTests {
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
         metrics: null,
-        logger: NullLogger<TransportConsumerWorker>.Instance
-      );
+        logger: NullLogger<TransportConsumerWorker>.Instance,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
       await Task.CompletedTask;
     });
   }
@@ -138,8 +138,8 @@ public class TransportConsumerWorkerCoverageTests {
         orderedProcessor: null!,
         lifecycleMessageDeserializer: null,
         metrics: null,
-        logger: NullLogger<TransportConsumerWorker>.Instance
-      );
+        logger: NullLogger<TransportConsumerWorker>.Instance,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
       await Task.CompletedTask;
     });
   }
@@ -156,8 +156,8 @@ public class TransportConsumerWorkerCoverageTests {
         orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
         lifecycleMessageDeserializer: null,
         metrics: null,
-        logger: null!
-      );
+        logger: null!,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
       await Task.CompletedTask;
     });
   }
@@ -174,8 +174,8 @@ public class TransportConsumerWorkerCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     await Assert.That(worker).IsNotNull();
   }
@@ -196,8 +196,8 @@ public class TransportConsumerWorkerCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     await Assert.That(transport.HasRecoveryHandler).IsTrue();
   }
@@ -243,8 +243,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
 
@@ -330,8 +330,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Start worker and wait for subscription
     using var cts = new CancellationTokenSource();
@@ -388,8 +388,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -439,8 +439,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -481,8 +481,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -527,8 +527,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -575,8 +575,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -629,8 +629,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -682,8 +682,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -808,8 +808,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -856,8 +856,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -988,8 +988,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -1050,8 +1050,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
     try {
@@ -1085,8 +1085,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   private static TransportConsumerWorker _createWorkerWithResilience(
@@ -1106,8 +1106,8 @@ public class TransportConsumerWorkerCoverageTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {

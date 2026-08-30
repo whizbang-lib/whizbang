@@ -131,7 +131,8 @@ public class TransportConsumerWorkerFlagDerivationTests {
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
-      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()));
+      eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {

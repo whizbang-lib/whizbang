@@ -62,7 +62,7 @@ public sealed partial class RedeliveryRequestReceptor(
       var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
       var pump = new RedeliveryPump(
         transport, envelopeSerializer,
-        services.GetService<IServiceInstanceProvider>(), options,
+        services.GetRequiredService<IServiceInstanceProvider>(), options,
         compositeFactory: services.GetService<Whizbang.Core.Minting.ICompositeFactory>());
 
       // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter

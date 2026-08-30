@@ -42,6 +42,7 @@ public sealed partial class OutboxPublishWorker(
   ISchemaReadyGate schemaReadyGate,
   IOptions<OutboxPublishWorkerOptions> options,
   ILogger<OutboxPublishWorker> logger,
+  IServiceInstanceProvider instanceProvider,
   IMessagePublishStrategy? publishStrategy = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
@@ -49,7 +50,6 @@ public sealed partial class OutboxPublishWorker(
   IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
   LeaseRegistry? leaseRegistry = null,
   TimeProvider? timeProvider = null,
-  IServiceInstanceProvider? instanceProvider = null,
   IDeadLetterStore? deadLetterStore = null,
   IGenerationProvider? generationProvider = null,
   Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
@@ -85,7 +85,7 @@ public sealed partial class OutboxPublishWorker(
   // before falling through to the failure-channel path. Mirrors the
   // OutboxDrainWorker.cs:287-312 design but in the post-failure catch sites
   // since this worker has no pre-publish gate.
-  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly IDeadLetterStore? _deadLetterStore = deadLetterStore;
   private readonly IGenerationProvider? _generationProvider = generationProvider;
   private readonly Whizbang.Core.Observability.DeadLetterMetrics? _dlqMetrics = dlqMetrics;

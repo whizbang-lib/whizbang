@@ -532,7 +532,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
-      )
+      ,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider())
     );
 
     // Logging
@@ -698,7 +699,8 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         sp.GetService<TransportMetrics>(),
         sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
-      )
+      ,
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider())
     );
 
     // Logging

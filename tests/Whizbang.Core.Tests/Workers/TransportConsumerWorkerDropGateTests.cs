@@ -130,7 +130,8 @@ public class TransportConsumerWorkerDropGateTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -186,7 +187,8 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
       receptorRegistry: compileTimeRegistry,
-      runtimeReceptorRegistry: runtimeRegistry);
+      runtimeReceptorRegistry: runtimeRegistry,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -227,7 +229,8 @@ public class TransportConsumerWorkerDropGateTests {
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: registry);
+      receptorRegistry: registry,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -289,7 +292,8 @@ public class TransportConsumerWorkerDropGateTests {
       lifecycleMessageDeserializer: null, metrics: null,
       NullLogger<TransportConsumerWorker>.Instance,
       receptorRegistry: new FakeReceptorRegistry(hasAnyConsumer: false),
-      eventMarkerResolver: new EventMarkerResolver(new CompositeMarkerCatalog()));
+      eventMarkerResolver: new EventMarkerResolver(new CompositeMarkerCatalog()),
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);

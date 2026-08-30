@@ -100,6 +100,13 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService<LifecyclePhaseWorker>();
     // Each lifecycle transition is recorded on this instance's own row so peers and the status
     // surface can observe it — the standby handshake turns on states a peer can actually see.
+    // The instance identity this run control records against. TryAdd keeps AddWhizbang's own
+    // registration authoritative when both run, and makes this extension self-contained: a
+    // pipeline composed without AddWhizbang used to leave the identity silently null rather
+    // than failing, so instance state was recorded against no instance at all.
+    services.TryAddSingleton<Observability.IServiceInstanceProvider>(sp =>
+      new Observability.ServiceInstanceProvider(
+        sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
     services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
 
     // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
@@ -174,7 +181,7 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
       sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
@@ -225,10 +232,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton(sp => new CoalesceShipWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<ISchemaReadyGate>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
       sp.GetService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
       sp.GetService<TimeProvider>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetService<Whizbang.Core.Minting.ICompositeFactory>()));
     // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
     // registration constructable (the F2-era lesson: extensions must be self-contained).

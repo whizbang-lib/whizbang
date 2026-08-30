@@ -45,7 +45,8 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
       transport, options, resilience,
       sp.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
       new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null, logger);
+      lifecycleMessageDeserializer: null, metrics: null, logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

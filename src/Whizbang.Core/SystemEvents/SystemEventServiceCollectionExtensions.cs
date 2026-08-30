@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Pipeline;
 
 namespace Whizbang.Core.SystemEvents;
@@ -63,6 +64,10 @@ public static class SystemEventServiceCollectionExtensions {
     }
 
     // Register core services
+    // Self-contained: the audit decorator requires the instance identity so its records can
+    // name the instance that wrote them. Assuming a fuller composition supplies it is what
+    // left that field null in every composed application.
+    services.AddWhizbangInstanceIdentity();
     services.TryAddSingleton<ITransportPublishFilter, SystemEventTransportFilter>();
 
     // Decorate the IEventStore with auditing if event audit is enabled
@@ -88,12 +93,13 @@ public static class SystemEventServiceCollectionExtensions {
               }
               var channel = sp.GetRequiredService<IDeferredOutboxChannel>();
               var opts = sp.GetRequiredService<IOptions<SystemEventOptions>>();
-              // Optional dependencies must be resolved explicitly: this decorator is constructed by
-              // hand, so anything not passed here is silently null however it is registered.
+              // The provider is required, so omitting it is a compile error rather than a silent
+              // null. The remaining optional dependencies must still be resolved explicitly:
+              // this decorator is hand-constructed, so anything not passed here is absent.
               return new AuditingEventStoreDecorator(
                 inner, channel, opts,
+                sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
                 sp.GetService<ILogger<AuditingEventStoreDecorator>>(),
-                sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
                 sp.GetService<IAuditDecisionHook>());
             },
             captured.Lifetime));
@@ -175,6 +181,8 @@ public static class SystemEventServiceCollectionExtensions {
   /// </example>
   public static IServiceCollection DecorateEventStoreWithAuditing(
       this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    services.AddWhizbangInstanceIdentity();
     // Find existing IEventStore registration
     var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IEventStore))
       ?? throw new InvalidOperationException(
@@ -198,12 +206,13 @@ public static class SystemEventServiceCollectionExtensions {
           }
           var channel = sp.GetRequiredService<IDeferredOutboxChannel>();
           var opts = sp.GetRequiredService<IOptions<SystemEventOptions>>();
-          // Optional dependencies must be resolved explicitly: this decorator is constructed by
-          // hand, so anything not passed here is silently null however it is registered.
+          // The provider is required, so omitting it is a compile error rather than a silent
+          // null. The remaining optional dependencies must still be resolved explicitly:
+          // this decorator is hand-constructed, so anything not passed here is absent.
           return new AuditingEventStoreDecorator(
             inner, channel, opts,
+            sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
             sp.GetService<ILogger<AuditingEventStoreDecorator>>(),
-            sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
             sp.GetService<IAuditDecisionHook>());
         },
         descriptor.Lifetime));

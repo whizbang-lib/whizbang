@@ -241,7 +241,8 @@ public class StartupReadyCompositeTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      schemaReadyGate: gate);
+      schemaReadyGate: gate,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("transport-consumer");

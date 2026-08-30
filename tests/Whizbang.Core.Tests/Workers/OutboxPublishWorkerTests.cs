@@ -152,6 +152,7 @@ public class OutboxPublishWorkerTests {
       channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
@@ -186,6 +187,7 @@ public class OutboxPublishWorkerTests {
       channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true, MaxBulkPublishBatchSize = 10 }),
       NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
@@ -231,6 +233,7 @@ public class OutboxPublishWorkerTests {
       // on test shutdown — also lets us shut down quickly after the renewal assertion.
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true, TransportNotReadyRetryDelayMilliseconds = 25 }),
       NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
@@ -267,6 +270,7 @@ public class OutboxPublishWorkerTests {
       channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
@@ -302,6 +306,7 @@ public class OutboxPublishWorkerTests {
       channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = false }),
       NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
@@ -335,6 +340,7 @@ public class OutboxPublishWorkerTests {
       channel, completion, failure, renewal, gate,
       Options.Create(new OutboxPublishWorkerOptions { Enabled = true }),
       NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       publishStrategy: strategy);
 
     using var cts = new CancellationTokenSource();
