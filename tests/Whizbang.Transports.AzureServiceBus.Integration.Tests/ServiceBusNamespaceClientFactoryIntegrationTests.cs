@@ -1,53 +1,30 @@
-using Azure.Messaging.ServiceBus;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Transports.AzureServiceBus.Integration.Tests.Containers;
 
 namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 
 /// <summary>
-/// Integration tests for <see cref="ServiceBusNamespaceClientFactory.CreateClient"/>.
+/// Tests for <see cref="ServiceBusNamespaceClientFactory.CreateClient"/>, kept together
+/// in the integration project because CreateClient is not a pure construction call.
 /// </summary>
 /// <remarks>
-/// CreateClient does not just construct a client: it goes through
-/// AzureServiceBusConnectionRetry, which verifies connectivity with a real
-/// GetNamespacePropertiesAsync round-trip before returning. That makes a live
-/// namespace mandatory, so every CreateClient test lives here against the emulator
-/// rather than in the unit suite. The CreateAdminClient branches, which touch no
-/// network, stay in ServiceBusNamespaceClientFactoryTests.
+/// <para>CreateClient goes through AzureServiceBusConnectionRetry, which verifies
+/// connectivity with a real <c>GetNamespacePropertiesAsync</c> round-trip before it returns.
+/// That is a management-plane call, and the Service Bus emulator this project runs against
+/// does not serve one: it reads its topology once at startup from a static Config.json and
+/// implements no administration API. A success-path test therefore hangs against the
+/// emulator, retrying the probe until the run is killed — it needs a real Azure namespace,
+/// which neither local runs nor CI have.</para>
+/// <para>What is left is the guard below, which reaches the call site and returns before any
+/// network access. The success path stays unverified by design; covering it would mean
+/// standing up a live namespace and gating the test on credentials being present.</para>
+/// <para>No emulator fixture is taken here deliberately — nothing in this class needs a
+/// broker, and requesting the shared fixture would make a millisecond test wait on
+/// container startup.</para>
 /// </remarks>
 [Category("Integration")]
-[Timeout(60_000)]
-[ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
-public class ServiceBusNamespaceClientFactoryIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
-  private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
-
-  [Test]
-  public async Task CreateClient_AgainstALiveNamespace_ReturnsAConnectedClientAsync() {
-    var factory = new ServiceBusNamespaceClientFactory(retryLogger: null);
-
-    await using var client = factory.CreateClient(
-        "default",
-        _fixture.ConnectionString,
-        new AzureServiceBusOptions());
-
-    await Assert.That(client).IsNotNull();
-    await Assert.That(client).IsTypeOf<ServiceBusClient>();
-  }
-
-  [Test]
-  public async Task CreateClient_AgainstALiveNamespace_TargetsTheFixtureNamespaceAsync() {
-    var factory = new ServiceBusNamespaceClientFactory(retryLogger: null);
-
-    await using var client = factory.CreateClient(
-        "default",
-        _fixture.ConnectionString,
-        new AzureServiceBusOptions());
-
-    await Assert.That(client.FullyQualifiedNamespace).IsNotNull();
-    await Assert.That(client.IsClosed).IsFalse();
-  }
+public class ServiceBusNamespaceClientFactoryIntegrationTests {
 
   [Test]
   public async Task CreateClient_WithEmptyConnectionString_ThrowsBeforeContactingTheBrokerAsync() {
@@ -58,18 +35,10 @@ public class ServiceBusNamespaceClientFactoryIntegrationTests(ServiceBusEmulator
   }
 
   [Test]
-  public async Task CreateAdminClient_AgainstALiveNamespace_CanReadNamespacePropertiesAsync() {
+  public async Task CreateClient_WithNullConnectionString_ThrowsBeforeContactingTheBrokerAsync() {
     var factory = new ServiceBusNamespaceClientFactory(retryLogger: null);
 
-    var admin = factory.CreateAdminClient(
-        "default",
-        _fixture.ConnectionString,
-        new AzureServiceBusOptions { AutoProvisionInfrastructure = true });
-
-    await Assert.That(admin).IsNotNull();
-
-    var properties = await admin!.GetNamespacePropertiesAsync();
-
-    await Assert.That(properties).IsNotNull();
+    await Assert.That(() => factory.CreateClient("default", null!, new AzureServiceBusOptions()))
+        .ThrowsExactly<ArgumentNullException>();
   }
 }
