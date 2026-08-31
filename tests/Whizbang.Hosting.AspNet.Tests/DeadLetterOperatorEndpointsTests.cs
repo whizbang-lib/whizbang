@@ -222,4 +222,46 @@ public class DeadLetterOperatorEndpointsTests {
     await Assert.That(resp.StatusCode).IsEqualTo(HttpStatusCode.OK);
     await Assert.That(svc.FetchDueCalls).IsEqualTo(1);
   }
+
+  // --- Route constraint behaviour -------------------------------------------
+  // Each id route carries a {id:guid} constraint, so a malformed id is rejected by
+  // routing and never reaches the handler. That makes the handlers' own
+  // "bad id -> 400" guards defence in depth rather than a reachable path; these
+  // tests pin the constraint that keeps them unreachable, so that removing it
+  // would fail here rather than silently change the contract from 404 to 400.
+
+  [Test]
+  [Arguments("retry")]
+  [Arguments("hold")]
+  [Arguments("give-up")]
+  public async Task PostWithMalformedId_IsRejectedByRoutingAsync(string action) {
+    var svc = new FakeRecoveryService();
+
+    using var host = _buildHost(svc);
+    await host.StartAsync();
+    var client = host.GetTestClient();
+
+    var resp = await client.PostAsync($"/whizbang/dlq/not-a-guid/{action}", content: null);
+
+    await Assert.That(resp.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    await Assert.That(svc.ScheduledIds).IsEmpty();
+    await Assert.That(svc.HeldIds).IsEmpty();
+    await Assert.That(svc.GaveUpIds).IsEmpty();
+  }
+
+  [Test]
+  [Arguments("retry")]
+  [Arguments("hold")]
+  [Arguments("give-up")]
+  public async Task PostWithEmptyId_IsRejectedByRoutingAsync(string action) {
+    var svc = new FakeRecoveryService();
+
+    using var host = _buildHost(svc);
+    await host.StartAsync();
+    var client = host.GetTestClient();
+
+    var resp = await client.PostAsync($"/whizbang/dlq//{action}", content: null);
+
+    await Assert.That(resp.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+  }
 }

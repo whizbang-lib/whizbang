@@ -141,7 +141,7 @@ tests/
 └── Whizbang.Observability.Tests/
 
 plans/                          # Feature planning documents
-ai-docs/                        # Focused topic documentation (11 files)
+ai-docs/                        # Focused topic documentation (12 files)
 .claude/commands/               # Slash commands (11 commands)
 ```
 
@@ -184,6 +184,16 @@ complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-
 - Need assertion patterns
 
 **Why critical**: Prevents common TUnit and Rocks mistakes that waste hours.
+
+### 📖 **[coverage-exclusions.md](ai-docs/coverage-exclusions.md)**
+**Read when**:
+- A line is uncovered and no test seems able to reach it
+- About to add `[ExcludeFromCodeCoverage]`
+- Deciding whether a red line is a gap or a deliberate decision
+
+**Why it matters**: the attribute is member-level, so applying it to a method that
+has any tested behavior suppresses real coverage. The target is near-100%, not
+literal 100% — the file gives the decision procedure and worked examples.
 
 ### 📖 **[efcore-10-usage.md](ai-docs/efcore-10-usage.md)**
 **Read when**:

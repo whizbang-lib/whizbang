@@ -523,4 +523,55 @@ public class GlobalEvent { }
   }
 
   #endregion
+
+  // --- Generic arity --------------------------------------------------------
+  // BuildClrTypeName appends CLR generic arity (Name`N). Every existing case uses a
+  // non-generic type, so the arity branch was never taken.
+
+  [Test]
+  public async Task BuildClrTypeName_GenericType_AppendsArityAsync() {
+    const string source = @"
+      namespace Sample {
+        public class Box<T> { }
+      }
+    ";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var symbol = compilation.GetTypeByMetadataName("Sample.Box`1")!;
+
+    var name = TypeNameUtilities.BuildClrTypeName(symbol);
+
+    await Assert.That(name).Contains("Box`1");
+  }
+
+  [Test]
+  public async Task BuildClrTypeName_TwoParameterGeneric_AppendsArityTwoAsync() {
+    const string source = @"
+      namespace Sample {
+        public class Pair<TKey, TValue> { }
+      }
+    ";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var symbol = compilation.GetTypeByMetadataName("Sample.Pair`2")!;
+
+    var name = TypeNameUtilities.BuildClrTypeName(symbol);
+
+    await Assert.That(name).Contains("Pair`2");
+  }
+
+  [Test]
+  public async Task BuildClrTypeName_NestedGeneric_JoinsWithPlusAndKeepsArityAsync() {
+    const string source = @"
+      namespace Sample {
+        public class Outer {
+          public class Inner<T> { }
+        }
+      }
+    ";
+    var compilation = GeneratorTestHelper.CreateCompilation(source);
+    var symbol = compilation.GetTypeByMetadataName("Sample.Outer+Inner`1")!;
+
+    var name = TypeNameUtilities.BuildClrTypeName(symbol);
+
+    await Assert.That(name).Contains("Outer+Inner`1");
+  }
 }

@@ -464,4 +464,53 @@ public class OpenTelemetryMetricHookTests {
     public required string TenantId { get; init; }
     public required string Region { get; init; }
   }
+
+  // --- ValueProperty omitted ------------------------------------------------
+  // _extractValue is only reached from the Histogram and Gauge branches, and every
+  // existing case sets ValueProperty. With it omitted the extractor falls back to 1.0
+  // so the metric still records rather than silently dropping the sample.
+
+  [Test]
+  public async Task OnTaggedMessage_HistogramWithoutValueProperty_RecordsDefaultOfOneAsync() {
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-histogram-default",
+      MetricName = "test.histogram.default",
+      Type = MetricType.Histogram
+    };
+    var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
+    var payload = JsonSerializer.SerializeToElement(message);
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = message,
+      MessageType = typeof(TestOrderEvent),
+      Payload = payload
+    };
+
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task OnTaggedMessage_GaugeWithoutValueProperty_RecordsDefaultOfOneAsync() {
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-gauge-default",
+      MetricName = "test.gauge.default",
+      Type = MetricType.Gauge
+    };
+    var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
+    var payload = JsonSerializer.SerializeToElement(message);
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = message,
+      MessageType = typeof(TestOrderEvent),
+      Payload = payload
+    };
+
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    await Assert.That(result).IsNull();
+  }
 }

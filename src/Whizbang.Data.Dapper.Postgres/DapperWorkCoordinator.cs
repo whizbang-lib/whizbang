@@ -68,7 +68,9 @@ public partial class DapperWorkCoordinator(
   public async Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) {
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    await connection.ExecuteAsync("SELECT deregister_instance(@instanceId)", new { instanceId });
+    await connection.ExecuteAsync(
+      new CommandDefinition(
+        "SELECT deregister_instance(@instanceId)", new { instanceId }, cancellationToken: cancellationToken));
   }
 
   /// <inheritdoc />
@@ -225,16 +227,6 @@ public partial class DapperWorkCoordinator(
       new { streamIds = streamIds.ToArray() });
   }
 
-  private string _serializeCompletions(MessageCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
   private string _serializeFailures(MessageFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
@@ -265,36 +257,6 @@ public partial class DapperWorkCoordinator(
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
-  private string _serializeMetadata(Dictionary<string, JsonElement>? metadata) {
-    if (metadata == null || metadata.Count == 0) {
-      return "{}";
-    }
-
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(metadata, typeInfo);
-  }
-
-  private string _serializeLeaseRenewals(Guid[] messageIds) {
-    if (messageIds.Length == 0) {
-      return "[]";
-    }
-
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(Guid[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(messageIds, typeInfo);
-  }
-
-  private string _serializePerspectiveEventCompletions(PerspectiveEventCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveEventCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveEventCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
   private string _serializePerspectiveCompletions(PerspectiveCursorCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
@@ -303,26 +265,6 @@ public partial class DapperWorkCoordinator(
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorCompletion[]))
       ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
-  private string _serializePerspectiveFailures(PerspectiveCursorFailure[] failures) {
-    if (failures.Length == 0) {
-      return "[]";
-    }
-
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCursorFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCursorFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(failures, typeInfo);
-  }
-
-  private string _serializeSyncInquiries(SyncInquiry[]? inquiries) {
-    if (inquiries == null || inquiries.Length == 0) {
-      return "[]";
-    }
-
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(SyncInquiry[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for SyncInquiry[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(inquiries, typeInfo);
   }
 
   public async Task ReportPerspectiveCompletionAsync(

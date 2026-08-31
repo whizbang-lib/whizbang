@@ -628,4 +628,48 @@ public class GraphQLLensTypeGeneratorTests {
     await Assert.That(code).DoesNotContain("[UsePaging");
     await Assert.That(code).DoesNotContain("[UseProjection]");
   }
+
+  // --- Extraction guards ----------------------------------------------------
+  // The syntax predicate only admits types that carry at least one attribute, so a
+  // type with no attributes at all never reaches _extractLensInfo. These cases give
+  // it one, so the guards inside actually run.
+
+  [Test]
+  public async Task Generator_TypeWithAnUnrelatedAttribute_IsSkippedAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Lenses;
+
+            namespace TestApp;
+
+            public record OrderReadModel(Guid Id, string Status);
+
+            [Obsolete]
+            public interface IOrderLens : ILensQuery<OrderReadModel> { }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<GraphQLLensTypeGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
+    await Assert.That(code).IsNull();
+  }
+
+  [Test]
+  public async Task Generator_AttributedTypeWithoutLensQueryInterface_IsSkippedAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Lenses;
+            using Whizbang.Transports.HotChocolate;
+
+            namespace TestApp;
+
+            [GraphQLLens(QueryName = "orders")]
+            public interface INotALens { }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<GraphQLLensTypeGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangLensQueries.g.cs");
+    await Assert.That(code).IsNull();
+  }
 }

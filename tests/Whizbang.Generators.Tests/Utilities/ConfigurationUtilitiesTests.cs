@@ -1,6 +1,7 @@
 extern alias shared;
 
 using System;
+using System.Collections.Generic;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -217,6 +218,77 @@ public class ConfigurationUtilitiesTests {
 
     // Assert
     await Assert.That(result).IsNull();
+  }
+
+  #endregion
+
+  #region GetTableNameConfig — populated options
+
+  /// <summary>Minimal AnalyzerConfigOptions backed by a dictionary of MSBuild properties.</summary>
+  private sealed class StubOptions(Dictionary<string, string> values)
+      : Microsoft.CodeAnalysis.Diagnostics.AnalyzerConfigOptions {
+    public override bool TryGetValue(string key, out string value) {
+      if (values.TryGetValue(key, out var found)) {
+        value = found;
+        return true;
+      }
+      value = null!;
+      return false;
+    }
+  }
+
+  [Test]
+  [Arguments("true", true)]
+  [Arguments("TRUE", true)]
+  [Arguments("false", false)]
+  [Arguments("nonsense", false)]
+  public async Task GetTableNameConfig_ReadsStripSuffixesProperty_CaseInsensitivelyAsync(
+      string raw, bool expected) {
+    var options = new StubOptions(new Dictionary<string, string> {
+      [ConfigurationUtilities.STRIP_TABLE_NAME_SUFFIXES_PROPERTY] = raw
+    });
+
+    var result = ConfigurationUtilities.GetTableNameConfig(options);
+
+    await Assert.That(result.StripSuffixes).IsEqualTo(expected);
+  }
+
+  [Test]
+  public async Task GetTableNameConfig_ReadsSuffixListProperty_AsyncAsync() {
+    var options = new StubOptions(new Dictionary<string, string> {
+      [ConfigurationUtilities.TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY] = "Model,Entity"
+    });
+
+    var result = ConfigurationUtilities.GetTableNameConfig(options);
+
+    await Assert.That(result.SuffixesToStrip).Count().IsEqualTo(2);
+    await Assert.That(result.SuffixesToStrip[0]).IsEqualTo("Model");
+    await Assert.That(result.SuffixesToStrip[1]).IsEqualTo("Entity");
+  }
+
+  [Test]
+  public async Task GetTableNameConfig_BlankSuffixList_KeepsDefaultsAsync() {
+    var options = new StubOptions(new Dictionary<string, string> {
+      [ConfigurationUtilities.TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY] = "   "
+    });
+
+    var result = ConfigurationUtilities.GetTableNameConfig(options);
+
+    await Assert.That(result.SuffixesToStrip).IsEquivalentTo(TableNameConfig.Default.SuffixesToStrip);
+  }
+
+  [Test]
+  public async Task GetTableNameConfig_BothProperties_AreAppliedTogetherAsync() {
+    var options = new StubOptions(new Dictionary<string, string> {
+      [ConfigurationUtilities.STRIP_TABLE_NAME_SUFFIXES_PROPERTY] = "false",
+      [ConfigurationUtilities.TABLE_NAME_SUFFIXES_TO_STRIP_PROPERTY] = "Dto"
+    });
+
+    var result = ConfigurationUtilities.GetTableNameConfig(options);
+
+    await Assert.That(result.StripSuffixes).IsFalse();
+    await Assert.That(result.SuffixesToStrip).Count().IsEqualTo(1);
+    await Assert.That(result.SuffixesToStrip[0]).IsEqualTo("Dto");
   }
 
   #endregion

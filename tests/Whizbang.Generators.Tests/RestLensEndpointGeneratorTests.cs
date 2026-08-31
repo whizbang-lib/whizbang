@@ -434,4 +434,48 @@ public class RestLensEndpointGeneratorTests {
     // Should derive "/api/invoices" from "InvoiceDto"
     await Assert.That(code).Contains("/api/invoices");
   }
+
+  // --- Extraction guards ----------------------------------------------------
+  // The syntax predicate only admits types that carry at least one attribute, so a
+  // type with no attributes at all never reaches _extractLensInfo. These cases give
+  // it one, so the guards inside actually run.
+
+  [Test]
+  public async Task Generator_TypeWithAnUnrelatedAttribute_IsSkippedAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Lenses;
+
+            namespace TestApp;
+
+            public record OrderReadModel(Guid Id, string Status);
+
+            [Obsolete]
+            public interface IOrderLens : ILensQuery<OrderReadModel> { }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<RestLensEndpointGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
+    await Assert.That(code).IsNull();
+  }
+
+  [Test]
+  public async Task Generator_AttributedTypeWithoutLensQueryInterface_IsSkippedAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core.Lenses;
+            using Whizbang.Transports.FastEndpoints;
+
+            namespace TestApp;
+
+            [RestLens(Route = "/api/orders")]
+            public interface INotALens { }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<RestLensEndpointGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangRestLensEndpoints.g.cs");
+    await Assert.That(code).IsNull();
+  }
 }
