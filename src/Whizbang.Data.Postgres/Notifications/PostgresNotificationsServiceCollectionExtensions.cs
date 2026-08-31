@@ -137,9 +137,6 @@ public static class PostgresNotificationsServiceCollectionExtensions {
     // ScheduleWorker wakes on the ScheduleDueSignal doorbell (poll source / arm-on-mutation NOTIFY)
     // and reconciles on its backstop interval, draining due schedules through the claimer.
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleClaimer, PgScheduleClaimer>();
-    // Self-contained: this worker waits on schema readiness, so the extension registering it
-    // must guarantee the gate exists rather than assume a fuller composition supplied it.
-    Whizbang.Core.Workers.SchemaReadyGateRegistration.AddWhizbangSchemaReadyGate(services);
     services.AddHostedService<Whizbang.Core.Temporal.ScheduleWorker>();
     // Temporal engine (F2): the schedule management API (create / pause / resume / cancel / trigger / update).
     services.TryAddSingleton<Whizbang.Core.Temporal.IScheduleManager, PgScheduleManager>();

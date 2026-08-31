@@ -90,29 +90,40 @@ public static class TraceSnapshotComparer {
         actual.Children.Count.ToString(CultureInfo.InvariantCulture)));
     }
 
-    // Compare children by position
-    var minChildren = Math.Min(actual.Children.Count, expected.Children.Count);
-    for (var i = 0; i < minChildren; i++) {
-      var childPath = string.IsNullOrEmpty(path)
-        ? (expected.Children[i].Span?.Name ?? $"[{i}]")
-        : $"{path}/{expected.Children[i].Span?.Name ?? $"[{i}]"}";
-      _compareNodes(actual.Children[i], expected.Children[i], childPath, differences);
+    // Pair children by NAME, not by position. Spans emitted concurrently arrive in whatever
+    // order they finish, so a detached stage and an inline stage can swap places between runs.
+    // Comparing positionally reported four differences for a trace that was entirely correct,
+    // and did so intermittently: it passed in isolation and failed under full-suite load, which
+    // is the shape that gets a test rerun rather than fixed.
+    //
+    // Duplicates are handled by consuming each match, so two siblings with the same name still
+    // require two actual siblings with that name.
+    var unmatched = new List<TraceTree>(actual.Children);
+    for (var i = 0; i < expected.Children.Count; i++) {
+      var expectedChild = expected.Children[i];
+      var expectedName = expectedChild.Span?.Name ?? $"[{i}]";
+      var childPath = string.IsNullOrEmpty(path) ? expectedName : $"{path}/{expectedName}";
+
+      var matchIndex = unmatched.FindIndex(
+        c => string.Equals(c.Span?.Name, expectedChild.Span?.Name, StringComparison.Ordinal));
+
+      if (matchIndex < 0) {
+        differences.Add(new TraceDifference(
+          childPath,
+          TraceDifferenceKind.MissingChild,
+          expectedName,
+          "(missing)"));
+        continue;
+      }
+
+      var actualChild = unmatched[matchIndex];
+      unmatched.RemoveAt(matchIndex);
+      _compareNodes(actualChild, expectedChild, childPath, differences);
     }
 
-    // Report missing children (in actual)
-    for (var i = minChildren; i < expected.Children.Count; i++) {
-      var missingName = expected.Children[i].Span?.Name ?? $"[{i}]";
-      var childPath = string.IsNullOrEmpty(path) ? missingName : $"{path}/{missingName}";
-      differences.Add(new TraceDifference(
-        childPath,
-        TraceDifferenceKind.MissingChild,
-        missingName,
-        "(missing)"));
-    }
-
-    // Report extra children (in actual)
-    for (var i = minChildren; i < actual.Children.Count; i++) {
-      var extraName = actual.Children[i].Span?.Name ?? $"[{i}]";
+    // Anything still unmatched is an actual child the baseline does not expect.
+    foreach (var extra in unmatched) {
+      var extraName = extra.Span?.Name ?? "(unnamed)";
       var childPath = string.IsNullOrEmpty(path) ? extraName : $"{path}/{extraName}";
       differences.Add(new TraceDifference(
         childPath,
