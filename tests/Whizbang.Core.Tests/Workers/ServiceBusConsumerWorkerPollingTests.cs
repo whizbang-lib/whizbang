@@ -44,13 +44,13 @@ public class ServiceBusConsumerWorkerPollingTests {
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      new JsonSerializerOptions(),
-      serviceProvider.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-      new TestOrderedStreamProcessor(),
-      options
-    );
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      logger: serviceProvider.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+      orderedProcessor: new TestOrderedStreamProcessor(),
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     await worker.StartAsync(CancellationToken.None);
@@ -81,13 +81,13 @@ public class ServiceBusConsumerWorkerPollingTests {
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      new JsonSerializerOptions(),
-      serviceProvider.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-      new TestOrderedStreamProcessor(),
-      options
-    );
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      logger: serviceProvider.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+      orderedProcessor: new TestOrderedStreamProcessor(),
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     await worker.StartAsync(CancellationToken.None);

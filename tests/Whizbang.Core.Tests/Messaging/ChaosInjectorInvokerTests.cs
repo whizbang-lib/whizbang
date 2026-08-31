@@ -26,7 +26,7 @@ public class ChaosInjectorInvokerTests {
 
   [Test]
   public async Task IsActive_FlagOff_NoInjector_FalseAsync() {
-    var sut = new ChaosInjectorInvoker(_options(enabled: false), injector: null);
+    var sut = new ChaosInjectorInvoker(_options(enabled: false), injector: NoChaosInjector.Instance);
 
     await Assert.That(sut.IsActive).IsFalse();
   }
@@ -41,7 +41,7 @@ public class ChaosInjectorInvokerTests {
 
   [Test]
   public async Task IsActive_FlagOn_NoInjector_FalseAsync() {
-    var sut = new ChaosInjectorInvoker(_options(enabled: true), injector: null);
+    var sut = new ChaosInjectorInvoker(_options(enabled: true), injector: NoChaosInjector.Instance);
 
     await Assert.That(sut.IsActive).IsFalse();
   }
@@ -73,7 +73,7 @@ public class ChaosInjectorInvokerTests {
 
   [Test]
   public async Task BeforeCheckpointAsync_NullInjector_NoOpAsync() {
-    var sut = new ChaosInjectorInvoker(_options(enabled: true), injector: null);
+    var sut = new ChaosInjectorInvoker(_options(enabled: true), injector: NoChaosInjector.Instance);
 
     // No throw, no measurable side effect — call returns ValueTask.CompletedTask.
     await sut.BeforeCheckpointAsync("Worker.Checkpoint", payload: null, CancellationToken.None);

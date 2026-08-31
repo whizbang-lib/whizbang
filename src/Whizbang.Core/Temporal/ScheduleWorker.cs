@@ -19,7 +19,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly TemporalOptions _options;
   private readonly ILogger<ScheduleWorker> _logger;
-  private readonly ISchemaReadyGate? _schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly ISignalBus? _signalBus;
   private ISignalSubscription? _dueSubscription;
   private readonly SemaphoreSlim _wake = new(0, 1);
@@ -30,7 +30,7 @@ public sealed partial class ScheduleWorker : BackgroundService {
     IServiceScopeFactory scopeFactory,
     IOptions<TemporalOptions> options,
     ILogger<ScheduleWorker> logger,
-    ISchemaReadyGate? schemaReadyGate = null,
+    ISchemaReadyGate schemaReadyGate,
     ISignalBus? signalBus = null,
     TimeProvider? timeProvider = null) {
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));

@@ -64,8 +64,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         scopeFactory: _buildScopeFactory(),
         jsonOptions: new JsonSerializerOptions(),
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null)
-      );
+        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -78,8 +78,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         scopeFactory: null!,
         jsonOptions: new JsonSerializerOptions(),
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null)
-      );
+        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -92,8 +92,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         scopeFactory: _buildScopeFactory(),
         jsonOptions: null!,
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null)
-      );
+        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -106,8 +106,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         scopeFactory: _buildScopeFactory(),
         jsonOptions: new JsonSerializerOptions(),
         logger: null!,
-        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null)
-      );
+        orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -120,8 +120,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
         scopeFactory: _buildScopeFactory(),
         jsonOptions: new JsonSerializerOptions(),
         logger: new TestLogger<ServiceBusConsumerWorker>(),
-        orderedProcessor: null!
-      );
+        orderedProcessor: null!,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -135,8 +135,8 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
       jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      options: null
-    );
+      options: null,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Should start successfully with no subscriptions
     await worker.StartAsync(CancellationToken.None);
@@ -1253,17 +1253,17 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
     return new ServiceBusConsumerWorker(
-      transport,
-      scopeFactory,
-      jsonOptions,
-      new TestLogger<ServiceBusConsumerWorker>(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      options,
-      lifecycleMessageDeserializer,
-      envelopeSerializer,
+      transport: transport,
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      logger: new TestLogger<ServiceBusConsumerWorker>(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      options: options,
+      lifecycleMessageDeserializer: lifecycleMessageDeserializer,
+      envelopeSerializer: envelopeSerializer,
       receptorRegistry: receptorRegistry,
-      runtimeReceptorRegistry: runtimeReceptorRegistry
-    );
+      runtimeReceptorRegistry: runtimeReceptorRegistry,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId, Guid streamId) {

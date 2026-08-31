@@ -34,8 +34,8 @@ namespace Whizbang.Core.SystemEvents;
 public sealed class SystemEventEmitter(
     IOptions<SystemEventOptions> options,
     IEventStore systemEventStore,
-    ILogger<SystemEventEmitter>? logger = null,
-    IServiceInstanceProvider? instanceProvider = null) : ISystemEventEmitter {
+    IServiceInstanceProvider instanceProvider,
+    ILogger<SystemEventEmitter>? logger = null) : ISystemEventEmitter {
   private const string SCOPE_TENANT_ID = "TenantId";
   private readonly SystemEventOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IEventStore _systemEventStore = systemEventStore ?? throw new ArgumentNullException(nameof(systemEventStore));
@@ -44,7 +44,7 @@ public sealed class SystemEventEmitter(
 
   // Optional by design: a service with no telemetry identity wired must still produce audit
   // records. Losing the audit entirely would be a far worse failure than an unnamed writer.
-  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
 
   /// <inheritdoc />
   public async Task EmitEventAuditedAsync<TEvent>(
@@ -186,7 +186,7 @@ public sealed class SystemEventEmitter(
           // Names the instance that wrote the record. Unknown is not a safe default here: it is
           // indistinguishable from an instance that genuinely could not be identified, so a
           // divergence between instances cannot be attributed to either of them.
-          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id,

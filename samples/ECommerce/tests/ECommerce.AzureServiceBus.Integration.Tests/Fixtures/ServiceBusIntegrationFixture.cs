@@ -519,16 +519,17 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(inventoryConsumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
       new TransportConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        inventoryConsumerOptions,
-        new SubscriptionResilienceOptions(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetService<TransportMetrics>(),
-        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
-      )
+        transport: sp.GetRequiredService<ITransport>(),
+        options: inventoryConsumerOptions,
+        resilienceOptions: new SubscriptionResilienceOptions(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions: jsonOptions,
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        metrics: sp.GetService<TransportMetrics>(),
+        logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())
     );
 
     // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor
@@ -699,16 +700,17 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
       new TransportConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        consumerOptions,
-        new SubscriptionResilienceOptions(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetService<TransportMetrics>(),
-        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
-      )
+        transport: sp.GetRequiredService<ITransport>(),
+        options: consumerOptions,
+        resilienceOptions: new SubscriptionResilienceOptions(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions: jsonOptions,
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        metrics: sp.GetService<TransportMetrics>(),
+        logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())
     );
 
     // Register TaskCompletionSource<ProductCreatedEvent> for DistributeStageTestReceptor

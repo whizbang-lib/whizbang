@@ -407,16 +407,17 @@ public class TransportConsumerWorkerResilienceTests {
     var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
 
     return new TransportConsumerWorker(
-      transport,
-      options,
-      resilienceOptions,
-      scopeFactory,
-      jsonOptions,
-      orderedProcessor,
+      transport: transport,
+      options: options,
+      resilienceOptions: resilienceOptions,
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance
-    );
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   #endregion

@@ -52,7 +52,8 @@ public class TransportDeadLetterDrainWorkerTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(opts),
       whizbangMetrics: new WhizbangMetrics(),
-      logger: NullLogger<TransportDeadLetterDrainWorker>.Instance);
+      logger: NullLogger<TransportDeadLetterDrainWorker>.Instance,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   [Test]
@@ -162,7 +163,8 @@ public class TransportDeadLetterDrainWorkerTests {
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 500 }),
       whizbangMetrics: new WhizbangMetrics(),
-      logger: logger);
+      logger: logger,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await worker.DrainOnceAsync(CancellationToken.None);
     await worker.DrainOnceAsync(CancellationToken.None);

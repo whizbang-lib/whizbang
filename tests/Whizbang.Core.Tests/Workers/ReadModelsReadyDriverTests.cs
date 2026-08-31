@@ -70,9 +70,9 @@ public class ReadModelsReadyDriverTests {
 
     var inner = new ServiceCollection().BuildServiceProvider();
     var worker = new PerspectiveWorker(
-      new _stubInstanceProvider(),
-      inner.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions()),
+      instanceProvider: new _stubInstanceProvider(),
+      scopeFactory: inner.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions()),
       schemaReadyGate: schemaGate);
     var services = new ServiceCollection();
     services.AddSingleton(worker);

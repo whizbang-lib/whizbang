@@ -33,6 +33,11 @@ public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IOptions<PerspectiveWorkerOptions> options,
+  // Startup barrier. Optional ONLY so existing test fixtures construct unchanged; DI always
+  // supplies it, and without it the startup work below would run against a database that may
+  // not have been migrated yet — the exact ungated-repair defect the startup pipeline exists
+  // to close.
+  ISchemaReadyGate schemaReadyGate,
   IOptionsMonitor<TracingOptions>? tracingOptions = null,
   IPerspectiveCompletionStrategy? completionStrategy = null,
   IEventTypeProvider? eventTypeProvider = null,
@@ -75,11 +80,6 @@ public partial class PerspectiveWorker(
   // an id with no registered LeaseHandle is silently skipped. The collective sink registers its
   // leased work rows here so per-batch renewals actually land (mirrors OutboxPublishWorker).
   LeaseRegistry? leaseRegistry = null,
-  // Startup barrier. Optional ONLY so existing test fixtures construct unchanged; DI always
-  // supplies it, and without it the startup work below would run against a database that may
-  // not have been migrated yet — the exact ungated-repair defect the startup pipeline exists
-  // to close.
-  ISchemaReadyGate? schemaReadyGate = null,
   // Drain measurement for the claim loop's outstanding budget. Perspective rows are leased
   // and charge attempts like any other work, so the budget counts them — and a work kind
   // that is counted but never measured drags the drain rate down and throttles a healthy

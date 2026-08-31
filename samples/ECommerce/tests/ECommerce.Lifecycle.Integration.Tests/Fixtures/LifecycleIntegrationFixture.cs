@@ -238,15 +238,16 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
       new TransportConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        consumerOptions,
-        new SubscriptionResilienceOptions(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        sp.GetRequiredService<ILifecycleMessageDeserializer>(),
-        sp.GetService<TransportMetrics>(),
-        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()));
+        transport: sp.GetRequiredService<ITransport>(),
+        options: consumerOptions,
+        resilienceOptions: new SubscriptionResilienceOptions(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions: jsonOptions,
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
+        metrics: sp.GetService<TransportMetrics>(),
+        logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()));
 
     // Logging
     builder.Services.AddLogging(logging => {

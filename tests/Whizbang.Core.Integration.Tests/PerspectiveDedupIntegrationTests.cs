@@ -664,11 +664,11 @@ public class PerspectiveDedupIntegrationTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      strategy,
+      completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider,
       processedEventCacheObserver: observer,
       timeProvider: timeProvider,
@@ -679,8 +679,8 @@ public class PerspectiveDedupIntegrationTests {
       completionMeter: completionMeter,
       // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
       // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider())
-    );
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, harness);
   }
 

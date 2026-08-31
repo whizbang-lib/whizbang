@@ -158,9 +158,9 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     // burst-driven wake via the NOTIFY listener) — this test locks latency under real
     // cadences; do not neuter.
     var perspectiveWorker = new PerspectiveWorker(
-      instanceProvider,
-      scopeFactory,
-      Options.Create(new PerspectiveWorkerOptions()),
+      instanceProvider: instanceProvider,
+      scopeFactory: scopeFactory,
+      options: Options.Create(new PerspectiveWorkerOptions()),
       logger: NullLogger<PerspectiveWorker>.Instance,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,

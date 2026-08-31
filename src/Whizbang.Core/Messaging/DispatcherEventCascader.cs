@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Internal;
 using Whizbang.Core.Observability;
@@ -32,7 +33,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/receptors/lifecycle-receptors#event-cascading</docs>
 public sealed partial class DispatcherEventCascader : IEventCascader {
   private readonly IServiceProvider _serviceProvider;
-  private readonly ILogger<DispatcherEventCascader>? _logger;
+  private readonly ILogger<DispatcherEventCascader> _logger;
   private IDispatcher? _dispatcher;
 
   /// <summary>
@@ -43,7 +44,7 @@ public sealed partial class DispatcherEventCascader : IEventCascader {
   public DispatcherEventCascader(IServiceProvider serviceProvider, ILogger<DispatcherEventCascader>? logger = null) {
     ArgumentNullException.ThrowIfNull(serviceProvider);
     _serviceProvider = serviceProvider;
-    _logger = logger;
+    _logger = logger ?? NullLogger<DispatcherEventCascader>.Instance;
   }
 
   /// <inheritdoc/>

@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tracing;
@@ -62,7 +63,7 @@ public partial class ScopedWorkCoordinatorStrategy(
   private readonly IWorkChannelWriter? _workChannelWriter = workChannelWriter;
   private readonly IInboxChannelWriter? _inboxChannelWriter = inboxChannelWriter;
   private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger = logger;
+  private readonly ILogger<ScopedWorkCoordinatorStrategy> _logger = logger ?? NullLogger<ScopedWorkCoordinatorStrategy>.Instance;
   private readonly ScopedWorkCoordinatorDependencies _dependencies = dependencies ?? new ScopedWorkCoordinatorDependencies();
   private readonly WorkCoordinatorMetrics? _metrics = metrics;
   private readonly LifecycleMetrics? _lifecycleMetrics = lifecycleMetrics;

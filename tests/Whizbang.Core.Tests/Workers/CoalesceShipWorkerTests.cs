@@ -324,7 +324,8 @@ public class CoalesceShipWorkerTests {
     return new CoalesceShipWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       gate,
-      resolver,
+      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      coalesceResolver: resolver,
       logger: null,
       timeProvider: time);
   }

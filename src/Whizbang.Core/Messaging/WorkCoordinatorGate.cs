@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -29,7 +30,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed partial class WorkCoordinatorGate : IDisposable {
   private readonly SemaphoreSlim? _semaphore;
-  private readonly ILogger<WorkCoordinatorGate>? _logger;
+  private readonly ILogger<WorkCoordinatorGate> _logger;
   private readonly Histogram<double>? _holdDurationHistogram;
 
   /// <summary>Maximum concurrent calls. 0 disables the cap.</summary>
@@ -65,7 +66,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     MaxConcurrent = maxConcurrent;
     AcquireTimeoutMilliseconds = acquireTimeoutMilliseconds;
     _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent, maxConcurrent) : null;
-    _logger = logger;
+    _logger = logger ?? NullLogger<WorkCoordinatorGate>.Instance;
     _holdDurationHistogram = metrics?.GateHoldDuration;
   }
 

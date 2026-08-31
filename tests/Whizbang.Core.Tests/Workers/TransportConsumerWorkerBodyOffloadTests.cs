@@ -335,12 +335,18 @@ public class TransportConsumerWorkerBodyOffloadTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("offload-topic"));
     return new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: metrics,
-      logger ?? NullLogger<TransportConsumerWorker>.Instance,
-      receptorRegistry: receptorRegistry);
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: metrics,
+      logger: logger ?? NullLogger<TransportConsumerWorker>.Instance,
+      receptorRegistry: receptorRegistry,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   /// <summary>Registry that consumes NOTHING — mirrors a real service that has no receptor for the

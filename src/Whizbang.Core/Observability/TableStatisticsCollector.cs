@@ -15,7 +15,7 @@ namespace Whizbang.Core.Observability;
 public sealed partial class TableStatisticsCollector(
   IServiceScopeFactory scopeFactory,
   TableStatisticsMetrics metrics,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
+  Whizbang.Core.Workers.ISchemaReadyGate schemaReadyGate,
   ILogger<TableStatisticsCollector>? logger = null
 ) : BackgroundService {
 

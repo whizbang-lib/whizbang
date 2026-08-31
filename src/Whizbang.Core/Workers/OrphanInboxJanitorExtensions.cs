@@ -22,6 +22,9 @@ public static class OrphanInboxJanitorExtensions {
   /// — calling twice replaces the snapshot with the latest state.
   /// </remarks>
   public static IServiceCollection AddOrphanInboxJanitor(this IServiceCollection services) {
+    // Self-contained: the janitor waits on schema readiness, so this extension guarantees the
+    // gate rather than assuming a fuller composition registered it first.
+    services.AddWhizbangSchemaReadyGate();
     ArgumentNullException.ThrowIfNull(services);
 
     var receptorTypes = _snapshotReceptorMessageTypes(services);

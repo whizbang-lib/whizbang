@@ -436,6 +436,7 @@ public class OutboxPublishWorkerErrorPathTests {
       channel, completion, failure, renewal, gate,
       Options.Create(options),
       NullLogger<OutboxPublishWorker>.Instance,
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       publishStrategy: strategy,
       lifecycleMessageDeserializer: lifecycleDeserializer);
     return new _Fixture(worker, channel, completion, failure, renewal, options, gate);

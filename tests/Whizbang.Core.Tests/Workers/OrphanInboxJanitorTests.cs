@@ -40,14 +40,20 @@ public class OrphanInboxJanitorTests {
   [Test]
   public async Task Constructor_NullServices_ThrowsAsync() {
     var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
-    await Assert.That(() => new OrphanInboxJanitor(null!, snapshot))
+    await Assert.That(() => new OrphanInboxJanitor(
+  services: null!,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()))
       .Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task Constructor_NullSnapshot_ThrowsAsync() {
     using var sp = new ServiceCollection().BuildServiceProvider();
-    await Assert.That(() => new OrphanInboxJanitor(sp, null!))
+    await Assert.That(() => new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: null!,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()))
       .Throws<ArgumentNullException>();
   }
 
@@ -59,7 +65,10 @@ public class OrphanInboxJanitorTests {
   public async Task StartAsync_NoWorkCoordinator_ReturnsCleanlyAsync() {
     using var sp = new ServiceCollection().BuildServiceProvider();
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Should not throw.
     await _runToCompletionAsync(janitor);
@@ -75,7 +84,10 @@ public class OrphanInboxJanitorTests {
     var coordinator = new _RecordingCoordinator();
     using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot(Array.Empty<Type>());
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await _runToCompletionAsync(janitor);
 
@@ -91,7 +103,10 @@ public class OrphanInboxJanitorTests {
     var coordinator = new _RecordingCoordinator();  // default empty result
     using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await _runToCompletionAsync(janitor);
 
@@ -114,7 +129,10 @@ public class OrphanInboxJanitorTests {
     };
     using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await _runToCompletionAsync(janitor);
 
@@ -130,7 +148,10 @@ public class OrphanInboxJanitorTests {
     var coordinator = new _RecordingCoordinator { ThrowOnPurge = true };
     using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Should not bubble out.
     await _runToCompletionAsync(janitor);
@@ -148,7 +169,10 @@ public class OrphanInboxJanitorTests {
     var raw = new _StaticRawRegistry(["RawA, RawAsm", "RawB, RawAsm"]);
     using var sp = _buildProviderWith(coordinator, perspectives, raw);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
-    var janitor = new OrphanInboxJanitor(sp, snapshot);
+    var janitor = new OrphanInboxJanitor(
+  services: sp,
+  receptorSnapshot: snapshot,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await _runToCompletionAsync(janitor);
 

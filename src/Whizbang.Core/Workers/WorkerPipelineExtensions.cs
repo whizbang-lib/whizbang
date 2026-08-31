@@ -100,6 +100,13 @@ public static class WorkerPipelineExtensions {
     services.AddHostedService<LifecyclePhaseWorker>();
     // Each lifecycle transition is recorded on this instance's own row so peers and the status
     // surface can observe it — the standby handshake turns on states a peer can actually see.
+    // The instance identity this run control records against. TryAdd keeps AddWhizbang's own
+    // registration authoritative when both run, and makes this extension self-contained: a
+    // pipeline composed without AddWhizbang used to leave the identity silently null rather
+    // than failing, so instance state was recorded against no instance at all.
+    services.TryAddSingleton<Observability.IServiceInstanceProvider>(sp =>
+      new Observability.ServiceInstanceProvider(
+        sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>()));
     services.AddSingleton<IWhizbangRunControl, InstanceStateRunControl>();
 
     // Startup pipeline (increment 3 of the startup-pipeline proposal): declared steps, an order
@@ -174,11 +181,11 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<IWhizbangLifecycleState>(),
       sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<ISchemaReadyGate>(),
       sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
-      sp.GetService<ISchemaReadyGate>(),
       sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>(),
       sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StandbyWatcher>()));
 
@@ -225,10 +232,10 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton(sp => new CoalesceShipWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       sp.GetRequiredService<ISchemaReadyGate>(),
+      sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetService<Whizbang.Core.Tags.CoalesceGroupResolver>(),
       sp.GetService<Microsoft.Extensions.Logging.ILogger<CoalesceShipWorker>>(),
       sp.GetService<TimeProvider>(),
-      sp.GetService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
       sp.GetService<Whizbang.Core.Minting.ICompositeFactory>()));
     // WhizbangMetrics normally rides AddWhizbang; the TryAdd keeps a standalone pipeline
     // registration constructable (the F2-era lesson: extensions must be self-contained).
@@ -271,11 +278,14 @@ public static class WorkerPipelineExtensions {
       sp.GetService<Whizbang.Core.IMessageTypeCatalog>()));
     services.TryAddSingleton<Whizbang.Core.Fingerprint.TypeDefinitionReconcilerHostedService>();
     // A1 "close the books" (StreamCloser): fires the E2 destruction hook around a Sourced-stream close.
-    // Factory-resolved so the IDestructionHook is optional (null = a thin pass-through to the gated truncate).
+    // The hook is required; the shipped default proceeds and observes nothing, which is what an
+    // unregistered hook used to do. TryAdd lets an application's own hook win.
+    services.TryAddSingleton<Whizbang.Core.Lifecycle.IDestructionHook,
+      Whizbang.Core.Lifecycle.NoOpDestructionHook>();
     services.TryAddSingleton<Whizbang.Core.Lifecycle.IStreamCloser>(sp => new Whizbang.Core.Lifecycle.StreamCloser(
       sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>(),
       sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Lifecycle.StreamCloser>>(),
-      sp.GetService<Whizbang.Core.Lifecycle.IDestructionHook>()));
+      sp.GetRequiredService<Whizbang.Core.Lifecycle.IDestructionHook>()));
     // E3 Tier-2 compaction (StreamCompactor): folds a state-based stream to a permanent Compacted origin,
     // reusing the snapshot store + event store + the A1 closer. On-demand, like IStreamCloser.
     services.TryAddSingleton<Whizbang.Core.Perspectives.IStreamCompactor>(sp => new Whizbang.Core.Perspectives.StreamCompactor(

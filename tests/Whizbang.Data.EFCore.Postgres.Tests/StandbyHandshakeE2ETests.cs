@@ -105,8 +105,9 @@ public class StandbyHandshakeE2ETests : EFCoreTestBase {
     var reviveProbe = new _countingStep();
     var hostLifetime = new _stubHostLifetime();
     var watcher = new StandbyWatcher(
-      scopeFactory, lifecycle, hostLifetime, pod, versionProvider, assessor,
-      new StartupPipelineRunner([reviveProbe]), schemaReadyGate: null, _fastOptions());
+      scopeFactory, lifecycle, hostLifetime, pod, Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      versionProvider: versionProvider, assessor: assessor,
+      pipelineRunner: new StartupPipelineRunner([reviveProbe]), options: _fastOptions());
     return new _podRig(pod, watcher, hostLifetime, lifecycle, reviveProbe, services);
   }
 
