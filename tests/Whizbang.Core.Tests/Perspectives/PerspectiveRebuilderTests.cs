@@ -433,4 +433,156 @@ public class PerspectiveRebuilderTests {
     public IQueryable<EventStoreRecord> GetEventsByType(string eventType) =>
         Query.Where(e => e.EventType == eventType);
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // Stream-group presence reconcile. A rebuilt follower can end up holding rows for streams its
+  // announcers no longer carry — the rebuild replays from the event store, which still has the
+  // history the announcer already evicted. Reconciling after the replay is what removes them.
+  // ---------------------------------------------------------------------------------------------
+
+  private sealed class GroupAnnouncerModel;
+  private sealed class GroupFollowerModel;
+
+  private sealed class ReconcileCoordinator : IWorkCoordinator {
+    public List<PerspectiveTableName> Tables { get; init; } = [];
+    public List<(string Follower, IReadOnlyCollection<string> Announcers)> Reconciled { get; } = [];
+
+    public Task<IReadOnlyList<PerspectiveTableName>> GetPerspectiveTableNamesAsync(
+        IReadOnlyCollection<string> clrTypeNames, CancellationToken ct = default)
+      => Task.FromResult<IReadOnlyList<PerspectiveTableName>>(Tables);
+
+    public Task<int> ReconcileFollowerPresenceAsync(
+        string followerTable, IReadOnlyCollection<string> announcerTables, CancellationToken ct = default) {
+      lock (Reconciled) { Reconciled.Add((followerTable, announcerTables)); }
+      return Task.FromResult(0);
+    }
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+      => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+        Guid streamId, string perspectiveName, CancellationToken ct = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+      => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+      => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+      => Task.CompletedTask;
+  }
+
+  private static PerspectiveRebuilder _rebuilderWith(
+      ReconcileCoordinator? coordinator, out ReconcileCoordinator coord) {
+    coord = coordinator ?? new ReconcileCoordinator();
+    var services = new ServiceCollection();
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new FakePerspectiveRunnerRegistry(new FakePerspectiveRunner()));
+    services.AddSingleton<IEventStoreQuery>(new FakeEventStoreQuery([Guid.NewGuid()]));
+    if (coordinator is not null) {
+      services.AddSingleton<IWorkCoordinator>(coord);
+    }
+    var sp = services.BuildServiceProvider();
+    return new PerspectiveRebuilder(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<PerspectiveRebuilder>.Instance);
+  }
+
+  [Test]
+  [NotInParallel("PerspectiveStreamGroupRegistry")]
+  public async Task Rebuild_ForAPerspectiveInNoGroup_ReconcilesNothingAsync() {
+    PerspectiveStreamGroupRegistry.Clear();
+    try {
+      var rebuilder = _rebuilderWith(new ReconcileCoordinator(), out var coord);
+
+      await rebuilder.RebuildInPlaceAsync("NotAGroupMember");
+
+      await Assert.That(coord.Reconciled).IsEmpty();
+    } finally {
+      PerspectiveStreamGroupRegistry.Clear();
+    }
+  }
+
+  [Test]
+  [NotInParallel("PerspectiveStreamGroupRegistry")]
+  public async Task Rebuild_ForAnAnnouncerOnly_ReconcilesNothingAsync() {
+    // Reconcile only makes sense for a follower: an announcer has no upstream to be absent from.
+    PerspectiveStreamGroupRegistry.Clear();
+    try {
+      PerspectiveStreamGroupRegistry.Register(
+        typeof(GroupAnnouncerModel), "g", announce: true, follow: false, bridge: false);
+      var rebuilder = _rebuilderWith(new ReconcileCoordinator(), out var coord);
+
+      await rebuilder.RebuildInPlaceAsync(typeof(GroupAnnouncerModel).FullName!);
+
+      await Assert.That(coord.Reconciled).IsEmpty();
+    } finally {
+      PerspectiveStreamGroupRegistry.Clear();
+    }
+  }
+
+  [Test]
+  [NotInParallel("PerspectiveStreamGroupRegistry")]
+  public async Task Rebuild_ForAFollower_ReconcilesAgainstItsAnnouncersAsync() {
+    PerspectiveStreamGroupRegistry.Clear();
+    try {
+      PerspectiveStreamGroupRegistry.Register(
+        typeof(GroupAnnouncerModel), "g", announce: true, follow: false, bridge: false);
+      PerspectiveStreamGroupRegistry.Register(
+        typeof(GroupFollowerModel), "g", announce: false, follow: true, bridge: false);
+
+      var coordinator = new ReconcileCoordinator {
+        Tables = {
+          new(typeof(GroupFollowerModel).FullName!, "wh_per_follower"),
+          new(typeof(GroupAnnouncerModel).FullName!, "wh_per_announcer"),
+        },
+      };
+      var rebuilder = _rebuilderWith(coordinator, out var coord);
+
+      await rebuilder.RebuildInPlaceAsync(typeof(GroupFollowerModel).FullName!);
+
+      await Assert.That(coord.Reconciled).IsNotEmpty();
+      await Assert.That(coord.Reconciled[0].Follower).IsEqualTo("wh_per_follower");
+      await Assert.That(coord.Reconciled[0].Announcers).Contains("wh_per_announcer");
+    } finally {
+      PerspectiveStreamGroupRegistry.Clear();
+    }
+  }
+
+  [Test]
+  [NotInParallel("PerspectiveStreamGroupRegistry")]
+  public async Task Rebuild_WithNoCoordinatorRegistered_SkipsReconcileAsync() {
+    // A host without a work coordinator can still rebuild; there is simply nothing to
+    // reconcile against, and that must not fail the rebuild.
+    PerspectiveStreamGroupRegistry.Clear();
+    try {
+      PerspectiveStreamGroupRegistry.Register(
+        typeof(GroupFollowerModel), "g", announce: false, follow: true, bridge: false);
+      var rebuilder = _rebuilderWith(null, out _);
+
+      var result = await rebuilder.RebuildInPlaceAsync(typeof(GroupFollowerModel).FullName!);
+
+      await Assert.That(result.Success).IsTrue();
+    } finally {
+      PerspectiveStreamGroupRegistry.Clear();
+    }
+  }
+
+  [Test]
+  [NotInParallel("PerspectiveStreamGroupRegistry")]
+  public async Task Rebuild_WhenTheTablesCannotBeResolved_SkipsReconcileAsync() {
+    PerspectiveStreamGroupRegistry.Clear();
+    try {
+      PerspectiveStreamGroupRegistry.Register(
+        typeof(GroupAnnouncerModel), "g", announce: true, follow: false, bridge: false);
+      PerspectiveStreamGroupRegistry.Register(
+        typeof(GroupFollowerModel), "g", announce: false, follow: true, bridge: false);
+
+      // No table names come back, so there is nothing to reconcile between.
+      var rebuilder = _rebuilderWith(new ReconcileCoordinator(), out var coord);
+
+      await rebuilder.RebuildInPlaceAsync(typeof(GroupFollowerModel).FullName!);
+
+      await Assert.That(coord.Reconciled).IsEmpty();
+    } finally {
+      PerspectiveStreamGroupRegistry.Clear();
+    }
+  }
 }
