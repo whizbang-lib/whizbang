@@ -204,7 +204,7 @@ public class CoalesceFoldCoordinatorSqlTests : EFCoreTestBase {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new CoalesceShipWorker(
-      sp.GetRequiredService<IServiceScopeFactory>(), gate, resolver, logger: null, timeProvider: time);
+      sp.GetRequiredService<IServiceScopeFactory>(), gate, new Whizbang.Core.Observability.ServiceInstanceProvider(), coalesceResolver: resolver, logger: null, timeProvider: time);
   }
 
   private static async Task<NpgsqlConnection> _openAsync(WorkCoordinationDbContext dbContext) {

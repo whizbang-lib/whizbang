@@ -19,6 +19,7 @@ This directory contains focused documentation topics to help Claude Code underst
 
 - **[flaky-tests.md](flaky-tests.md)** - Diagnosing and fixing intermittent test failures
 - [test-sharding.md](test-sharding.md) — how CI splits slow test projects across runners, and the guard that stops a class silently running in no shard
+- [coverage-exclusions.md](coverage-exclusions.md) — when `[ExcludeFromCodeCoverage]` is right, when it hides real coverage, and how to pin the invariant that makes a guard unreachable
   - **When to use:** Tests pass sometimes but fail other times
   - **Critical:** Static resources need `[NotInParallel]`, wait for ALL events affecting asserted data
 

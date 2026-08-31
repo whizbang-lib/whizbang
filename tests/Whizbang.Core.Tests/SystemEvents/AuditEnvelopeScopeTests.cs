@@ -47,7 +47,7 @@ public class AuditEnvelopeScopeTests {
   private static (SystemEventEmitter Emitter, _captureStore Store) _build() {
     var store = new _captureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    return (new SystemEventEmitter(options, store), store);
+    return (new SystemEventEmitter(options, store, new Whizbang.Core.Observability.ServiceInstanceProvider()), store);
   }
 
   private static MessageEnvelope<_auditedEvent> _scopedSource(string tenantId, string userId) => new() {
@@ -157,7 +157,7 @@ public class AuditEnvelopeScopeTests {
     // audit records. Losing the audit entirely would be a far worse failure than an unknown writer.
     var store = new _captureStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, store);
+    var emitter = new SystemEventEmitter(options, store, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance);
 
     await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, _scopedSource("tenant-a", "user-1"));
 

@@ -108,7 +108,8 @@ public class StreamIntegrityRedeliveryE2ETests {
     // serializer converts the typed bundle exactly as the outbox's composite seam does.
     var pump = new RedeliveryPump(
       harness.Wire,
-      new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+      new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()),
+      instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
     var originServiceId = TrackedGuid.NewMedo().Value;
     var published = await pump.PublishAsync(
       events, MultiServiceHarnessDefaults.SHARED_TOPIC, target: "damaged-svc", originServiceId: originServiceId);

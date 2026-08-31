@@ -114,7 +114,18 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>, EventEnvelopeJsonbAdapter>();
     services.AddSingleton<JsonbSizeValidator>();
 
-    services.AddScoped<IEventStore, DapperPostgresEventStore>();
+    // Registered as a FACTORY, not a type. A type-based registration is activated reflectively,
+    // both by the container and by the decoration path that has to rebuild the inner store when
+    // wrapping it. Naming the constructor here keeps that path free of reflection.
+    services.AddScoped<IEventStore>(sp => new DapperPostgresEventStore(
+      sp.GetRequiredService<IDbConnectionFactory>(),
+      sp.GetRequiredService<IDbExecutor>(),
+      sp.GetRequiredService<JsonSerializerOptions>(),
+      sp.GetRequiredService<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>>(),
+      sp.GetRequiredService<JsonbSizeValidator>(),
+      sp.GetRequiredService<IPolicyEngine>(),
+      sp.GetService<IPerspectiveInvoker>(),
+      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>()));
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,
@@ -237,7 +248,18 @@ public static class ServiceCollectionExtensions {
 
     // Register Whizbang stores
     // IEventStore is registered as Scoped to allow injection of scoped IPerspectiveInvoker
-    services.AddScoped<IEventStore, DapperPostgresEventStore>();
+    // Registered as a FACTORY, not a type. A type-based registration is activated reflectively,
+    // both by the container and by the decoration path that has to rebuild the inner store when
+    // wrapping it. Naming the constructor here keeps that path free of reflection.
+    services.AddScoped<IEventStore>(sp => new DapperPostgresEventStore(
+      sp.GetRequiredService<IDbConnectionFactory>(),
+      sp.GetRequiredService<IDbExecutor>(),
+      sp.GetRequiredService<JsonSerializerOptions>(),
+      sp.GetRequiredService<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>>(),
+      sp.GetRequiredService<JsonbSizeValidator>(),
+      sp.GetRequiredService<IPolicyEngine>(),
+      sp.GetService<IPerspectiveInvoker>(),
+      sp.GetRequiredService<ILogger<DapperPostgresEventStore>>()));
     services.AddSingleton<IWorkCoordinator>(sp =>
       new DapperWorkCoordinator(
         connectionString,

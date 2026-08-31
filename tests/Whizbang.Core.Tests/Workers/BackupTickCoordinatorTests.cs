@@ -57,8 +57,9 @@ public class BackupTickCoordinatorTests {
       registry,
       Options.Create(options ?? new BackupTickCoordinatorOptions()),
       NullLogger<BackupTickCoordinator>.Instance,
-      gate,
-      timeProvider);
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      gate: gate,
+      timeProvider: timeProvider);
 
   // ============================================================================
   // FireOneCycleAsync

@@ -40,13 +40,13 @@ public class ServiceBusConsumerWorkerCoverageTests {
     };
 
     var worker = new ServiceBusConsumerWorker(
-      failingTransport,
-      scopeFactory,
-      jsonOptions,
-      logger,
-      orderedProcessor,
-      workerOptions
-    );
+      transport: failingTransport,
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: workerOptions,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act & Assert — subscribing happens in the background now (behind the schema gate), so the
     // failure surfaces through SubscriptionsReady rather than StartAsync. A waiter must fault,
@@ -76,13 +76,13 @@ public class ServiceBusConsumerWorkerCoverageTests {
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport,
-      scopeFactory,
-      jsonOptions,
-      logger,
-      orderedProcessor,
-      workerOptions
-    );
+      transport: transport,
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: workerOptions,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act - Start then stop (triggers OperationCanceledException in ExecuteAsync)
     using var cts = new CancellationTokenSource();

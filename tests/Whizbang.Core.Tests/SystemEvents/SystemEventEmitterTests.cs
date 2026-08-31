@@ -27,7 +27,7 @@ public class SystemEventEmitterTests {
     var eventStore = new MockEventStore();
 
     // Act & Assert
-    await Assert.That(() => new SystemEventEmitter(null!, eventStore))
+    await Assert.That(() => new SystemEventEmitter(null!, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider()))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -37,7 +37,7 @@ public class SystemEventEmitterTests {
     var options = Options.Create(new SystemEventOptions());
 
     // Act & Assert
-    await Assert.That(() => new SystemEventEmitter(options, null!))
+    await Assert.That(() => new SystemEventEmitter(options, null!, new Whizbang.Core.Observability.ServiceInstanceProvider()))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -50,7 +50,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions()); // EventAuditEnabled = false by default
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var envelope = _createTestEnvelope(new TestEvent { Name = "Test" });
 
@@ -66,7 +66,7 @@ public class SystemEventEmitterTests {
     // Arrange - This test verifies the options check without hitting JSON serialization
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions()); // Disabled
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var streamId = Guid.NewGuid();
     var envelope = _createTestEnvelope(new TestEvent { Name = "TestName" });
@@ -87,7 +87,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
@@ -108,7 +108,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var envelope = _createTestEnvelope(new ExcludedEvent { Name = "Test" });
 
@@ -124,7 +124,7 @@ public class SystemEventEmitterTests {
     // Arrange - Test that the streamId parameter is used correctly
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var streamId = Guid.NewGuid();
     const long streamPosition = 42L;
@@ -153,7 +153,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions()); // CommandAuditEnabled = false by default
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var command = new TestCommand { OrderId = "ABC123" };
 
@@ -169,7 +169,7 @@ public class SystemEventEmitterTests {
     // Arrange - Test options checking behavior
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions()); // Disabled by default
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var command = new TestCommand { OrderId = "ABC123" };
 
@@ -186,7 +186,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var command = new ExcludedCommand { Name = "Test" };
 
@@ -202,7 +202,7 @@ public class SystemEventEmitterTests {
     // Arrange - Test that null context is handled gracefully
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions()); // Disabled to avoid serialization
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var command = new TestCommand { OrderId = "ABC123" };
 
@@ -222,7 +222,7 @@ public class SystemEventEmitterTests {
     // Arrange - Test non-EventAudited/CommandAudited path with audit disabled
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions()); // Audit disabled
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Use a custom ISystemEvent type that is NOT EventAudited or CommandAudited
     var systemEvent = new TestSystemEvent {
@@ -243,7 +243,7 @@ public class SystemEventEmitterTests {
     // Arrange - Test non-EventAudited/CommandAudited path with audit enabled
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit()); // Audit enabled
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Use a custom ISystemEvent type that is NOT EventAudited or CommandAudited
     var systemEvent = new TestSystemEvent {
@@ -264,7 +264,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions()); // Nothing enabled
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new EventAudited {
       Id = Guid.NewGuid(),
@@ -287,7 +287,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new EventAudited {
       Id = Guid.NewGuid(),
@@ -310,7 +310,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new CommandAudited {
       Id = Guid.NewGuid(),
@@ -337,7 +337,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act
     var result = emitter.ShouldExcludeFromAudit(typeof(ExcludedEvent));
@@ -351,7 +351,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act
     var result = emitter.ShouldExcludeFromAudit(typeof(TestEvent));
@@ -365,7 +365,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act
     var result = emitter.ShouldExcludeFromAudit(typeof(AuditedEvent));
@@ -379,7 +379,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act
     var result = emitter.ShouldExcludeFromAudit(typeof(ExplicitlyIncludedEvent));
@@ -582,7 +582,7 @@ public class SystemEventEmitterTests {
     // Arrange - Use real SystemEventEmitter to test scope extraction
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var testCorrelationId = Guid.NewGuid();
     var envelope = new MessageEnvelope<EventAudited> {
@@ -622,7 +622,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Create a mock context with metadata
     var context = new TestMessageContext {
@@ -644,7 +644,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new EventAudited {
       Id = Guid.NewGuid(),
@@ -668,7 +668,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new CommandAudited {
       Id = Guid.NewGuid(),
@@ -692,7 +692,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new EventAudited {
       Id = Guid.NewGuid(),
@@ -724,7 +724,7 @@ public class SystemEventEmitterTests {
     // Arrange - Use string as TEvent since it's registered in InfrastructureJsonContext
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var streamId = Guid.NewGuid();
     const long streamPosition = 42L;
@@ -749,7 +749,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var testCorrelationId = Guid.NewGuid();
     var envelope = new MessageEnvelope<string> {
@@ -788,7 +788,7 @@ public class SystemEventEmitterTests {
     // Arrange - Envelope with no scope delta and no correlation ID
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var envelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
@@ -821,7 +821,7 @@ public class SystemEventEmitterTests {
     // Arrange - Scope with only TenantId (no UserId, no CorrelationId)
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var envelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
@@ -856,7 +856,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var envelope = _createTestEnvelope("SerializeMe");
 
@@ -874,7 +874,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var before = DateTimeOffset.UtcNow;
     var envelope = _createTestEnvelope("TimestampTest");
@@ -898,7 +898,7 @@ public class SystemEventEmitterTests {
     // Arrange - Use string as TCommand since it's registered in InfrastructureJsonContext
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act
     await emitter.EmitCommandAuditedAsync("TestCommand", "TestResponse", "MyReceptor", null);
@@ -919,7 +919,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var context = new TestMessageContext {
       UserId = "user-cmd-123"
@@ -943,7 +943,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act - null context
     await emitter.EmitCommandAuditedAsync("NullCtxCmd", "ok", "TestReceptor", null);
@@ -962,7 +962,7 @@ public class SystemEventEmitterTests {
     // Arrange - Context with UserId but no TenantId in Metadata
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var context = new TestMessageContext {
       UserId = "user-only"
@@ -984,7 +984,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     // Act
     await emitter.EmitCommandAuditedAsync("MyCommandBody", "response", "Receptor", null);
@@ -1000,7 +1000,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var before = DateTimeOffset.UtcNow;
 
@@ -1024,7 +1024,7 @@ public class SystemEventEmitterTests {
     // This covers the branch in `scope["TenantId"] = tenantId?.ToString()` where tenantId is null.
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var context = new TestMessageContext {
       UserId = "user-789"
@@ -1049,7 +1049,7 @@ public class SystemEventEmitterTests {
     // This covers the false branch of context?.Metadata.TryGetValue("TenantId") == true.
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var context = new TestMessageContext {
       UserId = "user-scope-test"
@@ -1079,7 +1079,7 @@ public class SystemEventEmitterTests {
     // Start a diagnostic activity to ensure Activity.Current is non-null.
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new EventAudited {
       Id = Guid.NewGuid(),
@@ -1110,7 +1110,7 @@ public class SystemEventEmitterTests {
     // This ensures the null-conditional expression is tested with null Activity.Current.
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance);
 
     var systemEvent = new CommandAudited {
       Id = Guid.NewGuid(),
@@ -1141,7 +1141,7 @@ public class SystemEventEmitterTests {
     // Arrange - Test the path where IsEnabled<EventAudited>() returns true directly
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableEventAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new EventAudited {
       Id = Guid.NewGuid(),
@@ -1164,7 +1164,7 @@ public class SystemEventEmitterTests {
     // Arrange - Test the path where IsEnabled<CommandAudited>() returns true directly
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new CommandAudited {
       Id = Guid.NewGuid(),
@@ -1187,7 +1187,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     var systemEvent = new EventAudited {
       Id = Guid.NewGuid(),
@@ -1212,7 +1212,7 @@ public class SystemEventEmitterTests {
     // Arrange
     var eventStore = new MockEventStore();
     var options = Options.Create(new SystemEventOptions().EnableAudit());
-    var emitter = new SystemEventEmitter(options, eventStore);
+    var emitter = new SystemEventEmitter(options, eventStore, Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance);
 
     var systemEvent = new EventAudited {
       Id = Guid.NewGuid(),

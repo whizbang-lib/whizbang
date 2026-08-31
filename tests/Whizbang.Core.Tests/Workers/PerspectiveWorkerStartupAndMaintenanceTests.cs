@@ -288,9 +288,9 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
     var sp = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(options ?? new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options ?? new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 1_000_000,
         MaxConcurrentDrainConsumers = 1,
       }),
@@ -302,7 +302,8 @@ public class PerspectiveWorkerStartupAndMaintenanceTests {
       leaseRenewalChannel: harness.LeaseRenewalCapture,
       perspectiveDrainChannel: harness.DrainChannel,
       rewindOptions: rewindOptions is null ? null : Options.Create(rewindOptions),
-      perspectiveNotificationListener: notificationListener);
+      perspectiveNotificationListener: notificationListener,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return new _Fixture(worker, harness, coordinator, lifecycle);
   }
 

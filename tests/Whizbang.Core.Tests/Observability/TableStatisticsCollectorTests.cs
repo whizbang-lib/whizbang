@@ -19,7 +19,10 @@ public class TableStatisticsCollectorTests {
     // used to catch ObjectDisposedException, log a warning, then wait 30s and retry forever.
     // After the fix it should break out of the loop and exit cleanly.
     var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
-    var worker = new TableStatisticsCollector(new AlwaysDisposedScopeFactory(), metrics);
+    var worker = new TableStatisticsCollector(
+  scopeFactory: new AlwaysDisposedScopeFactory(),
+  metrics: metrics,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -76,7 +79,10 @@ public class TableStatisticsCollectorTests {
   public async Task Collector_PublishesTableBloatRatioAsync() {
     var provider = new BloatReportingProvider();
     var metrics = new TableStatisticsMetrics(new WhizbangMetrics());
-    var worker = new TableStatisticsCollector(new SingleProviderScopeFactory(provider), metrics);
+    var worker = new TableStatisticsCollector(
+  scopeFactory: new SingleProviderScopeFactory(provider),
+  metrics: metrics,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     var cycled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     double? ratioWhenSignalled = null;

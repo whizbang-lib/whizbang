@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.SystemEvents;
@@ -43,7 +44,7 @@ public partial class ImmediateWorkCoordinatorStrategy(
   private readonly IWorkCoordinator _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly WorkCoordinatorOptions _options = options ?? throw new ArgumentNullException(nameof(options));
-  private readonly ILogger<ImmediateWorkCoordinatorStrategy>? _logger = logger;
+  private readonly ILogger<ImmediateWorkCoordinatorStrategy> _logger = logger ?? NullLogger<ImmediateWorkCoordinatorStrategy>.Instance;
   private readonly IServiceScopeFactory? _scopeFactory = scopeFactory;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;

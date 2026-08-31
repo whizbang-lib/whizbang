@@ -56,13 +56,13 @@ public sealed class StandbyWatcherOptions {
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StandbyHandshakeE2ETests.cs</tests>
 public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly IServiceInstanceProvider? _instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider;
   private readonly ILibraryVersionProvider? _versionProvider;
   private readonly IWhizbangLifecycleState _lifecycle;
   private readonly IStartupAssessor? _assessor;
   private readonly IHostApplicationLifetime _hostLifetime;
   private readonly StartupPipelineRunner? _pipelineRunner;
-  private readonly ISchemaReadyGate? _schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly StandbyWatcherOptions _options;
   private readonly ILogger<StandbyWatcher> _logger;
 
@@ -75,11 +75,11 @@ public sealed partial class StandbyWatcher : BackgroundService {
       IServiceScopeFactory scopeFactory,
       IWhizbangLifecycleState lifecycle,
       IHostApplicationLifetime hostLifetime,
-      IServiceInstanceProvider? instanceProvider = null,
+      IServiceInstanceProvider instanceProvider,
+      ISchemaReadyGate schemaReadyGate,
       ILibraryVersionProvider? versionProvider = null,
       IStartupAssessor? assessor = null,
       StartupPipelineRunner? pipelineRunner = null,
-      ISchemaReadyGate? schemaReadyGate = null,
       StandbyWatcherOptions? options = null,
       ILogger<StandbyWatcher>? logger = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);

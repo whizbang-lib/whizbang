@@ -611,11 +611,11 @@ public class PerspectiveApplyExactlyOnceTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      strategy,
+      completionStrategy: strategy,
       eventTypeProvider: registry,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -626,7 +626,8 @@ public class PerspectiveApplyExactlyOnceTests {
       // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
       // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
       // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, harness);
   }
 
@@ -964,11 +965,11 @@ public class PerspectiveApplyExactlyOnceTests {
     var options = new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 };
     configureOptions?.Invoke(options);
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(options),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
       tracingOptions: null,
-      strategy,
+      completionStrategy: strategy,
       eventTypeProvider: registry,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -979,7 +980,8 @@ public class PerspectiveApplyExactlyOnceTests {
       // re-serves the same rows every refetch, and with no cooldown to mark them processed the loop
       // re-dispatched each event once per iteration. The tests only passed when cts.Cancel() happened
       // to win the race against the second refetch — the source of the intermittent 2×-dispatch flake.
-      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()));
+      recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, harness);
   }
 }

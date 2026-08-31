@@ -113,6 +113,24 @@ public sealed record EventAudited : ISystemEvent {
   public string? AuditReason { get; init; }
 
   /// <summary>
+  /// Human-readable name for the ACTIVITY this record represents, supplied per occurrence by an
+  /// <see cref="IAuditDecisionHook"/>. Null falls back to humanizing the event type name.
+  /// </summary>
+  /// <remarks>
+  /// The type name is often the wrong unit. A saga's boundary event says "SagaStartedEvent", which
+  /// tells an auditor nothing; the activity says "Bulk acknowledgment assignment". Only the hook can
+  /// know which activity an occurrence belongs to, so the label has to travel with the record —
+  /// the name humanizers run at projection time from the type name alone and cannot produce it.
+  /// </remarks>
+  public string? ActivityName { get; init; }
+
+  /// <summary>
+  /// Human-readable detail for this occurrence, typically drawn from the payload — "Imported 500
+  /// records". Null falls back to the description humanizer.
+  /// </summary>
+  public string? ActivityDescription { get; init; }
+
+  /// <summary>
   /// Audit level from <see cref="AuditEventAttribute.Level"/> if present.
   /// Defaults to <see cref="AuditLevel.Info"/>.
   /// </summary>

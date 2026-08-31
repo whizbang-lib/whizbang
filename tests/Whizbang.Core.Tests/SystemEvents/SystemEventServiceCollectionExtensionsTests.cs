@@ -289,10 +289,10 @@ public class SystemEventServiceCollectionExtensionsTests {
     services.DecorateEventStoreWithAuditing();
     var provider = services.BuildServiceProvider();
 
-    // Assert
-    var eventStore = provider.GetService<IEventStore>();
-    await Assert.That(eventStore).IsNotNull();
-    await Assert.That(eventStore).IsTypeOf<AuditingEventStoreDecorator>();
+    // Assert - a type-based registration cannot be decorated without reflection, which Core
+    // does not permit. The error names the fix so a consumer knows what to change.
+    var ex = Assert.Throws<InvalidOperationException>(() => provider.GetService<IEventStore>());
+    await Assert.That(ex!.Message).Contains("factory");
   }
 
   [Test]
@@ -378,14 +378,14 @@ public class SystemEventServiceCollectionExtensionsTests {
     services.AddSingleton<IDeferredOutboxChannel>(new MockDeferredOutboxChannel());
     services.AddSingleton<IEventStore, MockEventStore>();
 
-    // Act
+    // Act & Assert - a type-based registration cannot be decorated without reflection, which
+    // Core does not permit. The error names the fix, because a consumer who hits it otherwise
+    // learns only that something is unsupported.
     services.AddSystemEvents(opts => opts.EnableEventAudit());
     var provider = services.BuildServiceProvider();
 
-    // Assert - Type was used to resolve inner, then wrapped
-    var eventStore = provider.GetService<IEventStore>();
-    await Assert.That(eventStore).IsNotNull();
-    await Assert.That(eventStore).IsTypeOf<AuditingEventStoreDecorator>();
+    var ex = Assert.Throws<InvalidOperationException>(() => provider.GetService<IEventStore>());
+    await Assert.That(ex!.Message).Contains("factory");
   }
 
   #endregion

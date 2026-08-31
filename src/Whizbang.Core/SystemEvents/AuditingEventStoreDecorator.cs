@@ -43,8 +43,9 @@ public sealed class AuditingEventStoreDecorator(
     IEventStore inner,
     IDeferredOutboxChannel outboxChannel,
     IOptions<SystemEventOptions> options,
-    ILogger<AuditingEventStoreDecorator>? logger = null,
-      Whizbang.Core.Observability.IServiceInstanceProvider? instanceProvider = null) : ForwardingEventStoreDecorator(inner) {
+    Whizbang.Core.Observability.IServiceInstanceProvider instanceProvider,
+    IAuditDecisionHook auditDecisionHook,
+    ILogger<AuditingEventStoreDecorator>? logger = null) : ForwardingEventStoreDecorator(inner) {
   /// <summary>
   /// The dedicated audit topic destination for outbox messages.
   /// </summary>
@@ -58,7 +59,10 @@ public sealed class AuditingEventStoreDecorator(
   private readonly ILogger<AuditingEventStoreDecorator> _logger = logger ?? NullLogger<AuditingEventStoreDecorator>.Instance;
 
   // Optional: a service with no telemetry identity wired must still produce audit records.
-  private readonly Whizbang.Core.Observability.IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly Whizbang.Core.Observability.IServiceInstanceProvider _instanceProvider = instanceProvider;
+
+  // Optional per-occurrence decision. Without one, behavior is exactly the attribute's.
+  private readonly IAuditDecisionHook _auditDecisionHook = auditDecisionHook;
 
   /// <inheritdoc />
   public override async Task AppendAsync<TMessage>(
@@ -105,7 +109,10 @@ public sealed class AuditingEventStoreDecorator(
     if (!_options.EventAuditEnabled) {
       return;
     }
-    if (!_shouldAudit(typeof(TMessage))) {
+    // One place decides: the attribute gates the TYPE, the hook may veto or name the OCCURRENCE.
+    var auditDecision = AuditEligibility.Decide(
+      envelope.Payload, typeof(TMessage), _options.AuditMode, _auditDecisionHook);
+    if (!auditDecision.ShouldAudit) {
       return;
     }
     if (envelope.Payload is null) {
@@ -113,7 +120,7 @@ public sealed class AuditingEventStoreDecorator(
     }
 
     var streamPosition = await Inner.GetLastSequenceAsync(streamId, cancellationToken);
-    var auditEvent = _buildEventAudited(streamId, streamPosition, envelope);
+    var auditEvent = _buildEventAudited(streamId, streamPosition, envelope, auditDecision);
     var outboxMsg = _buildOutboxMessage(auditEvent);
     await _outboxChannel.QueueAsync(outboxMsg, cancellationToken);
   }
@@ -131,7 +138,8 @@ public sealed class AuditingEventStoreDecorator(
   private EventAudited _buildEventAudited<TMessage>(
       Guid streamId,
       long streamPosition,
-      MessageEnvelope<TMessage> envelope) {
+      MessageEnvelope<TMessage> envelope,
+      AuditDecision decision) {
     // Extract scope from envelope
     var scopeContext = envelope.GetCurrentScope();
     var correlationId = envelope.GetCorrelationId();
@@ -168,6 +176,9 @@ public sealed class AuditingEventStoreDecorator(
       OriginalStreamPosition = streamPosition,
       OriginalBody = payloadJson,
       Timestamp = DateTimeOffset.UtcNow,
+      // Supplied per occurrence by the decision hook; null falls back to humanizing the type name.
+      ActivityName = decision.Name,
+      ActivityDescription = decision.Description,
       TenantId = scopeContext?.Scope?.TenantId,
       UserId = scopeContext?.Scope?.UserId,
       CorrelationId = correlationId?.ToString(),
@@ -184,7 +195,7 @@ public sealed class AuditingEventStoreDecorator(
       Payload = auditEvent,
       Hops = [
         new MessageHop {
-          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
+          ServiceInstance = _instanceProvider.ToInfo(),
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
           TraceParent = System.Diagnostics.Activity.Current?.Id,

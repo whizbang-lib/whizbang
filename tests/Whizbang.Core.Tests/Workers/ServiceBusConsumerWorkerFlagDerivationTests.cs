@@ -105,16 +105,17 @@ public class ServiceBusConsumerWorkerFlagDerivationTests {
     var scopeFactory = services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
 
     var worker = new ServiceBusConsumerWorker(
-      transport,
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new TestLogger<ServiceBusConsumerWorker>(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      new ServiceBusConsumerOptions {
+      transport: transport,
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      logger: new TestLogger<ServiceBusConsumerWorker>(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("flags-topic", "flags-sub")]
       },
       eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
-      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()));
+      ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));

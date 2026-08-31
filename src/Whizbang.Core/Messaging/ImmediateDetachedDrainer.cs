@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -32,7 +33,7 @@ namespace Whizbang.Core.Messaging;
 public sealed partial class ImmediateDetachedDrainer(int warningThreshold = 10, ILogger? logger = null) {
   private readonly ConcurrentQueue<(IMessageEnvelope Envelope, ILifecycleContext? Context)> _queue = new();
   private readonly int _warningThreshold = warningThreshold > 0 ? warningThreshold : 10;
-  private readonly ILogger? _logger = logger;
+  private readonly ILogger _logger = logger ?? NullLogger.Instance;
 
   /// <summary>
   /// Gets the number of pending items in the queue.

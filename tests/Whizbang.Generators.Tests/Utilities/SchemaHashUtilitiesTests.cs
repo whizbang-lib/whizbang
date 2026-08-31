@@ -404,5 +404,72 @@ public class SchemaHashUtilitiesTests {
   }
 
   #endregion
-}
 
+  // --- Index canonicalisation -----------------------------------------------
+  // Existing cases all pass an empty index list, so the index branch of
+  // ToCanonicalJson was never entered. Column order inside an index is
+  // canonicalised too, or the hash would change on a reorder that means nothing.
+
+  [Test]
+  public async Task ToCanonicalJson_WithIndexes_EmitsIndexColumnsAsync() {
+    var columns = new List<ColumnSchema> {
+      new("id", "uuid", false, true, false, null)
+    };
+    var indexes = new List<IndexSchema> {
+      new("ix_orders_tenant", new List<string> { "tenant_id", "created_at" }, "btree", IsUnique: false)
+    };
+    var schema = new PerspectiveTableSchema(columns, indexes);
+
+    var json = SchemaHashUtilities.ToCanonicalJson(schema);
+
+    await Assert.That(json).Contains("tenant_id");
+    await Assert.That(json).Contains("created_at");
+    await Assert.That(json).Contains("ix_orders_tenant");
+  }
+
+  [Test]
+  public async Task ToCanonicalJson_IndexColumnOrder_IsCanonicalisedAsync() {
+    var columns = new List<ColumnSchema> {
+      new("id", "uuid", false, true, false, null)
+    };
+    var forward = new PerspectiveTableSchema(columns, new List<IndexSchema> {
+      new("ix", new List<string> { "a", "b", "c" }, "btree", IsUnique: false)
+    });
+    var shuffled = new PerspectiveTableSchema(columns, new List<IndexSchema> {
+      new("ix", new List<string> { "c", "a", "b" }, "btree", IsUnique: false)
+    });
+
+    await Assert.That(SchemaHashUtilities.ToCanonicalJson(shuffled))
+        .IsEqualTo(SchemaHashUtilities.ToCanonicalJson(forward));
+  }
+
+  [Test]
+  public async Task ComputeSchemaHash_IndexColumnReorder_DoesNotChangeTheHashAsync() {
+    var columns = new List<ColumnSchema> {
+      new("id", "uuid", false, true, false, null)
+    };
+    var forward = new PerspectiveTableSchema(columns, new List<IndexSchema> {
+      new("ix", new List<string> { "a", "b" }, "btree", IsUnique: true)
+    });
+    var shuffled = new PerspectiveTableSchema(columns, new List<IndexSchema> {
+      new("ix", new List<string> { "b", "a" }, "btree", IsUnique: true)
+    });
+
+    await Assert.That(SchemaHashUtilities.ComputeSchemaHash(shuffled))
+        .IsEqualTo(SchemaHashUtilities.ComputeSchemaHash(forward));
+  }
+
+  [Test]
+  public async Task ComputeSchemaHash_AddingAnIndex_ChangesTheHashAsync() {
+    var columns = new List<ColumnSchema> {
+      new("id", "uuid", false, true, false, null)
+    };
+    var without = new PerspectiveTableSchema(columns, new List<IndexSchema>());
+    var with = new PerspectiveTableSchema(columns, new List<IndexSchema> {
+      new("ix", new List<string> { "a" }, "btree", IsUnique: false)
+    });
+
+    await Assert.That(SchemaHashUtilities.ComputeSchemaHash(with))
+        .IsNotEqualTo(SchemaHashUtilities.ComputeSchemaHash(without));
+  }
+}

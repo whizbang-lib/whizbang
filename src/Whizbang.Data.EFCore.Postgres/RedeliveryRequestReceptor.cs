@@ -62,7 +62,11 @@ public sealed partial class RedeliveryRequestReceptor(
       var originServiceId = await coordinator.GetLocalServiceIdAsync(cancellationToken).ConfigureAwait(false);
       var pump = new RedeliveryPump(
         transport, envelopeSerializer,
-        services.GetService<IServiceInstanceProvider>(), options,
+        // A host with no telemetry identity still redelivers; the bundle names an explicitly
+        // unknown origin, which is what passing null used to produce. Requiring the provider
+        // here turned an absent identity into a failed redelivery.
+        services.GetService<IServiceInstanceProvider>()
+          ?? Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance, options,
         compositeFactory: services.GetService<Whizbang.Core.Minting.ICompositeFactory>());
 
       // Select-and-publish in keyset pages so memory is bounded by ONE page of bodies no matter

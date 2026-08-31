@@ -217,15 +217,18 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
 
     var instanceProvider = new StubServiceInstanceProvider(serviceName);
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
-      serviceInstanceProvider: instanceProvider
-    );
+      serviceInstanceProvider: instanceProvider,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     return new TestWorkerWrapper(worker, transport, noOpCoordinator);
   }

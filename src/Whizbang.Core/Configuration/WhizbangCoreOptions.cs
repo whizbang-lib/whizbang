@@ -86,6 +86,23 @@ public sealed class WhizbangCoreOptions {
   public bool AutoRegisterAspNetHosting { get; set; } = true;
 
   /// <summary>
+  /// Validate at startup that every registered type's constructor can be satisfied. Default true.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A dependency that is declared but never registered produces no error on its own: the container
+  /// supplies null and the dependent type runs in a degraded mode nobody chose. This turns that into
+  /// a startup failure naming both the missing service and the type that wanted it.
+  /// </para>
+  /// <para>
+  /// The check reads service descriptors and never resolves anything, so it constructs nothing and
+  /// fires no factory side effects. Set false for a partial composition that deliberately registers
+  /// only a subset, such as a test fixture exercising one worker in isolation.
+  /// </para>
+  /// </remarks>
+  public bool ValidateRegistrations { get; set; } = true;
+
+  /// <summary>
   /// How long graceful shutdown may spend deregistering this instance before giving up.
   /// Default: 15 seconds.
   /// </summary>

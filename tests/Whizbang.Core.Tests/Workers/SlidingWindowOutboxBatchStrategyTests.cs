@@ -244,4 +244,119 @@ public class SlidingWindowOutboxBatchStrategyTests {
       },
     };
   }
+
+  // ===== failure and shutdown paths =====
+
+  [Test]
+  public async Task ActiveStreamCount_TracksDistinctStreamsAsync() {
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => Task.CompletedTask,
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromSeconds(30),
+        MaxWait = TimeSpan.FromSeconds(30),
+        MaxSize = 100,
+      });
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task AppendAsync_WithoutStreamId_SharesTheDefaultBufferAsync() {
+    // A null stream id is not "no stream": those messages still have to serialise
+    // against each other, so they share one keyed buffer rather than one buffer each.
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => Task.CompletedTask,
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromSeconds(30),
+        MaxWait = TimeSpan.FromSeconds(30),
+        MaxSize = 100,
+      });
+
+    await sut.AppendAsync(_make(null));
+    await sut.AppendAsync(_make(null));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task FlushThrows_IsSwallowedSoTheStrategyKeepsRunningAsync() {
+    // A failed bulk flush must not tear down the batcher: the dispatcher re-emits, and
+    // killing the strategy would take every other stream's buffer down with it.
+    var attempted = new TaskCompletionSource();
+
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => {
+        attempted.TrySetResult();
+        throw new InvalidOperationException("bulk flush failed");
+      },
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        MaxWait = TimeSpan.FromMilliseconds(100),
+        MaxSize = 100,
+      });
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+    await attempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Still accepting work after the failure.
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+    await Assert.That(sut.ActiveStreamCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task AppendAsync_AfterStop_ThrowsObjectDisposedAsync() {
+    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+
+    await sut.FlushAndStopAsync(CancellationToken.None);
+
+    await Assert.That(async () => await sut.AppendAsync(_make(null)))
+        .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task FlushAndStopAsync_CalledTwice_IsIdempotentAsync() {
+    // DisposeAsync also routes here, so a using-block around an explicit stop must not
+    // double-dispose the stop token source.
+    var sut = new SlidingWindowOutboxBatchStrategy(flush: (_, _) => Task.CompletedTask);
+
+    await sut.FlushAndStopAsync(CancellationToken.None);
+    await sut.FlushAndStopAsync(CancellationToken.None);
+    await sut.DisposeAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FlushAndStopAsync_WithCancelledToken_StopsWithoutHangingAsync() {
+    // Shutdown deadline reached with a flush still in flight: the drain is abandoned
+    // rather than waited on forever.
+    var releaseFlush = new TaskCompletionSource();
+    var flushEntered = new TaskCompletionSource();
+
+    var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: async (_, _) => {
+        flushEntered.TrySetResult();
+        await releaseFlush.Task;
+      },
+      options: new SlidingWindowOutboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(20),
+        MaxWait = TimeSpan.FromMilliseconds(100),
+        MaxSize = 100,
+      });
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()));
+    await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    await sut.FlushAndStopAsync(cts.Token);
+
+    releaseFlush.TrySetResult();
+  }
 }

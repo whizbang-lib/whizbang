@@ -179,7 +179,7 @@ public class OutboxPublishWorkerDlqPromotionTests {
       }),
       NullLogger<OutboxPublishWorker>.Instance,
       publishStrategy: strategy,
-      instanceProvider: wireDeadLetterStore ? new _FakeServiceInstanceProvider() : null,
+      instanceProvider: wireDeadLetterStore ? new _FakeServiceInstanceProvider() : new Whizbang.Core.Observability.ServiceInstanceProvider(),
       deadLetterStore: wireDeadLetterStore ? dlq : null,
       generationProvider: wireDeadLetterStore ? new _FakeGenerationProvider("test-gen") : null);
     return (worker, channel, failure, dlq);

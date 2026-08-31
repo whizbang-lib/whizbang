@@ -38,13 +38,13 @@ public sealed partial class BackupTickCoordinator(
   IBackupTickRegistry registry,
   IOptions<BackupTickCoordinatorOptions> options,
   ILogger<BackupTickCoordinator> logger,
-  INotifySignalingGate? gate = null,
-  TimeProvider? timeProvider = null,
   // Startup barrier: registered backstop ticks poll the database. Optional only so existing
   // fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate? schemaReadyGate = null
+  ISchemaReadyGate schemaReadyGate,
+  INotifySignalingGate? gate = null,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
-  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
 
   private readonly IIdleActivityTracker _tracker = tracker ?? throw new ArgumentNullException(nameof(tracker));
   private readonly IBackupTickRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));

@@ -30,6 +30,11 @@ public class AddWhizbangPostgresNotificationsTests {
     // call AddWhizbangWorkers itself because it pulls in the full worker pipeline which
     // needs DI deps unrelated to this test's scope.
     services.AddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
+    // ScheduleWorker waits on schema readiness. This fixture composes the notifications extension
+    // alone, with nothing that would ever open a real gate, so it supplies one that is already
+    // open: registering a real gate with no opener deadlocks rather than fails.
+    services.AddSingleton<Whizbang.Core.Workers.ISchemaReadyGate>(
+      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     services.AddWhizbangPostgresNotifications();  // replaces NoOp with Pg
     extra?.Invoke(services);
     return services.BuildServiceProvider();
@@ -68,6 +73,9 @@ public class AddWhizbangPostgresNotificationsTests {
     services.AddLogging();
     services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
     services.AddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
+    // As above: this composition has nothing that would open a real gate.
+    services.AddSingleton<Whizbang.Core.Workers.ISchemaReadyGate>(
+      Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     services.AddWhizbangPostgresNotifications();
     services.AddWhizbangPostgresNotifications();
     var sp = services.BuildServiceProvider();

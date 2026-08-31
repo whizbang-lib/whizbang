@@ -15,7 +15,10 @@ public class PerspectiveMigrationWorkerTests {
   public async Task ExecuteAsync_WithNoPendingRebuilds_CompletesQuicklyAsync() {
     // Arrange
     var rebuilder = new FakeRebuilder();
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([]),
       UpdateMigrationStatus = (_, _, _, _) => Task.CompletedTask
     };
@@ -35,7 +38,10 @@ public class PerspectiveMigrationWorkerTests {
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
     var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("OrderPerspective", "perspective:OrderPerspective")
       ]),
@@ -65,7 +71,10 @@ public class PerspectiveMigrationWorkerTests {
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
     var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("FailingPerspective", "perspective:FailingPerspective")
       ]),
@@ -90,7 +99,10 @@ public class PerspectiveMigrationWorkerTests {
   public async Task ExecuteAsync_WithNoCallbacks_CompletesGracefullyAsync() {
     // Arrange — callbacks not set, ExecuteAsync returns early
     var rebuilder = new FakeRebuilder();
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance);
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act — should not throw
     await worker.StartAsync(CancellationToken.None);
@@ -108,7 +120,10 @@ public class PerspectiveMigrationWorkerTests {
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
     var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("First", "perspective:First"),
         new PendingMigrationRebuild("Second", "perspective:Second"),
@@ -140,7 +155,10 @@ public class PerspectiveMigrationWorkerTests {
     var statusUpdates = new List<(string Key, int Status, string Desc)>();
     var workDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("CrashPerspective", "perspective:CrashPerspective")
       ]),
@@ -168,7 +186,10 @@ public class PerspectiveMigrationWorkerTests {
     // No callback signal available (UpdateMigrationStatus throws), so use StopAsync to await completion
     var rebuilder = new ThrowingRebuilder();
 
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
         new PendingMigrationRebuild("CrashPerspective", "perspective:CrashPerspective")
       ]),
@@ -190,7 +211,10 @@ public class PerspectiveMigrationWorkerTests {
     // GetPendingRebuilds throws immediately, so ExecuteAsync completes quickly
     var rebuilder = new FakeRebuilder();
 
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       GetPendingRebuilds = _ => throw new InvalidOperationException("Database unavailable"),
       UpdateMigrationStatus = (_, _, _, _) => Task.CompletedTask
     };
@@ -207,7 +231,10 @@ public class PerspectiveMigrationWorkerTests {
   public async Task ExecuteAsync_WithOnlyGetPendingRebuildsNull_ReturnsEarlyAsync() {
     // Arrange — covers the OR condition: GetPendingRebuilds is null but UpdateMigrationStatus is set
     var rebuilder = new FakeRebuilder();
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       UpdateMigrationStatus = (_, _, _, _) => Task.CompletedTask
     };
 
@@ -223,7 +250,10 @@ public class PerspectiveMigrationWorkerTests {
   public async Task ExecuteAsync_WithOnlyUpdateMigrationStatusNull_ReturnsEarlyAsync() {
     // Arrange — covers the OR condition: UpdateMigrationStatus is null but GetPendingRebuilds is set
     var rebuilder = new FakeRebuilder();
-    var worker = new PerspectiveMigrationWorker(rebuilder, NullLogger<PerspectiveMigrationWorker>.Instance) {
+    var worker = new PerspectiveMigrationWorker(
+  rebuilder: rebuilder,
+  logger: NullLogger<PerspectiveMigrationWorker>.Instance,
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()) {
       GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([])
     };
 
