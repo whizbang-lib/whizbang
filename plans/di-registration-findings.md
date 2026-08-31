@@ -139,6 +139,47 @@ exists to prevent, so it is available only to callers that construct these types
 now a compile error, which was the deliberate intent of the original optional parameter and also
 the reason the defect shipped.
 
+## Triage outcome: the twelve candidates are not defects
+
+All twelve resolved. None is a service silently missing from a deployed system, and the register
+records that plainly rather than leaving a list of open suspicions behind.
+
+| Interface | Outcome |
+|---|---|
+| `IChaosInjector` | now registered; converted to a required dependency with `NoChaosInjector` |
+| `IDestructionHook` | now registered; converted with `NoOpDestructionHook` |
+| `IConcurrencyGovernor` | optional, and each site constructs its own default inline |
+| `IPerspectiveCompletionStrategy` | optional with an inline default |
+| `IEnvelopeRegistry` | optional with an inline default |
+| `IProcessedEventCacheObserver` | passed through to a cache that coalesces to a null object |
+| `ILibraryVersionProvider` | every use is `?.`-guarded |
+| `IInstanceAliveLockSource` | every use is guarded |
+| `ICommandInboxAddressResolver` | every use is guarded |
+| `IWorkChannelWriter` | guarded in `ClaimWorker`; supplied by a storage driver elsewhere |
+| `IEventNamespaceRegistry` | a test seam; production reads a static registry |
+| `ICallerInfo` | a nullable property on a message context, not an injected dependency |
+
+`IConcurrencyGovernor` was singled out earlier as the highest-priority item because three
+implementations existed and nothing registered any of them. That reasoning was wrong in a way worth
+keeping: implementations existing does not imply a registration is missing. The workers select among
+them in code, and the parameter is optional precisely so a host can override that selection.
+
+## Confirmed defects, whole investigation
+
+Three, all fixed:
+
+1. **The audit decorator built with three of six arguments.** Shipped. Audit records written by any
+   deployed version after the instance provider was introduced carry no writer identity.
+2. **`DispatcherEventCascader` constructed without its logger** at both registration sites, so the
+   cascader wrote no diagnostics in any composed application. Found by `WHIZ500` on its first run.
+3. **The destruction hook default registration was never committed.** Self-inflicted during this
+   work: the edit failed silently, and resolving `IStreamCloser` would have thrown. Found while
+   writing documentation, not by any test.
+
+The third is the one to remember. It passed the build, passed the suite, and passed the validator,
+because the manifest could not see factory registrations at the time. Every guard here has a blind
+spot, and the blind spots are where the defects live.
+
 ## Next actions
 
 1. Classify each candidate: genuine gap, extension point optional by design, or not a DI service.
