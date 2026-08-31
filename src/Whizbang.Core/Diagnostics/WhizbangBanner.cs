@@ -23,13 +23,20 @@ public static partial class WhizbangBanner {
   private static readonly char[] _starChars = ['.', '·', '∙', '*', '⋅', '✦'];
 
   /// <summary>
+  /// Test seam standing in for <see cref="Console.IsOutputRedirected"/>. Null means ask
+  /// the console. A test host always has stdout redirected, so without this the detection
+  /// below short-circuits on the first line and the coloured render path is unreachable.
+  /// </summary>
+  internal static bool? OutputRedirectedOverride { get; set; }
+
+  /// <summary>
   /// Gets whether the terminal supports ANSI color escape codes.
   /// Checks for output redirection, CI environment variables, TERM/COLORTERM,
   /// and known terminal programs (Windows Terminal, VS Code).
   /// </summary>
   public static bool SupportsAnsiColor {
     get {
-      if (Console.IsOutputRedirected) {
+      if (OutputRedirectedOverride ?? Console.IsOutputRedirected) {
         return false;
       }
 

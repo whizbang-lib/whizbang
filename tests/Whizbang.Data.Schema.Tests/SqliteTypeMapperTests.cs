@@ -211,4 +211,34 @@ public class SqliteTypeMapperTests {
     // Assert
     await Assert.That(result).IsEqualTo("NULL");
   }
+
+  // --- Unknown-input guards -------------------------------------------------
+  // Mirrors PostgresTypeMapperTests: each switch ends in a throwing default arm, the
+  // contract for an enum value (or DefaultValue subtype) added without a SQLite mapping.
+
+  /// <summary>A DefaultValue subtype the mapper has no arm for.</summary>
+  private sealed record UnmappedDefault : Whizbang.Data.Schema.DefaultValue;
+
+  [Test]
+  public async Task MapDataType_UnknownDataType_ThrowsArgumentOutOfRangeAsync() {
+    var unknown = (Whizbang.Data.Schema.WhizbangDataType)9999;
+
+    await Assert.That(() => SqliteTypeMapper.MapDataType(unknown))
+        .ThrowsExactly<ArgumentOutOfRangeException>();
+  }
+
+  [Test]
+  public async Task MapDefaultValue_UnknownSubtype_ThrowsArgumentOutOfRangeAsync() {
+    await Assert.That(() => SqliteTypeMapper.MapDefaultValue(new UnmappedDefault()))
+        .ThrowsExactly<ArgumentOutOfRangeException>();
+  }
+
+  [Test]
+  public async Task MapDefaultValue_UnknownFunction_ThrowsArgumentOutOfRangeAsync() {
+    var unknown = Whizbang.Data.Schema.DefaultValue.Function(
+        (Whizbang.Data.Schema.DefaultValueFunction)9999);
+
+    await Assert.That(() => SqliteTypeMapper.MapDefaultValue(unknown))
+        .ThrowsExactly<ArgumentOutOfRangeException>();
+  }
 }

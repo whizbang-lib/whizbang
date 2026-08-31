@@ -396,4 +396,28 @@ public class GraphQLMutationTypeGeneratorTests {
     await Assert.That(code).IsNotNull();
     await Assert.That(code).Contains("#nullable enable");
   }
+
+  // --- Extraction guard -----------------------------------------------------
+  // The syntax predicate admits any class carrying at least one attribute, so a class
+  // with an unrelated attribute is what actually reaches the CommandEndpoint check.
+
+  [Test]
+  public async Task Generator_ClassWithAnUnrelatedAttribute_IsSkippedAsync() {
+    const string source = """
+            using System;
+            using Whizbang.Core;
+
+            namespace TestApp;
+
+            [Obsolete]
+            public class NotACommandEndpoint {
+                public required string CustomerId { get; init; }
+            }
+            """;
+
+    var result = GeneratorTestHelper.RunGenerator<GraphQLMutationTypeGenerator>(source);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
+    await Assert.That(code).IsNull();
+  }
 }

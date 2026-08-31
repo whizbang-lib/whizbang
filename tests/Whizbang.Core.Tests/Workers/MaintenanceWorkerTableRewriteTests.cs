@@ -40,8 +40,16 @@ public class MaintenanceWorkerTableRewriteTests {
     public List<string> Rewritten { get; } = [];
     public List<string> Cleared { get; } = [];
 
+    /// <summary>When set, the bloat scan fails instead of returning candidates.</summary>
+    public Exception? ScanThrows { get; init; }
+
+    /// <summary>When set, recording a rewrite request fails for every candidate.</summary>
+    public Exception? RequestThrows { get; init; }
+
     public Task<IReadOnlyList<TableRewriteCandidate>> GetTablesNeedingRewriteAsync(CancellationToken ct = default)
-      => Task.FromResult<IReadOnlyList<TableRewriteCandidate>>(Candidates);
+      => ScanThrows is not null
+        ? Task.FromException<IReadOnlyList<TableRewriteCandidate>>(ScanThrows)
+        : Task.FromResult<IReadOnlyList<TableRewriteCandidate>>(Candidates);
 
     public Task<double?> RewriteTableAsync(string tableName, CancellationToken ct = default) {
       Rewritten.Add(tableName);
@@ -55,7 +63,7 @@ public class MaintenanceWorkerTableRewriteTests {
 
     public Task RequestTableRewriteAsync(string tableName, CancellationToken ct = default) {
       Requested.Add(tableName);
-      return Task.CompletedTask;
+      return RequestThrows is not null ? Task.FromException(RequestThrows) : Task.CompletedTask;
     }
     public List<string> Requested { get; } = [];
 
@@ -133,5 +141,56 @@ public class MaintenanceWorkerTableRewriteTests {
     await Assert.That(coord.Rewritten).IsEmpty();
     await Assert.That(coord.Requested).IsEmpty()
       .Because("a request already on the books needs no second recording");
+  }
+
+  // --- Failure paths ---------------------------------------------------------
+  // Bloat detection is advisory. Neither a failed scan nor a failed recording may take
+  // the maintenance cycle down with it — the sweep that actually reclaims rows runs in
+  // the same tick, and losing it to a statistics query would be a poor trade.
+
+  [Test]
+  public async Task BloatScanFails_MaintenanceCycleStillCompletesAsync() {
+    var coord = new RewriteCoordinator {
+      ScanThrows = new InvalidOperationException("pg_stat unavailable"),
+    };
+
+    await _buildWorker(coord, allowRewrite: true).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Requested).IsEmpty();
+  }
+
+  [Test]
+  public async Task RecordingARewriteRequestFails_OtherCandidatesAreStillRecordedAsync() {
+    // One table failing to record must not skip the rest of the candidate list.
+    var coord = new RewriteCoordinator {
+      Candidates = {
+        new TableRewriteCandidate("wh_event_store", 4.2, Requested: false),
+        new TableRewriteCandidate("wh_inbox", 3.9, Requested: false),
+      },
+      RequestThrows = new InvalidOperationException("write failed"),
+    };
+
+    await _buildWorker(coord, allowRewrite: true).RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Requested).Contains("wh_event_store");
+    await Assert.That(coord.Requested).Contains("wh_inbox")
+      .Because("the loop continues past a failed recording rather than abandoning the scan");
+  }
+
+  [Test]
+  public async Task CancelledMidCandidates_StopsWithoutRecordingFurtherTablesAsync() {
+    var coord = new RewriteCoordinator {
+      Candidates = { new TableRewriteCandidate("wh_event_store", 4.2, Requested: false) },
+    };
+    using var cts = new CancellationTokenSource();
+    await cts.CancelAsync();
+
+    try {
+      await _buildWorker(coord, allowRewrite: true).RunMaintenanceOnceAsync(cts.Token);
+    } catch (OperationCanceledException) {
+      // Shutdown mid-cycle is expected; the assertion below is what matters.
+    }
+
+    await Assert.That(coord.Requested).IsEmpty();
   }
 }
