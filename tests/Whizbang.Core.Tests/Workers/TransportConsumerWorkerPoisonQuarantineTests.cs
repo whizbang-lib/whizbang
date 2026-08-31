@@ -246,9 +246,20 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
   private sealed class RecordingDeadLetterStore : IDeadLetterStore {
     public List<(string SourceTable, Guid SourceId, MessageFailureReason FailureReason)> Moved { get; } = [];
 
+    /// <summary>Attempts, including the ones this store refuses — the quarantine must keep trying
+    /// the rest of the batch after one row fails.</summary>
+    public List<Guid> Attempted { get; } = [];
+
+    /// <summary>Makes every move fail, standing in for a dead-letter table that is unreachable.</summary>
+    public bool ThrowOnMove { get; init; }
+
     public Task<Guid?> MoveAsync(
         Guid deadLetterId, string sourceTable, Guid sourceId, MessageFailureReason failureReason,
         string? errorText, Guid instanceId, string generation, CancellationToken ct = default) {
+      Attempted.Add(sourceId);
+      if (ThrowOnMove) {
+        return Task.FromException<Guid?>(new InvalidOperationException("wh_dead_letters unreachable"));
+      }
       Moved.Add((sourceTable, sourceId, failureReason));
       return Task.FromResult<Guid?>(deadLetterId);
     }
@@ -318,4 +329,70 @@ public class TransportConsumerWorkerPoisonQuarantineTests {
   }
 
   #endregion
+
+  /// <summary>
+  /// A dead-letter store that cannot take the row does not take the consumer down with it.
+  /// </summary>
+  /// <remarks>
+  /// Quarantine is a best-effort safety net running inside the receive path. If the move throwing
+  /// propagated, an unreachable dead-letter table would stop the consumer receiving anything at
+  /// all — trading one looping message for total unavailability. The message stays in its loop,
+  /// which is what the log line has to say so an operator knows the bound is not being enforced.
+  /// </remarks>
+  [Test]
+  public async Task Batch_QuarantineStoreThrows_TheConsumerKeepsReceivingAsync() {
+    var coordinator = new ObservingWorkCoordinator(
+      [new InboxRedeliveryObservation(_hostage, 10) { ProcessingAttempts = 10 }]);
+    var deadLetters = new RecordingDeadLetterStore { ThrowOnMove = true };
+    var (worker, transport, sp) = _buildWorker(coordinator, deadLetters, maxDurableObservations: 10);
+
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      _ = worker.StartAsync(cts.Token);
+      await transport.SubscribedSignal.Task;
+
+      await transport.SimulateBatchReceivedAsync([new TransportMessage(_envelope(), CONSUMED_ENVELOPE_TYPE)]);
+
+      // A second batch after the failure: the receive path must still be alive.
+      await transport.SimulateBatchReceivedAsync([new TransportMessage(_envelope(), CONSUMED_ENVELOPE_TYPE)]);
+      await cts.CancelAsync();
+
+      await Assert.That(deadLetters.Attempted.Count).IsGreaterThanOrEqualTo(2)
+        .Because("a failed quarantine must not stop the consumer — the next batch still arrives, "
+               + "and the still-looping message is still attempted");
+      await Assert.That(deadLetters.Moved).IsEmpty()
+        .Because("nothing was actually quarantined; the row stays in its loop");
+    }
+  }
+
+  /// <summary>
+  /// One row failing to quarantine does not abandon the rest of the batch.
+  /// </summary>
+  /// <remarks>
+  /// The loop is per-observation, so a store that rejects one id must not skip the others — they
+  /// are independent messages that happen to have been reported together.
+  /// </remarks>
+  [Test]
+  public async Task Batch_MultiplePoisonRows_EachIsAttemptedIndependentlyAsync() {
+    var second = Guid.Parse("0199aaaa-bbbb-cccc-dddd-eeeeffff0099");
+    var coordinator = new ObservingWorkCoordinator([
+      new InboxRedeliveryObservation(_hostage, 10) { ProcessingAttempts = 10 },
+      new InboxRedeliveryObservation(second, 10) { ProcessingAttempts = 10 },
+    ]);
+    var deadLetters = new RecordingDeadLetterStore { ThrowOnMove = true };
+    var (worker, transport, sp) = _buildWorker(coordinator, deadLetters, maxDurableObservations: 10);
+
+    await using (sp) {
+      using var cts = new CancellationTokenSource();
+      _ = worker.StartAsync(cts.Token);
+      await transport.SubscribedSignal.Task;
+
+      await transport.SimulateBatchReceivedAsync([new TransportMessage(_envelope(), CONSUMED_ENVELOPE_TYPE)]);
+      await cts.CancelAsync();
+
+      await Assert.That(deadLetters.Attempted).Contains(_hostage);
+      await Assert.That(deadLetters.Attempted).Contains(second)
+        .Because("the observations are independent messages — one store failure must not skip the rest");
+    }
+  }
 }

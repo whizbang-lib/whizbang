@@ -40,6 +40,9 @@ public static class AnalyzerTestHelper {
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Threading.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Threading.Tasks.dll")));
+    // System.Net.Http so HttpClient resolves to a symbol: the purity analyzer classifies I/O by
+    // the containing type of the resolved method, and an unresolved call is simply not seen.
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Net.Http.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "netstandard.dll")));
 
     // Add reference to Whizbang.Core (for TrackedGuid, WhizbangId, etc.)

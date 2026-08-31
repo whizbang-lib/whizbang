@@ -485,7 +485,8 @@ public class IntegrityAuditWorkerTests {
       _auditCoordinator coordinator, _captureDispatcher dispatcher, _captureTransport transport,
       StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
-      IntegritySweepScheduleState? sweepState = null) {
+      IntegritySweepScheduleState? sweepState = null,
+      ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     if (sweepState is not null) {
       services.AddSingleton(sweepState);
@@ -505,7 +506,7 @@ public class IntegrityAuditWorkerTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityAuditWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
+      gate ?? new SchemaReadyGate(),
       Options.Create(options),
       NullLogger<IntegrityAuditWorker>.Instance);
   }
@@ -600,5 +601,64 @@ public class IntegrityAuditWorkerTests {
     }
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+  }
+
+  // ── ExecuteAsync lifecycle ──────────────────────────────────────────────
+  //
+  // The audit is a background reconciliation, not a request path, so both of its exits are quiet
+  // ones: opting out, and shutting down before the schema exists. Neither may fault — a hosted
+  // service whose ExecuteAsync throws turns an ordinary shutdown into a reported crash, and on
+  // startup it takes the whole host down with it.
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_AuditDisabled_ParksWithoutAuditingAsync(CancellationToken testToken) {
+    // Disabled means disabled: the worker still runs as a hosted service (so the host's service
+    // list is the same either way) but must never reach the coordinator.
+    var coordinator = new _auditCoordinator();
+    var worker = _buildWorker(
+      coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { AuditEnabled = false },
+      gate: _readyGate());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("parking is not an error — a faulted ExecuteAsync reads as a crash on shutdown");
+    await Assert.That(coordinator.AuditClaimCalls).IsEqualTo(0)
+      .Because("a disabled audit must not touch the coordinator at all");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CancelledBeforeSchemaReady_ReturnsCleanlyAsync(CancellationToken testToken) {
+    // A host that fails during migration stops everything it built. The audit reads integrity
+    // tables that do not exist yet, so it must return rather than run or fault.
+    var coordinator = new _auditCoordinator();
+    var worker = _buildWorker(
+      coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { AuditEnabled = true });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse();
+    await Assert.That(coordinator.AuditClaimCalls).IsEqualTo(0)
+      .Because("nothing may run before the schema the integrity tables live in exists");
+  }
+
+  private static SchemaReadyGate _readyGate() {
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    return gate;
   }
 }

@@ -286,6 +286,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
 #pragma warning disable S4487 // Field keeps background task rooted to prevent GC collection
     private readonly Task _readTask;
 #pragma warning restore S4487
+    private bool _disposed;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PauseStateSubscription"/> class.
@@ -298,6 +299,13 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     }
 
     public void Dispose() {
+      // Guarded because Dispose must be safe to call twice: Cancel() on an already-disposed
+      // source throws, and a `using` around a subscription the caller also released explicitly
+      // is an ordinary shape — the second release would then fault the caller's scope exit.
+      if (_disposed) {
+        return;
+      }
+      _disposed = true;
       _cts.Cancel();
       _cts.Dispose();
       // Don't wait for task - it will complete when cancelled

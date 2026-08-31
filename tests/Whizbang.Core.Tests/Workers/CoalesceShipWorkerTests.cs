@@ -309,7 +309,7 @@ public class CoalesceShipWorkerTests {
   }
 
   private static CoalesceShipWorker _buildWorker(
-      FakeCoalesceCoordinator coordinator,
+      IWorkCoordinator coordinator,
       CoalesceGroupResolver? resolver,
       FakeTimeProvider time) {
     var services = new ServiceCollection();
@@ -502,6 +502,189 @@ public class CoalesceShipWorkerTests {
 
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default)
       => Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  #endregion
+
+  #region Loop resilience
+
+  // The shipper is the only thing that folds coalesce rows and the only thing that releases them
+  // when folding is not possible. If a transient coordinator failure ends the loop nothing
+  // notices — the worker is still "running", the backlog just stops draining, and the rows sit
+  // there until someone restarts the process. So each step has to survive its own failure and
+  // come back on the next tick.
+
+  /// <summary>A coordinator whose coalesce calls fail a fixed number of times, then succeed.</summary>
+  private sealed class FlakyCoalesceCoordinator(int statsFailures, int releaseFailures) : IWorkCoordinator {
+    private int _statsLeft = statsFailures;
+    private int _releaseLeft = releaseFailures;
+
+    public int StatsAttempts { get; private set; }
+    public int ReleaseAttempts { get; private set; }
+    public TaskCompletionSource StatsSucceeded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource ReleaseSucceeded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(
+        CancellationToken cancellationToken = default) {
+      StatsAttempts++;
+      if (_statsLeft-- > 0) {
+        return Task.FromException<IReadOnlyList<CoalesceGroupStats>>(
+          new InvalidOperationException("transient coordinator outage"));
+      }
+      StatsSucceeded.TrySetResult();
+      return Task.FromResult<IReadOnlyList<CoalesceGroupStats>>([]);
+    }
+
+    public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
+      ReleaseAttempts++;
+      if (_releaseLeft-- > 0) {
+        return Task.FromException<int>(new InvalidOperationException("release failed"));
+      }
+      ReleaseSucceeded.TrySetResult();
+      return Task.FromResult(0);
+    }
+
+    // The rest of IWorkCoordinator is default-implemented; only the abstract members need bodies.
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
+      => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(
+        Guid streamId, string perspectiveName, CancellationToken ct = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default)
+      => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default)
+      => Task.CompletedTask;
+    public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
+      => Task.CompletedTask;
+  }
+
+  private static CoalesceGroupResolver _oneGroupResolver(FakeTimeProvider time, string group = "record-digest") {
+    var tagOptions = new TagOptions();
+    tagOptions.Coalesce(group, c => c.SlideSeconds = 15);
+    return new CoalesceGroupResolver(tagOptions, time, () => []);
+  }
+
+  /// <summary>
+  /// A failing startup recovery is logged and the loop still starts ticking.
+  /// </summary>
+  /// <remarks>
+  /// Recovery runs against a coordinator that has just come up alongside this process, so it is
+  /// the single most likely step to hit a cold connection. Letting that end ExecuteAsync would
+  /// mean a database blip during rollout silently disables coalesce shipping for the life of
+  /// the pod.
+  /// </remarks>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_StartupRecoveryFails_TheLoopStillRunsAsync(CancellationToken testToken) {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 0, releaseFailures: 1);
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+    using var cts = new CancellationTokenSource();
+
+    await worker.StartAsync(cts.Token);
+    await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.ReleaseAttempts).IsGreaterThanOrEqualTo(1)
+      .Because("recovery ran and failed");
+    await Assert.That(coordinator.StatsAttempts).IsGreaterThanOrEqualTo(1)
+      .Because("a failed recovery must not stop the first tick — otherwise a cold-start blip "
+             + "disables shipping until the process restarts");
+  }
+
+  /// <summary>
+  /// A failing tick is logged and the loop keeps ticking.
+  /// </summary>
+  /// <remarks>
+  /// There is no other path that drains these rows, so an ended loop is an unbounded backlog
+  /// reported as a healthy worker.
+  /// </remarks>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_ATickFails_TheLoopKeepsTickingAsync(CancellationToken testToken) {
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 2, releaseFailures: 0);
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+    using var cts = new CancellationTokenSource();
+
+    await worker.StartAsync(cts.Token);
+    // Ticks pace on a timer the FakeTimeProvider owns; advance until a stats call succeeds.
+    while (!coordinator.StatsSucceeded.Task.IsCompleted && !cts.IsCancellationRequested) {
+      time.Advance(TimeSpan.FromSeconds(30));
+      await Task.Delay(20, testToken);
+    }
+    await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.StatsAttempts).IsGreaterThanOrEqualTo(3)
+      .Because("two ticks failed and a third ran — one failure must not end the loop");
+  }
+
+  /// <summary>
+  /// Cancellation during the loop ends it cleanly rather than faulting.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CancelledMidLoop_StopsWithoutFaultingAsync(CancellationToken testToken) {
+    // Shutdown cancels the stopping token while the worker may be inside a coordinator call.
+    // A fault here surfaces as a failed host shutdown, which reads as a crash.
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 0, releaseFailures: 0);
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time);
+    using var cts = new CancellationTokenSource();
+
+    await worker.StartAsync(cts.Token);
+    await coordinator.StatsSucceeded.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    var executeTask = worker.ExecuteTask;
+
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("a faulted ExecuteAsync turns an ordinary shutdown into a reported crash");
+  }
+
+  /// <summary>
+  /// Cancellation while waiting on the schema gate returns without touching the coordinator.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CancelledBeforeSchemaReady_NeverStartsAsync(CancellationToken testToken) {
+    // A host that fails during migration stops everything it built. The shipper must not run
+    // recovery against a schema that is not there.
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FlakyCoalesceCoordinator(statsFailures: 0, releaseFailures: 0);
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(
+      Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions()));
+    services.AddSingleton(new WorkCoordinatorOptions());
+    var sp = services.BuildServiceProvider();
+
+    // Gate never marked ready.
+    var worker = new CoalesceShipWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new SchemaReadyGate(),
+      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      coalesceResolver: _oneGroupResolver(time),
+      logger: null,
+      timeProvider: time);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse();
+    await Assert.That(coordinator.StatsAttempts).IsEqualTo(0)
+      .Because("nothing may run before the schema the coalesce tables live in exists");
   }
 
   #endregion

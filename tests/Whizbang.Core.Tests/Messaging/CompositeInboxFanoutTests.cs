@@ -789,4 +789,118 @@ public class CompositeInboxFanoutTests {
     await Assert.That(isComposite).IsFalse()
       .Because("Generic payload names are not catalog-addressed — the catalog holds concrete message types only.");
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // Identity-preserving composites. A redelivery composite carries the original event ids so the
+  // children land with the SAME identity they had the first time. That pairing is positional, so
+  // any mismatch between inner events and ids has to fail the whole fanout — expanding a subset
+  // would silently re-mint the unpaired children under fresh ids and duplicate them downstream.
+  // ---------------------------------------------------------------------------------------------
+
+  private sealed class _identityComposite : IIdentityPreservingComposite {
+    public _identityComposite(IReadOnlyList<Guid> ids, params IMessage?[] inner) {
+      InnerEventIds = ids;
+      _inner = inner;
+    }
+    private readonly IMessage?[] _inner;
+    public IReadOnlyList<Guid> InnerEventIds { get; }
+    public IReadOnlyList<long?>? InnerCommitSequencesOverride { get; init; }
+    public IReadOnlyList<long?>? InnerCommitSequences => InnerCommitSequencesOverride;
+    public int MaxInnerEventsAllowed => 10_000;
+    public IEnumerable<IMessage> InnerEvents => _inner!;
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_PairsChildrenWithTheOriginalIdsAsync() {
+    var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    var composite = new _identityComposite(ids, new _innerEvent("a"), new _innerEvent("b"));
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Select(c => c.MessageId)).Contains(ids[0]);
+    await Assert.That(result.Children.Select(c => c.MessageId)).Contains(ids[1]);
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_WithMoreInnersThanIds_FailsAsync() {
+    // Three events, two ids: the third has no identity to inherit. Expanding two and dropping
+    // one would lose an event; expanding all three would re-mint the last under a fresh id.
+    var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    var composite = new _identityComposite(
+      ids, new _innerEvent("a"), new _innerEvent("b"), new _innerEvent("c"));
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Children).IsEmpty();
+    await Assert.That(result.Detail).Contains("InnerEventIds");
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_WithMoreInnersThanCommitSequences_FailsAsync() {
+    var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    var composite = new _identityComposite(ids, new _innerEvent("a"), new _innerEvent("b")) {
+      InnerCommitSequencesOverride = [1L],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Detail).Contains("InnerCommitSequences");
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_WithANullInner_FailsRatherThanDropAsync() {
+    // A plain composite drops a null inner and carries on. An identity-preserving one cannot:
+    // dropping shifts every later event onto the wrong id.
+    var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    var composite = new _identityComposite(ids, null, new _innerEvent("b"));
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Children).IsEmpty();
+    await Assert.That(result.Detail).Contains("id pairing");
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_CarriesTheCommitSequencesThroughAsync() {
+    var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    var composite = new _identityComposite(ids, new _innerEvent("a"), new _innerEvent("b")) {
+      InnerCommitSequencesOverride = [10L, 20L],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_WithFewerInnersThanIds_FailsAsync() {
+    // The reverse mismatch: two ids, one event. Nothing is mis-paired yet, but an id with no
+    // event means the redelivery is incomplete, and expanding it would quietly drop one.
+    var ids = new[] { Guid.NewGuid(), Guid.NewGuid() };
+    var composite = new _identityComposite(ids, new _innerEvent("only"));
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Children).IsEmpty();
+    await Assert.That(result.Detail).Contains("InnerEventIds");
+  }
+
+  [Test]
+  public async Task TryExpand_IdentityComposite_WithFewerInnersThanCommitSequences_FailsAsync() {
+    var ids = new[] { Guid.NewGuid() };
+    var composite = new _identityComposite(ids, new _innerEvent("only")) {
+      InnerCommitSequencesOverride = [1L, 2L],
+    };
+
+    var result = CompositeInboxFanout.TryExpand(composite, _sourceEnvelope(Guid.NewGuid()), _provider());
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+    await Assert.That(result.Detail).Contains("InnerCommitSequences");
+  }
 }

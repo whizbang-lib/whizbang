@@ -702,4 +702,268 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
   }
 
   #endregion
+
+  #region Perspective data coalescing (dotnet/efcore#38625 workaround)
+
+  // EF Core 10 materializes a JSON-absent complex collection as null rather than empty. That
+  // happens on every row written before a collection property was added, so a schema evolution
+  // turns yesterday's rows into NullReferenceExceptions on read and PrepareToSave failures on
+  // write. The generator walks each perspective model's collection graph at compile time and
+  // emits `??=` statements to repair the shape on materialization.
+  //
+  // The walk is the interesting part: it has to reach collections nested inside complex
+  // references and inside other collections' elements, skip the properties where null is a
+  // legitimate value, and terminate on a model graph that refers back to itself.
+
+  private static string _coalescerFor(string modelBody, string extraTypes = "") => $$"""
+    using System.Collections.Generic;
+    using Microsoft.EntityFrameworkCore;
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+    using Whizbang.Data.EFCore.Custom;
+
+    namespace TestApp;
+
+    public record CoalesceEvent : IEvent;
+
+    {{extraTypes}}
+
+    public class CoalesceModel {
+      public string Id { get; set; } = "";
+    {{modelBody}}
+    }
+
+    public class CoalescePerspective : IPerspectiveFor<CoalesceModel, CoalesceEvent> {
+      public CoalesceModel Apply(CoalesceModel currentData, CoalesceEvent eventData) => currentData;
+    }
+
+    [WhizbangDbContext]
+    public class TestDbContext : DbContext {
+      public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+    }
+    """;
+
+  private static async Task<string> _generatedCoalescerAsync(string modelBody, string extraTypes = "") {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(
+      _coalescerFor(modelBody, extraTypes));
+    return string.Join("\n", result.GeneratedSources.Select(g => g.SourceText.ToString()));
+  }
+
+  /// <summary>A settable, non-nullable collection is coalesced to empty.</summary>
+  [Test]
+  public async Task Coalescer_SettableNonNullableCollection_IsCoalescedAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public List<string> Tags { get; set; } = new();
+    """);
+
+    await Assert.That(generated).Contains("Tags ??=")
+      .Because("an old-shape row materializes this as null, and every read of it then throws");
+  }
+
+  /// <summary>A nullable-annotated collection is left alone.</summary>
+  [Test]
+  public async Task Coalescer_NullableAnnotatedCollection_IsLeftAloneAsync() {
+    // The annotation is the author saying null is a real state here — "no tags recorded" is
+    // different from "tags recorded, and there were none". Coalescing would erase that.
+    var generated = await _generatedCoalescerAsync("""
+      public List<string>? Tags { get; set; }
+    """);
+
+    await Assert.That(generated).DoesNotContain("Tags ??=")
+      .Because("null is a legitimate value on a nullable-annotated collection");
+  }
+
+  /// <summary>An init-only collection is not assigned post-construction.</summary>
+  [Test]
+  public async Task Coalescer_InitOnlyCollection_IsNotAssignedAsync() {
+    // `??=` against an init-only setter is CS8852, so emitting it would break the consumer's
+    // build in generated code they cannot edit.
+    var generated = await _generatedCoalescerAsync("""
+      public List<string> Tags { get; init; } = new();
+    """);
+
+    await Assert.That(generated).DoesNotContain("Tags ??=")
+      .Because("assigning an init-only property post-construction is CS8852 — in generated code");
+  }
+
+  /// <summary>A get-only collection is not assigned either.</summary>
+  [Test]
+  public async Task Coalescer_GetOnlyCollection_IsNotAssignedAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public List<string> Tags { get; } = new();
+    """);
+
+    await Assert.That(generated).DoesNotContain("Tags ??=");
+  }
+
+  /// <summary>The walk descends through a complex reference to reach its collections.</summary>
+  [Test]
+  public async Task Coalescer_CollectionBehindAComplexReference_IsReachedAsync() {
+    // Stopping at the top level would leave every nested collection unrepaired, which is the
+    // common shape — a model with an owned address or settings object that holds a list.
+    var generated = await _generatedCoalescerAsync("""
+      public Settings Config { get; set; } = new();
+    """, """
+    public class Settings {
+      public List<string> Flags { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).Contains("Flags ??=");
+  }
+
+  /// <summary>The complex reference itself is null-guarded rather than constructed.</summary>
+  [Test]
+  public async Task Coalescer_ComplexReference_IsGuardedNotConstructedAsync() {
+    // A null complex reference may be legitimate — only collections are repaired. Constructing
+    // one would invent state the row never had.
+    var generated = await _generatedCoalescerAsync("""
+      public Settings Config { get; set; } = new();
+    """, """
+    public class Settings {
+      public List<string> Flags { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).Contains("Config is");
+    await Assert.That(generated).DoesNotContain("Config ??=")
+      .Because("only collections are coalesced; a null reference may be the row's real state");
+  }
+
+  /// <summary>The walk descends into a collection's complex element type.</summary>
+  [Test]
+  public async Task Coalescer_CollectionOfComplexElements_IsWalkedPerElementAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public List<Line> Lines { get; set; } = new();
+    """, """
+    public class Line {
+      public List<string> Notes { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).Contains("Lines ??=");
+    await Assert.That(generated).Contains("foreach")
+      .Because("each element carries its own collections, so the repair has to run per element");
+    await Assert.That(generated).Contains("Notes ??=");
+  }
+
+  /// <summary>
+  /// A collection that was itself left un-coalesced still has its elements walked, under a null
+  /// guard.
+  /// </summary>
+  [Test]
+  public async Task Coalescer_NullableCollectionOfComplexElements_IsWalkedUnderAGuardAsync() {
+    // The collection stays possibly-null by the author's choice, so the foreach that repairs
+    // its elements must be guarded or the repair itself throws.
+    var generated = await _generatedCoalescerAsync("""
+      public List<Line>? Lines { get; set; }
+    """, """
+    public class Line {
+      public List<string> Notes { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).DoesNotContain("Lines ??=");
+    await Assert.That(generated).Contains("Notes ??=");
+    await Assert.That(generated).Contains("is not null")
+      .Because("walking a collection left possibly-null must be guarded, or the repair NREs");
+  }
+
+  /// <summary>A self-referencing model does not send the walker into infinite recursion.</summary>
+  [Test]
+  public async Task Coalescer_SelfReferencingModel_TerminatesAsync() {
+    // A tree-shaped model is ordinary. Without the cycle guard the generator would recurse
+    // until it died — and a generator crash takes the consumer's whole build with it.
+    var generated = await _generatedCoalescerAsync("""
+      public Node Root { get; set; } = new();
+    """, """
+    public class Node {
+      public List<string> Labels { get; set; } = new();
+      public Node Child { get; set; } = null!;
+    }
+    """);
+
+    await Assert.That(generated).Contains("Labels ??=")
+      .Because("the guard must stop the recursion without abandoning the work already found");
+  }
+
+  /// <summary>Mutually recursive models terminate too.</summary>
+  [Test]
+  public async Task Coalescer_MutuallyRecursiveModels_TerminateAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public Parent Top { get; set; } = new();
+    """, """
+    public class Parent {
+      public List<string> ParentTags { get; set; } = new();
+      public Child Kid { get; set; } = null!;
+    }
+
+    public class Child {
+      public List<string> ChildTags { get; set; } = new();
+      public Parent Owner { get; set; } = null!;
+    }
+    """);
+
+    await Assert.That(generated).Contains("ParentTags ??=");
+    await Assert.That(generated).Contains("ChildTags ??=");
+  }
+
+  /// <summary>A model with no collections emits no coalesce body at all.</summary>
+  [Test]
+  public async Task Coalescer_ModelWithNoCollections_EmitsNoDataBlockAsync() {
+    // The registration is emitted for every model, so a model with nothing to repair must not
+    // carry a dead `var data = row.Data;` block into generated output.
+    var generated = await _generatedCoalescerAsync("""
+      public int Count { get; set; }
+    """);
+
+    await Assert.That(generated).DoesNotContain("var data = row.Data;")
+      .Because("nothing to coalesce means nothing to emit");
+  }
+
+  /// <summary>The scope extensions collection is coalesced for every model regardless.</summary>
+  [Test]
+  public async Task Coalescer_ScopeExtensions_AreAlwaysCoalescedAsync() {
+    // Scope lives on the row rather than the model, so it needs the same repair on every
+    // perspective — including the ones whose own model has no collections at all.
+    var generated = await _generatedCoalescerAsync("""
+      public int Count { get; set; }
+    """);
+
+    await Assert.That(generated).Contains("row.Scope.Extensions ??=");
+  }
+
+  /// <summary>Arrays are coalesced the same way lists are.</summary>
+  [Test]
+  public async Task Coalescer_ArrayProperty_IsCoalescedAsync() {
+    var generated = await _generatedCoalescerAsync("""
+      public string[] Codes { get; set; } = [];
+    """);
+
+    await Assert.That(generated).Contains("Codes ??=");
+  }
+
+  /// <summary>The generated coalescer compiles — it is emitted into the consumer's build.</summary>
+  [Test]
+  public async Task Coalescer_GeneratedCodeHasNoCompilationErrorsAsync() {
+    // The whole risk of emitting statements from a symbol walk is producing code that does not
+    // build, in a file the consumer cannot edit.
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(_coalescerFor("""
+      public List<Line> Lines { get; set; } = new();
+      public List<string>? Optional { get; set; }
+      public Settings Config { get; set; } = new();
+    """, """
+    public class Line {
+      public List<string> Notes { get; set; } = new();
+    }
+
+    public class Settings {
+      public List<string> Flags { get; set; } = new();
+    }
+    """));
+
+    await Assert.That(result.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error)).IsFalse();
+  }
+
+  #endregion
 }
