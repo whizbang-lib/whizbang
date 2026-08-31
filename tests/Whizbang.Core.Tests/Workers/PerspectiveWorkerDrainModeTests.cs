@@ -81,17 +81,18 @@ public class PerspectiveWorkerDrainModeTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
-      eventTypeProvider: null, // null — lazy-resolved from DI
+      completionStrategy: new InstantCompletionStrategy(),
+      eventTypeProvider: null,
+      // null — lazy-resolved from DI
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();

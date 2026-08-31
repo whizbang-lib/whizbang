@@ -443,9 +443,9 @@ public class PerspectiveWorkerDeepPathMiscTests {
     configure?.Invoke(options);
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(options),
+      instanceProvider: instanceProvider,
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: registry,
@@ -455,7 +455,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel);
+      perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, harness, provider);
   }
 

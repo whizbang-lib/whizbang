@@ -74,7 +74,8 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       options: Options.Create(new PerspectiveWorkerOptions { MaxPerspectiveEventAttempts = maxAttempts }),
       deadLetterStore: store,
       generationProvider: gen,
-      deadLetterMetrics: metrics);
+      deadLetterMetrics: metrics,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   private static StreamEventData _row(int attempts) {

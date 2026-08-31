@@ -36,7 +36,7 @@ public class CompositionSatisfiabilityTests {
   /// build on every improvement, and asserting nothing would let the surface grow silently, which
   /// is how it reached this size.
   /// </remarks>
-  private const int OPTIONAL_INJECTED_PARAMETER_BASELINE = 142;
+  private const int OPTIONAL_INJECTED_PARAMETER_BASELINE = 141;
 
   /// <summary>
   /// Fails when a new optional interface-typed constructor parameter is introduced.
