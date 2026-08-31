@@ -671,7 +671,8 @@ public class CoalesceShipWorkerTests {
     var worker = new CoalesceShipWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new SchemaReadyGate(),
-      _oneGroupResolver(time),
+      new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      coalesceResolver: _oneGroupResolver(time),
       logger: null,
       timeProvider: time);
 
