@@ -45,6 +45,29 @@ public class MaintenanceWorkerSnapshotAndHookTests {
 
   private sealed class SnapshotCoordinator : IWorkCoordinator {
     public List<EphemeralSnapshotTarget> Targets { get; init; } = [];
+    public List<EphemeralDestructionTarget> AboutToReap { get; init; } = [];
+    public List<Guid> Held { get; } = [];
+    public DateTimeOffset? HeldUntil { get; private set; }
+    public int FailuresRecorded;
+    public int AttemptToReport { get; init; } = 1;
+
+    public Task<IReadOnlyList<EphemeralDestructionTarget>> GetEphemeralBodiesAboutToReapAsync(
+        CancellationToken ct = default)
+      => Task.FromResult<IReadOnlyList<EphemeralDestructionTarget>>(AboutToReap);
+
+    public Task HoldEphemeralDestructionAsync(
+        IReadOnlyList<Guid> eventIds, DateTimeOffset holdUntil, CancellationToken ct = default) {
+      lock (Held) { Held.AddRange(eventIds); HeldUntil = holdUntil; }
+      return Task.CompletedTask;
+    }
+
+    public Task<int> RecordDestructionFailureAsync(
+        IReadOnlyList<Guid> eventIds, DateTimeOffset retryHoldUntil, int maxRetries,
+        Whizbang.Core.Lifecycle.OnDestroyFailure onFailure = Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenForcedDelete,
+        CancellationToken ct = default) {
+      Interlocked.Increment(ref FailuresRecorded);
+      return Task.FromResult(AttemptToReport);
+    }
 
     public Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(
         CancellationToken ct = default)
@@ -92,12 +115,37 @@ public class MaintenanceWorkerSnapshotAndHookTests {
       new HashSet<LifecycleStage>();
   }
 
+  private sealed class StubHook(
+      DestructionResult? before = null, Exception? beforeThrows = null, Exception? afterThrows = null)
+      : IDestructionHook {
+    public int BeforeCalls;
+    public int AfterCalls;
+
+    public ValueTask<DestructionResult> OnBeforeDestructionAsync(
+        DestructionContext context, CancellationToken ct = default) {
+      Interlocked.Increment(ref BeforeCalls);
+      return beforeThrows is not null
+        ? ValueTask.FromException<DestructionResult>(beforeThrows)
+        : ValueTask.FromResult(before ?? new DestructionResult());
+    }
+
+    public ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken ct = default) {
+      Interlocked.Increment(ref AfterCalls);
+      return afterThrows is not null ? ValueTask.FromException(afterThrows) : ValueTask.CompletedTask;
+    }
+  }
+
   private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
-      SnapshotCoordinator coord, IPerspectiveRunnerRegistry? registry) {
+      SnapshotCoordinator coord, IPerspectiveRunnerRegistry? registry, IDestructionHook? hook = null,
+      Whizbang.Core.Lifecycle.OnDestroyFailure policy =
+        Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenForcedDelete) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     if (registry is not null) {
       services.AddSingleton(registry);
+    }
+    if (hook is not null) {
+      services.AddSingleton(hook);
     }
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -106,7 +154,10 @@ public class MaintenanceWorkerSnapshotAndHookTests {
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       gate,
-      Options.Create(new MaintenanceWorkerOptions { IntervalMinutes = 1 }),
+      Options.Create(new MaintenanceWorkerOptions {
+        IntervalMinutes = 1,
+        OnDestroyFailure = policy,
+      }),
       logger);
     return (worker, logger);
   }
@@ -182,5 +233,151 @@ public class MaintenanceWorkerSnapshotAndHookTests {
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(runner.Snapshots).IsEmpty();
+  }
+
+  // --- Destruction hooks -----------------------------------------------------
+  // A registered hook gets to preserve, compact or archive an ephemeral body before the
+  // reaper deletes it. Its answer decides whether the delete proceeds at all, so the
+  // cancel, defer and failure paths each change what happens to real data.
+
+  private static EphemeralDestructionTarget _target() =>
+    new(Guid.CreateVersion7(), Guid.CreateVersion7(), "Test.Event, Test");
+
+  [Test]
+  public async Task WithoutARegisteredHook_DestructionProceedsUnhookedAsync() {
+    var coord = new SnapshotCoordinator { AboutToReap = { _target() } };
+    var (worker, _) = _build(coord, registry: null, hook: null);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Held).IsEmpty();
+  }
+
+  [Test]
+  public async Task HookCancelling_HoldsTheBodiesIndefinitelyAsync() {
+    // Cancel means "do not delete this". The hold is DateTimeOffset.MaxValue rather than a
+    // backoff, because there is no later time at which the answer changes on its own.
+    var coord = new SnapshotCoordinator { AboutToReap = { _target(), _target() } };
+    var hook = new StubHook(new DestructionResult { Cancel = true });
+    var (worker, _) = _build(coord, registry: null, hook);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(hook.BeforeCalls).IsEqualTo(1);
+    await Assert.That(coord.Held).Count().IsEqualTo(2);
+    await Assert.That(coord.HeldUntil).IsEqualTo(DateTimeOffset.MaxValue);
+  }
+
+  [Test]
+  public async Task HookDeferring_HoldsTheBodiesUntilTheRequestedTimeAsync() {
+    var until = DateTimeOffset.UtcNow.AddHours(6);
+    var coord = new SnapshotCoordinator { AboutToReap = { _target() } };
+    var hook = new StubHook(new DestructionResult { DeferUntil = until });
+    var (worker, _) = _build(coord, registry: null, hook);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.HeldUntil).IsEqualTo(until);
+  }
+
+  [Test]
+  public async Task HookAllowing_LetsTheReapProceedAsync() {
+    var coord = new SnapshotCoordinator { AboutToReap = { _target() } };
+    var hook = new StubHook(new DestructionResult());
+    var (worker, _) = _build(coord, registry: null, hook);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Held).IsEmpty();
+    await Assert.That(hook.AfterCalls).IsEqualTo(1)
+      .Because("the bodies were deleted, so the after-hook fires for them");
+  }
+
+  [Test]
+  public async Task HookThrowingBeforeDestruction_RecordsAFailureAndKeepsTheBodiesAsync() {
+    // A hook that cannot run is not permission to delete: the bodies are held under the
+    // configured retry policy instead of being reaped unhooked.
+    var coord = new SnapshotCoordinator { AboutToReap = { _target() } };
+    var hook = new StubHook(beforeThrows: new InvalidOperationException("hook failed"));
+    var (worker, logger) = _build(coord, registry: null, hook);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.FailuresRecorded).IsEqualTo(1);
+    await Assert.That(logger.Snapshot().Any(e => e.Exception is InvalidOperationException)).IsTrue();
+  }
+
+  [Test]
+  public async Task HookThrowingAfterDestruction_IsLoggedNotPropagatedAsync() {
+    // The bodies are already gone by then; failing the cycle would lose the rest of the
+    // maintenance pass over work that cannot be undone anyway.
+    var coord = new SnapshotCoordinator { AboutToReap = { _target() } };
+    var hook = new StubHook(afterThrows: new InvalidOperationException("after failed"));
+    var (worker, logger) = _build(coord, registry: null, hook);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Snapshot().Any(e => e.Exception is InvalidOperationException)).IsTrue();
+  }
+
+  [Test]
+  public async Task WithNothingAboutToReap_TheHookIsNotConsultedAsync() {
+    var coord = new SnapshotCoordinator();
+    var hook = new StubHook();
+    var (worker, _) = _build(coord, registry: null, hook);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(hook.BeforeCalls).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task HookFailure_UnderForceDeletePolicy_ReportsAForcedDeleteAsync() {
+    // The policy decides what a hook failure costs. ForceDeleteImmediately says the body
+    // goes regardless, so the operator sees that rather than "held for retry".
+    var coord = new SnapshotCoordinator { AboutToReap = { _target() } };
+    var hook = new StubHook(beforeThrows: new InvalidOperationException("hook failed"));
+    var (worker, logger) = _build(
+      coord, registry: null, hook,
+      Whizbang.Core.Lifecycle.OnDestroyFailure.ForceDeleteImmediately);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Snapshot().Any(e =>
+      e.Message.Contains("FORCED DELETE", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task HookFailure_UnderRetryThenKeep_WithRetriesExhausted_ReportsKeptAsync() {
+    // The opposite policy: once the retries are spent the body is kept rather than forced,
+    // so a hook that never succeeds cannot silently delete data it was meant to preserve.
+    var coord = new SnapshotCoordinator {
+      AboutToReap = { _target() },
+      AttemptToReport = 999,
+    };
+    var hook = new StubHook(beforeThrows: new InvalidOperationException("hook failed"));
+    var (worker, logger) = _build(
+      coord, registry: null, hook,
+      Whizbang.Core.Lifecycle.OnDestroyFailure.RetryThenKeep);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Snapshot().Any(e =>
+      e.Message.Contains("KEPT", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task HookFailure_WithRetriesExhausted_DefaultsToForcedDeleteAsync() {
+    var coord = new SnapshotCoordinator {
+      AboutToReap = { _target() },
+      AttemptToReport = 999,
+    };
+    var hook = new StubHook(beforeThrows: new InvalidOperationException("hook failed"));
+    var (worker, logger) = _build(coord, registry: null, hook);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Snapshot().Any(e =>
+      e.Message.Contains("FORCED DELETE", StringComparison.Ordinal))).IsTrue();
   }
 }
