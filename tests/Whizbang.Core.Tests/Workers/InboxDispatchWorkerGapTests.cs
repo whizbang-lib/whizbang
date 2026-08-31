@@ -146,6 +146,13 @@ public class InboxDispatchWorkerGapTests {
 
   private sealed record InnerImportEvent(string Id) : IEvent;
 
+  /// <summary>A composite that expands cleanly — its own cap is generous, so only the
+  /// consumer-side expansion budget can refuse it.</summary>
+  private sealed class WideComposite(int count) : ICompositeEvent {
+    public int MaxInnerEventsAllowed => 1_000_000;
+    public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new InnerImportEvent($"W-{i}"));
+  }
+
   private sealed class OverCapComposite(int count) : ICompositeEvent {
     public int MaxInnerEventsAllowed => 1;
     public IEnumerable<IMessage> InnerEvents => Enumerable.Range(0, count).Select(i => (IMessage)new InnerImportEvent($"J-{i}"));
@@ -546,13 +553,14 @@ public class InboxDispatchWorkerGapTests {
       ICompositeEvent composite,
       IDeadLetterStore? deadLetterStore,
       IGenerationProvider? generationProvider,
-      DeadLetterMetrics? dlqMetrics = null) {
+      DeadLetterMetrics? dlqMetrics = null,
+      InboxDispatchWorkerOptions? options = null) {
     var gate = new SchemaReadyGate();
     gate.MarkReady();
     return new InboxDispatchWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, new FakeFailureChannel(), gate,
-      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(options ?? new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
@@ -895,5 +903,252 @@ public class InboxDispatchWorkerGapTests {
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+  }
+
+  // ============================================================
+  // Consumer-side expansion budget (MaxCompositeChildrenPerExpansion)
+  // ============================================================
+
+  /// <summary>
+  /// Enforcement on and the expansion over budget: the composite is dead-lettered rather than
+  /// expanded, so none of its children reach the inbox.
+  /// </summary>
+  /// <remarks>
+  /// The composite declares its own MaxInnerEventsAllowed, so a producer can wave through any
+  /// size it likes. This budget is the consumer's own limit — the only one it controls — and
+  /// expansion happens after admission control has already accepted the message, so without it
+  /// a single accepted composite can add more inbox rows than every downstream bound was sized
+  /// for.
+  /// </remarks>
+  [Test]
+  public async Task CompositeOverConsumerBudget_Enforced_DeadLettersInsteadOfExpandingAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, logger, new WideComposite(50),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 10,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var move = store.Moves.Single();
+    await Assert.That(move.SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(move.SourceId).IsEqualTo(work.MessageId);
+    await Assert.That(move.Reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
+    await Assert.That(handlerCommit.All).IsEmpty()
+      .Because("the DLQ move deletes the wh_inbox row in the same transaction — no children and no legacy commit");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("50", StringComparison.Ordinal))).IsTrue()
+      .Because("the operator needs the actual child count to size the budget");
+  }
+
+  /// <summary>
+  /// The refusal increments the DLQ Added counter with the budget reason, so an inflating
+  /// producer shows up on the dead-letter dashboard rather than only in logs.
+  /// </summary>
+  [Test]
+  public async Task CompositeOverConsumerBudget_Enforced_RecordsTheDeadLetterMetricAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+
+    var added = new List<(long Value, string? SourceTable, string? Reason)>();
+    using var listener = new MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (instrument.Name.Contains("dead_letter", StringComparison.Ordinal)) {
+          l.EnableMeasurementEvents(instrument);
+        }
+      },
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      string? sourceTable = null;
+      string? reason = null;
+      foreach (var tag in tags) {
+        if (tag.Key == "source_table") { sourceTable = tag.Value?.ToString(); }
+        if (tag.Key == "reason") { reason = tag.Value?.ToString(); }
+      }
+      added.Add((value, sourceTable, reason));
+    });
+    listener.Start();
+
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, new RecordingLogger<InboxDispatchWorker>(), new WideComposite(25),
+      deadLetterStore: new CapturingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider(),
+      dlqMetrics: metrics,
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 4,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+    listener.Dispose();
+
+    await Assert.That(added).Count().IsEqualTo(1);
+    await Assert.That(added[0].Value).IsEqualTo(1L);
+    await Assert.That(added[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(added[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
+  }
+
+  /// <summary>
+  /// The budget refusal's DLQ move is best-effort like every other: when the store throws, the
+  /// row still terminates via the legacy mark-Published completion.
+  /// </summary>
+  /// <remarks>
+  /// Without the fallback the composite stays claimable, so it re-claims, re-expands past the
+  /// budget, and re-fails — the exact inbox growth the budget exists to stop.
+  /// </remarks>
+  [Test]
+  public async Task CompositeOverConsumerBudget_StoreThrows_FallsBackToTerminalCommitAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, logger, new WideComposite(30),
+      deadLetterStore: new ThrowingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 5,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var routed = handlerCommit.All.Single();
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)(work.Status | MessageProcessingStatus.Published));
+    await Assert.That(routed.NewInboxMessages is null || routed.NewInboxMessages.Count == 0).IsTrue()
+      .Because("refusing the expansion is all-or-nothing: the fallback must not smuggle children through");
+    await Assert.That(logger.Entries.Any(e =>
+      e.Message.Contains("falling back to legacy mark-Published", StringComparison.Ordinal))).IsTrue();
+  }
+
+  /// <summary>
+  /// Same refusal with no DLQ store wired: straight to the terminal completion.
+  /// </summary>
+  [Test]
+  public async Task CompositeOverConsumerBudget_NoDeadLetterStore_TerminatesViaLegacyCommitAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, new RecordingLogger<InboxDispatchWorker>(), new WideComposite(12),
+      deadLetterStore: null,
+      generationProvider: null,
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 3,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    var work = _makeWork();
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var routed = handlerCommit.All.Single();
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)(work.Status | MessageProcessingStatus.Published));
+    await Assert.That(routed.NewInboxMessages is null || routed.NewInboxMessages.Count == 0).IsTrue();
+  }
+
+  /// <summary>
+  /// Enforcement off is report-only: the breach is logged, and the expansion still goes through.
+  /// </summary>
+  /// <remarks>
+  /// This is the rollout default. An operator turning the budget on blind would dead-letter live
+  /// traffic, so the first phase only reports what *would* have been refused — which means the
+  /// report path has to leave the children intact.
+  /// </remarks>
+  [Test]
+  public async Task CompositeOverConsumerBudget_NotEnforced_LogsButStillExpandsAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, logger, new WideComposite(20),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 6,
+        EnforceCompositeExpansionBudget = false,
+      });
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(store.Moves).IsEmpty()
+      .Because("report-only must never dead-letter — that is the whole point of the rollout phase");
+    var routed = handlerCommit.All.Single();
+    await Assert.That(routed.NewInboxMessages).IsNotNull();
+    await Assert.That(routed.NewInboxMessages!.Count).IsEqualTo(20)
+      .Because("every child must still be committed while the budget is only reporting");
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo((int)MessageProcessingStatus.EventStored);
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("the report is the only signal an operator gets before enabling enforcement");
+  }
+
+  /// <summary>
+  /// A budget of zero or less disables the check entirely, however wide the expansion.
+  /// </summary>
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task CompositeExpansionBudget_NonPositive_IsDisabledAsync(int budget) {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, new RecordingLogger<InboxDispatchWorker>(), new WideComposite(40),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = budget,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(store.Moves).IsEmpty();
+    await Assert.That(handlerCommit.All.Single().NewInboxMessages!.Count).IsEqualTo(40);
+  }
+
+  /// <summary>
+  /// An expansion inside the budget takes the ordinary path untouched.
+  /// </summary>
+  [Test]
+  public async Task CompositeWithinConsumerBudget_ExpandsNormallyAsync() {
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var store = new CapturingDeadLetterStore();
+    await using var sp = new ServiceCollection()
+      .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
+      .BuildServiceProvider();
+    var worker = _buildCompositeWorker(
+      sp, handlerCommit, new RecordingLogger<InboxDispatchWorker>(), new WideComposite(8),
+      deadLetterStore: store,
+      generationProvider: new FakeGenerationProvider(),
+      options: new InboxDispatchWorkerOptions {
+        MaxCompositeChildrenPerExpansion = 8,
+        EnforceCompositeExpansionBudget = true,
+      });
+
+    await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+
+    await Assert.That(store.Moves).IsEmpty()
+      .Because("the budget is a ceiling, not an exclusive bound — exactly-at-budget must pass");
+    await Assert.That(handlerCommit.All.Single().NewInboxMessages!.Count).IsEqualTo(8);
   }
 }

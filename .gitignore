@@ -460,3 +460,6 @@ local-packages/
 # Stryker.NET mutation testing output
 **/StrykerOutput/
 Whizbang.Analysis.slnx
+
+# Local git worktrees — checkouts, never content
+.worktrees/
