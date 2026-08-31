@@ -158,4 +158,78 @@ public class BaseUpsertStrategyAtomicPathTests : EFCoreTestBase {
     await Assert.That(row!.Version).IsEqualTo(1);
     await Assert.That(row.Data.Status).IsEqualTo("FallbackPath");
   }
+
+  // --- Identifier guard ------------------------------------------------------
+  // The atomic path interpolates the table name and physical-field column names into raw
+  // SQL. They are not user input today — source generators produce them from compile-time
+  // definitions — but the guard is what keeps that true if a caller is ever refactored.
+  // A name that fails it declines the atomic path and falls through to the EF-mapped
+  // write, which never sees the string. The row still lands; the SQL never does.
+  //
+  // Only the table-name half is covered here. The physical-field key guard needs a
+  // perspective whose table actually has projected columns; wh_per_order has none, so a
+  // test against it fails on the missing column rather than on the guard.
+
+  private static Order _guardOrder(Guid id) => new() {
+    OrderId = new TestOrderId(id),
+    Amount = 10m,
+    Status = "GuardProbe",
+  };
+
+  private static PerspectiveMetadata _guardMetadata() => new() {
+    EventType = "OrderCreated",
+    EventId = Guid.NewGuid().ToString(),
+    Timestamp = DateTime.UtcNow,
+  };
+
+  private static void _enablePathOne() =>
+    BaseUpsertStrategy.PathOnePersistenceOptionsProvider = () =>
+      PerspectivePersistenceJsonContext.CreateOptions(
+        MessageJsonContext.Default,
+        global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
+
+  [Test]
+  [Arguments("wh_per_order; DROP TABLE wh_per_order")]
+  [Arguments("wh-per-order")]
+  [Arguments("1_starts_with_digit")]
+  [Arguments("wh_per_order\"")]
+  public async Task Upsert_WithAnInvalidTableName_DeclinesTheAtomicPathAndLeavesTheTableIntactAsync(
+      string tableName) {
+    _enablePathOne();
+    await using var context = CreateDbContext();
+    var strategy = new PostgresUpsertStrategy();
+    var id = Guid.CreateVersion7();
+
+    await strategy.UpsertPerspectiveRowAsync(
+      context, tableName, id, _guardOrder(id), _guardMetadata(), new PerspectiveScope());
+
+    await using var readContext = CreateDbContext();
+    var row = await readContext.Set<PerspectiveRow<Order>>()
+      .AsNoTracking()
+      .FirstOrDefaultAsync(r => r.Id == id);
+
+    await Assert.That(row).IsNotNull()
+      .Because("declining the atomic path falls through to the EF-mapped write, which "
+             + "never interpolates the caller's string");
+  }
+
+  [Test]
+  public async Task Upsert_WithAnOverlongTableName_DeclinesTheAtomicPathAsync() {
+    // Postgres truncates identifiers at 63 bytes, so a longer name would silently target a
+    // different table than the caller named — the guard rejects rather than let that happen.
+    _enablePathOne();
+    await using var context = CreateDbContext();
+    var strategy = new PostgresUpsertStrategy();
+    var id = Guid.CreateVersion7();
+
+    await strategy.UpsertPerspectiveRowAsync(
+      context, new string('a', 64), id, _guardOrder(id), _guardMetadata(), new PerspectiveScope());
+
+    await using var readContext = CreateDbContext();
+    var row = await readContext.Set<PerspectiveRow<Order>>()
+      .AsNoTracking()
+      .FirstOrDefaultAsync(r => r.Id == id);
+
+    await Assert.That(row).IsNotNull();
+  }
 }
