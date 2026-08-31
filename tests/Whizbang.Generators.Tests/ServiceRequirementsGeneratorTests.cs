@@ -236,4 +236,63 @@ public class ServiceRequirementsGeneratorTests {
       .Because("what a factory resolves with GetRequiredService is a hard requirement of that "
              + "registration, and is invisible to a type-based scan");
   }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AnOptionalParameterIsNotAHardRequirementAsync() {
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IRequired { }
+      public interface IOptionalDep { }
+      public sealed class Worker {
+        public Worker(IRequired required, IOptionalDep? optional = null) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<Worker>();
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    // An optional parameter has a compiler-supplied default, so it is by definition not something
+    // the composition must provide. Recording it would make validation demand a registration for
+    // every dependency that legitimately falls back, and since validation runs at startup by
+    // default, that fails correct applications on boot.
+    await Assert.That(generated).Contains("IRequired");
+    await Assert.That(generated).DoesNotContain("IOptionalDep")
+      .Because("demanding a registration for an optional dependency fails compositions that are "
+             + "correct, which is the failure mode that gets a guard switched off");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ACollectionDependencyIsNotARequirementAsync() {
+    const string source = """
+      using System.Collections.Generic;
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IPlugin { }
+      public sealed class Host2 {
+        public Host2(IEnumerable<IPlugin> plugins) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<Host2>();
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    // The container always satisfies IEnumerable<T>, returning empty when nothing is registered.
+    // Requiring a registration for it would report a gap that cannot exist.
+    await Assert.That(generated).DoesNotContain("IEnumerable");
+  }
 }

@@ -173,6 +173,38 @@ public class RegistrationValidationTests {
     await Assert.That(ex!.ParamName).IsEqualTo("requirements");
   }
 
+  [Test]
+  public async Task ContainerIntrinsicServicesAreAlwaysSatisfiedAsync() {
+    var services = new ServiceCollection();
+    var requirements = new[] {
+      new ServiceRequirement(typeof(Consumer), [
+        typeof(IServiceProvider),
+        typeof(IServiceScopeFactory),
+      ]),
+    };
+
+    var returned = services.ValidateWhizbangRegistrations(requirements);
+
+    // The container supplies these itself; they never appear as descriptors in the collection.
+    // Reporting them missing would put a couple of dozen impossible gaps in front of anyone
+    // reading a real failure, and bury the handful that are real.
+    await Assert.That(returned).IsSameReferenceAs(services);
+  }
+
+  [Test]
+  public async Task GenericCollectionDependenciesAreAlwaysSatisfiedAsync() {
+    var services = new ServiceCollection();
+    var requirements = new[] {
+      new ServiceRequirement(typeof(Consumer), [typeof(IEnumerable<IPresent>)]),
+    };
+
+    var returned = services.ValidateWhizbangRegistrations(requirements);
+
+    // IEnumerable<T> resolves to an empty sequence when nothing is registered, so a gap cannot
+    // exist. Demanding a registration would report something that is not possible to fix.
+    await Assert.That(returned).IsSameReferenceAs(services);
+  }
+
   private interface IPresent { }
   private sealed class Present : IPresent { }
   private interface IAbsent { }

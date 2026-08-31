@@ -68,6 +68,25 @@ public static class RegistrationValidation {
   }
 
   private static bool _isSatisfied(IServiceCollection services, Type dependency) {
+    // The container supplies these itself; they never appear as descriptors, so requiring a
+    // registration would report gaps that cannot be closed. In a real composition that was two
+    // dozen impossible entries burying the handful of genuine ones.
+    if (dependency == typeof(IServiceProvider) || dependency == typeof(IServiceScopeFactory)) {
+      return true;
+    }
+
+    // IEnumerable<T> resolves to an empty sequence when nothing is registered, so a gap cannot
+    // exist. The same is true of the read-only collection interfaces the container composes.
+    if (dependency.IsConstructedGenericType) {
+      var definition = dependency.GetGenericTypeDefinition();
+      if (definition == typeof(IEnumerable<>)
+          || definition == typeof(IReadOnlyCollection<>)
+          || definition == typeof(IReadOnlyList<>)
+          || definition == typeof(IReadOnlyDictionary<,>)) {
+        return true;
+      }
+    }
+
     // A closed generic dependency is satisfied by an open generic registration: the container
     // constructs IGeneric<string> from an IGeneric<> descriptor. Comparing handles alone would
     // report it missing and make the validator cry wolf on a correct composition, which is the

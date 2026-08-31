@@ -141,6 +141,19 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
 
     var dependencies = new List<string>();
     foreach (var p in ctor.Parameters) {
+      // An optional parameter has a compiler-supplied default, so the composition is not obliged
+      // to provide it. Recording one would make validation demand a registration for every
+      // dependency that legitimately falls back and, because validation runs at startup by
+      // default, would fail correct applications on boot.
+      if (p.IsOptional) {
+        continue;
+      }
+      // The container always satisfies IEnumerable<T>, returning empty when nothing is
+      // registered, so requiring one would report a gap that cannot exist.
+      if (p.Type is INamedTypeSymbol { IsGenericType: true } collection
+          && collection.ConstructedFrom.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T) {
+        continue;
+      }
       // Only interfaces are container-resolved services here. Demanding a registration for a
       // string, an int, or a token would fail every composition, and a guard that always fails is
       // a guard that gets switched off.
