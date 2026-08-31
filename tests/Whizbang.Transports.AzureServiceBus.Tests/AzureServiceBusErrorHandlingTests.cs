@@ -8,6 +8,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
@@ -749,9 +750,24 @@ public class AzureServiceBusErrorHandlingTests {
   /// OnProcessMessageAsync / OnProcessErrorAsync mocking hooks.
   /// </summary>
   private sealed class FakeProcessor : ServiceBusProcessor {
-    public override Task StartProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    private int _startCount;
+    private int _stopCount;
 
-    public override Task StopProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    /// <summary>Accept-loop starts, including the throttle governor's resume.</summary>
+    public int StartCount => Volatile.Read(ref _startCount);
+
+    /// <summary>Accept-loop stops, including the throttle governor's pause.</summary>
+    public int StopCount => Volatile.Read(ref _stopCount);
+
+    public override Task StartProcessingAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _startCount);
+      return Task.CompletedTask;
+    }
+
+    public override Task StopProcessingAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _stopCount);
+      return Task.CompletedTask;
+    }
 
     public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -768,11 +784,26 @@ public class AzureServiceBusErrorHandlingTests {
   private sealed class FakeSessionProcessor : ServiceBusSessionProcessor {
     private readonly InnerFakeProcessor _inner = new();
 
+    private int _startCount;
+    private int _stopCount;
+
     protected override ServiceBusProcessor InnerProcessor => _inner;
 
-    public override Task StartProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    /// <summary>Accept-loop starts, including the throttle governor's resume.</summary>
+    public int StartCount => Volatile.Read(ref _startCount);
 
-    public override Task StopProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    /// <summary>Accept-loop stops, including the throttle governor's pause.</summary>
+    public int StopCount => Volatile.Read(ref _stopCount);
+
+    public override Task StartProcessingAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _startCount);
+      return Task.CompletedTask;
+    }
+
+    public override Task StopProcessingAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _stopCount);
+      return Task.CompletedTask;
+    }
 
     public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -873,5 +904,207 @@ public class AzureServiceBusErrorHandlingTests {
       DisposeCount++;
       return ValueTask.CompletedTask;
     }
+  }
+
+  // ============================================================
+  // Namespace throttle governor (ServiceBusy)
+  // ============================================================
+  //
+  // ServiceBusy is a NAMESPACE condition, and the SDK answers it by retrying the accept
+  // immediately across every concurrent session slot — which amplifies the throttle instead of
+  // relieving it. Observed live as a fleet that could not accept a single session while thousands
+  // of messages sat broker-side. The governor's job is to convert that storm into one backed-off
+  // pause per streak: stop accepting, wait, resume.
+  //
+  // The governor is wired on the BATCH subscription paths, which are the ones that run with
+  // concurrent accept slots; the single-message path takes the error handler without the
+  // stop/start delegates and so never pauses.
+
+  private static TransportBatchOptions _batchOptions() => new();
+
+  /// <summary>
+  /// A throttle error pauses the accept loop and then resumes it. Both halves matter: a pause
+  /// that never resumes is a consumer that has quietly stopped receiving, which is strictly worse
+  /// than the throttle it was shedding.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task BatchProcessorError_ServiceBusy_PausesThenResumesTheAcceptLoopAsync(
+      CancellationToken cancellationToken) {
+    var (transport, client) = _createTransport(enableSessions: false);
+    await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
+    var processor = client.LastProcessor!;
+    var startsAfterSubscribe = processor.StartCount;
+
+    await processor.RaiseErrorAsync(
+      _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)));
+
+    // The pause runs detached so the error callback can return — StopProcessingAsync awaits
+    // in-flight handlers, and this callback is one of them.
+    while (processor.StopCount == 0 && !cancellationToken.IsCancellationRequested) {
+      await Task.Delay(25, cancellationToken);
+    }
+    await Assert.That(processor.StopCount).IsGreaterThanOrEqualTo(1)
+      .Because("shedding accept pressure is the whole response to a namespace throttle");
+
+    while (processor.StartCount <= startsAfterSubscribe && !cancellationToken.IsCancellationRequested) {
+      await Task.Delay(25, cancellationToken);
+    }
+    await Assert.That(processor.StartCount).IsGreaterThan(startsAfterSubscribe)
+      .Because("a pause with no resume is an outage, not a backoff");
+  }
+
+  /// <summary>
+  /// A burst of throttle errors produces ONE pause, not one per error.
+  /// </summary>
+  /// <remarks>
+  /// This is the single-flight guard. Every concurrent accept slot sees the same namespace
+  /// throttle at once, so without it a sixteen-slot consumer would stop and start the processor
+  /// sixteen times over — churn that adds management-plane load to a namespace already refusing
+  /// work.
+  /// </remarks>
+  [Test]
+  [Timeout(60000)]
+  public async Task BatchProcessorError_ServiceBusyBurst_PausesOnlyOnceAsync(
+      CancellationToken cancellationToken) {
+    var (transport, client) = _createTransport(enableSessions: false);
+    await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
+    var processor = client.LastProcessor!;
+
+    await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+      processor.RaiseErrorAsync(
+        _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)))));
+
+    while (processor.StopCount == 0 && !cancellationToken.IsCancellationRequested) {
+      await Task.Delay(25, cancellationToken);
+    }
+    // Give any duplicate pause a chance to land before counting.
+    await Task.Delay(300, cancellationToken);
+
+    await Assert.That(processor.StopCount).IsEqualTo(1)
+      .Because("one namespace throttle is one pause however many slots reported it");
+  }
+
+  /// <summary>
+  /// Errors that are not ServiceBusy never touch the accept loop.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  [Arguments(ServiceBusFailureReason.MessagingEntityNotFound)]
+  [Arguments(ServiceBusFailureReason.MessageLockLost)]
+  [Arguments(ServiceBusFailureReason.QuotaExceeded)]
+  public async Task BatchProcessorError_NonThrottleReason_LeavesTheAcceptLoopRunningAsync(
+      ServiceBusFailureReason reason, CancellationToken cancellationToken) {
+    var (transport, client) = _createTransport(enableSessions: false);
+    await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
+    var processor = client.LastProcessor!;
+
+    await processor.RaiseErrorAsync(_errorArgs(new ServiceBusException("not a throttle", reason)));
+    await Task.Delay(300, cancellationToken);
+
+    await Assert.That(processor.StopCount).IsEqualTo(0)
+      .Because("pausing accepts for an unrelated error sheds throughput for no reason");
+  }
+
+  /// <summary>
+  /// A non-Service-Bus exception never pauses either.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task BatchProcessorError_NonServiceBusException_LeavesTheAcceptLoopRunningAsync(
+      CancellationToken cancellationToken) {
+    var (transport, client) = _createTransport(enableSessions: false);
+    await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
+    var processor = client.LastProcessor!;
+
+    await processor.RaiseErrorAsync(_errorArgs(new InvalidOperationException("unrelated")));
+    await Task.Delay(300, cancellationToken);
+
+    await Assert.That(processor.StopCount).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// The session batch processor gets the same governor — sessions are where the amplification
+  /// was actually observed, since each concurrent session slot retries its accept independently.
+  /// </summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task SessionBatchProcessorError_ServiceBusy_PausesThenResumesTheAcceptLoopAsync(
+      CancellationToken cancellationToken) {
+    var (transport, client) = _createTransport(enableSessions: true);
+    await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
+    var processor = client.LastSessionProcessor!;
+    var startsAfterSubscribe = processor.StartCount;
+
+    await processor.RaiseErrorAsync(
+      _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)));
+
+    while (processor.StopCount == 0 && !cancellationToken.IsCancellationRequested) {
+      await Task.Delay(25, cancellationToken);
+    }
+    await Assert.That(processor.StopCount).IsGreaterThanOrEqualTo(1);
+
+    while (processor.StartCount <= startsAfterSubscribe && !cancellationToken.IsCancellationRequested) {
+      await Task.Delay(25, cancellationToken);
+    }
+    await Assert.That(processor.StartCount).IsGreaterThan(startsAfterSubscribe);
+  }
+
+  /// <summary>
+  /// ServiceBusy drives the connection-recovery handler as well as the pause — the two responses
+  /// are independent, and both fire.
+  /// </summary>
+  /// <remarks>
+  /// Worth pinning explicitly because it is not the obvious design: ServiceBusy is back-pressure
+  /// rather than a broken connection, so classifying it as a connection error is a deliberate
+  /// choice. Dropping it from that list would silently remove the recovery half while every
+  /// throttle test here still passed on the pause half alone.
+  /// </remarks>
+  [Test]
+  [Timeout(60000)]
+  public async Task BatchProcessorError_ServiceBusy_AlsoInvokesTheRecoveryHandlerAsync(
+      CancellationToken cancellationToken) {
+    var (transport, client) = _createTransport(enableSessions: false);
+    await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask, _destination(), _batchOptions(), cancellationToken);
+    var recoveryInvocations = 0;
+    transport.SetRecoveryHandler(_ => { recoveryInvocations++; return Task.CompletedTask; });
+
+    await client.LastProcessor!.RaiseErrorAsync(
+      _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)));
+
+    await Assert.That(recoveryInvocations).IsEqualTo(1)
+      .Because("ServiceBusy is classified as a connection error, so recovery runs alongside the pause");
+  }
+
+  /// <summary>
+  /// The single-message subscription path takes the error handler without stop/start delegates,
+  /// so a throttle there is logged and recovered from but never pauses the accept loop.
+  /// </summary>
+  /// <remarks>
+  /// Pinned so the asymmetry is visible rather than assumed. The governor exists for concurrent
+  /// accept slots, which is the batch path; if the single path ever grows concurrency it needs
+  /// the delegates too, and this test is where that shows up.
+  /// </remarks>
+  [Test]
+  [Timeout(60000)]
+  public async Task SingleMessageProcessorError_ServiceBusy_DoesNotPauseTheAcceptLoopAsync(
+      CancellationToken cancellationToken) {
+    var (transport, client) = _createTransport(enableSessions: false);
+    await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, _destination(), cancellationToken);
+    var processor = client.LastProcessor!;
+
+    await processor.RaiseErrorAsync(
+      _errorArgs(new ServiceBusException("throttled", ServiceBusFailureReason.ServiceBusy)));
+    await Task.Delay(300, cancellationToken);
+
+    await Assert.That(processor.StopCount).IsEqualTo(0)
+      .Because("the single-message path has no concurrent accept slots to shed, so it is wired "
+             + "without the pause delegates");
   }
 }
