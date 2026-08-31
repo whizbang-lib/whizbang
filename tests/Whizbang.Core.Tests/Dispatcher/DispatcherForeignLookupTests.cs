@@ -132,4 +132,206 @@ public class DispatcherForeignLookupTests {
       await dispatcher.SendAsync(new ForeignCommand(Guid.NewGuid())));
     // hosts without foreign lookups behave exactly as before — the fallback is additive
   }
+
+  // ============================================================
+  // The remaining receptor shapes
+  // ============================================================
+  //
+  // A receptor's shape — async or sync, returning a value or void — is the author's choice, made
+  // in whichever assembly declares it. The cross-assembly fallback therefore has to cover every
+  // shape: a lookup that only consulted foreign assemblies for async value-returning receptors
+  // would leave a sync void receptor in another assembly just as unreachable as before issue #491,
+  // and just as silently.
+
+  private sealed record VoidCommand(Guid Id);
+  private sealed record SyncQuery(Guid Id);
+  private sealed record VoidSyncCommand(Guid Id);
+
+  /// <summary>A foreign assembly whose receptors span every shape the dispatcher can resolve.</summary>
+  private sealed class _allShapesLookup : IReceptorLookup {
+    private int _asyncVoid;
+    private int _sync;
+    private int _syncVoid;
+    private int _any;
+
+    public int AsyncVoidInvoked => Volatile.Read(ref _asyncVoid);
+    public int SyncInvoked => Volatile.Read(ref _sync);
+    public int SyncVoidInvoked => Volatile.Read(ref _syncVoid);
+    public int AnyInvoked => Volatile.Read(ref _any);
+    public DispatchModes? RoutingFor { get; set; }
+
+    public ReceptorInvoker<TResult>? LookupReceptorInvoker<TResult>(object message, Type messageType) => null;
+
+    public VoidReceptorInvoker? LookupVoidReceptorInvoker(object message, Type messageType) {
+      if (messageType != typeof(VoidCommand)) {
+        return null;
+      }
+      return _ => {
+        Interlocked.Increment(ref _asyncVoid);
+        return ValueTask.CompletedTask;
+      };
+    }
+
+    public Func<object, IMessageEnvelope?, CancellationToken, Task>? LookupUntypedReceptorPublisher(Type eventType) => null;
+
+    public SyncReceptorInvoker<TResult>? LookupSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      if (messageType != typeof(SyncQuery)) {
+        return null;
+      }
+      return _ => {
+        Interlocked.Increment(ref _sync);
+        return default!;
+      };
+    }
+
+    public VoidSyncReceptorInvoker? LookupVoidSyncReceptorInvoker(object message, Type messageType) {
+      if (messageType != typeof(VoidSyncCommand)) {
+        return null;
+      }
+      return _ => Interlocked.Increment(ref _syncVoid);
+    }
+
+    public Func<object, ValueTask<object?>>? LookupReceptorInvokerAny(object message, Type messageType) {
+      if (messageType != typeof(SyncQuery)) {
+        return null;
+      }
+      return _ => {
+        Interlocked.Increment(ref _any);
+        return ValueTask.FromResult<object?>(null);
+      };
+    }
+
+    public DispatchModes? LookupReceptorDefaultRouting(Type messageType) => RoutingFor;
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task LocalInvoke_ResolvesAForeignAsyncVoidReceptorAsync(CancellationToken cancellationToken) {
+    var foreign = new _allShapesLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new _blindDispatcher(sp);
+
+    await dispatcher.LocalInvokeAsync(new VoidCommand(Guid.NewGuid()));
+
+    await Assert.That(foreign.AsyncVoidInvoked).IsEqualTo(1)
+      .Because("a void receptor in another assembly is as unreachable as a value-returning one "
+             + "unless the void lookup consults foreign assemblies too");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task LocalInvoke_ResolvesAForeignSyncReceptorAsync(CancellationToken cancellationToken) {
+    // Sync is the fallback the dispatcher tries only after the async table answers null, so the
+    // foreign consultation has to happen on that second pass as well.
+    var foreign = new _allShapesLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new _blindDispatcher(sp);
+
+    _ = await dispatcher.LocalInvokeAsync<string>(new SyncQuery(Guid.NewGuid()));
+
+    await Assert.That(foreign.SyncInvoked).IsEqualTo(1);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task LocalInvoke_ResolvesAForeignSyncVoidReceptorAsync(CancellationToken cancellationToken) {
+    var foreign = new _allShapesLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new _blindDispatcher(sp);
+
+    await dispatcher.LocalInvokeAsync(new VoidSyncCommand(Guid.NewGuid()));
+
+    await Assert.That(foreign.SyncVoidInvoked).IsEqualTo(1)
+      .Because("the narrowest shape — sync, void — is the last fallback and the easiest to leave out");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ForeignLookup_IsConsultedOnlyWhenTheOwnTableAnswersNullAsync(CancellationToken cancellationToken) {
+    // The fallback is additive: an assembly that can answer for itself must never hand the
+    // message to a foreign assembly, or a publish would double-deliver.
+    var foreign = new _allShapesLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new _knowsVoidCommandDispatcher(sp);
+
+    await dispatcher.LocalInvokeAsync(new VoidCommand(Guid.NewGuid()));
+
+    await Assert.That(dispatcher.OwnInvoked).IsEqualTo(1);
+    await Assert.That(foreign.AsyncVoidInvoked).IsEqualTo(0)
+      .Because("consulting foreign lookups after a local hit would run the receptor twice");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ForeignLookup_TakesTheFirstAssemblyThatAnswersForASendAsync(CancellationToken cancellationToken) {
+    // Sends have exactly one handler by definition, so the scan stops at the first match rather
+    // than fanning out the way a publish does.
+    var first = new _allShapesLookup();
+    var second = new _allShapesLookup();
+    await using var sp = _buildHost(first, second);
+    var dispatcher = new _blindDispatcher(sp);
+
+    await dispatcher.LocalInvokeAsync(new VoidCommand(Guid.NewGuid()));
+
+    await Assert.That(first.AsyncVoidInvoked + second.AsyncVoidInvoked).IsEqualTo(1)
+      .Because("a send is not a broadcast — running it in two assemblies would duplicate its effects");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ForeignLookup_SkipsAnAssemblyThatDoesNotKnowTheTypeAsync(CancellationToken cancellationToken) {
+    // The scan has to keep walking past assemblies that answer null, not stop at the first one.
+    var stranger = new _foreignAssemblyLookup("unrelated-assembly");
+    var owner = new _allShapesLookup();
+    await using var sp = _buildHost(stranger, owner);
+    var dispatcher = new _blindDispatcher(sp);
+
+    await dispatcher.LocalInvokeAsync(new VoidCommand(Guid.NewGuid()));
+
+    await Assert.That(owner.AsyncVoidInvoked).IsEqualTo(1);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task UnknownMessage_StillThrowsAfterEveryForeignLookupAnswersNullAsync(CancellationToken cancellationToken) {
+    // The scan must terminate in the same ReceptorNotFoundException as before — a message nobody
+    // handles has to stay a loud error, not become a silent no-op once lookups are registered.
+    var foreign = new _allShapesLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new _blindDispatcher(sp);
+
+    await Assert.ThrowsAsync<ReceptorNotFoundException>(async () =>
+      await dispatcher.LocalInvokeAsync(new ForeignCommand(Guid.NewGuid())));
+  }
+
+  /// <summary>A host dispatcher whose own table answers for <see cref="VoidCommand"/>.</summary>
+  private sealed class _knowsVoidCommandDispatcher(IServiceProvider sp) : Core.Dispatcher(
+      sp, new ServiceInstanceProvider(configuration: null)) {
+    private int _own;
+    public int OwnInvoked => Volatile.Read(ref _own);
+
+    protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType)
+      => null;
+    protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
+      if (messageType != typeof(VoidCommand)) {
+        return null;
+      }
+      return _ => {
+        Interlocked.Increment(ref _own);
+        return ValueTask.CompletedTask;
+      };
+    }
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType)
+      => _ => Task.CompletedTask;
+    protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType)
+      => null;
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType)
+      => null;
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType)
+      => null;
+    protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType)
+      => null;
+    protected override DispatchModes? GetReceptorDefaultRouting(Type messageType)
+      => null;
+  }
 }
