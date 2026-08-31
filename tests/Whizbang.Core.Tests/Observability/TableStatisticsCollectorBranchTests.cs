@@ -34,8 +34,9 @@ public class TableStatisticsCollectorBranchTests {
     var services = new ServiceCollection();
     var sp = services.BuildServiceProvider();
     var worker = new TableStatisticsCollector(
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      _newMetrics());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      metrics: _newMetrics(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await worker.StartAsync(CancellationToken.None);
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(2));
@@ -57,7 +58,9 @@ public class TableStatisticsCollectorBranchTests {
 
     var metrics = _newMetrics();
     var worker = new TableStatisticsCollector(
-      sp.GetRequiredService<IServiceScopeFactory>(), metrics);
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      metrics: metrics,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -85,7 +88,9 @@ public class TableStatisticsCollectorBranchTests {
     services.AddSingleton<ITableStatisticsProvider>(fakeProvider);
     var sp = services.BuildServiceProvider();
     var worker = new TableStatisticsCollector(
-      sp.GetRequiredService<IServiceScopeFactory>(), _newMetrics());
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      metrics: _newMetrics(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

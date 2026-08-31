@@ -55,9 +55,9 @@ public class PerspectiveWorkerStartupGateTests {
     var gate = new SchemaReadyGate();   // NOT ready
 
     var worker = new PerspectiveWorker(
-      new _stubInstanceProvider(),
-      scopeFactory,
-      Options.Create(new PerspectiveWorkerOptions()),
+      instanceProvider: new _stubInstanceProvider(),
+      scopeFactory: scopeFactory,
+      options: Options.Create(new PerspectiveWorkerOptions()),
       schemaReadyGate: gate);
 
     // The constructor creates one scope to resolve its startup-scan logger — in-memory wiring,
@@ -93,9 +93,10 @@ public class PerspectiveWorkerStartupGateTests {
     var scopeFactory = new _countingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
 
     var worker = new PerspectiveWorker(
-      new _stubInstanceProvider(),
-      scopeFactory,
-      Options.Create(new PerspectiveWorkerOptions()));
+      instanceProvider: new _stubInstanceProvider(),
+      scopeFactory: scopeFactory,
+      options: Options.Create(new PerspectiveWorkerOptions()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     var baseline = scopeFactory.Count;
 
     using var cts = new CancellationTokenSource();

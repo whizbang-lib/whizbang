@@ -43,7 +43,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
   private readonly PerStreamSerializerOptions _options;
   private readonly IComparer<T>? _sortComparer;
   private readonly TimeProvider _timeProvider;
-  private readonly ILogger? _logger;
+  private readonly ILogger _logger;
 
   private readonly ConcurrentDictionary<Guid, StreamChannel> _streams = new();
   private readonly CancellationTokenSource _stopCts = new();
@@ -73,7 +73,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
     _options = options ?? new PerStreamSerializerOptions();
     _sortComparer = sortComparer;
     _timeProvider = timeProvider ?? TimeProvider.System;
-    _logger = logger;
+    _logger = (ILogger?)logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance;
 
     _idleSweepTimer = _timeProvider.CreateTimer(
       _ => _ = _runIdleSweepAsync(),
@@ -249,7 +249,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
 
   private void _logUnhandledProcessorException(Exception ex, Guid streamKey) {
 #pragma warning disable CA1848
-    _logger?.LogError(ex,
+    _logger.LogError(ex,
       "PerStreamSerializer<{ItemType}>: processor threw for stream {StreamKey}; continuing",
       typeof(T).Name, streamKey);
 #pragma warning restore CA1848

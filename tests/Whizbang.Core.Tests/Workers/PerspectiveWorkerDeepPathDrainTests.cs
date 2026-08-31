@@ -800,9 +800,9 @@ public class PerspectiveWorkerDeepPathDrainTests {
     configure?.Invoke(options);
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      provider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(options),
+      instanceProvider: instanceProvider,
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(options),
       tracingOptions: null,
       completionStrategy: useBatchedStrategy ? null : new InstantCompletionStrategy(),
       eventTypeProvider: registry,
@@ -814,7 +814,8 @@ public class PerspectiveWorkerDeepPathDrainTests {
       perspectiveDrainChannel: harness.DrainChannel,
       recentlyProcessedEventCache: cooldownCache,
       leaseHandleOptions: leaseHandleOptions,
-      leaseRenewalOptions: leaseRenewalOptions);
+      leaseRenewalOptions: leaseRenewalOptions,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, harness, provider);
   }
 

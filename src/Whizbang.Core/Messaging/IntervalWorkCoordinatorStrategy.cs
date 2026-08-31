@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Tracing;
@@ -26,7 +27,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IWorkCoordinator? _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
-  private readonly ILogger<IntervalWorkCoordinatorStrategy>? _logger;
+  private readonly ILogger<IntervalWorkCoordinatorStrategy> _logger = NullLogger<IntervalWorkCoordinatorStrategy>.Instance;
   private readonly IServiceScopeFactory? _scopeFactory;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions;
@@ -79,7 +80,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     _coordinator = coordinator;
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _options = options ?? throw new ArgumentNullException(nameof(options));
-    _logger = logger;
+    _logger = logger ?? NullLogger<IntervalWorkCoordinatorStrategy>.Instance;
     _scopeFactory = scopeFactory;
     _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
     _tracingOptions = tracingOptions;

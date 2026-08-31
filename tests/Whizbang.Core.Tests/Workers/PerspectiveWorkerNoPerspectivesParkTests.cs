@@ -37,9 +37,10 @@ public class PerspectiveWorkerNoPerspectivesParkTests {
     var sp = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      new StubInstanceProvider(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions()));
+      instanceProvider: new StubInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // ACT
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));

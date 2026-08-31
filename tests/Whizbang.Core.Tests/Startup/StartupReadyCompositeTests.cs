@@ -232,16 +232,17 @@ public class StartupReadyCompositeTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
     var worker = new TransportConsumerWorker(
-      new Whizbang.Core.Transports.InProcessTransport(),
-      options,
-      new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      JsonContextRegistry.CreateCombinedOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: new Whizbang.Core.Transports.InProcessTransport(),
+      options: options,
+      resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      schemaReadyGate: gate);
+      schemaReadyGate: gate,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("transport-consumer");
@@ -264,12 +265,13 @@ public class StartupReadyCompositeTests {
   public async Task ServiceBusConsumerWorker_ContributesItsSubscriptionsReadySignalAsync() {
     using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new ServiceBusConsumerWorker(
-      new Whizbang.Core.Transports.InProcessTransport(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<ServiceBusConsumerWorker>.Instance,
-      new OrderedStreamProcessor(),
-      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] });
+      transport: new Whizbang.Core.Transports.InProcessTransport(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<ServiceBusConsumerWorker>.Instance,
+      orderedProcessor: new OrderedStreamProcessor(),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     IStartupReadinessContributor contributor = worker;
 
     await Assert.That(contributor.ContributorName).IsEqualTo("servicebus-consumer");

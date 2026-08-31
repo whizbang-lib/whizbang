@@ -59,9 +59,9 @@ public class PerspectiveWorkerChannelModeTests {
     }, coordinator, default);
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 1_000_000,
         MaxStreamsPerBatch = 10
       }),
@@ -70,7 +70,8 @@ public class PerspectiveWorkerChannelModeTests {
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: channelWriter,
       perspectiveCompletionChannel: completionCapture,
-      failureChannel: failureCapture);
+      failureChannel: failureCapture,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act — call the new entry point directly with an empty batch. The flush of pending
     // completions should run regardless of batch contents.
@@ -110,16 +111,17 @@ public class PerspectiveWorkerChannelModeTests {
     var sp = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { MaxStreamsPerBatch = 10 }),
       tracingOptions: null,
       completionStrategy: new BatchedCompletionStrategy(),
       eventTypeProvider: new FakeEventTypeProvider([typeof(TestEvent)]),
       perspectiveChannelWriter: channelWriter,
       perspectiveCompletionChannel: completionCapture,
       failureChannel: failureCapture,
-      perspectiveDrainChannel: drainChannel);
+      perspectiveDrainChannel: drainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act — call the drain-aware overload with NO per-event work but ONE drain stream ID.
     // This must not throw and must not touch the legacy poll path.

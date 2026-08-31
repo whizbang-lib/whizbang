@@ -42,12 +42,13 @@ public class PerspectiveWorkerDeepPathChannelTests {
     var harness = new PerspectiveWorkerTestHarness();
 
     var worker = new PerspectiveWorker(
-      new FakeInstanceProvider(),
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: new FakeInstanceProvider(),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
-      perspectiveChannelWriter: harness.ChannelWriter);
+      perspectiveChannelWriter: harness.ChannelWriter,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     var workItems = new List<PerspectiveWork>();
 
@@ -93,9 +94,9 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: new StaticOptionsMonitor<TracingOptions>(new TracingOptions {
         EnableWorkerBatchSpans = true,
         // Verbosity must be non-Off: IsEnabled(component) gates the perspective span on
@@ -109,7 +110,8 @@ public class PerspectiveWorkerDeepPathChannelTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -177,9 +179,9 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -189,7 +191,8 @@ public class PerspectiveWorkerDeepPathChannelTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     PerspectiveEventProcessedEvent? processedEvent = null;
     var processedSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -264,9 +267,9 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       snapshotStore: snapshotStore,
@@ -275,7 +278,8 @@ public class PerspectiveWorkerDeepPathChannelTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act — two sequential work items for the same (stream, perspective)
     using var cts = new CancellationTokenSource();
@@ -342,9 +346,9 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
       var harness = new PerspectiveWorkerTestHarness();
       var worker = new PerspectiveWorker(
-        instanceProvider,
-        serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-        Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        instanceProvider: instanceProvider,
+        scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+        options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
         tracingOptions: null,
         completionStrategy: new InstantCompletionStrategy(),
         eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -352,7 +356,8 @@ public class PerspectiveWorkerDeepPathChannelTests {
         perspectiveChannelWriter: harness.ChannelWriter,
         perspectiveCompletionChannel: harness.CompletionCapture,
         failureChannel: harness.FailureCapture,
-        perspectiveDrainChannel: harness.DrainChannel);
+        perspectiveDrainChannel: harness.DrainChannel,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
       // Act
       using var cts = new CancellationTokenSource();
@@ -415,16 +420,17 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
       var harness = new PerspectiveWorkerTestHarness();
       var worker = new PerspectiveWorker(
-        instanceProvider,
-        serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-        Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        instanceProvider: instanceProvider,
+        scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+        options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
         tracingOptions: null,
         completionStrategy: new InstantCompletionStrategy(),
         eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
         perspectiveChannelWriter: harness.ChannelWriter,
         perspectiveCompletionChannel: harness.CompletionCapture,
         failureChannel: harness.FailureCapture,
-        perspectiveDrainChannel: harness.DrainChannel);
+        perspectiveDrainChannel: harness.DrainChannel,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
       // Act
       using var cts = new CancellationTokenSource();
@@ -488,16 +494,17 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -530,15 +537,16 @@ public class PerspectiveWorkerDeepPathChannelTests {
     var serviceProvider = services.BuildServiceProvider();
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      new FakeInstanceProvider(),
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: new FakeInstanceProvider(),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act — first call releases the semaphore; subsequent calls hit the CAS short-circuit
     worker.RequestImmediatePoll();
@@ -573,9 +581,9 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         NotifyHealthyPollingIntervalMilliseconds = 30_000
       }),
@@ -585,7 +593,8 @@ public class PerspectiveWorkerDeepPathChannelTests {
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      perspectiveNotificationListener: listener);
+      perspectiveNotificationListener: listener,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -641,9 +650,9 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         // Single consumer loop so the break on ObjectDisposedException completes ExecuteAsync
         // deterministically (sibling loops would otherwise keep idling forever).
@@ -654,7 +663,8 @@ public class PerspectiveWorkerDeepPathChannelTests {
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

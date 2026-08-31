@@ -6,6 +6,10 @@
     <!-- Temporarily suppress Guid usage analyzer warnings in test projects -->
     <!-- Remove after Phase 5 migration completes all usages -->
     <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
+    <!-- Suppress the DI-factory construction rule here: fixtures and samples construct
+         services by hand on purpose, supplying only what a scenario needs. The rule exists
+         for registrations that stand in for the container in shipping code. -->
+    <NoWarn>$(NoWarn);WHIZ500</NoWarn>
     <!-- Suppress [PinnedId] enforcement in tests: test-only message/perspective types -->
     <!-- (TestEvent, TestCommand, TestPerspective, etc.) are ephemeral fixtures, not stored data. -->
     <NoWarn>$(NoWarn);WHIZ110;WHIZ111</NoWarn>

@@ -333,13 +333,14 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective cursors
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
+        transport: sp.GetRequiredService<ITransport>(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions: jsonOptions,
+        logger: // Pass JSON options for event deserialization
         sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
-      )
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        options: consumerOptions,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())
     );
 
     return builder.Build();
@@ -465,13 +466,14 @@ public sealed partial class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
+        transport: sp.GetRequiredService<ITransport>(),
+        scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions: jsonOptions,
+        logger: // Pass JSON options for event deserialization
         sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
-      )
+        orderedProcessor: sp.GetRequiredService<OrderedStreamProcessor>(),
+        options: consumerOptions,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())
     );
 
     return builder.Build();

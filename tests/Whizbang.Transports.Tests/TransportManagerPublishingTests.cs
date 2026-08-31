@@ -18,7 +18,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithSingleTarget_ShouldPublishAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -60,7 +60,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
     var transport1 = new InProcessTransport();
     var transport2 = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport1);
@@ -120,7 +120,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -154,7 +154,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithCustomContext_ShouldUseProvidedContextAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -203,7 +203,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_CreatesEnvelopeWithHopsAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(Whizbang.Core.Observability.UnknownServiceInstanceProvider.Instance);
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -250,7 +250,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
     var message = new TestMessage { Content = "fail", Value = 1 };
     var targets = new List<PublishTarget> {
       new() {
@@ -267,7 +267,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task Constructor_Default_ShouldCreateWithJsonSerializerAsync() {
     // Arrange & Act
-    var manager = new TransportManager();
+    var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 

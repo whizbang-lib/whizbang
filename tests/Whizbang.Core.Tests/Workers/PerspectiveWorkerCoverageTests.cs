@@ -43,20 +43,20 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act & Assert
     await Assert.That(() => new PerspectiveWorker(
-      null!,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions())
-    )).Throws<ArgumentNullException>();
+      instanceProvider: null!,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())).Throws<ArgumentNullException>();
   }
 
   [Test]
   public async Task Constructor_NullScopeFactory_ThrowsArgumentNullExceptionAsync() {
     // Act & Assert
     await Assert.That(() => new PerspectiveWorker(
-      new FakeServiceInstanceProvider(),
-      null!,
-      Options.Create(new PerspectiveWorkerOptions())
-    )).Throws<ArgumentNullException>();
+      instanceProvider: new FakeServiceInstanceProvider(),
+      scopeFactory: null!,
+      options: Options.Create(new PerspectiveWorkerOptions()),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())).Throws<ArgumentNullException>();
   }
 
   [Test]
@@ -68,10 +68,10 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act & Assert
     await Assert.That(() => new PerspectiveWorker(
-      new FakeServiceInstanceProvider(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      null!
-    )).Throws<ArgumentNullException>();
+      instanceProvider: new FakeServiceInstanceProvider(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: null!,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady())).Throws<ArgumentNullException>();
   }
 
   #endregion
@@ -367,16 +367,16 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -421,16 +421,16 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -514,16 +514,16 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -555,16 +555,16 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -596,16 +596,16 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -652,17 +652,17 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       syncSignaler: syncSignaler,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -717,18 +717,18 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       syncEventTracker: syncEventTracker,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -785,17 +785,17 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -852,17 +852,17 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act — run the REAL PerspectiveWorker
     using var cts = new CancellationTokenSource();
@@ -932,16 +932,16 @@ public class PerspectiveWorkerCoverageTests {
 
       var harness = new PerspectiveWorkerTestHarness();
       var worker = new PerspectiveWorker(
-        instanceProvider,
-        serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-        Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        instanceProvider: instanceProvider,
+        scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+        options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
         tracingOptions: null,
-        new InstantCompletionStrategy(),
+        completionStrategy: new InstantCompletionStrategy(),
         perspectiveChannelWriter: harness.ChannelWriter,
         perspectiveCompletionChannel: harness.CompletionCapture,
         failureChannel: harness.FailureCapture,
-        perspectiveDrainChannel: harness.DrainChannel
-      );
+        perspectiveDrainChannel: harness.DrainChannel,
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
       // Act
       using var cts = new CancellationTokenSource();
@@ -1005,16 +1005,16 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: tracingOptionsMonitor,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -1074,17 +1074,17 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -1134,17 +1134,17 @@ public class PerspectiveWorkerCoverageTests {
 
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -1214,19 +1214,19 @@ public class PerspectiveWorkerCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         IdleThresholdPolls = idleThresholdPolls
       }),
       tracingOptions: null,
-      new InstantCompletionStrategy(),
+      completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel
-    );
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     return (worker, coordinator, new object(), harness);
   }
@@ -1250,14 +1250,14 @@ public class PerspectiveWorkerCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50
       }),
       tracingOptions: null,
-      new InstantCompletionStrategy()
-    );
+      completionStrategy: new InstantCompletionStrategy(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act - start the worker, then dispose the service provider to simulate host shutdown
     using var cts = new CancellationTokenSource();
@@ -1296,10 +1296,10 @@ public class PerspectiveWorkerCoverageTests {
       realProvider.GetRequiredService<IServiceScopeFactory>(), throwAfterCalls: 1);
 
     var worker = new PerspectiveWorker(
-      new FakeServiceInstanceProvider(),
-      scopeFactory,
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 })
-    );
+      instanceProvider: new FakeServiceInstanceProvider(),
+      scopeFactory: scopeFactory,
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -1333,12 +1333,12 @@ public class PerspectiveWorkerCoverageTests {
     // false → _processInitialCheckpointsAsync skips processWorkBatch (no extra scope)
     // true  → _scanAndRepairRewindsOnStartupAsync proceeds to CreateAsyncScope → throws
     var worker = new PerspectiveWorker(
-      new FakeServiceInstanceProvider(),
-      scopeFactory,
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: new FakeServiceInstanceProvider(),
+      scopeFactory: scopeFactory,
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      new InstantCompletionStrategy()
-    );
+      completionStrategy: new InstantCompletionStrategy(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

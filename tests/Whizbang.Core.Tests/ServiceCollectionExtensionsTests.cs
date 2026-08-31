@@ -1112,16 +1112,15 @@ public class ServiceCollectionExtensionsTests {
     // Register as scoped type
     services.AddScoped<IEventStore, StubEventStore>();
 
-    // Act
-    services.DecorateEventStoreWithSyncTracking();
+    // Act & Assert - a type-based registration cannot be decorated without reflection,
+    // which Core does not permit. The error has to name the fix, or a consumer hitting
+    // it only learns that something is unsupported.
+    var ex = Assert.Throws<InvalidOperationException>(
+      () => services.DecorateEventStoreWithSyncTracking());
 
-    // Assert - IEventStore should still be resolvable
-    var provider = services.BuildServiceProvider();
-    using var scope = provider.CreateScope();
-    var eventStore = scope.ServiceProvider.GetService<IEventStore>();
-
-    await Assert.That(eventStore).IsNotNull()
-      .Because("IEventStore should be resolvable after decoration with type registration");
+    await Assert.That(ex!.Message).Contains("factory")
+      .Because("decoration has to rebuild the inner store in order to wrap it, and a "
+               + "type-based registration leaves no reflection-free way to do that; the error names the fix");
   }
 
   [Test]
@@ -1179,16 +1178,15 @@ public class ServiceCollectionExtensionsTests {
 
     services.AddSingleton<IEventStore, StubEventStore>();
 
-    // Act
-    services.DecorateEventStoreWithSyncTracking();
+    // Act & Assert - a type-based registration cannot be decorated without reflection,
+    // which Core does not permit. The error has to name the fix, or a consumer hitting
+    // it only learns that something is unsupported.
+    var ex = Assert.Throws<InvalidOperationException>(
+      () => services.DecorateEventStoreWithSyncTracking());
 
-    // Assert
-    var provider = services.BuildServiceProvider();
-    using var scope = provider.CreateScope();
-    var eventStore = scope.ServiceProvider.GetService<IEventStore>();
-
-    await Assert.That(eventStore).IsNotNull()
-      .Because("IEventStore should be resolvable after decoration with singleton type");
+    await Assert.That(ex!.Message).Contains("factory")
+      .Because("decoration has to rebuild the inner store in order to wrap it, and a "
+               + "type-based registration leaves no reflection-free way to do that; the error names the fix");
   }
 
   // ==========================================================================

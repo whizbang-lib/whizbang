@@ -136,12 +136,12 @@ public class UngatedWorkerAdoptionTests {
     var gate = new SchemaReadyGate();
     using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new ServiceBusConsumerWorker(
-      new Whizbang.Core.Transports.InProcessTransport(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<ServiceBusConsumerWorker>.Instance,
-      new OrderedStreamProcessor(),
-      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
+      transport: new Whizbang.Core.Transports.InProcessTransport(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<ServiceBusConsumerWorker>.Instance,
+      orderedProcessor: new OrderedStreamProcessor(),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
       schemaReadyGate: gate);
 
     using var cts = new CancellationTokenSource();
@@ -168,16 +168,17 @@ public class UngatedWorkerAdoptionTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
     var worker = new TransportConsumerWorker(
-      new Whizbang.Core.Transports.InProcessTransport(),
-      options,
-      new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      JsonContextRegistry.CreateCombinedOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: new Whizbang.Core.Transports.InProcessTransport(),
+      options: options,
+      resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      schemaReadyGate: gate);
+      schemaReadyGate: gate,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

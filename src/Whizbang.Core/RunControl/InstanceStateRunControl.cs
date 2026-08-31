@@ -32,7 +32,7 @@ public sealed partial class InstanceStateRunControl : IWhizbangRunControl {
   private static readonly TimeSpan _writeTimeout = TimeSpan.FromSeconds(5);
 
   private readonly IServiceScopeFactory _scopeFactory;
-  private readonly IServiceInstanceProvider? _instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider;
   private readonly ILibraryVersionProvider? _versionProvider;
   private readonly ILogger<InstanceStateRunControl> _logger;
 
@@ -40,7 +40,7 @@ public sealed partial class InstanceStateRunControl : IWhizbangRunControl {
   /// Inert without an instance provider — no identity means no row to record on.</summary>
   public InstanceStateRunControl(
       IServiceScopeFactory scopeFactory,
-      IServiceInstanceProvider? instanceProvider = null,
+      IServiceInstanceProvider instanceProvider,
       ILibraryVersionProvider? versionProvider = null,
       ILogger<InstanceStateRunControl>? logger = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);

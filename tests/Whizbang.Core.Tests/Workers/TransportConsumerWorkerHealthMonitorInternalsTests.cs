@@ -42,10 +42,17 @@ public class TransportConsumerWorkerHealthMonitorInternalsTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("monitor-topic"));
     var worker = new TransportConsumerWorker(
-      transport, options, resilience,
-      sp.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null, logger);
+      transport: transport,
+      options: options,
+      resilienceOptions: resilience,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

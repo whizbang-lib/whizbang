@@ -814,16 +814,17 @@ public class RewindScenarioTests {
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
-      strategy,
+      completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel);
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, harness);
   }
 

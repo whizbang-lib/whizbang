@@ -692,14 +692,14 @@ public class PerspectiveWorkerCollectiveSinkTests {
     var sp = services.BuildServiceProvider();
 
     var worker = new PerspectiveWorker(
-      instanceProvider,
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      Options.Create(new PerspectiveWorkerOptions {
+      instanceProvider: instanceProvider,
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
       }),
       tracingOptions: null,
-      strategy,
+      completionStrategy: strategy,
       eventTypeProvider: registry,
       processedEventCacheObserver: processedEventCacheObserver,
       perspectiveChannelWriter: harness.ChannelWriter,
@@ -709,7 +709,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
       perspectiveDrainChannel: harness.DrainChannel,
       deadLetterStore: deadLetterStore,
       generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider(),
-      leaseRegistry: leaseRegistry);
+      leaseRegistry: leaseRegistry,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, harness, coordinator);
   }
 

@@ -31,8 +31,8 @@ public sealed partial class SignalBusHostedService(
   SignalBusLivenessState liveness,
   IEnumerable<ISignalTransport> transports,
   ILogger<SignalBusHostedService> logger,
+  IServiceInstanceProvider instanceProvider,
   IOptions<SignalBusOptions>? options = null,
-  IServiceInstanceProvider? instanceProvider = null,
   TimeProvider? timeProvider = null
 ) : IHostedService, IDisposable {
   private readonly SignalBus _bus = bus ?? throw new ArgumentNullException(nameof(bus));
@@ -40,7 +40,7 @@ public sealed partial class SignalBusHostedService(
   private readonly ISignalTransport[] _transports = (transports ?? throw new ArgumentNullException(nameof(transports))).ToArray();
   private readonly ILogger<SignalBusHostedService> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly SignalBusOptions _options = options?.Value ?? new SignalBusOptions();
-  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider;
   private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   private readonly CancellationTokenSource _stopCts = new();
@@ -103,7 +103,7 @@ public sealed partial class SignalBusHostedService(
   private async Task<string?> _probeAllTransportsAsync(CancellationToken stopping) {
     // With an instance identity, target our own channel — in a fleet, only this instance must ring.
     // Without one (single-process/test hosts) fall back to broadcast, which is still a self-loopback.
-    var instanceId = _instanceProvider?.InstanceId ?? Guid.Empty;
+    var instanceId = _instanceProvider.InstanceId;
     var target = instanceId == Guid.Empty ? SignalTarget.Broadcast : SignalTarget.Instance(instanceId);
     foreach (var transport in _transports) {
       var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

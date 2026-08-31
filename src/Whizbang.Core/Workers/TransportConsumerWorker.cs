@@ -62,7 +62,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   private readonly IEphemeralModeResolver? _ephemeralModeResolver;
   // Once-per-type diagnostic guard for catalog-lookup misses on the receive path (bounded).
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _warnedFlagMisses = new();
-  private readonly ISchemaReadyGate? _schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly IEventMarkerResolver? _eventMarkerResolver;
 
   // Signals when SubscribeToAllDestinationsAsync has completed and the consumer
@@ -151,8 +151,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer,
     TransportMetrics? metrics,
     ILogger<TransportConsumerWorker> logger,
+    IServiceInstanceProvider serviceInstanceProvider,
+    // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
+    // database work against a schema that may not exist yet on a first boot. Optional only so
+    // existing fixtures construct unchanged; DI always supplies it.
+    ISchemaReadyGate schemaReadyGate,
     Microsoft.Extensions.Options.IOptions<Routing.RoutingOptions>? routingOptions = null,
-    IServiceInstanceProvider? serviceInstanceProvider = null,
     MessageProcessingOptions? messageProcessingOptions = null,
     TransportBatchOptions? transportBatchOptions = null,
     IWorkChannelWriter? workChannelWriter = null,
@@ -161,10 +165,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     IReceptorRegistry? runtimeReceptorRegistry = null,
     IEphemeralModeResolver? ephemeralModeResolver = null,
     IEventMarkerResolver? eventMarkerResolver = null,
-    // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
-    // database work against a schema that may not exist yet on a first boot. Optional only so
-    // existing fixtures construct unchanged; DI always supplies it.
-    ISchemaReadyGate? schemaReadyGate = null,
     // Control class (topology arc phase 9). Both optional: absent ⇒ every message takes the
     // durable path, i.e. pre-phase-9 behavior with no new branch reachable at all.
     Microsoft.Extensions.Options.IOptions<Routing.ControlClassOptions>? controlClass = null,
@@ -189,7 +189,16 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     _metrics = metrics;
     _logger = logger;
     _ownedDomains = routingOptions?.Value?.OwnedDomains?.ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
-    _serviceName = serviceInstanceProvider?.ServiceName;
+    // An unknown identity is not a service name. The three gates below (self-echo, foreign
+    // target, hop attribution) all treat a null name as "this service cannot know who it is" and
+    // fail open. Passing "Unknown" through as if it were a real name would make every targeted
+    // message look foreign and be discarded, turning fail-open into fail-closed for exactly the
+    // hosts that cannot defend themselves against it.
+    var resolvedServiceName = serviceInstanceProvider.ServiceName;
+    _serviceName = string.Equals(
+        resolvedServiceName, ServiceInstanceInfo.Unknown.ServiceName, StringComparison.Ordinal)
+      ? null
+      : resolvedServiceName;
     _receptorRegistry = receptorRegistry;
     _ephemeralModeResolver = ephemeralModeResolver;
     _eventMarkerResolver = eventMarkerResolver;

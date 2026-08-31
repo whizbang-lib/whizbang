@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Startup;
@@ -68,13 +69,13 @@ public sealed class MigrateStartupStep : IStartupStep {
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public sealed partial class StartupPipelineWorker : BackgroundService {
   private readonly StartupPipelineRunner _runner;
-  private readonly ILogger<StartupPipelineWorker>? _logger;
+  private readonly ILogger<StartupPipelineWorker> _logger;
 
   /// <summary>Creates the worker over the runner.</summary>
   public StartupPipelineWorker(StartupPipelineRunner runner, ILogger<StartupPipelineWorker>? logger = null) {
     ArgumentNullException.ThrowIfNull(runner);
     _runner = runner;
-    _logger = logger;
+    _logger = logger ?? NullLogger<StartupPipelineWorker>.Instance;
   }
 
   /// <inheritdoc />

@@ -36,6 +36,10 @@ public partial class ServiceBusConsumerWorker(
   JsonSerializerOptions jsonOptions,
   ILogger<ServiceBusConsumerWorker> logger,
   OrderedStreamProcessor orderedProcessor,
+  // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
+  // database work against a schema that may not exist yet on a first boot. Optional only so
+  // existing fixtures construct unchanged; DI always supplies it.
+  ISchemaReadyGate schemaReadyGate,
   ServiceBusConsumerOptions? options = null,
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null,
@@ -43,15 +47,11 @@ public partial class ServiceBusConsumerWorker(
   IReceptorRegistryQuery? receptorRegistry = null,
   IReceptorRegistry? runtimeReceptorRegistry = null,
   IEventMarkerResolver? eventMarkerResolver = null,
-  IEphemeralModeResolver? ephemeralModeResolver = null,
-  // Startup barrier: subscribing lets the broker deliver, and delivery lands in the inbox —
-  // database work against a schema that may not exist yet on a first boot. Optional only so
-  // existing fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate? schemaReadyGate = null
+  IEphemeralModeResolver? ephemeralModeResolver = null
   ) : BackgroundService, Whizbang.Core.Startup.IStartupReadinessContributor {
 #pragma warning restore S107
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
   private readonly TaskCompletionSource _subscriptionsReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
   /// <summary>
