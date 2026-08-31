@@ -133,14 +133,18 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
       receptorRegistry: registry,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     return (worker, transport, coordinator, sp);
   }
@@ -257,14 +261,18 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var worker = new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      countingFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: countingFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
       receptorRegistry: registry,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);

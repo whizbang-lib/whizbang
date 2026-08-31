@@ -49,7 +49,8 @@ public class TransportConsumerWorkerCoverageTests {
         lifecycleMessageDeserializer: null,
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
-        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -67,7 +68,8 @@ public class TransportConsumerWorkerCoverageTests {
         lifecycleMessageDeserializer: null,
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
-        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -85,7 +87,8 @@ public class TransportConsumerWorkerCoverageTests {
         lifecycleMessageDeserializer: null,
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
-        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -103,7 +106,8 @@ public class TransportConsumerWorkerCoverageTests {
         lifecycleMessageDeserializer: null,
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
-        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -121,7 +125,8 @@ public class TransportConsumerWorkerCoverageTests {
         lifecycleMessageDeserializer: null,
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
-        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -139,7 +144,8 @@ public class TransportConsumerWorkerCoverageTests {
         lifecycleMessageDeserializer: null,
         metrics: null,
         logger: NullLogger<TransportConsumerWorker>.Instance,
-        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -157,7 +163,8 @@ public class TransportConsumerWorkerCoverageTests {
         lifecycleMessageDeserializer: null,
         metrics: null,
         logger: null!,
-        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+        serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
       await Task.CompletedTask;
     });
   }
@@ -175,7 +182,8 @@ public class TransportConsumerWorkerCoverageTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await Assert.That(worker).IsNotNull();
   }
@@ -197,7 +205,8 @@ public class TransportConsumerWorkerCoverageTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await Assert.That(transport.HasRecoveryHandler).IsTrue();
   }
@@ -235,16 +244,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
 
@@ -322,16 +332,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Start worker and wait for subscription
     using var cts = new CancellationTokenSource();
@@ -380,16 +391,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -431,16 +443,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -473,16 +486,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -519,16 +533,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -567,16 +582,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -621,16 +637,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -674,16 +691,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -800,16 +818,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -848,16 +867,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -980,16 +1000,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -1042,16 +1063,17 @@ public class TransportConsumerWorkerCoverageTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
     try {
@@ -1077,16 +1099,17 @@ public class TransportConsumerWorkerCoverageTests {
       ITransport transport,
       TransportConsumerOptions options) {
     return new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      _buildScopeFactory(),
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: _buildScopeFactory(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   private static TransportConsumerWorker _createWorkerWithResilience(
@@ -1098,16 +1121,17 @@ public class TransportConsumerWorkerCoverageTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     return new TransportConsumerWorker(
-      transport,
-      options,
-      resilienceOptions,
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: resilienceOptions,
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {

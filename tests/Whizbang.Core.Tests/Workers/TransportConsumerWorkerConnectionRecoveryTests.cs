@@ -44,16 +44,17 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
 
     // Act
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      jsonOptions,
-      orderedProcessor,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Assert - recovery handler was registered
     await Assert.That(transport.RecoveryHandlerRegistered).IsTrue()
@@ -80,16 +81,17 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      jsonOptions,
-      orderedProcessor,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
 
@@ -130,16 +132,17 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      jsonOptions,
-      orderedProcessor,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act & Assert - StopAsync should not throw even without StartAsync
     await Assert.That(async () => await worker.StopAsync(CancellationToken.None))
@@ -160,16 +163,17 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      jsonOptions,
-      orderedProcessor,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
@@ -208,16 +212,17 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
 
     // Act
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      jsonOptions,
-      orderedProcessor,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Assert
     await Assert.That(worker.SubscriptionStates.Count).IsEqualTo(3)
@@ -243,16 +248,17 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var orderedProcessor = new OrderedStreamProcessor(parallelizeStreams: false, logger: null);
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      jsonOptions,
-      orderedProcessor,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      orderedProcessor: orderedProcessor,
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
 
@@ -283,16 +289,17 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act & Assert - should not throw when subscription objects are null
     await Assert.That(async () => await worker.PauseAllSubscriptionsAsync())
@@ -311,16 +318,17 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var worker = new TransportConsumerWorker(
-      transport,
-      options,
-      new SubscriptionResilienceOptions(),
-      scopeFactory,
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act & Assert
     await Assert.That(async () => await worker.ResumeAllSubscriptionsAsync())

@@ -185,15 +185,18 @@ public class TransportConsumerWorkerResilienceEdgeTests {
       IOptions<RoutingOptions>? routingOptions = null,
       IServiceInstanceProvider? instanceProvider = null) {
     return new TransportConsumerWorker(
-      transport, options, resilience,
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: transport,
+      options: options,
+      resilienceOptions: resilience,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
       routingOptions: routingOptions,
-      serviceInstanceProvider: instanceProvider ?? new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: instanceProvider ?? new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   private static TransportConsumerOptions _oneDestination(string address = "edge-topic") {

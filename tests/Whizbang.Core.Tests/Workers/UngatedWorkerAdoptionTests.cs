@@ -168,12 +168,12 @@ public class UngatedWorkerAdoptionTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new Whizbang.Core.Transports.TransportDestination("dest-a"));
     var worker = new TransportConsumerWorker(
-      new Whizbang.Core.Transports.InProcessTransport(),
-      options,
-      new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      JsonContextRegistry.CreateCombinedOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      transport: new Whizbang.Core.Transports.InProcessTransport(),
+      options: options,
+      resilienceOptions: new Whizbang.Core.Resilience.SubscriptionResilienceOptions(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLogger<TransportConsumerWorker>.Instance,

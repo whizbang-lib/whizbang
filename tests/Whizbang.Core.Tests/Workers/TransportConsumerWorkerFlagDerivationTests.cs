@@ -125,14 +125,19 @@ public class TransportConsumerWorkerFlagDerivationTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("flags-topic"));
     return new TransportConsumerWorker(
-      transport, options, new SubscriptionResilienceOptions(),
-      serviceProvider.GetRequiredService<IServiceScopeFactory>(), new JsonSerializerOptions(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      lifecycleMessageDeserializer: null, metrics: null,
-      NullLogger<TransportConsumerWorker>.Instance,
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
       ephemeralModeResolver: new EphemeralModeResolver(new FakeCatalog()),
       eventMarkerResolver: new EventMarkerResolver(new FakeCatalog()),
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId) {

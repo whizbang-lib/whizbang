@@ -228,7 +228,8 @@ public class TransportConsumerWorkerProvisioningTests {
       lifecycleMessageDeserializer: null,
       metrics: null,
       logger: NullLoggerFactory.Instance.CreateLogger<TransportConsumerWorker>(),
-      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider());
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   // ========================================
