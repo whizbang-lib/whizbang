@@ -62,6 +62,27 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
     public Exception? DrainThrows { get; init; }
     public List<(string Table, IReadOnlyCollection<Guid> Ids)> Deleted { get; } = [];
     public List<PerspectiveRowRef> Requeued { get; } = [];
+    public List<PerspectiveRowDestructionTarget> RowsById { get; init; } = [];
+    public List<(PerspectiveRowRef Row, DateTimeOffset Until)> Held { get; } = [];
+    public int FailuresRecorded;
+
+    public Task<IReadOnlyList<PerspectiveRowDestructionTarget>> GetPerspectiveRowsByIdsAsync(
+        string clrTypeName, string tableName, IReadOnlyCollection<Guid> rowIds,
+        CancellationToken ct = default)
+      => Task.FromResult<IReadOnlyList<PerspectiveRowDestructionTarget>>(RowsById);
+
+    public Task HoldPerspectiveRowDestructionAsync(
+        IReadOnlyCollection<PerspectiveRowRef> rows, DateTimeOffset holdUntil, CancellationToken ct = default) {
+      lock (Held) { Held.AddRange(rows.Select(r => (r, holdUntil))); }
+      return Task.CompletedTask;
+    }
+
+    public Task<int> RecordPerspectiveRowDestructionFailureAsync(
+        IReadOnlyCollection<PerspectiveRowRef> rows, TimeSpan retryBackoff, int maxRetries,
+        OnDestroyFailure onDestroyFailure, CancellationToken ct = default) {
+      Interlocked.Increment(ref FailuresRecorded);
+      return Task.FromResult(1);
+    }
 
     public Task<IReadOnlyList<PerspectiveRowRef>> DrainRowEvictionJournalAsync(
         int limit = 1000, CancellationToken ct = default)
@@ -99,9 +120,42 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
       => Task.CompletedTask;
   }
 
-  private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(CascadeCoordinator coord) {
+  private sealed class FollowerGuard(
+      PerspectiveRowDecision? verdict = null, Exception? throws = null)
+      : IPerspectiveRowDestructionGuard {
+    public IReadOnlyCollection<Type> GuardedModels => [typeof(FollowerModel)];
+    public int AfterCalls;
+
+    public ValueTask<IReadOnlyDictionary<Guid, PerspectiveRowDecision>> OnBeforeReapAsync(
+        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken ct = default) {
+      if (throws is not null) {
+        return ValueTask.FromException<IReadOnlyDictionary<Guid, PerspectiveRowDecision>>(throws);
+      }
+      var map = new Dictionary<Guid, PerspectiveRowDecision>();
+      if (verdict is { } v) {
+        foreach (var t in targets) { map[t.RowId] = v; }
+      }
+      return ValueTask.FromResult<IReadOnlyDictionary<Guid, PerspectiveRowDecision>>(map);
+    }
+
+    public ValueTask OnAfterReapAsync(
+        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken ct = default) {
+      Interlocked.Increment(ref AfterCalls);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private static PerspectiveRowDestructionTarget _followerTarget(Guid id) => new(
+    typeof(FollowerModel).FullName!, FOLLOWER_TABLE, id, null,
+    JsonDocument.Parse("{}").RootElement, "cascade");
+
+  private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
+      CascadeCoordinator coord, IPerspectiveRowDestructionGuard? guard = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
+    if (guard is not null) {
+      services.AddSingleton(guard);
+    }
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -197,5 +251,96 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
 
     await Assert.That(logger.Snapshot().Any(e => e.Exception is InvalidOperationException)).IsTrue();
     await Assert.That(coord.Deleted).IsEmpty();
+  }
+
+  // --- Guarded cascade -------------------------------------------------------
+  // A follower can carry its own destruction guard. The cascade must consult it rather
+  // than delete on the announcer's authority alone, so the same verdicts apply here as on
+  // the direct reap path.
+
+  [Test]
+  public async Task GuardedFollower_ProceedVerdict_IsCascadeDeletedAsync() {
+    _registerGroup();
+    var seed = Guid.CreateVersion7();
+    var followerRow = Guid.CreateVersion7();
+    var coord = new CascadeCoordinator {
+      Journal = { new PerspectiveRowRef(ANNOUNCER_TABLE, seed) },
+      Tables = _tables(),
+      RowsById = { _followerTarget(followerRow) },
+    };
+    var guard = new FollowerGuard(PerspectiveRowDecision.Proceed());
+    var (worker, _) = _build(coord, guard);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Deleted.Any(d => d.Table == FOLLOWER_TABLE)).IsTrue();
+  }
+
+  [Test]
+  public async Task GuardedFollower_CancelVerdict_IsHeldNotDeletedAsync() {
+    _registerGroup();
+    var followerRow = Guid.CreateVersion7();
+    var coord = new CascadeCoordinator {
+      Journal = { new PerspectiveRowRef(ANNOUNCER_TABLE, Guid.CreateVersion7()) },
+      Tables = _tables(),
+      RowsById = { _followerTarget(followerRow) },
+    };
+    var (worker, _) = _build(coord, new FollowerGuard(PerspectiveRowDecision.Cancel()));
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Deleted.Any(d => d.Table == FOLLOWER_TABLE)).IsFalse();
+    await Assert.That(coord.Held.Any(h => h.Row.RowId == followerRow)).IsTrue();
+  }
+
+  [Test]
+  public async Task GuardedFollower_DeferVerdict_RequeuesTheSeedAsync() {
+    // A deferred follower means the cascade is unfinished, so the seed goes back on the
+    // journal — otherwise the eviction is forgotten and the follower never catches up.
+    _registerGroup();
+    var seed = Guid.CreateVersion7();
+    var coord = new CascadeCoordinator {
+      Journal = { new PerspectiveRowRef(ANNOUNCER_TABLE, seed) },
+      Tables = _tables(),
+      RowsById = { _followerTarget(Guid.CreateVersion7()) },
+    };
+    var until = DateTimeOffset.UtcNow.AddHours(1);
+    var (worker, _) = _build(coord, new FollowerGuard(PerspectiveRowDecision.Defer(until)));
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Requeued).IsNotEmpty();
+  }
+
+  [Test]
+  public async Task GuardedFollower_GuardThrowing_RecordsAFailureAndRequeuesAsync() {
+    _registerGroup();
+    var coord = new CascadeCoordinator {
+      Journal = { new PerspectiveRowRef(ANNOUNCER_TABLE, Guid.CreateVersion7()) },
+      Tables = _tables(),
+      RowsById = { _followerTarget(Guid.CreateVersion7()) },
+    };
+    var (worker, logger) = _build(
+      coord, new FollowerGuard(throws: new InvalidOperationException("guard failed")));
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.FailuresRecorded).IsEqualTo(1);
+    await Assert.That(coord.Deleted.Any(d => d.Table == FOLLOWER_TABLE)).IsFalse();
+    await Assert.That(logger.Snapshot().Any(e => e.Exception is InvalidOperationException)).IsTrue();
+  }
+
+  [Test]
+  public async Task UnguardedFollower_IsCascadeDeletedDirectlyAsync() {
+    _registerGroup();
+    var coord = new CascadeCoordinator {
+      Journal = { new PerspectiveRowRef(ANNOUNCER_TABLE, Guid.CreateVersion7()) },
+      Tables = _tables(),
+    };
+    var (worker, _) = _build(coord, guard: null);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.Deleted.Any(d => d.Table == FOLLOWER_TABLE)).IsTrue();
   }
 }
