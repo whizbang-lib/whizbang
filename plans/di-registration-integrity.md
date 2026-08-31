@@ -376,6 +376,29 @@ The point of this work is that absence is invisible, so the tests must assert on
 - Validate with `validate-doc-links` and `validate-test-links`; confirm coverage with
   `get-coverage-stats`
 
+## Type-based registrations: verified, not converted
+
+The plan listed roughly 55 type-based registrations as a remaining reflection hole. The real figure
+is 185, and the hole does not exist. Recording the evidence because the conclusion is the opposite
+of the plan's original assumption.
+
+`AddSingleton<TService, TImplementation>()` annotates the implementation type with
+`[DynamicallyAccessedMembers(PublicConstructors)]`, so the trimmer preserves its constructors and
+NativeAOT resolves them. This is not inference: `IsAotCompatible` and `EnableTrimAnalyzer` are both
+enabled, `TreatWarningsAsErrors` is on, and `Whizbang.Core` builds with **zero** IL trim or AOT
+diagnostics. A real problem here would fail the build today. The codebase already applies the same
+annotation to its own generic registration APIs, so the pattern is understood and in use.
+
+Converting all 185 to generated factories would therefore fix nothing, while adding 185 new
+hand-supplied argument lists: precisely the construction sites `WHIZ500` exists to police, and
+precisely the population every defect in this investigation came from. It would trade a
+container-internal implementation detail, already verified safe, for 185 new opportunities to drop
+a dependency silently.
+
+What was a genuine hole, and is now closed, was the framework's own `ActivatorUtilities` usage on
+the decoration path. That ran on every composed application and had no annotation protecting it.
+`Whizbang.Core` now contains none.
+
 ## Phases
 
 1. **Foundation.** `ServiceRequirement`, `WhizbangRegistrationException`,
