@@ -182,10 +182,10 @@ public static class WorkerPipelineExtensions {
       sp.GetRequiredService<IWhizbangLifecycleState>(),
       sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
       sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>(),
+      sp.GetRequiredService<ISchemaReadyGate>(),
       sp.GetService<Whizbang.Core.Observability.ILibraryVersionProvider>(),
       sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
       sp.GetService<Whizbang.Core.Startup.StartupPipelineRunner>(),
-      sp.GetService<ISchemaReadyGate>(),
       sp.GetService<Whizbang.Core.Startup.StandbyWatcherOptions>(),
       sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.StandbyWatcher>()));
 

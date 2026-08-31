@@ -50,14 +50,14 @@ public sealed class OrphanInboxJanitor : BackgroundService {
   private readonly IServiceProvider _services;
   private readonly HandledReceptorTypeSnapshot _receptorSnapshot;
   private readonly ILogger<OrphanInboxJanitor> _logger;
-  private readonly ISchemaReadyGate? _schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate;
 
   /// <summary>Constructs the janitor with required services and snapshot.</summary>
   public OrphanInboxJanitor(
       IServiceProvider services,
       HandledReceptorTypeSnapshot receptorSnapshot,
-      ILogger<OrphanInboxJanitor>? logger = null,
-      ISchemaReadyGate? schemaReadyGate = null) {
+      ISchemaReadyGate schemaReadyGate,
+      ILogger<OrphanInboxJanitor>? logger = null) {
     ArgumentNullException.ThrowIfNull(services);
     ArgumentNullException.ThrowIfNull(receptorSnapshot);
     _services = services;

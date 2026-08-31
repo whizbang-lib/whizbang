@@ -43,7 +43,7 @@ public class ScheduleWorkerTests {
       provider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(options ?? new TemporalOptions()),
       NullLogger<ScheduleWorker>.Instance,
-      schemaReadyGate: gate,
+      schemaReadyGate: gate ?? Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       signalBus: bus,
       timeProvider: clock);
     return (worker, claimer);

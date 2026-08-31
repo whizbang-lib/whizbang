@@ -62,7 +62,7 @@ public sealed partial class StandbyWatcher : BackgroundService {
   private readonly IStartupAssessor? _assessor;
   private readonly IHostApplicationLifetime _hostLifetime;
   private readonly StartupPipelineRunner? _pipelineRunner;
-  private readonly ISchemaReadyGate? _schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly StandbyWatcherOptions _options;
   private readonly ILogger<StandbyWatcher> _logger;
 
@@ -76,10 +76,10 @@ public sealed partial class StandbyWatcher : BackgroundService {
       IWhizbangLifecycleState lifecycle,
       IHostApplicationLifetime hostLifetime,
       IServiceInstanceProvider instanceProvider,
+      ISchemaReadyGate schemaReadyGate,
       ILibraryVersionProvider? versionProvider = null,
       IStartupAssessor? assessor = null,
       StartupPipelineRunner? pipelineRunner = null,
-      ISchemaReadyGate? schemaReadyGate = null,
       StandbyWatcherOptions? options = null,
       ILogger<StandbyWatcher>? logger = null) {
     ArgumentNullException.ThrowIfNull(scopeFactory);

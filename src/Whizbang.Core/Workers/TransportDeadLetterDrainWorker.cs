@@ -40,11 +40,9 @@ public partial class TransportDeadLetterDrainWorker(
   IOptions<TransportDeadLetterDrainWorkerOptions> options,
   WhizbangMetrics whizbangMetrics,
   ILogger<TransportDeadLetterDrainWorker> logger,
-  // Startup barrier: draining writes to wh_dead_letters, which may not exist on a first boot.
-  // Optional only so existing fixtures construct unchanged; DI always supplies it.
-  ISchemaReadyGate? schemaReadyGate = null
+  ISchemaReadyGate schemaReadyGate
 ) : BackgroundService {
-  private readonly ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate;
 
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly TransportDeadLetterDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
