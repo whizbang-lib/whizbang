@@ -66,8 +66,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, logger, orderedProcessor, options);
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Drain existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
@@ -123,9 +128,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     var serviceProvider = services.BuildServiceProvider();
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, new TestConsumerLogger(), new OrderedStreamProcessor(),
-      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")] });
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: new TestConsumerLogger(),
+      orderedProcessor: new OrderedStreamProcessor(),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("topic-00", "sub-00-a")] },
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // The pipeline itself is drained (no blocking steps) — readiness now hangs ONLY on the broker.
     var state = new Whizbang.Core.Startup.StartupPipelineState();
@@ -180,8 +189,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, logger, orderedProcessor, options);
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
     await worker.StartAsync(CancellationToken.None);
@@ -235,8 +249,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, logger, orderedProcessor, options);
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
     await worker.StartAsync(CancellationToken.None);
@@ -287,8 +306,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, logger, orderedProcessor, options);
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act: Start creates subscriptions, stop disposes them
     await worker.StartAsync(CancellationToken.None);
@@ -324,8 +348,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, logger, orderedProcessor, options);
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await worker.StartAsync(CancellationToken.None);
 
@@ -365,8 +394,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, logger, orderedProcessor, options);
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     // Act: Start should handle filter metadata without errors
     await worker.StartAsync(CancellationToken.None);
@@ -406,8 +440,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, logger, orderedProcessor, options);
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await _drainMessagesAsync("topic-01", "sub-01-a");
     await worker.StartAsync(CancellationToken.None);
@@ -463,8 +502,13 @@ public class ServiceBusConsumerWorkerIntegrationTests(ServiceBusEmulatorFixtureS
     };
 
     var worker = new ServiceBusConsumerWorker(
-      transport, serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      jsonOptions, logger, orderedProcessor, options);
+      transport: transport,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: jsonOptions,
+      logger: logger,
+      orderedProcessor: orderedProcessor,
+      options: options,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     await _drainMessagesAsync("topic-00", "sub-00-a");
     await worker.StartAsync(CancellationToken.None);

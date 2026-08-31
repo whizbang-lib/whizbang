@@ -638,20 +638,20 @@ public class ServiceBusConsumerWorkerGapTests {
     var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = SbcGapJsonContext.Default };
 
     return new ServiceBusConsumerWorker(
-      transport,
-      scopeFactory,
-      jsonOptions,
-      new TestLogger<ServiceBusConsumerWorker>(),
-      new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
-      new ServiceBusConsumerOptions {
+      transport: transport,
+      scopeFactory: scopeFactory,
+      jsonOptions: jsonOptions,
+      logger: new TestLogger<ServiceBusConsumerWorker>(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      options: new ServiceBusConsumerOptions {
         Subscriptions = [new TopicSubscription("gap-topic", "gap-sub")]
       },
-      lifecycleMessageDeserializer,
+      lifecycleMessageDeserializer: lifecycleMessageDeserializer,
       envelopeSerializer: null,
       messageProcessingOptions: messageProcessingOptions,
       receptorRegistry: receptorRegistry,
-      runtimeReceptorRegistry: null
-    );
+      runtimeReceptorRegistry: null,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(

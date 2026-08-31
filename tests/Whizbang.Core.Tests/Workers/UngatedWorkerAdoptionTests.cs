@@ -136,12 +136,12 @@ public class UngatedWorkerAdoptionTests {
     var gate = new SchemaReadyGate();
     using var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new ServiceBusConsumerWorker(
-      new Whizbang.Core.Transports.InProcessTransport(),
-      sp.GetRequiredService<IServiceScopeFactory>(),
-      JsonContextRegistry.CreateCombinedOptions(),
-      NullLogger<ServiceBusConsumerWorker>.Instance,
-      new OrderedStreamProcessor(),
-      new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
+      transport: new Whizbang.Core.Transports.InProcessTransport(),
+      scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
+      jsonOptions: JsonContextRegistry.CreateCombinedOptions(),
+      logger: NullLogger<ServiceBusConsumerWorker>.Instance,
+      orderedProcessor: new OrderedStreamProcessor(),
+      options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("t", "s")] },
       schemaReadyGate: gate);
 
     using var cts = new CancellationTokenSource();
