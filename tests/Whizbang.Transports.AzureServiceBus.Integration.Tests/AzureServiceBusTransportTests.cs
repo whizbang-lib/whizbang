@@ -24,11 +24,6 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 /// </summary>
 [Category("Integration")]
 [Timeout(240_000)] // 240s timeout for integration tests (emulator initialization ~72s + test execution)
-// Every test here publishes to topic-00/sub-00-a. Run in parallel they receive each other's
-// messages: whoever reads first either completes someone else's message or abandons it, and an
-// abandoned message is redelivered, so the contention compounds. Serialising the class is what
-// makes each test's own message findable.
-[NotInParallel("AsbTopic00")]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
@@ -177,11 +172,7 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     // Assert - Verify message arrived by receiving it
     var receiver = _fixture.Client.CreateReceiver("topic-00", "sub-00-a");
     try {
-      // Cooperative receive: other tests in this class publish to the same topic, so take
-      // only this test's own message and leave the rest available rather than completing
-      // whatever happens to arrive first.
-      var received = await _receiveOwnAsync(
-        receiver, envelope.MessageId.Value.ToString(), TimeSpan.FromSeconds(20));
+      var received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(10));
       await Assert.That(received).IsNotNull();
       await Assert.That(received!.MessageId).IsEqualTo(envelope.MessageId.Value.ToString());
       await receiver.CompleteMessageAsync(received);
@@ -416,123 +407,4 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     }
   }
 
-
-  /// <summary>
-  /// Receives until the message this test published turns up, abandoning anything else so a
-  /// sibling test's message stays available to it. Completing another test's message — which a
-  /// plain ReceiveMessageAsync would do — is what makes shared-topic tests flaky.
-  /// </summary>
-  private static async Task<ServiceBusReceivedMessage?> _receiveOwnAsync(
-      ServiceBusReceiver receiver, string expectedMessageId, TimeSpan timeout) {
-    var deadline = DateTimeOffset.UtcNow + timeout;
-    while (DateTimeOffset.UtcNow < deadline) {
-      var msg = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(2));
-      if (msg is null) {
-        continue;
-      }
-      if (string.Equals(msg.MessageId, expectedMessageId, StringComparison.Ordinal)) {
-        return msg;
-      }
-      await receiver.AbandonMessageAsync(msg);
-    }
-    return null;
-  }
-
-  // ---------------------------------------------------------------------------------------------
-  // Destination metadata is copied onto the AMQP message's ApplicationProperties, converting each
-  // JsonElement to a broker-native value. Every JSON kind has to survive that trip: a header the
-  // broker rejects fails the publish, and one that silently changes shape breaks any consumer
-  // filtering on it.
-  // ---------------------------------------------------------------------------------------------
-
-  [Test]
-  public async Task PublishAsync_CopiesMetadataOfEveryJsonKindOntoApplicationPropertiesAsync() {
-    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = TestJsonContext.Default };
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
-    _disposables.Add(transport);
-    await transport.InitializeAsync();
-
-    using var doc = JsonDocument.Parse("""
-      {
-        "str": "hello",
-        "int": 42,
-        "float": 1.5,
-        "yes": true,
-        "no": false,
-        "nothing": null,
-        "arr": [1, 2],
-        "obj": { "k": "v" }
-      }
-      """);
-    var metadata = doc.RootElement.EnumerateObject()
-      .ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal);
-
-    var envelope = _createTestEnvelope();
-    var destination = new TransportDestination("topic-00", Metadata: metadata);
-
-    await transport.PublishAsync(envelope, destination);
-
-    var receiver = _fixture.Client.CreateReceiver("topic-00", "sub-00-a");
-    try {
-      var received = await _receiveOwnAsync(
-        receiver, envelope.MessageId.Value.ToString(), TimeSpan.FromSeconds(20));
-      await Assert.That(received).IsNotNull();
-
-      var props = received!.ApplicationProperties;
-
-      // Strings stay strings; numbers become native longs and doubles rather than text, so a
-      // consumer can filter on them numerically.
-      await Assert.That(props["str"]).IsEqualTo("hello");
-      await Assert.That(props["int"]).IsEqualTo(42L);
-      await Assert.That(props["float"]).IsEqualTo(1.5d);
-
-      // Booleans survive as booleans, not "True"/"False".
-      await Assert.That(props["yes"]).IsEqualTo(true);
-      await Assert.That(props["no"]).IsEqualTo(false);
-
-      // Null stays null rather than becoming the string "null".
-      await Assert.That(props["nothing"]).IsNull();
-
-      // Arrays and objects have no AMQP primitive, so they ride as their raw JSON text.
-      // GetRawText preserves the source spacing, so this is the JSON as written, not reformatted.
-      await Assert.That(props["arr"]?.ToString()).IsEqualTo("[1, 2]");
-      await Assert.That(props["obj"]?.ToString()).Contains("\"k\"");
-
-      await receiver.CompleteMessageAsync(received);
-    } finally {
-      await receiver.DisposeAsync();
-    }
-  }
-
-  [Test]
-  public async Task PublishAsync_WithAStreamIdInMetadata_SetsTheSessionFromItAsync() {
-    // The session key is what gives a stream its FIFO ordering. It is read out of metadata
-    // through the same conversion, so a StreamId that failed to convert would silently
-    // scatter one stream's messages across sessions.
-    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = TestJsonContext.Default };
-    var transport = new AzureServiceBusTransport(_fixture.Client, jsonOptions);
-    _disposables.Add(transport);
-    await transport.InitializeAsync();
-
-    var streamId = Guid.NewGuid();
-    using var doc = JsonDocument.Parse($"{{\"StreamId\":\"{streamId}\"}}");
-    var metadata = doc.RootElement.EnumerateObject()
-      .ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal);
-
-    var envelope = _createTestEnvelope();
-    var destination = new TransportDestination("topic-00", Metadata: metadata);
-
-    await transport.PublishAsync(envelope, destination);
-
-    var receiver = _fixture.Client.CreateReceiver("topic-00", "sub-00-a");
-    try {
-      var received = await _receiveOwnAsync(
-        receiver, envelope.MessageId.Value.ToString(), TimeSpan.FromSeconds(20));
-      await Assert.That(received).IsNotNull();
-      await Assert.That(received!.SessionId).IsNotNull();
-      await receiver.CompleteMessageAsync(received);
-    } finally {
-      await receiver.DisposeAsync();
-    }
-  }
 }

@@ -19,7 +19,7 @@ namespace Whizbang.Transports.AzureServiceBus.Integration.Tests;
 /// </remarks>
 [Category("Integration")]
 [Timeout(240_000)]
-[NotInParallel("AsbBacklogPeek")]
+[NotInParallel("ServiceBus")]
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public class AzureServiceBusBacklogPeekIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
