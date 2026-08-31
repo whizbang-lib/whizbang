@@ -2050,6 +2050,17 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Fallback method to generate ReceptorInfo entry manually if snippet extraction fails.
   /// </summary>
+  /// <remarks>
+  /// Unreachable in practice: extraction fails only when a snippet has lost the
+  /// <c>new global::Whizbang.Core.Messaging.ReceptorInfo(</c> marker, and
+  /// <c>ReceptorRegistrySnippetInvariantTests</c> pins that marker in all four snippets
+  /// <c>_selectSnippet</c> can return. Kept as the safety net for that edit, but it is a second
+  /// copy of the entry shape that no snippet change updates — so if it ever does run, the entries
+  /// it emits will have drifted from the template's.
+  /// </remarks>
+  // Justification lives in the remarks above: netstandard2.0's ExcludeFromCodeCoverageAttribute
+  // has no Justification property (it arrived in .NET 5), so generator projects carry it in prose.
+  [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
   private static string _generateReceptorInfoEntryManually(
       ReceptorInfo receptor,
       string syncAttributesCode) {
