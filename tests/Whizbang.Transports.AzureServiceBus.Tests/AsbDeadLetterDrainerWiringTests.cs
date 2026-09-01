@@ -61,7 +61,7 @@ public class AsbDeadLetterDrainerWiringTests {
   public async Task FleetDrainer_DrainsEveryActiveSubscription_AndSumsCountsAsync() {
     var made = new Dictionary<(string, string), _recordingDrainer>();
     var subs = new List<(string TopicName, string SubscriptionName)> {
-      ("jdx.contracts.job", "svc-jdx.contracts.job"),
+      ("orders.contracts.job", "svc-orders.contracts.job"),
       ("inbox", "svc-inbox"),
     };
     var fleet = new AzureServiceBusFleetDeadLetterDrainer(

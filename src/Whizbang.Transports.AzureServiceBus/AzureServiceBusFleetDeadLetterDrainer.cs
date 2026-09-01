@@ -20,6 +20,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AsbDeadLetterDrainerWiringTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/AsbDeadLetterImportSeamIntegrationTests.cs</tests>
 public sealed class AzureServiceBusFleetDeadLetterDrainer : ITransportDeadLetterDrainer, IAsyncDisposable {
   private readonly Func<IReadOnlyCollection<(string TopicName, string SubscriptionName)>> _activeSubscriptions;
   private readonly Func<(string TopicName, string SubscriptionName), ITransportDeadLetterDrainer> _drainerFactory;

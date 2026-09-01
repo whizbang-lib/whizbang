@@ -182,7 +182,7 @@ public class RowRetentionDeclarationToEnforcementTests : EFCoreTestBase {
     await conn.OpenAsync();
     await _arrangeAsync(conn);
 
-    // The companion case, and the one JDX ships: age AND cardinality on one perspective.
+    // The companion case, and the common one in production: age AND cardinality on one perspective.
     await _syncAsync(ttlSeconds: 60 * 60 * 24 * 60, capPerScope: 200, capScopeKey: "u");
 
     await using var read = new NpgsqlCommand(
