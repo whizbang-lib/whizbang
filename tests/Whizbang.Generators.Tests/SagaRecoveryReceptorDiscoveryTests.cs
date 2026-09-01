@@ -92,6 +92,45 @@ public partial class OrderSaga {
   }
 
   [Test]
+  public async Task TheWatchdogTickReceptor_IsGeneratedWhenTheTickTypeIsReferencedAsync() {
+    // The watchdog handler is the safety net: it is what drives SagaCompletedEvent when per-item
+    // terminal events were dropped before the right pod's tracker saw them. Unlike the per-item
+    // handlers, its message is the framework's own tick type rather than a nested generated one,
+    // so it is the only receptor here that depends on a type being RESOLVABLE in the compilation.
+    // When it is not, the generator skips that one shape and emits the rest — which reads exactly
+    // like a working generator right up until a saga strands and nothing wakes to recover it.
+    // The tick type is declared HERE rather than in the shared surface, because the companion
+    // test asserts the handler is omitted without it — putting it in the surface would quietly
+    // disarm that one.
+    var source = SAGA_ATTRIBUTE_DECL + @"
+namespace Whizbang.Sagas {
+  public sealed class SagaCompletionWatchdogTickEvent : global::Whizbang.Core.IEvent {
+    public System.Guid SagaId { get; set; }
+  }
+}
+
+namespace MyApp.Sagas;
+
+[global::Whizbang.Sagas.Saga(""orders"")]
+public partial class OrderSaga {
+  public sealed record ItemCompletedEvent;
+  public sealed record ItemFailedEvent;
+}
+";
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("SagaCompletionWatchdogTickHandler")
+      .Because("without the tick handler a stranded saga has nothing scheduled to recover it, and "
+             + "the other receptors being present makes that look like a working generator");
+    await Assert.That(dispatcher!).Contains("SagaCompletionWatchdogTickEvent")
+      .Because("the handler has to be bound to the framework tick type it actually receives");
+  }
+
+  [Test]
   public async Task GenericSaga_IsSkippedAsync() {
     // A generic saga has no single closed type to emit handlers against.
     var source = _source(@"
