@@ -221,4 +221,74 @@ public class InboxDrainFetchPlanTests {
              + "round-trip; when the budget cannot seat everyone the answer is fewer streams this "
              + "cycle, never thinner slices for all of them");
   }
+
+  // ============================================================
+  // Depth-map pruning
+  // ============================================================
+  //
+  // The worker remembers how deep each stream was last cycle so the next one can size its
+  // fetches. That map is keyed on stream id and nothing removes an entry when a stream goes
+  // quiet, so on a service that sees many short-lived streams it would grow for the life of the
+  // process — a slow leak that only shows up as memory on a long-running host.
+
+  [Test]
+  public async Task PruneDepth_BelowTheThreshold_KeepsEverythingAsync() {
+    // Pruning is a scan of the whole map, and it runs inside the drain cycle. Doing it while the
+    // map is small would put that scan on the hot path for no benefit.
+    var worker = _worker(_opts());
+    var ids = Enumerable.Range(0, 100).Select(_ => Guid.CreateVersion7()).ToList();
+    foreach (var id in ids) {
+      worker.RecordObservedDepthForTest(id, 10);
+    }
+
+    worker.PruneDepthForTest([]);
+
+    await Assert.That(worker.ObservedDepthCountForTest).IsEqualTo(ids.Count)
+      .Because("a small map is not worth scanning — the prune is bounded work, not constant work");
+  }
+
+  [Test]
+  public async Task PruneDepth_PastTheThreshold_DropsStreamsNoLongerInPlayAsync() {
+    // The leak this exists to stop: a service whose streams are short-lived accumulates one
+    // entry per stream it has ever seen.
+    var worker = _worker(_opts());
+    var stale = Enumerable.Range(0, 5000).Select(_ => Guid.CreateVersion7()).ToList();
+    foreach (var id in stale) {
+      worker.RecordObservedDepthForTest(id, 10);
+    }
+
+    worker.PruneDepthForTest([]);
+
+    await Assert.That(worker.ObservedDepthCountForTest).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PruneDepth_KeepsTheStreamsStillInPlayAsync() {
+    // The kept set is the streams this cycle is about to fetch. Dropping their depths would make
+    // the very next fetch size itself from nothing, undoing the adaptation the map exists for.
+    var worker = _worker(_opts());
+    var keep = Enumerable.Range(0, 10).Select(_ => Guid.CreateVersion7()).ToList();
+    var stale = Enumerable.Range(0, 5000).Select(_ => Guid.CreateVersion7()).ToList();
+    foreach (var id in keep.Concat(stale)) {
+      worker.RecordObservedDepthForTest(id, 10);
+    }
+
+    worker.PruneDepthForTest(keep);
+
+    await Assert.That(worker.ObservedDepthCountForTest).IsEqualTo(keep.Count)
+      .Because("the streams about to be fetched must keep the depth their next fetch is sized from");
+  }
+
+  [Test]
+  public async Task PruneDepth_WithNothingStale_KeepsTheWholeMapAsync() {
+    var worker = _worker(_opts());
+    var live = Enumerable.Range(0, 5000).Select(_ => Guid.CreateVersion7()).ToList();
+    foreach (var id in live) {
+      worker.RecordObservedDepthForTest(id, 10);
+    }
+
+    worker.PruneDepthForTest(live);
+
+    await Assert.That(worker.ObservedDepthCountForTest).IsEqualTo(live.Count);
+  }
 }
