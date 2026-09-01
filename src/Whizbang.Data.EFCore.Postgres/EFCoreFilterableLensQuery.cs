@@ -1,5 +1,6 @@
 #pragma warning disable CS0618
 
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Configuration;
@@ -209,6 +210,15 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
   /// <summary>
   /// Wraps an IScopeContext with override values.
   /// </summary>
+  /// <remarks>
+  /// <see cref="ScopeFilterBuilder.Build"/> reads exactly two things off a context —
+  /// <see cref="IScopeContext.Scope"/> and <see cref="IScopeContext.SecurityPrincipals"/> — and
+  /// this instance never leaves <c>_createScopedAccess</c>: the builder returns a
+  /// <c>ScopeFilterInfo</c> of plain values, and the scoped access holds that, not the context.
+  /// So the members below exist only to satisfy the interface the builder takes; nothing can
+  /// call them. They are excluded individually rather than at the type, because the two members
+  /// that ARE read carry the override semantics and must keep their coverage.
+  /// </remarks>
   private sealed class OverrideScopeContext(IScopeContext inner, ScopeFilterOverride overrides) : IScopeContext {
     public PerspectiveScope Scope => new() {
       TenantId = overrides.TenantId ?? inner.Scope.TenantId,
@@ -216,19 +226,32 @@ public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterable
       OrganizationId = overrides.OrganizationId ?? inner.Scope.OrganizationId,
       CustomerId = overrides.CustomerId ?? inner.Scope.CustomerId
     };
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public IReadOnlySet<string> Roles => inner.Roles;
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public IReadOnlySet<Permission> Permissions => inner.Permissions;
     public IReadOnlySet<SecurityPrincipalId> SecurityPrincipals => inner.SecurityPrincipals;
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public IReadOnlyDictionary<string, string> Claims => inner.Claims;
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public string? ActualPrincipal => inner.ActualPrincipal;
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public string? EffectivePrincipal => inner.EffectivePrincipal;
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public SecurityContextType ContextType => inner.ContextType;
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public bool HasPermission(Permission permission) => inner.HasPermission(permission);
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public bool HasAnyPermission(params Permission[] permissions) => inner.HasAnyPermission(permissions);
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public bool HasAllPermissions(params Permission[] permissions) => inner.HasAllPermissions(permissions);
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public bool HasRole(string roleName) => inner.HasRole(roleName);
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public bool HasAnyRole(params string[] roleNames) => inner.HasAnyRole(roleNames);
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public bool IsMemberOfAny(params SecurityPrincipalId[] principals) => inner.IsMemberOfAny(principals);
+    [ExcludeFromCodeCoverage(Justification = "Interface plumbing: ScopeFilterBuilder.Build reads only Scope and SecurityPrincipals, and this wrapper never escapes _createScopedAccess, so nothing can call this.")]
     public bool IsMemberOfAll(params SecurityPrincipalId[] principals) => inner.IsMemberOfAll(principals);
   }
 }
