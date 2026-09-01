@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using TUnit.Core;
 using Whizbang.Core.Diagnostics;
 
@@ -97,11 +98,21 @@ public class DebuggerAwareClockTests {
     var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
     using var clock = new DebuggerAwareClock(options);
 
-    // Act
+    // Act — bracket the start so the assertion can be bounded by real elapsed time rather than a
+    // fixed budget. A constant here races the scheduler: the thread can be descheduled between
+    // StartNew and the read for longer than any number small enough to be meaningful, which is a
+    // CI flake, and a number large enough never to flake no longer says "initially zero".
+    var before = Stopwatch.GetTimestamp();
     var stopwatch = clock.StartNew();
+    var reading = stopwatch.ActiveElapsed;
+    var wallSpentGettingHere = Stopwatch.GetElapsedTime(before);
 
-    // Assert - should be very close to zero (allow small margin for execution time)
-    await Assert.That(stopwatch.ActiveElapsed.TotalMilliseconds).IsLessThan(50);
+    // Assert
+    await Assert.That(reading).IsGreaterThanOrEqualTo(TimeSpan.Zero);
+    await Assert.That(reading).IsLessThanOrEqualTo(wallSpentGettingHere)
+      .Because("a stopwatch that starts now cannot have accumulated more than the wall time this "
+             + "test spent starting it and reading it — which is what catches one handed back "
+             + "already running, however slow the machine is");
   }
 
   [Test]
@@ -110,11 +121,17 @@ public class DebuggerAwareClockTests {
     var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
     using var clock = new DebuggerAwareClock(options);
 
-    // Act
+    // Act — same bounded shape as the ActiveElapsed case; this one is what actually flaked in CI.
+    var before = Stopwatch.GetTimestamp();
     var stopwatch = clock.StartNew();
+    var reading = stopwatch.WallElapsed;
+    var wallSpentGettingHere = Stopwatch.GetElapsedTime(before);
 
-    // Assert - should be very close to zero (allow small margin for execution time)
-    await Assert.That(stopwatch.WallElapsed.TotalMilliseconds).IsLessThan(50);
+    // Assert
+    await Assert.That(reading).IsGreaterThanOrEqualTo(TimeSpan.Zero);
+    await Assert.That(reading).IsLessThanOrEqualTo(wallSpentGettingHere)
+      .Because("wall elapsed at the moment of starting is bounded by the wall time spent starting "
+             + "it, on any machine and under any load");
   }
 
   [Test]
