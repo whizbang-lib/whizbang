@@ -527,4 +527,121 @@ public class MaintenanceTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("v", value);
     await cmd.ExecuteNonQueryAsync();
   }
+
+  // ================================================================
+  // Task 8: Recovered dead-letter purge
+  //
+  // wh_dead_letters had no purge path at all, so every row a consumer ever
+  // dead-lettered stayed forever — including rows already marked Recovered,
+  // which are finished business. Combined with a recovery loop that writes a
+  // NEW row per republish attempt, an unhealthy deployment grew this table
+  // without bound. Rows still awaiting a human decision must survive the
+  // sweep regardless of age; only settled ones are reclaimable.
+  // ================================================================
+
+  private static Task _insertDeadLetterAsync(
+      NpgsqlConnection conn, Guid id, int recoveryStatus, string age) =>
+    conn.ExecuteAsync($@"
+      INSERT INTO wh_dead_letters (
+        dead_letter_id, source_table, source_id, message_type, envelope,
+        failure_reason, attempts_when_dlq, dead_lettered_at, recovery_status, generation)
+      VALUES (
+        '{id}', 'wh_inbox', '{Guid.CreateVersion7()}', 'TestEvent', '{{}}'::jsonb,
+        17, 3, NOW() - INTERVAL '{age}', {recoveryStatus}, 'test-generation')");
+
+  private static Task<long> _countDeadLetterAsync(NpgsqlConnection conn, Guid id) =>
+    conn.ExecuteScalarAsync<long>(
+      $"SELECT COUNT(*) FROM wh_dead_letters WHERE dead_letter_id = '{id}'");
+
+  [Test]
+  public async Task PerformMaintenance_PurgesRecoveredDeadLetters_PastRetentionAsync() {
+    // Arrange — a Recovered row older than the default retention window.
+    await using var conn = await _openConnectionAsync();
+    var settledId = Guid.CreateVersion7();
+    await _insertDeadLetterAsync(conn, settledId, recoveryStatus: 3, age: "60 days");
+
+    // Act
+    var results = await _runMaintenanceAsync(conn);
+
+    // Assert — the sweep reports itself and the row is gone.
+    var task = results.FirstOrDefault(r => r.TaskName == "purge_recovered_dead_letters");
+    await Assert.That(task.TaskName).IsEqualTo("purge_recovered_dead_letters");
+    await Assert.That(task.RowsAffected).IsGreaterThanOrEqualTo(1);
+    await Assert.That(await _countDeadLetterAsync(conn, settledId)).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_PreservesHoldForReviewDeadLetters_RegardlessOfAgeAsync() {
+    // Arrange — HoldForReview is a human decision that has not been made yet.
+    // Age must never be sufficient reason to discard it.
+    await using var conn = await _openConnectionAsync();
+    var heldId = Guid.CreateVersion7();
+    await _insertDeadLetterAsync(conn, heldId, recoveryStatus: 2, age: "365 days");
+
+    // Act
+    await _runMaintenanceAsync(conn);
+
+    // Assert
+    await Assert.That(await _countDeadLetterAsync(conn, heldId)).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_PreservesPendingAndFailedDeadLetters_RegardlessOfAgeAsync() {
+    // Arrange — Pending(0) is unresolved work and PermanentlyFailed(4) is the
+    // forensic record of something that never succeeded. Neither is settled.
+    await using var conn = await _openConnectionAsync();
+    var pendingId = Guid.CreateVersion7();
+    var failedId = Guid.CreateVersion7();
+    await _insertDeadLetterAsync(conn, pendingId, recoveryStatus: 0, age: "365 days");
+    await _insertDeadLetterAsync(conn, failedId, recoveryStatus: 4, age: "365 days");
+
+    // Act
+    await _runMaintenanceAsync(conn);
+
+    // Assert
+    await Assert.That(await _countDeadLetterAsync(conn, pendingId)).IsEqualTo(1);
+    await Assert.That(await _countDeadLetterAsync(conn, failedId)).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_PreservesRecentRecoveredDeadLetters_WithinRetentionAsync() {
+    // Arrange — a freshly recovered row is still useful for diagnosing the
+    // failure it came from, so the window must be honored rather than
+    // deleting on status alone.
+    await using var conn = await _openConnectionAsync();
+    var recentId = Guid.CreateVersion7();
+    await _insertDeadLetterAsync(conn, recentId, recoveryStatus: 3, age: "1 hour");
+
+    // Act
+    await _runMaintenanceAsync(conn);
+
+    // Assert
+    await Assert.That(await _countDeadLetterAsync(conn, recentId)).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PerformMaintenance_RespectsConfigurableDeadLetterRetention_ViaWhSettingsAsync() {
+    // Arrange — narrow the window to 1 day; a 2-day-old settled row becomes eligible.
+    await using var conn = await _openConnectionAsync();
+    await conn.ExecuteAsync(@"
+      INSERT INTO wh_settings (setting_key, setting_value, value_type, description)
+      VALUES ('dead_letter_retention_days', '1', 'integer', 'test override')
+      ON CONFLICT (setting_key) DO UPDATE SET setting_value = '1'");
+
+    var id = Guid.CreateVersion7();
+    await _insertDeadLetterAsync(conn, id, recoveryStatus: 3, age: "2 days");
+
+    try {
+      // Act
+      await _runMaintenanceAsync(conn);
+
+      // Assert — 2-day-old settled row is eligible under a 1-day window
+      await Assert.That(await _countDeadLetterAsync(conn, id)).IsEqualTo(0);
+    } finally {
+      await conn.ExecuteAsync(@"
+        UPDATE wh_settings SET setting_value = '7'
+        WHERE setting_key = 'dead_letter_retention_days'");
+    }
+  }
+
 }
