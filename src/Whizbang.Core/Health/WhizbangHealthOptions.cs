@@ -15,6 +15,28 @@ public sealed class WhizbangHealthOptions {
   public HealthPolicy Default { get; set; } = HealthPolicy.Lenient;
 
   /// <summary>
+  /// How long a single health source may take before it is reported as faulted. Default 2 seconds.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A probe must always answer. Sources report on dependencies, and a dependency probe can block
+  /// indefinitely: a network call inside a library that does not observe cancellation will not
+  /// return and will not throw. Without a bound, one such source takes the entire health response
+  /// with it, and the policy that says liveness is always healthy never gets to run.
+  /// </para>
+  /// <para>
+  /// The consequence is worse for liveness than readiness. A readiness probe that hangs holds a pod
+  /// out of rotation; a liveness probe that hangs makes kubelet kill a process that is running
+  /// perfectly well, then do it again after every restart.
+  /// </para>
+  /// <para>
+  /// Keep this comfortably under the probe's own timeout. A source that cannot answer in two
+  /// seconds is not healthy, and saying so is more useful than waiting longer to find out.
+  /// </para>
+  /// </remarks>
+  public TimeSpan SourceTimeout { get; set; } = TimeSpan.FromSeconds(2);
+
+  /// <summary>
   /// Per-component policy overrides keyed by <see cref="IWhizbangHealthSource.Component"/> — e.g. keep
   /// <c>"offload"</c> Strict while everything else is Lenient.
   /// </summary>
