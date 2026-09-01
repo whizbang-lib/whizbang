@@ -640,6 +640,21 @@ public sealed partial class PgSharedNotifyConnection(
     }
   }
 
+  /// <summary>
+  /// The channels this connection currently holds a <c>LISTEN</c> on. Test hook, because the set
+  /// is otherwise unobservable: PostgreSQL exposes no catalog for another session's listened
+  /// channels, and "the NOTIFY stopped arriving" is an absence, which cannot be waited for. Without
+  /// a way to see the set shrink, a shared connection that never UNLISTENs looks identical to one
+  /// that does — while it accumulates channels for the life of the process.
+  /// </summary>
+  internal IReadOnlyCollection<string> ListenedChannelsForTesting {
+    get {
+      lock (_connectionGate) {
+        return [.. _listenedChannels];
+      }
+    }
+  }
+
   private sealed class SubscriptionHandle(PgSharedNotifyConnection owner, INotifySubscription subscription) : IDisposable {
     private int _disposed;
     public void Dispose() {
