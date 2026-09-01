@@ -529,4 +529,75 @@ public class TransportConsumerBuilderExtensionsTests {
   }
 
   #endregion
+
+  // ============================================================
+  // The subscription health check
+  // ============================================================
+  //
+  // A transport consumer whose subscriptions have dropped is still a running process with a
+  // green liveness probe — it simply stops receiving. The health check is what turns that into
+  // something an orchestrator can see, so its registration has to produce a working check in
+  // both the composed and the partly-composed case.
+
+  [Test]
+  public async Task AddTransportConsumer_RegistersTheSubscriptionHealthCheckAsync() {
+    var services = new ServiceCollection();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands").Inbox.UseSharedTopic("inbox"));
+
+    builder.AddTransportConsumer();
+
+    var provider = services.BuildServiceProvider();
+    var registrations = provider
+      .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+        Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>().Value.Registrations;
+
+    await Assert.That(registrations.Any(r => r.Tags.Contains("transport"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TheHealthCheckFactory_ToleratesAnAbsentWorkerAsync() {
+    // A host that registered the consumer options but not the worker — a schema-only or
+    // diagnostic composition — must still get a check rather than a null-reference from the
+    // health endpoint. The check simply reports on an empty subscription set.
+    var services = new ServiceCollection();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands").Inbox.UseSharedTopic("inbox"));
+    builder.AddTransportConsumer();
+
+    // Resolve through a provider that cannot build the worker.
+    var bare = new ServiceCollection();
+    var registration = services.BuildServiceProvider()
+      .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+        Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>().Value.Registrations
+      .First(r => r.Tags.Contains("transport"));
+
+    var check = registration.Factory(bare.BuildServiceProvider());
+
+    await Assert.That(check).IsNotNull()
+      .Because("a partly-composed host must get a health check that reports, not one that throws");
+  }
+
+  [Test]
+  public async Task TheHealthCheckIsDegradedRatherThanUnhealthyAsync() {
+    // Subscriptions drop and recover on their own — the transport reconnects. Reporting
+    // Unhealthy would make an orchestrator restart or evict a pod that was about to recover.
+    var services = new ServiceCollection();
+    _registerRequiredServices(services);
+    var builder = new WhizbangBuilder(services);
+    builder.WithRouting(routing => routing.OwnDomains("myapp.orders.commands").Inbox.UseSharedTopic("inbox"));
+    builder.AddTransportConsumer();
+
+    var registration = services.BuildServiceProvider()
+      .GetRequiredService<Microsoft.Extensions.Options.IOptions<
+        Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckServiceOptions>>().Value.Registrations
+      .First(r => r.Tags.Contains("transport"));
+
+    await Assert.That(registration.FailureStatus)
+      .IsEqualTo(Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded)
+      .Because("a dropped subscription recovers on its own — Unhealthy would evict a pod that "
+             + "was about to come back");
+  }
 }
