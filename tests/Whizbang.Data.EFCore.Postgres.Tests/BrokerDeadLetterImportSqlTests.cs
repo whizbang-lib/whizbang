@@ -153,4 +153,93 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
         .Because("Recovered");
     }
   }
+
+  /// <summary>
+  /// A body that is not valid JSON is still taken into custody, verbatim.
+  /// </summary>
+  /// <remarks>
+  /// Custody over correctness. A message reaches the broker DLQ precisely because something
+  /// about it was wrong, and its body is often part of that — refusing to import it because it
+  /// does not parse would discard the evidence at the exact moment an operator needs it. The
+  /// function falls back to wrapping the raw text rather than casting it.
+  /// </remarks>
+  [Test]
+  public async Task Import_WithABodyThatIsNotJson_StillTakesCustodyAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var messageId = (Guid)TrackedGuid.NewMedo();
+
+    var imported = await coordinator.ImportBrokerDeadLetterAsync(
+      _import(messageId, body: "{not json at all"));
+
+    await Assert.That(imported).IsTrue()
+      .Because("a body that does not parse is exactly what an operator needs to see, not a "
+             + "reason to drop the message");
+
+    var conn = await _openAsync(ctx);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT COUNT(*) FROM wh_dead_letters WHERE source_id = @id AND source_table = 'broker'";
+    cmd.Parameters.AddWithValue("id", messageId);
+    await Assert.That((long)(await cmd.ExecuteScalarAsync())!).IsEqualTo(1L);
+  }
+
+  /// <summary>
+  /// A failed import must throw, not report a duplicate.
+  /// </summary>
+  /// <remarks>
+  /// The return value is load-bearing in a way that is easy to get backwards: FALSE means
+  /// "custody already exists, safe to settle at the broker", so the drainer completes the broker
+  /// message on it. A failed import that returned false would therefore complete the broker
+  /// message with no custody anywhere — the message is gone. Throwing makes the drainer abandon,
+  /// and the broker re-offers it on the next pass.
+  /// </remarks>
+  [Test]
+  public async Task Import_WhenTheCallCannotBeMade_ThrowsRatherThanReportingADuplicateAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+
+    // A wire message with no destination recorded: the call cannot be assembled, which stands
+    // in for any failure between here and the store.
+    var noDestination = new BrokerDeadLetterImport(
+      MessageId: (Guid)TrackedGuid.NewMedo(),
+      StreamId: null,
+      MessageType: "Test.Message, Test",
+      Destination: null!,
+      EnvelopeJson: """{"v":1}""",
+      BrokerReason: "MaxDeliveryAttemptsExceeded",
+      BrokerDescription: null,
+      EnqueuedAt: DateTimeOffset.UtcNow,
+      DeliveryCount: 3);
+
+    await Assert.That(async () => await coordinator.ImportBrokerDeadLetterAsync(noDestination))
+      .ThrowsException()
+      .Because("returning false would tell the drainer custody exists and let it settle the "
+             + "broker message — losing it");
+  }
+
+  /// <summary>
+  /// Re-importing the same wire message is a duplicate, and says so.
+  /// </summary>
+  [Test]
+  public async Task Import_OfTheSameMessageTwice_ReportsADuplicateAsync() {
+    // Idempotency on the wire message id is what lets the drainer retry safely: the second pass
+    // must be told custody already exists so it settles the broker message instead of stacking
+    // a second dead-letter row for the same failure.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var messageId = (Guid)TrackedGuid.NewMedo();
+
+    var first = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId));
+    var second = await coordinator.ImportBrokerDeadLetterAsync(_import(messageId));
+
+    await Assert.That(first).IsTrue();
+    await Assert.That(second).IsFalse()
+      .Because("false is how the drainer learns it may settle the broker message");
+
+    var conn = await _openAsync(ctx);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT COUNT(*) FROM wh_dead_letters WHERE source_id = @id AND source_table = 'broker'";
+    cmd.Parameters.AddWithValue("id", messageId);
+    await Assert.That((long)(await cmd.ExecuteScalarAsync())!).IsEqualTo(1L);
+  }
 }
