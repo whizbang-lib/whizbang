@@ -280,4 +280,142 @@ public class PostgresConnectionRetryTests {
   }
 
   #endregion
+
+  #region Backoff and retry policy
+
+  // The retry policy is what a service does while its database is still coming up. Both ends
+  // matter: give up too early and a deploy fails because Postgres took a second longer than
+  // usual; never give up and a genuinely wrong connection string looks like a hang instead of an
+  // error, with nothing in the log to say which.
+
+  [Test]
+  public async Task CalculateNextDelay_AppliesTheBackoffMultiplierAsync() {
+    var retry = new PostgresConnectionRetry(new PostgresOptions {
+      BackoffMultiplier = 2.0,
+      MaxRetryDelay = TimeSpan.FromMinutes(5),
+    });
+
+    var next = retry.CalculateNextDelay(TimeSpan.FromSeconds(1));
+
+    await Assert.That(next).IsEqualTo(TimeSpan.FromSeconds(2));
+  }
+
+  [Test]
+  public async Task CalculateNextDelay_CapsAtTheMaximumAsync() {
+    // Without the cap the delay doubles without limit, and a service that has been waiting an
+    // hour would then wait two — long after an operator would have wanted to see it retry.
+    var retry = new PostgresConnectionRetry(new PostgresOptions {
+      BackoffMultiplier = 2.0,
+      MaxRetryDelay = TimeSpan.FromSeconds(30),
+    });
+
+    var next = retry.CalculateNextDelay(TimeSpan.FromSeconds(25));
+
+    await Assert.That(next).IsEqualTo(TimeSpan.FromSeconds(30));
+  }
+
+  [Test]
+  public async Task CalculateNextDelay_AtTheCapStaysThereAsync() {
+    var retry = new PostgresConnectionRetry(new PostgresOptions {
+      BackoffMultiplier = 2.0,
+      MaxRetryDelay = TimeSpan.FromSeconds(30),
+    });
+
+    var next = retry.CalculateNextDelay(TimeSpan.FromSeconds(30));
+
+    await Assert.That(next).IsEqualTo(TimeSpan.FromSeconds(30));
+  }
+
+  [Test]
+  public async Task CalculateNextDelay_WithAMultiplierOfOne_DoesNotGrowAsync() {
+    // A flat retry is a legitimate configuration — a fixed poll rather than a backoff.
+    var retry = new PostgresConnectionRetry(new PostgresOptions {
+      BackoffMultiplier = 1.0,
+      MaxRetryDelay = TimeSpan.FromMinutes(5),
+    });
+
+    var next = retry.CalculateNextDelay(TimeSpan.FromSeconds(3));
+
+    await Assert.That(next).IsEqualTo(TimeSpan.FromSeconds(3));
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task WaitForConnection_WhenNotRetryingIndefinitely_GivesUpAfterTheInitialAttemptsAsync(
+      CancellationToken testToken) {
+    // The bounded mode exists so a wrong connection string surfaces as an error rather than a
+    // hang. Giving up has to actually happen, and the exception has to be the connection failure
+    // rather than something the retry loop invented.
+    var retry = new PostgresConnectionRetry(new PostgresOptions {
+      InitialRetryAttempts = 2,
+      InitialRetryDelay = TimeSpan.FromMilliseconds(10),
+      MaxRetryDelay = TimeSpan.FromMilliseconds(20),
+      RetryIndefinitely = false,
+    });
+
+    await Assert.That(async () => await retry.WaitForConnectionAsync(
+      "Host=127.0.0.1;Port=1;Username=nobody;Password=nobody;Database=nothing;Timeout=1",
+      testToken)).ThrowsException();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task WaitForConnection_WhenRetryingIndefinitely_KeepsGoingUntilCancelledAsync(
+      CancellationToken testToken) {
+    // The default. A database that is still starting must not fail the service, so the only way
+    // out is cancellation — which is what host shutdown supplies.
+    var retry = new PostgresConnectionRetry(new PostgresOptions {
+      InitialRetryAttempts = 1,
+      InitialRetryDelay = TimeSpan.FromMilliseconds(10),
+      MaxRetryDelay = TimeSpan.FromMilliseconds(20),
+      RetryIndefinitely = true,
+    });
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    cts.CancelAfter(TimeSpan.FromMilliseconds(300));
+
+    await Assert.That(async () => await retry.WaitForConnectionAsync(
+      "Host=127.0.0.1;Port=1;Username=nobody;Password=nobody;Database=nothing;Timeout=1",
+      cts.Token)).ThrowsException()
+      .Because("indefinite retry ends only on cancellation — anything else would fail a service "
+             + "whose database is merely slow to start");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task WaitForSchemaReady_WhenTheServerIsUnreachable_KeepsRetryingAsync(
+      CancellationToken testToken) {
+    // Schema readiness and connection readiness are separate waits, and the schema wait has its
+    // own transient-exception branch: the server can disappear between the two.
+    var retry = new PostgresConnectionRetry(new PostgresOptions {
+      InitialRetryAttempts = 1,
+      InitialRetryDelay = TimeSpan.FromMilliseconds(10),
+      MaxRetryDelay = TimeSpan.FromMilliseconds(20),
+      RetryIndefinitely = true,
+    });
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    cts.CancelAfter(TimeSpan.FromMilliseconds(300));
+
+    await Assert.That(async () => await retry.WaitForSchemaReadyAsync(
+      "Host=127.0.0.1;Port=1;Username=nobody;Password=nobody;Database=nothing;Timeout=1",
+      cts.Token)).ThrowsException();
+  }
+
+  [Test]
+  public async Task WaitForSchemaReady_WithNullConnectionString_ThrowsAsync() {
+    var retry = new PostgresConnectionRetry(new PostgresOptions());
+
+    await Assert.That(async () => await retry.WaitForSchemaReadyAsync(null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_RejectsNullOptionsAsync() {
+    await Assert.That(() => new PostgresConnectionRetry(null!))
+      .ThrowsExactly<ArgumentNullException>()
+      .WithParameterName("options");
+  }
+
+  #endregion
 }
