@@ -26,14 +26,16 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// </summary>
 public class RabbitMQTransportNackErrorHandlingTests {
 
-  private static RabbitMQTransport _newTransport(IChannel channel) {
+  private static RabbitMQTransport _newTransport(
+      IChannel channel, Whizbang.Core.Routing.IPoisonMessageDetector? poisonDetector = null) {
     var fakeConnection = new FakeConnection(() => Task.FromResult(channel));
     var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
     var jsonOptions = new JsonSerializerOptions {
       TypeInfoResolver = new DefaultJsonTypeInfoResolver()
     };
     return new RabbitMQTransport(
-      fakeConnection, jsonOptions, pool, new RabbitMQOptions(), logger: null);
+      fakeConnection, jsonOptions, pool, new RabbitMQOptions(), logger: null,
+      poisonDetector: poisonDetector);
   }
 
   private static BasicDeliverEventArgs _envelope(IChannel channel, ulong tag = 1) {
@@ -206,5 +208,95 @@ public class RabbitMQTransportNackErrorHandlingTests {
     await Assert.That(channel.LastNackedDeliveryTag).IsEqualTo(99UL);
     await Assert.That(channel.LastNackRequeue).IsFalse()
       .Because("Deserialization failure must NOT requeue — dead-letter the poison message instead.");
+  }
+
+  // ============================================================
+  // The poison-quarantine nack
+  // ============================================================
+  //
+  // Quarantine is the third place this transport nacks, and it has the same hazard as the other
+  // two: it runs inside AsyncEventingBasicConsumer.ReceivedAsync, where an escaping exception
+  // takes down the dispatch thread and stops delivery for the whole connection. A channel that
+  // closed mid-quarantine is the ordinary way that happens — the broker simply redelivers and
+  // the quarantine re-evaluates, so the close is survivable and the crash is not.
+
+  /// <summary>A detector that quarantines everything it is shown.</summary>
+  private sealed class AlwaysQuarantineDetector : Whizbang.Core.Routing.IPoisonMessageDetector {
+    public int Quarantines { get; private set; }
+
+    public bool Enabled => true;
+
+    public Whizbang.Core.Routing.PoisonVerdict Evaluate(
+        Whizbang.Core.Routing.PoisonEvaluationContext context)
+      => new(ShouldQuarantine: true, Whizbang.Core.Routing.PoisonQuarantineReason.MessageAgeExceeded, "aged out");
+
+    public void RecordQuarantine(
+        Whizbang.Core.Routing.PoisonQuarantineGate gate,
+        Whizbang.Core.Routing.PoisonVerdict verdict,
+        Whizbang.Core.Routing.PoisonEvaluationContext context,
+        IReadOnlyDictionary<string, object?>? additionalTags = null) => Quarantines++;
+
+    public void ReportAgeCapability(string transport, string queue, bool hasTrustworthyAge) { }
+  }
+
+  private static Task<bool> _invokeQuarantineAsync(
+      RabbitMQTransport transport, IChannel channel, BasicDeliverEventArgs args) {
+    var method = typeof(RabbitMQTransport).GetMethod(
+      "_tryQuarantinePoisonAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+    return (Task<bool>)method.Invoke(transport, [channel, args, "test-queue"])!;
+  }
+
+  [Test]
+  public async Task Quarantine_WhenTheChannelClosedMidNack_SwallowsTheExceptionAsync() {
+    var detector = new AlwaysQuarantineDetector();
+    var channel = new FakeChannel { ExceptionToThrowOnNack = _newAlreadyClosed() };
+    var transport = _newTransport(channel, detector);
+
+    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope(channel));
+
+    await Assert.That(quarantined).IsTrue()
+      .Because("the message was judged poison — the failed nack does not undo that verdict");
+    await Assert.That(detector.Quarantines).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Quarantine_WhenTheChannelWasDisposedMidNack_SwallowsTheExceptionAsync() {
+    // Shutdown disposes channels while deliveries are still in flight.
+    var detector = new AlwaysQuarantineDetector();
+    var channel = new FakeChannel {
+      ExceptionToThrowOnNack = new ObjectDisposedException(nameof(IChannel))
+    };
+    var transport = _newTransport(channel, detector);
+
+    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope(channel));
+
+    await Assert.That(quarantined).IsTrue();
+  }
+
+  [Test]
+  public async Task Quarantine_WithNoDetectorWired_DoesNothingAsync() {
+    // A host that never configured poison detection must not have its deliveries nacked.
+    var channel = new FakeChannel();
+    var transport = _newTransport(channel);
+
+    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope(channel));
+
+    await Assert.That(quarantined).IsFalse();
+  }
+
+  [Test]
+  public async Task Quarantine_HappyPath_NacksWithoutRequeueAsync() {
+    // requeue: false is what routes the message to the queue's dead-letter exchange. Requeueing
+    // it would put the poison message straight back at the head of the queue.
+    var detector = new AlwaysQuarantineDetector();
+    var channel = new FakeChannel();
+    var transport = _newTransport(channel, detector);
+
+    var quarantined = await _invokeQuarantineAsync(transport, channel, _envelope(channel));
+
+    await Assert.That(quarantined).IsTrue();
+    await Assert.That(channel.BasicNackAsyncCalled).IsTrue();
+    await Assert.That(channel.LastNackRequeue).IsFalse()
+      .Because("requeue would put the poison message back at the head of the queue");
   }
 }

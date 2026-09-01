@@ -196,7 +196,7 @@ public static class PostgresDriverExtensions {
         selector.Services.AddSingleton<IWhizbangHealthSource>(sp =>
           ConnectivityHealthSource.AlwaysRequired(
             "event-store",
-            ct => _pingEventStoreAsync(sp.GetRequiredService<NpgsqlDataSource>(), ct),
+            ct => PingEventStoreAsync(sp.GetRequiredService<NpgsqlDataSource>(), ct),
             sp.GetRequiredService<IWhizbangLifecycleState>(),
             "event-store database unreachable"));
 
@@ -303,7 +303,11 @@ public static class PostgresDriverExtensions {
   /// Throwing (connection refused, auth, timeout) is caught by <see cref="ConnectivityHealthSource"/>
   /// and read as unreachable. Deliberately trivial so it never queries a mid-migration table.
   /// </summary>
-  private static async ValueTask<bool> _pingEventStoreAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) {
+  /// <remarks>
+  /// Internal rather than private so the health-source tests can drive the REAL probe. They
+  /// previously kept a local copy of this body, which meant a change here would not fail them.
+  /// </remarks>
+  internal static async ValueTask<bool> PingEventStoreAsync(NpgsqlDataSource dataSource, CancellationToken cancellationToken) {
     await using var connection = await dataSource.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
     await using var command = connection.CreateCommand();
     command.CommandText = "SELECT 1";

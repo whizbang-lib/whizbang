@@ -86,6 +86,19 @@ public class ClaimWorkerLifecycleTests {
   }
 
   private sealed class MinimalCoordinator : IWorkCoordinator {
+    /// <summary>Makes the startup registration fail, standing in for a database that is up but
+    /// briefly refusing writes.</summary>
+    public bool HeartbeatThrows { get; init; }
+
+    public TaskCompletionSource HeartbeatAttempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) {
+      HeartbeatAttempted.TrySetResult();
+      return HeartbeatThrows
+        ? Task.FromException<bool>(new InvalidOperationException("wh_service_instances unavailable"))
+        : Task.FromResult(true);
+    }
+
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
       => Task.FromResult(new WorkCoordinatorStatistics());
@@ -100,9 +113,11 @@ public class ClaimWorkerLifecycleTests {
       => Task.CompletedTask;
   }
 
-  private static ClaimWorker _worker(ControllableListener listener, ISignalBus? bus = null) {
+  private static ClaimWorker _worker(
+      ControllableListener listener, ISignalBus? bus = null,
+      MinimalCoordinator? coordinator = null, bool perspectiveOnly = false) {
     var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(new MinimalCoordinator());
+    services.AddSingleton<IWorkCoordinator>(coordinator ?? new MinimalCoordinator());
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
@@ -114,6 +129,7 @@ public class ClaimWorkerLifecycleTests {
       Options.Create(new ClaimWorkerOptions {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 200,
+        PerspectiveOnly = perspectiveOnly,
       }),
       NullLogger<ClaimWorker>.Instance,
       signalBus: bus);
@@ -226,5 +242,69 @@ public class ClaimWorkerLifecycleTests {
     worker.RequestImmediatePoll();
 
     await Assert.That(listener.SignalSubscribers).IsGreaterThan(0);
+  }
+
+  // ============================================================
+  // Startup
+  // ============================================================
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AFailedStartupRegistration_DoesNotStopTheWorkerAsync(CancellationToken testToken) {
+    // The registration exists so peers rank correctly the moment this pod appears, but
+    // claim_work repairs its own registration before ranking — so this is an optimization, not
+    // a correctness requirement. Treating its failure as fatal would keep a pod out of the
+    // fleet over something the very next claim fixes by itself.
+    var coordinator = new MinimalCoordinator { HeartbeatThrows = true };
+    var worker = _worker(new ControllableListener(), coordinator: coordinator);
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await worker.StartAsync(cts.Token);
+    await coordinator.HeartbeatAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    var executeTask = worker.ExecuteTask;
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsFaulted).IsFalse()
+      .Because("claim_work repairs its own registration — failing here must not keep the pod "
+             + "out of the fleet");
+    worker.Dispose();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task TheStartupRegistrationRunsBeforeClaimingAsync(CancellationToken testToken) {
+    // Registering after the first claim would leave the registry briefly carrying no row for
+    // this pod, which skews every peer's rank denominator and delays instance-lifecycle signals.
+    var coordinator = new MinimalCoordinator();
+    var worker = _worker(new ControllableListener(), coordinator: coordinator);
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await worker.StartAsync(cts.Token);
+    await coordinator.HeartbeatAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+    worker.Dispose();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task PerspectiveOnlyMode_ParksInsteadOfClaimingAsync(CancellationToken testToken) {
+    // In this mode the legacy publisher is the sole poller. ClaimWorker also claiming would race
+    // it and lease orphan rows before process_work_batch sees them, breaking the event-store
+    // auto-create chain — so parking is the whole behavior.
+    var coordinator = new MinimalCoordinator();
+    var worker = _worker(new ControllableListener(), coordinator: coordinator, perspectiveOnly: true);
+
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("parking is the intended state — a faulted worker reads as a crash on shutdown");
+    worker.Dispose();
   }
 }

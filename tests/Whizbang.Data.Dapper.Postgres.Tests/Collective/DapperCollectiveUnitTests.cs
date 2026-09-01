@@ -396,4 +396,86 @@ public class DapperCollectiveUnitTests {
     await Assert.That(() => new ServiceCollection().AddCollectiveExecutorDapper<_jobModel>(""))
       .Throws<ArgumentException>();
   }
+
+  // ============================================================
+  // The remaining dispatch-routing guards
+  // ============================================================
+  //
+  // All three of these fire only when the dispatcher routed to the wrong applier, so their value
+  // is entirely in the message: each names the routing decision that was wrong. Failing silently
+  // — or with a cast exception from deep inside the batch loop — would leave the author looking
+  // at Dapper rather than at the registry lookup that mis-routed.
+
+  [Test]
+  public async Task Applier_ModelTypeMismatch_NamesTheApplierItShouldHaveGoneToAsync() {
+    // The entry belongs to a different model, so this applier's TModel cannot serve it. The
+    // message names the applier the dispatcher should have used.
+    var wrongModelEntry = new CollectiveApplyEntry(
+      ModelType: typeof(_otherModel), EventType: typeof(_evtA), HandlerType: typeof(_handler),
+      MethodName: nameof(_handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
+      SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, q) => ((_handler)h).Apply((_evtA)e));
+
+    await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+        wrongModelEntry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
+        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings,
+        CollectiveApplyOptions.Default, default))
+      .Throws<ArgumentException>()
+      .WithMessageContaining(nameof(_otherModel));
+  }
+
+  [Test]
+  public async Task Applier_HandlerReturningNull_SaysWhichHandlerAsync() {
+    // A handler whose Apply fell through a branch returns null. Without this guard the null
+    // reaches the batch loop and fails as a cast, pointing at the SQL layer instead of at the
+    // handler method that produced nothing.
+    var nullSpecEntry = new CollectiveApplyEntry(
+      ModelType: typeof(_jobModel), EventType: typeof(_evtA), HandlerType: typeof(_handler),
+      MethodName: nameof(_handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
+      SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, q) => null!);
+
+    await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+        nullSpecEntry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
+        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings,
+        CollectiveApplyOptions.Default, default))
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining(nameof(_handler));
+  }
+
+  [Test]
+  public async Task Applier_HandlerReturningAForeignSpec_IsRejectedAsync() {
+    // A spec for a different model type. Casting it would apply one model's SET clause against
+    // another model's table.
+    var wrongSpecEntry = new CollectiveApplyEntry(
+      ModelType: typeof(_jobModel), EventType: typeof(_evtA), HandlerType: typeof(_handler),
+      MethodName: nameof(_handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
+      SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, q) => new object());
+
+    await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+        wrongSpecEntry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
+        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings,
+        CollectiveApplyOptions.Default, default))
+      .Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task Applier_ValidationHappensBeforeAnyConnectionIsOpenedAsync() {
+    // The connection factory in this file throws if asked. Every guard above relies on that:
+    // validating after opening a connection would take a pooled connection to discover a
+    // routing bug that is knowable from the arguments alone.
+    var wrongModelEntry = new CollectiveApplyEntry(
+      ModelType: typeof(_otherModel), EventType: typeof(_evtA), HandlerType: typeof(_handler),
+      MethodName: nameof(_handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
+      SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, q) => ((_handler)h).Apply((_evtA)e));
+
+    await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
+        wrongModelEntry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },
+        new TenantCollectiveScopeResolver(), new _factory(), "wh_per_x", _noSiblings,
+        CollectiveApplyOptions.Default, default))
+      .Throws<ArgumentException>()
+      .Because("the factory throws when used — reaching it would mean validation ran too late");
+  }
+
+  private sealed record _otherModel {
+    public Guid Id { get; init; }
+  }
 }

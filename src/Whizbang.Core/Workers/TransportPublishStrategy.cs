@@ -546,6 +546,12 @@ public partial class TransportPublishStrategy(
   /// </summary>
   /// <param name="typeFullName">Assembly-qualified type name (e.g., "MyApp.Commands.CreateTenantCommand, MyApp")</param>
   /// <returns>Detected MessageKind or Unknown</returns>
+  /// <summary>Test seam for the runtime classifier, which must agree with the compile-time
+  /// ladder in CompileTimeMessageClassification — a message that classifies one way at build
+  /// time and another here routes inconsistently.</summary>
+  internal static MessageKind DetectMessageKindForTest(string typeFullName)
+    => _detectMessageKindFromTypeName(typeFullName);
+
   private static MessageKind _detectMessageKindFromTypeName(string typeFullName) {
     var ns = _extractNamespace(typeFullName);
     var typeName = _extractTypeName(typeFullName);
