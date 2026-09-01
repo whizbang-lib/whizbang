@@ -72,7 +72,11 @@ public class ReceptorInvokerOwnedDomainFilterTests {
   }
 
   private static (ReceptorInvoker Invoker, FiringTracker Tracker) _invoker<TMessage>(
-      LifecycleStage stage, params string[] ownedDomains) {
+      LifecycleStage stage, params string[] ownedDomains)
+    => _invoker<TMessage>(stage, stageTracker: null, ownedDomains);
+
+  private static (ReceptorInvoker Invoker, FiringTracker Tracker) _invoker<TMessage>(
+      LifecycleStage stage, LifecycleStageTracker? stageTracker, params string[] ownedDomains) {
     var tracker = new FiringTracker();
     var registry = new StubRegistry(tracker);
     registry.RegisterReceptor<TMessage>(stage);
@@ -81,6 +85,9 @@ public class ReceptorInvokerOwnedDomainFilterTests {
     if (ownedDomains.Length > 0) {
       services.AddSingleton<IOptions<RoutingOptions>>(
         Options.Create(new RoutingOptions().OwnDomains(ownedDomains)));
+    }
+    if (stageTracker is not null) {
+      services.AddSingleton(stageTracker);
     }
     var sp = services.BuildServiceProvider();
     return (new ReceptorInvoker(registry, sp), tracker);
@@ -286,5 +293,97 @@ public class ReceptorInvokerOwnedDomainFilterTests {
 
     await Assert.That(tracker.Count).IsEqualTo(1)
       .Because("skipping here would mean the owned command is never handled by anyone");
+  }
+
+  // ============================================================
+  // Cross-worker stage dedup
+  // ============================================================
+  //
+  // The same message can reach more than one worker — an inbox dispatcher and a drain pass, say —
+  // and both would fire the same lifecycle stage for it. The stage tracker is what makes the
+  // second one a no-op. Without it, every receptor at that stage runs twice for one message, and
+  // the effects a lifecycle receptor produces are usually not idempotent.
+
+  [Test]
+  public async Task AStageAlreadyClaimedElsewhere_IsNotFiredAgainAsync() {
+    var stageTracker = new LifecycleStageTracker();
+    var (invoker, firings) = _invoker<Shop.Orders.OrderPlaced>(
+      LifecycleStage.PostInboxInline, stageTracker);
+    var envelope = _envelope(new Shop.Orders.OrderPlaced());
+
+    // Another worker got there first.
+    var claimed = stageTracker.TryClaim(envelope.MessageId.Value, LifecycleStage.PostInboxInline);
+
+    await invoker.InvokeAsync(
+      envelope, LifecycleStage.PostInboxInline, _context(LifecycleStage.PostInboxInline));
+
+    await Assert.That(claimed).IsTrue();
+    await Assert.That(firings.Count).IsEqualTo(0)
+      .Because("two workers reaching the same message must not run its lifecycle receptors twice");
+  }
+
+  [Test]
+  public async Task AnUnclaimedStage_FiresAndThenClaimsItAsync() {
+    // The first arrival does the work and takes the claim, so a later one is the one that skips.
+    var stageTracker = new LifecycleStageTracker();
+    var (invoker, firings) = _invoker<Shop.Orders.OrderPlaced>(
+      LifecycleStage.PostInboxInline, stageTracker);
+    var envelope = _envelope(new Shop.Orders.OrderPlaced());
+
+    await invoker.InvokeAsync(
+      envelope, LifecycleStage.PostInboxInline, _context(LifecycleStage.PostInboxInline));
+
+    await Assert.That(firings.Count).IsEqualTo(1);
+    await Assert.That(stageTracker.TryClaim(envelope.MessageId.Value, LifecycleStage.PostInboxInline))
+      .IsFalse()
+      .Because("the invocation takes the claim, which is what makes a later worker skip");
+  }
+
+  [Test]
+  public async Task ADifferentStageOnTheSameMessage_IsNotBlockedAsync() {
+    // Dedup is per (message, stage). Keying on the message alone would let one stage's claim
+    // suppress every other stage for that message.
+    var stageTracker = new LifecycleStageTracker();
+    var (invoker, firings) = _invoker<Shop.Orders.OrderPlaced>(
+      LifecycleStage.PostInboxInline, stageTracker);
+    var envelope = _envelope(new Shop.Orders.OrderPlaced());
+
+    _ = stageTracker.TryClaim(envelope.MessageId.Value, LifecycleStage.PreOutboxInline);
+
+    await invoker.InvokeAsync(
+      envelope, LifecycleStage.PostInboxInline, _context(LifecycleStage.PostInboxInline));
+
+    await Assert.That(firings.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ADifferentMessageAtTheSameStage_IsNotBlockedAsync() {
+    var stageTracker = new LifecycleStageTracker();
+    var (invoker, firings) = _invoker<Shop.Orders.OrderPlaced>(
+      LifecycleStage.PostInboxInline, stageTracker);
+
+    _ = stageTracker.TryClaim(
+      (Guid)TrackedGuid.NewMedo(), LifecycleStage.PostInboxInline);
+
+    await invoker.InvokeAsync(
+      _envelope(new Shop.Orders.OrderPlaced()),
+      LifecycleStage.PostInboxInline, _context(LifecycleStage.PostInboxInline));
+
+    await Assert.That(firings.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task WithNoStageTrackerRegistered_EveryInvocationFiresAsync() {
+    // A host built without the tracker keeps the pre-dedup behavior rather than silently
+    // dropping stages it cannot deduplicate.
+    var (invoker, firings) = _invoker<Shop.Orders.OrderPlaced>(LifecycleStage.PostInboxInline);
+    var envelope = _envelope(new Shop.Orders.OrderPlaced());
+
+    await invoker.InvokeAsync(
+      envelope, LifecycleStage.PostInboxInline, _context(LifecycleStage.PostInboxInline));
+    await invoker.InvokeAsync(
+      envelope, LifecycleStage.PostInboxInline, _context(LifecycleStage.PostInboxInline));
+
+    await Assert.That(firings.Count).IsEqualTo(2);
   }
 }
