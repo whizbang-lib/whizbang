@@ -300,6 +300,14 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   /// <summary>Test seam: seeds what a stream was last seen holding.</summary>
   internal void RecordObservedDepthForTest(Guid streamId, int depth) => _observedDepth[streamId] = depth;
 
+  /// <summary>Test seam for the depth-map prune. The prune only runs mid-cycle past a size
+  /// threshold, so reaching it through a real drain would need a coordinator serving thousands
+  /// of streams.</summary>
+  internal void PruneDepthForTest(IReadOnlyList<Guid> keep) => _pruneDepth(keep);
+
+  /// <summary>Test seam: how many streams the depth map is currently holding.</summary>
+  internal int ObservedDepthCountForTest => _observedDepth.Count;
+
   /// <summary>Test seam: the page size the next fetch would request.</summary>
   internal int EffectivePerStreamForTest() => _effectivePerStream();
 

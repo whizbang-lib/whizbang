@@ -389,4 +389,113 @@ public class IntegrityCheckpointWorkerTests {
     public Task<ISubscription> SubscribeBatchAsync(Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler, TransportDestination destination, TransportBatchOptions batchOptions, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
+
+  // ============================================================
+  // Lifecycle and consumer-side liveness
+  // ============================================================
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WhenCheckpointsAreDisabled_ParksWithoutPublishingAsync(
+      CancellationToken testToken) {
+    // Checkpoints are what let every other service detect that this one's stream diverged, so
+    // turning them off is a deliberate choice — and it has to mean nothing is published rather
+    // than a worker that quietly still runs.
+    var coordinator = new _checkpointCoordinator();
+    var dispatcher = new _captureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
+      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = false });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("parking is not an error — a faulted worker reads as a crash on shutdown");
+    await Assert.That(dispatcher.Published).IsEmpty();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CancelledBeforeSchemaReady_ReturnsCleanlyAsync(
+      CancellationToken testToken) {
+    // The checkpoint reads integrity watermarks from tables the migration creates. A host that
+    // fails during migration must get a clean shutdown, not a fault.
+    var coordinator = new _checkpointCoordinator();
+    var dispatcher = new _captureDispatcher();
+    var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
+      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = true });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    var executeTask = worker.ExecuteTask;
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse();
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("nothing may publish before the tables the watermarks live in exist");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task RunCheckpointOnce_ReportsOriginsWhoseCheckpointsStoppedArrivingAsync(
+      CancellationToken testToken) {
+    // Every service is both origin and consumer. An origin that has gone quiet is itself an
+    // integrity signal — its streams may be diverging with nothing left to announce it — so the
+    // absence has to be reported rather than simply read as "no gaps".
+    var coordinator = new _checkpointCoordinator {
+      Window = new IntegrityCheckpointWindow {
+        FromCommitSequence = 1,
+        ToCommitSequence = 10,
+        Buckets = [],
+      },
+    };
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    var staleOrigin = Guid.CreateVersion7();
+    tracker.RecordCheckpoint(staleOrigin, "quiet-origin", DateTimeOffset.UtcNow.AddHours(-2));
+
+    var services = new ServiceCollection();
+    services.AddSingleton<ICheckpointMint>(new CheckpointMint(Options.Create(new ControlClassOptions())));
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("origin-svc"));
+    services.AddSingleton(tracker);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new IntegrityCheckpointWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      SchemaReadyGate.AlreadyReady(),
+      Options.Create(new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 }),
+      NullLogger<IntegrityCheckpointWorker>.Instance);
+
+    await worker.RunCheckpointOnceAsync(testToken);
+
+    var stale = tracker.GetStaleOrigins(TimeSpan.FromSeconds(3), DateTimeOffset.UtcNow);
+    await Assert.That(stale.Any(o => o.OriginServiceId == staleOrigin)).IsTrue()
+      .Because("an origin that stopped checkpointing is an integrity signal, not silence");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task RunCheckpointOnce_OnAHostWithNoCoordinator_IsInertAsync(
+      CancellationToken testToken) {
+    // Schema-only and diagnostic hosts build the worker but have nothing to checkpoint with.
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("origin-svc"));
+    var sp = services.BuildServiceProvider();
+
+    var worker = new IntegrityCheckpointWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      SchemaReadyGate.AlreadyReady(),
+      Options.Create(new StreamIntegrityOptions()),
+      NullLogger<IntegrityCheckpointWorker>.Instance);
+
+    await worker.RunCheckpointOnceAsync(testToken);
+  }
 }

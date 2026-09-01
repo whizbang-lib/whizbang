@@ -306,5 +306,66 @@ public class ServiceBusInfrastructureProvisionerTests {
       throw new NotImplementedException();
     }
   }
-}
 
+  // ============================================================
+  // Logging on the provisioning path
+  // ============================================================
+
+  /// <summary>
+  /// Provisioning reports how many topics it is about to create.
+  /// </summary>
+  /// <remarks>
+  /// Provisioning happens once at startup and is otherwise invisible. When a deploy comes up
+  /// against a namespace whose entities are missing, this line is what tells an operator the
+  /// service noticed and is creating them — as opposed to a service that is simply hanging on a
+  /// broker it cannot reach.
+  /// </remarks>
+  [Test]
+  public async Task ProvisionOwnedDomains_ReportsHowManyTopicsItWillCreateAsync() {
+    var adminClient = new TrackingAdminClient();
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = new ServiceBusInfrastructureProvisioner(adminClient, logger);
+
+    await provisioner.ProvisionOwnedDomainsAsync(
+      new HashSet<string> { "myapp.users", "myapp.orders" });
+
+    await Assert.That(logger.Messages.Any(m => m.Contains("Provisioning", StringComparison.Ordinal)))
+      .IsTrue();
+    await Assert.That(logger.Messages.Any(m => m.Contains('2', StringComparison.Ordinal))).IsTrue()
+      .Because("the count is what tells an operator how much of the topology was missing");
+  }
+
+  [Test]
+  public async Task ProvisionOwnedDomains_WithNothingToDo_StillReportsAsync() {
+    // Zero is a meaningful answer: it says the topology was already there, which is what a
+    // steady-state restart should show.
+    var adminClient = new TrackingAdminClient();
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = new ServiceBusInfrastructureProvisioner(adminClient, logger);
+
+    await provisioner.ProvisionOwnedDomainsAsync(new HashSet<string>());
+
+    await Assert.That(adminClient.CreatedTopics).IsEmpty();
+  }
+
+  /// <summary>A logger that is enabled at every level and keeps what it was told.</summary>
+  private sealed class CapturingLogger<T> : ILogger<T> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _messages = [];
+
+    public List<string> Messages {
+      get { lock (_lock) { return [.. _messages]; } }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    // Deliberately enabled everywhere: the guarded log statements are the point, and a logger
+    // that answers false would skip them exactly as NullLogger does.
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_lock) { _messages.Add(formatter(state, exception)); }
+    }
+  }
+}

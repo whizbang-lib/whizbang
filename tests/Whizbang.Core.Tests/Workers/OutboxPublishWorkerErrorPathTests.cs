@@ -48,7 +48,10 @@ public class OutboxPublishWorkerErrorPathTests {
     public bool TryWrite(OutboxWork work) => _channel.Writer.TryWrite(work);
     public void Complete() => _channel.Writer.Complete();
     public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
+    /// <summary>In-flight slots released without completing — how the deferred path settles.</summary>
+    public ConcurrentBag<Guid> RemovedInFlight { get; } = [];
+
+    public void RemoveInFlight(Guid messageId) => RemovedInFlight.Add(messageId);
     public void ClearInFlight() { }
     public bool ShouldRenewLease(Guid messageId) => false;
     public event Action? OnNewWorkAvailable;
@@ -121,6 +124,22 @@ public class OutboxPublishWorkerErrorPathTests {
   // ============================================================
   // Publish strategy fakes
   // ============================================================
+
+  /// <summary>Publishes successfully and records what it was asked to publish.</summary>
+  private sealed class _RecordingStrategy : IMessagePublishStrategy {
+    public ConcurrentBag<Guid> Published { get; } = [];
+
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct = default) {
+      Published.Add(work.MessageId);
+      return Task.FromResult(new MessagePublishResult {
+        MessageId = work.MessageId,
+        Success = true,
+        CompletedStatus = work.Status,
+      });
+    }
+  }
 
   /// <summary>Reports not-ready for the first N readiness checks, then ready; publishes successfully.</summary>
   private sealed class _FlipReadyStrategy(int notReadyCount) : IMessagePublishStrategy {
@@ -415,7 +434,8 @@ public class OutboxPublishWorkerErrorPathTests {
       int transportNotReadyRetryDelayMs = 0,
       IServiceProvider? serviceProvider = null,
       ILifecycleMessageDeserializer? lifecycleDeserializer = null,
-      bool markGateReady = true) {
+      bool markGateReady = true,
+      IOccurrencePublishGate? occurrenceGate = null) {
     var channel = new _FakeWorkChannelWriter();
     var completion = new _RecordingCompletionChannel();
     var failure = new _RecordingFailureChannel();
@@ -438,7 +458,8 @@ public class OutboxPublishWorkerErrorPathTests {
       NullLogger<OutboxPublishWorker>.Instance,
       instanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       publishStrategy: strategy,
-      lifecycleMessageDeserializer: lifecycleDeserializer);
+      lifecycleMessageDeserializer: lifecycleDeserializer,
+      occurrenceGate: occurrenceGate);
     return new _Fixture(worker, channel, completion, failure, renewal, options, gate);
   }
 
@@ -843,5 +864,94 @@ public class OutboxPublishWorkerErrorPathTests {
       .Because("The discard must be attributed to the Outbox gate for the skipped-counter tags.");
     await Assert.That(policy.RecordedTags!["message_id"]).IsEqualTo((object?)messageId)
       .Because("The message_id tag lets operators trace which row was suppressed.");
+  }
+
+  // ============================================================
+  // The schedule-occurrence pre-fire gate
+  // ============================================================
+  //
+  // A scheduled job's occurrence runs the consumer's own fire hook before it publishes, so the
+  // hook can check authority, skip the run, or push it to a later time. Both non-Proceed
+  // decisions have to leave the row in a settled state: a dropped occurrence that stays in the
+  // outbox is published on the next pass — running the job the hook just refused — and a deferred
+  // one that is completed here loses the reschedule the hook already made.
+
+  private sealed class _DecidingGate(OccurrencePublishDecision decision) : IOccurrencePublishGate {
+    public int Evaluations { get; private set; }
+    public ValueTask<OccurrencePublishDecision> EvaluateAsync(
+        OutboxWork work, CancellationToken cancellationToken = default) {
+      Evaluations++;
+      return ValueTask.FromResult(decision);
+    }
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task GateDrops_CompletesTheRowWithoutPublishingAsync(CancellationToken testToken) {
+    var strategy = new _RecordingStrategy();
+    var gate = new _DecidingGate(OccurrencePublishDecision.Drop);
+    var fx = _build(strategy, occurrenceGate: gate);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await fx.Worker.StartAsync(cts.Token);
+
+    var work = _work();
+    await fx.Channel.WriteAsync(work, cts.Token);
+    while (!fx.Completion.Completed.Contains(work.MessageId) && !testToken.IsCancellationRequested) {
+      await Task.Delay(20, testToken);
+    }
+    await cts.CancelAsync();
+
+    await Assert.That(gate.Evaluations).IsGreaterThan(0);
+    await Assert.That(strategy.Published).IsEmpty()
+      .Because("the hook refused this run — publishing anyway would execute the job it declined");
+    await Assert.That(fx.Completion.Completed).Contains(work.MessageId)
+      .Because("a dropped occurrence left in the outbox is published on the next pass");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task GateDefers_LetsGoWithoutCompletingOrPublishingAsync(CancellationToken testToken) {
+    // Deferred means the gate already rescheduled the message. Completing it here would delete
+    // the row the reschedule points at; publishing it would run the job at the time the hook
+    // just moved it away from.
+    var strategy = new _RecordingStrategy();
+    var gate = new _DecidingGate(OccurrencePublishDecision.Deferred);
+    var fx = _build(strategy, occurrenceGate: gate);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await fx.Worker.StartAsync(cts.Token);
+
+    var work = _work();
+    await fx.Channel.WriteAsync(work, cts.Token);
+
+    // The deferred path settles by releasing the in-flight slot rather than completing.
+    while (!fx.Channel.RemovedInFlight.Contains(work.MessageId) && !testToken.IsCancellationRequested) {
+      await Task.Delay(20, testToken);
+    }
+    await cts.CancelAsync();
+
+    await Assert.That(strategy.Published).IsEmpty();
+    await Assert.That(fx.Completion.Completed).DoesNotContain(work.MessageId)
+      .Because("completing a deferred occurrence deletes the row its reschedule points at");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task GateProceeds_PublishesNormallyAsync(CancellationToken testToken) {
+    // The control: the gate is on the hot path for every outbox row, so a Proceed must be
+    // indistinguishable from having no gate at all.
+    var strategy = new _RecordingStrategy();
+    var gate = new _DecidingGate(OccurrencePublishDecision.Proceed);
+    var fx = _build(strategy, occurrenceGate: gate);
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
+    await fx.Worker.StartAsync(cts.Token);
+
+    var work = _work();
+    await fx.Channel.WriteAsync(work, cts.Token);
+    while (strategy.Published.IsEmpty && !testToken.IsCancellationRequested) {
+      await Task.Delay(20, testToken);
+    }
+    await cts.CancelAsync();
+
+    await Assert.That(strategy.Published).IsNotEmpty();
   }
 }

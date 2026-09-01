@@ -47,14 +47,6 @@ internal static class PerspectiveDiscoveryHelper {
       })];
   }
 
-  /// <summary>
-  /// Finds the first matching perspective interface (single-stream or global).
-  /// Returns null if no perspective interface is found.
-  /// </summary>
-  public static INamedTypeSymbol? FindFirstPerspectiveInterface(INamedTypeSymbol classSymbol) {
-    return FindSingleStreamInterfaces(classSymbol).FirstOrDefault()
-      ?? FindGlobalInterfaces(classSymbol).FirstOrDefault();
-  }
 
   /// <summary>
   /// Checks if a class implements any perspective interface.
@@ -70,26 +62,7 @@ internal static class PerspectiveDiscoveryHelper {
     });
   }
 
-  /// <summary>
-  /// Checks if a class implements IPerspectiveWithActionsFor for a specific event type.
-  /// Used by code gen to determine if Apply returns ApplyResult vs TModel.
-  /// </summary>
-  public static bool HasWithActionsForEvent(INamedTypeSymbol classSymbol, ITypeSymbol eventType) {
-    return classSymbol.AllInterfaces.Any(i => {
-      var originalDef = i.OriginalDefinition.ToDisplayString();
-      return originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + "<", StringComparison.Ordinal)
-             && i.TypeArguments.Length >= 2
-             && SymbolEqualityComparer.Default.Equals(i.TypeArguments[1], eventType);
-    });
-  }
 
-  /// <summary>
-  /// Extracts the model type from the first type argument of any perspective interface.
-  /// </summary>
-  public static ITypeSymbol? ExtractModelType(INamedTypeSymbol classSymbol) {
-    var iface = FindFirstPerspectiveInterface(classSymbol);
-    return iface?.TypeArguments[0];
-  }
 
   /// <summary>
   /// Extracts all event types from perspective interfaces (skipping TModel at index 0).
