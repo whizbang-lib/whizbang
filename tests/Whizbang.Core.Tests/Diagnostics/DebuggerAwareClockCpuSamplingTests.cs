@@ -157,7 +157,14 @@ public class DebuggerAwareClockCpuSamplingTests {
   // The sampler
   // ============================================================
 
+  // The two tests below wait for the sampler to observe a stretch where wall time advanced and
+  // CPU time did not. That is a property of the PROCESS, not of the clock instance — so while the
+  // rest of the suite is saturating every core, the stretch never appears and the wait runs out.
+  // [NotInParallel] gives them the idle process the detection needs; without it they fail on a
+  // fast machine and pass on a slow one, which is the worst possible signal.
+
   [Test]
+  [NotInParallel]
   [Timeout(30000)]
   public async Task Sampler_DetectsAnIdleProcessAsFrozenAsync(CancellationToken cancellationToken) {
     // The detection itself: a stretch where wall time advanced and CPU time did not is, to this
@@ -175,6 +182,7 @@ public class DebuggerAwareClockCpuSamplingTests {
   }
 
   [Test]
+  [NotInParallel]
   [Timeout(30000)]
   public async Task Sampler_PublishesThePauseTransitionToSubscribersAsync(
       CancellationToken cancellationToken) {
