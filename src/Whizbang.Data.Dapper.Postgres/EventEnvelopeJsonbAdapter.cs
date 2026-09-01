@@ -135,8 +135,22 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   /// Supports both new PerspectiveScope short keys and legacy snake_case format.
   /// </summary>
   private void _restoreScopeFromJson(string? scopeJson, List<MessageHop> hops) {
-    if (string.IsNullOrEmpty(scopeJson) || hops.Count == 0) {
+    if (string.IsNullOrEmpty(scopeJson)) {
       return;
+    }
+
+    // An event read back from the store keeps its scope in a COLUMN and carries no envelope
+    // metadata, so there is no hop to restore into. Returning early here discarded a scope that had
+    // already been read and deserialized; GetCurrentScope() walks hops, so it then found nothing and
+    // any perspective requiring a security context rejected the event on every retry until it
+    // parked. Synthesizing a hop restores exactly what was persisted -- an event with no stored
+    // scope still yields none, because the emptiness check above returns first.
+    if (hops.Count == 0) {
+      hops.Add(new MessageHop {
+        Type = HopType.Current,
+        Timestamp = DateTimeOffset.UtcNow,
+        ServiceInstance = ServiceInstanceInfo.Unknown,
+      });
     }
 
     var (tenantId, userId) = _parseScopeValues(scopeJson);

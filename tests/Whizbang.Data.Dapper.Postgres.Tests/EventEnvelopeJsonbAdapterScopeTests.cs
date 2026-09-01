@@ -23,6 +23,65 @@ public class EventEnvelopeJsonbAdapterScopeTests {
     return new EventEnvelopeJsonbAdapter(jsonOptions);
   }
 
+
+  /// <summary>
+  /// An event read back with NO hops must still receive its persisted scope.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The restore guard required <c>hops.Count &gt; 0</c>. That is the normal shape for an event read
+  /// back from the store: the row keeps its scope in a column and carries no envelope metadata, so
+  /// there are no hops to restore into and the scope — already read and deserialized — was dropped.
+  /// </para>
+  /// <para>
+  /// <c>GetCurrentScope()</c> walks hops, so it then returned null and any perspective requiring a
+  /// security context threw on every replayed event: a retry that could never succeed, ten attempts
+  /// each, then a permanent park. Fixed for the EF Core store; these stores carried the same guard.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task FromJsonb_WithNoHops_StillRestoresThePersistedScopeAsync() {
+    var adapter = _createAdapter();
+    var envelope = _createEnvelopeWithScope(tenantId: "tenant-xyz", userId: "user-456");
+    var jsonb = adapter.ToJsonb(envelope);
+
+    // The shape an event read back from the store actually has: scope in its column, no hops.
+    var noHops = jsonb with {
+      MetadataJson = jsonb.MetadataJson.Replace(
+        _hopsArray(jsonb.MetadataJson), "\"hops\":[]", StringComparison.Ordinal),
+    };
+
+    var restored = adapter.FromJsonb<TestEvent>(noHops);
+
+    var scope = restored.GetCurrentScope();
+    await Assert.That(scope).IsNotNull()
+      .Because("the scope column was populated and already deserialized; dropping it because there "
+             + "was no hop to hang it on is what leaves a replayed event permanently unprocessable");
+    await Assert.That(scope!.Scope.TenantId).IsEqualTo("tenant-xyz");
+  }
+
+  [Test]
+  public async Task FromJsonb_WithNoHopsAndNoStoredScope_StaysUnscopedAsync() {
+    // The other half of the contract: restoring what was persisted must never become inventing it.
+    var adapter = _createAdapter();
+    var envelope = _createEnvelopeWithScope();
+    var jsonb = adapter.ToJsonb(envelope) with { ScopeJson = null };
+
+    var restored = adapter.FromJsonb<TestEvent>(jsonb);
+
+    await Assert.That(restored.GetCurrentScope()).IsNull()
+      .Because("an event stored without a scope must stay unscoped — fabricating one would project "
+             + "data under an authority nobody granted");
+  }
+
+  /// <summary>Finds the serialized hops array so a test can replace it with an empty one.</summary>
+  private static string _hopsArray(string metadataJson) {
+    var start = metadataJson.IndexOf("\"hops\":", StringComparison.Ordinal);
+    if (start < 0) { return "\"hops\":[]"; }
+    var end = metadataJson.IndexOf(']', start);
+    return metadataJson[start..(end + 1)];
+  }
+
   private static MessageEnvelope<TestEvent> _createEnvelopeWithScope(
       string? tenantId = null,
       string? userId = null) {
