@@ -391,20 +391,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <param name="typeSymbol">The type symbol to check</param>
   /// <returns>True if the type is a value type or Nullable&lt;T&gt; where T is a value type</returns>
   private static bool _isValueType(ITypeSymbol typeSymbol) {
-    // Check if the type itself is a value type
-    if (typeSymbol.IsValueType) {
-      return true;
-    }
-
-    // Check if this is Nullable<T> where T is a value type
-    // Nullable<T> is a struct (value type), but we want to know if the underlying type is a value type
-    if (typeSymbol is INamedTypeSymbol namedType &&
-        namedType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) {
-      // Nullable<T> is itself a value type, so return true
-      return true;
-    }
-
-    return false;
+    // Nullable<T> needs no separate arm: it is itself a struct, so IsValueType already answers
+    // true for int?, DateTime?, and every other nullable value type. A second check against
+    // System_Nullable_T underneath this one is unreachable.
+    return typeSymbol.IsValueType;
   }
 
   /// <summary>
