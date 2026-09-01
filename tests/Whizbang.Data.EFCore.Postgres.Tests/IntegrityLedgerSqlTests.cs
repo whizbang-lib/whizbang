@@ -485,4 +485,142 @@ public class IntegrityLedgerSqlTests : EFCoreTestBase {
 
     await Assert.That(completed).IsEqualTo(0);
   }
+
+  // ============================================================
+  // The single-key fallbacks
+  // ============================================================
+  //
+  // The batch functions degrade to these one key at a time when a batch call fails — the batch
+  // wrappers say so in their own log line. So this is the path that runs precisely when the
+  // database is already unhappy, and it had no tests: a divergence discovered during an outage
+  // would be reported, repaired and healed entirely through code nothing had exercised.
+
+  [Test]
+  public async Task TryBeginReport_GrantsAFirstSightingAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.NewMedo();
+    var key = _key(origin);
+
+    var granted = await coordinator.IntegrityTryBeginReportAsync(
+      key, originLo: 10, originHi: 20, localLo: 10, localHi: 18,
+      DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+
+    await Assert.That(granted).IsTrue();
+    await Assert.That(await _ledgerRowCountAsync(ctx, origin)).IsEqualTo(1L);
+  }
+
+  [Test]
+  public async Task TryBeginReport_RefusesInsideTheCooldownAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.NewMedo();
+    var key = _key(origin);
+    var now = DateTimeOffset.UtcNow;
+
+    _ = await coordinator.IntegrityTryBeginReportAsync(key, 10, 20, 10, 18, now, TimeSpan.FromMinutes(5));
+    var second = await coordinator.IntegrityTryBeginReportAsync(
+      key, 10, 20, 10, 18, now.AddMinutes(1), TimeSpan.FromMinutes(5));
+
+    await Assert.That(second).IsFalse()
+      .Because("the single-key path has to hold the same rate limit as the batch it stands in for");
+  }
+
+  [Test]
+  public async Task TryBeginRepair_GrantsThenHoldsOffAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.NewMedo();
+    var key = _key(origin);
+    var now = DateTimeOffset.UtcNow;
+    _ = await coordinator.IntegrityTryBeginReportAsync(key, 10, 20, 10, 18, now, TimeSpan.FromMinutes(5));
+
+    var first = await coordinator.IntegrityTryBeginRepairAsync(key, now, TimeSpan.FromMinutes(10), maxAttempts: 5);
+    var second = await coordinator.IntegrityTryBeginRepairAsync(
+      key, now.AddSeconds(5), TimeSpan.FromMinutes(10), maxAttempts: 5);
+
+    await Assert.That(first).IsTrue();
+    await Assert.That(second).IsFalse();
+  }
+
+  [Test]
+  public async Task MarkHealed_ForgetsTheBucketAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.NewMedo();
+    var key = _key(origin);
+    _ = await coordinator.IntegrityTryBeginReportAsync(
+      key, 10, 20, 10, 18, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+
+    await coordinator.IntegrityMarkHealedAsync(key);
+
+    await Assert.That(await _ledgerRowCountAsync(ctx, origin)).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task MarkHealed_ForAnUnknownBucket_IsANoOpAsync() {
+    // Healing something never reported is ordinary: another instance may have healed it first.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.NewMedo();
+
+    await coordinator.IntegrityMarkHealedAsync(_key(origin));
+
+    await Assert.That(await _ledgerRowCountAsync(ctx, origin)).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task SingleKey_TreatsANullTenantScopeAsTheEmptyScopeAsync() {
+    // The SQL coalesces a null scope to the empty string, so the C# has to bind the same way or
+    // a null-scoped key would report under one identity and heal under another — leaving a
+    // bucket that can never be cleared.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.NewMedo();
+    var nullScoped = new IntegrityRepairLedger.DivergenceKey(
+      origin, TenantScope: null, EventType: "OrderPlaced", StreamId: (Guid)TrackedGuid.NewMedo());
+
+    _ = await coordinator.IntegrityTryBeginReportAsync(
+      nullScoped, 10, 20, 10, 18, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+    await Assert.That(await _ledgerRowCountAsync(ctx, origin)).IsEqualTo(1L);
+
+    await coordinator.IntegrityMarkHealedAsync(nullScoped);
+
+    await Assert.That(await _ledgerRowCountAsync(ctx, origin)).IsEqualTo(0L)
+      .Because("reporting and healing must agree on the identity of a null-scoped key, or the "
+             + "bucket can never be cleared");
+  }
+
+  [Test]
+  public async Task SingleKeyAndBatch_ShareOneLedgerRowAsync() {
+    // The single-key path is a fallback for the batch, so the two must address the same row —
+    // otherwise a chunk that degraded mid-flight would double-report the same divergence.
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.NewMedo();
+    var key = _key(origin);
+    var now = DateTimeOffset.UtcNow;
+
+    _ = await coordinator.IntegrityTryBeginReportAsync(key, 10, 20, 10, 18, now, TimeSpan.FromMinutes(5));
+    var batchAgain = await coordinator.IntegrityTryBeginReportBatchAsync(
+      origin, [_observation(key)], now.AddMinutes(1), TimeSpan.FromMinutes(5));
+
+    await Assert.That(await _ledgerRowCountAsync(ctx, origin)).IsEqualTo(1L);
+    await Assert.That(batchAgain![0]).IsFalse()
+      .Because("the batch must see the cooldown the single-key call just set on the same row");
+  }
+
+  [Test]
+  public async Task BatchHealing_ClearsWhatTheSingleKeyPathReportedAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _coordinator(ctx);
+    var origin = (Guid)TrackedGuid.NewMedo();
+    var key = _key(origin);
+    _ = await coordinator.IntegrityTryBeginReportAsync(
+      key, 10, 20, 10, 18, DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
+
+    _ = await coordinator.IntegrityMarkHealedBatchAsync(origin, [key]);
+
+    await Assert.That(await _ledgerRowCountAsync(ctx, origin)).IsEqualTo(0L);
+  }
 }
