@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -77,7 +78,8 @@ public class PostgresSignalTransportUnitTests {
     string? connectionString = null,
     string? configConnectionKey = null,
     string? configConnectionValue = null,
-    Guid? instanceId = null) {
+    Guid? instanceId = null,
+    ILogger<PostgresSignalTransport>? logger = null) {
     var opts = new WhizbangNotificationOptions {
       DirectConnectionString = connectionString,
     };
@@ -93,7 +95,7 @@ public class PostgresSignalTransportUnitTests {
     var instanceProvider = new ServiceInstanceProvider(effectiveInstanceId, "utest-service", "utest-host", processId: 1);
     var transport = new PostgresSignalTransport(
       Options.Create(opts), cfg, shared, instanceProvider,
-      NullLogger<PostgresSignalTransport>.Instance);
+      logger ?? NullLogger<PostgresSignalTransport>.Instance);
     return (transport, shared, effectiveInstanceId);
   }
 
@@ -300,5 +302,61 @@ public class PostgresSignalTransportUnitTests {
 
   private sealed class FakeSource(IReadOnlyList<SignalTypeEntry> entries) : ISignalTypeSource {
     public IReadOnlyList<SignalTypeEntry> GetSignalTypes() => entries;
+  }
+
+  // ============================================================
+  // Publishing before the bus has started
+  // ============================================================
+
+  /// <summary>
+  /// A publish that beats StartAsync says so, rather than claiming the signal is unregistered.
+  /// </summary>
+  /// <remarks>
+  /// The routing maps are built in StartAsync, so a publish that arrives first has no map to
+  /// consult. Reporting that as "not in the registry" was the misleading version of this message,
+  /// and it hid a fleet-wide dead doorbell route for weeks — the log said the signal type was
+  /// wrong when in fact the bus had never started. The distinction is the whole point of this
+  /// branch.
+  /// </remarks>
+  [Test]
+  public async Task PublishBeforeStart_ReportsTheStartOrderNotAMissingRegistrationAsync() {
+    var logger = new CapturingSignalLogger();
+    var (transport, _, _) = _createTransport(logger: logger);
+
+    // No StartAsync: the routing map does not exist yet.
+    await transport.PublishAsync(new ProbeSignal(), SignalTarget.Broadcast);
+
+    await Assert.That(logger.Messages).IsNotEmpty();
+    await Assert.That(logger.Messages.Any(m =>
+      m.Contains("start", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("saying \"unregistered\" here sent people hunting a signal-type problem while the "
+             + "real fault was that the bus had never started");
+  }
+
+  [Test]
+  public async Task PublishBeforeStart_DoesNotThrowAsync() {
+    // A doorbell that throws on a startup race would take down whatever was ringing it. Losing
+    // one notify is survivable — every signal has a durable or polling backstop.
+    var (transport, _, _) = _createTransport();
+
+    await transport.PublishAsync(new ProbeSignal(), SignalTarget.Broadcast);
+  }
+
+  private readonly record struct ProbeSignal : ISignal {
+    public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.BestEffort;
+    public static SignalTargeting Targeting => SignalTargeting.Broadcast;
+  }
+
+  /// <summary>Captures what the transport reported, at every level.</summary>
+  private sealed class CapturingSignalLogger : ILogger<PostgresSignalTransport> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _messages = [];
+    public List<string> Messages { get { lock (_lock) { return [.. _messages]; } } }
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_lock) { _messages.Add(formatter(state, exception)); }
+    }
   }
 }
