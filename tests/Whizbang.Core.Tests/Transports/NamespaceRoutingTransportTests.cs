@@ -272,6 +272,28 @@ public class NamespaceRoutingTransportTests {
     public List<RecordingSubscription> Subscriptions { get; } = [];
     public int InitializeCount { get; private set; }
     public int DisposeCount { get; private set; }
+    public List<TransportDestination> DeadLetterSubscribed { get; } = [];
+
+    /// <summary>Whether this broker answers a health probe. False stands in for a namespace
+    /// whose credentials expired or whose network path is gone.</summary>
+    public bool Reachable { get; init; } = true;
+
+    public int ConnectivityChecks { get; private set; }
+
+    public ValueTask<bool> CheckConnectivityAsync(CancellationToken cancellationToken = default) {
+      ConnectivityChecks++;
+      return ValueTask.FromResult(Reachable);
+    }
+
+    public Task<ISubscription> SubscribeToDeadLetterAsync(
+        Func<TransportMessage, CancellationToken, Task> handler,
+        TransportDestination destination,
+        CancellationToken cancellationToken = default) {
+      DeadLetterSubscribed.Add(destination);
+      var subscription = new RecordingSubscription();
+      Subscriptions.Add(subscription);
+      return Task.FromResult<ISubscription>(subscription);
+    }
     public long? MaxSizeBytes { get; init; }
     public Func<CancellationToken, Task>? RecoveryHandler { get; private set; }
 
@@ -354,6 +376,134 @@ public class NamespaceRoutingTransportTests {
       OnDisconnected?.Invoke(this, new SubscriptionDisconnectedEventArgs());
     }
   }
+
+  #endregion
+
+  #region Connectivity, dead-letter and disposal
+
+  // The routing transport is one ITransport over several brokers, so anything that reports on
+  // "the transport" has to speak for all of them. A health probe that only asked the default
+  // would report healthy while a namespace the service publishes to is unreachable — and the
+  // messages for it pile up in the outbox with nothing saying why.
+
+  [Test]
+  public async Task CheckConnectivity_IsTrueOnlyWhenEveryNamespaceAnswersAsync() {
+    var @default = new RecordingTransport();
+    var bulk = new RecordingTransport();
+    var transport = _routing(@default, ("bulk", bulk));
+
+    var healthy = await transport.CheckConnectivityAsync();
+
+    await Assert.That(healthy).IsTrue();
+    await Assert.That(bulk.ConnectivityChecks).IsGreaterThan(0)
+      .Because("a probe that only asked the default would call a partly-broken fleet healthy");
+  }
+
+  [Test]
+  public async Task CheckConnectivity_IsFalseWhenANonDefaultNamespaceIsUnreachableAsync() {
+    var @default = new RecordingTransport();
+    var bulk = new RecordingTransport { Reachable = false };
+    var transport = _routing(@default, ("bulk", bulk));
+
+    await Assert.That(await transport.CheckConnectivityAsync()).IsFalse();
+  }
+
+  [Test]
+  public async Task CheckConnectivity_IsFalseWhenTheDefaultIsUnreachableAsync() {
+    var @default = new RecordingTransport { Reachable = false };
+    var bulk = new RecordingTransport();
+    var transport = _routing(@default, ("bulk", bulk));
+
+    await Assert.That(await transport.CheckConnectivityAsync()).IsFalse();
+  }
+
+  [Test]
+  public async Task CheckConnectivity_ShortCircuitsOnTheDefaultAsync() {
+    // The default is checked first and its failure answers the question. Probing every other
+    // broker afterwards costs a round trip per namespace for an answer already known — and
+    // health probes run on a timer.
+    var @default = new RecordingTransport { Reachable = false };
+    var bulk = new RecordingTransport();
+    var transport = _routing(@default, ("bulk", bulk));
+
+    _ = await transport.CheckConnectivityAsync();
+
+    await Assert.That(bulk.ConnectivityChecks).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task DeadLetterSubscriptions_AreMirroredIntoActivelyConsumedNamespacesAsync() {
+    // Dead letters accumulate wherever the message was published, so a DLQ subscription that
+    // only covered the default would leave a consumed namespace's dead letters unread.
+    var @default = new RecordingTransport();
+    var bulk = new RecordingTransport();
+    var transport = _routing(@default, [("bulk", bulk)], consumeKeys: ["bulk"]);
+
+    _ = await transport.SubscribeToDeadLetterAsync(
+      (_, _) => Task.CompletedTask, new TransportDestination("myapp.records"));
+
+    await Assert.That(@default.DeadLetterSubscribed).IsNotEmpty();
+    await Assert.That(bulk.DeadLetterSubscribed).IsNotEmpty()
+      .Because("dead letters land in the namespace the message was published to");
+  }
+
+  [Test]
+  public async Task DeadLetterSubscriptions_SkipANamespaceNothingConsumesFromAsync() {
+    // A namespace this service only publishes to has no subscriptions of ours to dead-letter
+    // from — mirroring there would create broker entities and acceptor slots for nothing.
+    var @default = new RecordingTransport();
+    var publishOnly = new RecordingTransport();
+    var transport = _routing(@default, ("publish-only", publishOnly));
+
+    _ = await transport.SubscribeToDeadLetterAsync(
+      (_, _) => Task.CompletedTask, new TransportDestination("myapp.records"));
+
+    await Assert.That(@default.DeadLetterSubscribed).IsNotEmpty();
+    await Assert.That(publishOnly.DeadLetterSubscribed).IsEmpty()
+      .Because("a publish-only namespace costs zero broker entities by design");
+  }
+
+  [Test]
+  public async Task Dispose_DisposesEveryNamespacesTransportAsync() {
+    var @default = new RecordingTransport();
+    var bulk = new RecordingTransport();
+    var transport = _routing(@default, ("bulk", bulk));
+
+    await transport.DisposeAsync();
+
+    await Assert.That(@default.DisposeCount).IsEqualTo(1);
+    await Assert.That(bulk.DisposeCount).IsEqualTo(1)
+      .Because("a namespace transport left undisposed holds its broker connection for the life "
+             + "of the process");
+  }
+
+  [Test]
+  public async Task Dispose_IsIdempotentAsync() {
+    // The host disposes it and a `using` in the composition root may dispose it again. Disposing
+    // a broker client twice is not always safe, so the guard is what makes the second call inert.
+    var @default = new RecordingTransport();
+    var bulk = new RecordingTransport();
+    var transport = _routing(@default, ("bulk", bulk));
+
+    await transport.DisposeAsync();
+    await transport.DisposeAsync();
+
+    await Assert.That(@default.DisposeCount).IsEqualTo(1);
+    await Assert.That(bulk.DisposeCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task Send_RejectsANullDestinationAsync() {
+    // Every routing entry point guards the destination, because it is the thing the key is
+    // read from — a null one would resolve to the default and send to the wrong broker.
+    var transport = _routing(new RecordingTransport(), ("bulk", new RecordingTransport()));
+
+    await Assert.That(async () => await transport.SendAsync<TestRequest, TestResponse>(_envelope(), null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  private sealed record TestRequest(string Value);
+  private sealed record TestResponse(string Value);
 
   #endregion
 }
