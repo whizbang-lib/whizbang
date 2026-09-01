@@ -26,6 +26,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// </remarks>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqDeadLetterDrainerTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMqHostRegistrationIntegrationTests.cs</tests>
 public sealed class RabbitMqDeadLetterDrainer : ITransportDeadLetterDrainer {
   private readonly IConnection _connection;
   private readonly string _dlqName;
