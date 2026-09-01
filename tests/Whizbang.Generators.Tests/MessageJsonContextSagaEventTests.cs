@@ -42,6 +42,10 @@ namespace Whizbang.Sagas {
     public string? OperationName { get; set; }
   }
 
+  public interface ISagaEvent : IEvent { }
+  public interface ISagaInitiatedEvent : ISagaEvent { }
+  public interface ISagaItemCompletedEvent : ISagaEvent { }
+
   [AttributeUsage(AttributeTargets.Class)]
   public sealed class SagaAttribute : Attribute {
     public SagaAttribute(string name) { Name = name; }
@@ -221,6 +225,49 @@ internal partial class LandingSaga { }
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).DoesNotContain("LandingSaga.InitiatedEvent")
       .Because("The generated context is public — referencing an internal saga's nested types would not compile.");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_RegistersSynthesizedEventsUnderTheirMarkerInterfaceAsync() {
+    // Each synthesized event implements a marker interface from Whizbang.Sagas.Contracts, and a
+    // consumer that receives one polymorphically — a receptor on ISagaItemCompletedEvent, a
+    // projection keyed on the interface — resolves the concrete type through the registered
+    // derived-type relationship. Emit the JsonTypeInfo but not the relationship and the metadata
+    // is present while the polymorphic read still fails, which is a strictly more confusing
+    // version of the failure this whole file exists to prevent.
+    //
+    // The marker interfaces only exist in the compilation when the consumer references the
+    // contracts assembly; when they do not resolve the generator simply records no relationship,
+    // which is why every other test here never reached this path.
+    var source = _withSagaSurface(@"
+namespace ConsumerApp.Sagas;
+
+[Whizbang.Sagas.Saga(""landing"")]
+public partial class LandingSaga { }
+");
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var context = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(context).IsNotNull();
+
+    // The interface gets its own polymorphic factory — that factory IS the resolution mechanism.
+    const string factory = "CreatePolymorphic_Whizbang_Sagas_ISagaItemCompletedEvent";
+    await Assert.That(context!).Contains(factory)
+      .Because("a receptor written against the marker interface resolves the concrete event "
+             + "through this factory; without it the metadata exists and the polymorphic read "
+             + "still fails, which is a more confusing version of no metadata at all");
+
+    // Scoped to the factory body so the concrete type cannot satisfy this by appearing elsewhere
+    // in a file that names every message in the assembly.
+    var body = context![context.IndexOf(factory + "(JsonSerializerOptions", StringComparison.Ordinal)..];
+    body = body[..body.IndexOf("private JsonTypeInfo", 1, StringComparison.Ordinal)];
+    await Assert.That(body).Contains("LandingSaga.ItemCompletedEvent")
+      .Because("the factory has to name the synthesized event as a derived type, or it resolves "
+             + "the interface to nothing");
   }
 
   [Test]
