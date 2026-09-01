@@ -25,6 +25,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </remarks>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
 /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusDeadLetterDrainerTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.AzureServiceBus.Integration.Tests/AsbDeadLetterImportSeamIntegrationTests.cs</tests>
 public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrainer, IAsyncDisposable {
   private readonly ServiceBusClient _client;
   private readonly string _topicName;
@@ -87,6 +88,7 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
         break;
       }
 
+      var drainedBeforeBatch = drained;
       foreach (var msg in batch) {
         ct.ThrowIfCancellationRequested();
 
@@ -121,6 +123,17 @@ public sealed class AzureServiceBusDeadLetterDrainer : ITransportDeadLetterDrain
 #pragma warning restore CA1848, CA1873
           await _abandonGuardedAsync(receiver, msg, ct).ConfigureAwait(false);
         }
+      }
+
+      // Every message in this batch was abandoned. Abandoning returns a message to the queue
+      // IMMEDIATELY, so receiving again hands back the same batch — and the loop's only other
+      // exit is an empty DLQ, which a DLQ of abandoned messages never becomes. Without this the
+      // pass spins until cancellation, burning the very broker ops the drain worker's per-tick
+      // budget exists to ration. Nothing that failed here (a coordinator that cannot give
+      // custody, foreign messages that are not ours to settle) resolves inside one pass, so
+      // stop and let the next scheduled drain retry.
+      if (drained == drainedBeforeBatch) {
+        break;
       }
     }
 

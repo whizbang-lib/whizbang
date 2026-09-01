@@ -380,6 +380,55 @@ public class AzureServiceBusDeadLetterDrainerTests {
   }
 
   [Test]
+  [Timeout(15_000)]
+  public async Task DrainDeadLetterQueueAsync_WholeBatchAbandoned_StopsInsteadOfReOfferingItForeverAsync(
+      CancellationToken cancellationToken) {
+    // Every import fails — the shape a host with no coordinator (or a database that cannot take
+    // custody) produces. The broker re-offers each abandoned message immediately, so the loop's
+    // "empty DLQ" exit never arrives: without a no-progress guard this pass runs until
+    // cancellation, hammering the broker with receives it will never settle.
+    var client = new FakeDrainClient();
+    var importer = new FakeImporter();
+    client.Receiver.RedeliverAbandoned = true;
+    client.Receiver.Batches.Enqueue(new[] { _dlqMessage(_id1) });
+    for (var i = 0; i < 50; i++) {
+      importer.PlannedOutcomes.Enqueue(new InvalidOperationException("no custody available"));
+    }
+    await using var drainer = _drainerFor(client, importer);
+
+    var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 100, cancellationToken);
+
+    await Assert.That(drained).IsEqualTo(0);
+    await Assert.That(client.Receiver.RequestedBatchSizes).Count().IsEqualTo(1)
+      .Because("a pass that settles nothing must stop after one receive — re-receiving hands "
+             + "back the same abandoned messages, and nothing that failed resolves mid-pass");
+    await Assert.That(client.Receiver.Abandoned).Count().IsEqualTo(1)
+      .Because("the message is abandoned exactly once, not once per spin");
+  }
+
+  [Test]
+  [Timeout(15_000)]
+  public async Task DrainDeadLetterQueueAsync_PartialProgress_KeepsDrainingUntilNothingSettlesAsync(
+      CancellationToken cancellationToken) {
+    // A mixed DLQ: one message this host can custody, one foreign message it may never settle.
+    // The pass that drains the Whizbang message made progress, so the loop continues; the pass
+    // that only re-abandons the foreign one is where it stops.
+    var client = new FakeDrainClient();
+    var importer = new FakeImporter();
+    client.Receiver.RedeliverAbandoned = true;
+    client.Receiver.Batches.Enqueue(new[] { _dlqMessage("not-a-guid"), _dlqMessage(_id1) });
+    await using var drainer = _drainerFor(client, importer);
+
+    var drained = await drainer.DrainDeadLetterQueueAsync(maxCount: 100, cancellationToken);
+
+    await Assert.That(drained).IsEqualTo(1)
+      .Because("the foreign message is not ours to settle, so only the Whizbang one drains");
+    await Assert.That(client.Receiver.RequestedBatchSizes).Count().IsEqualTo(2)
+      .Because("the first pass made progress and earns another receive; the second settles "
+             + "nothing and ends the pass");
+  }
+
+  [Test]
   public async Task DrainDeadLetterQueueAsync_SecondCall_ReusesReceiverAsync() {
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
@@ -484,6 +533,12 @@ public class AzureServiceBusDeadLetterDrainerTests {
     public List<string> Abandoned { get; } = [];
     public Exception? CompleteException { get; set; }
     public Exception? AbandonException { get; set; }
+    /// <summary>
+    /// Models the broker faithfully for the drain loop's termination: abandoning returns a
+    /// message to the queue IMMEDIATELY, so the next receive offers it again. Off by default so
+    /// the settlement tests stay one-shot.
+    /// </summary>
+    public bool RedeliverAbandoned { get; set; }
     public Action? OnReceive { get; set; }
     public Action? OnComplete { get; set; }
     public int DisposeCount { get; private set; }
@@ -512,6 +567,9 @@ public class AzureServiceBusDeadLetterDrainerTests {
       IDictionary<string, object>? propertiesToModify = null,
       CancellationToken cancellationToken = default) {
       Abandoned.Add(message.MessageId);
+      if (RedeliverAbandoned) {
+        Batches.Enqueue([message]);
+      }
       return AbandonException is null ? Task.CompletedTask : Task.FromException(AbandonException);
     }
 

@@ -21,6 +21,7 @@ namespace Whizbang.Transports.RabbitMQ;
 /// </summary>
 /// <docs>operations/dead-letter-queue/transport-recovery</docs>
 /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMqFleetDeadLetterDrainerTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Integration.Tests/RabbitMqHostRegistrationIntegrationTests.cs</tests>
 public sealed class RabbitMqFleetDeadLetterDrainer : ITransportDeadLetterDrainer {
   private readonly Func<IReadOnlyCollection<string>> _activeDeadLetterQueues;
   private readonly Func<string, ITransportDeadLetterDrainer> _drainerFactory;

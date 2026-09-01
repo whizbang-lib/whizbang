@@ -618,4 +618,155 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
           cancellationToken);
     }
   }
+
+  // ==================== TOCTOU duplicate-key race ====================
+
+  /// <summary>
+  /// Concurrent first-writes of the same row all succeed, and leave exactly one row.
+  /// </summary>
+  /// <remarks>
+  /// The physical-field path is a SELECT-then-INSERT, and it is not atomic. Two consumers
+  /// applying the same event concurrently — parallel perspective apply, or a rewind replaying
+  /// alongside live traffic — can both see "row absent" and both attempt the INSERT. The second
+  /// gets Postgres 23505.
+  ///
+  /// <para>
+  /// The retry loop is what makes that survivable: it clears the failed change-tracker state and
+  /// re-enters, and the second-pass SELECT now sees the committed row so the path goes UPDATE.
+  /// Without it the losing consumer's apply fails and its event routes to the failure channel —
+  /// a perspective row that is simply missing an event, with a dup-key exception as the only
+  /// clue. This drives real concurrent contexts against real Postgres because the race is
+  /// between two connections; a single DbContext cannot produce it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ConcurrentFirstWritesOfTheSameRow_AllSucceedAndLeaveOneRowAsync(
+      CancellationToken cancellationToken) {
+    const int RACERS = 8;
+    var strategy = new PostgresUpsertStrategy();
+    var testId = _idProvider.NewGuid();
+    var scope = new PerspectiveScope { TenantId = "tenant-race" };
+
+    // Separate contexts: the race is between connections, so one shared DbContext would only
+    // produce EF change-tracker contention rather than the 23505 this loop exists for.
+    var contexts = new List<PhysicalFieldIntegrationDbContext>(RACERS);
+    for (var i = 0; i < RACERS; i++) {
+      var ob = new DbContextOptionsBuilder<PhysicalFieldIntegrationDbContext>();
+      ob.UseNpgsql(_dataSource!)
+        .ConfigureWarnings(w => w.Ignore(
+          Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+      contexts.Add(new PhysicalFieldIntegrationDbContext(ob.Options));
+    }
+
+    try {
+      // Release every racer at once so their SELECTs overlap.
+      using var gate = new SemaphoreSlim(0, RACERS);
+      var racers = contexts.Select((ctx, i) => Task.Run(async () => {
+        await gate.WaitAsync(cancellationToken);
+        await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+          ctx, "wh_per_product_search", testId,
+          new ProductSearchModel { Name = $"racer-{i}", Price = i, IsActive = true },
+          new PerspectiveMetadata {
+            EventType = "ProductCreated",
+            EventId = Guid.NewGuid().ToString(),
+            Timestamp = DateTime.UtcNow,
+          },
+          scope,
+          new Dictionary<string, object?> {
+            { "name", $"racer-{i}" }, { "price", (decimal)i },
+            { "category", "race" }, { "is_active", true },
+          },
+          cancellationToken);
+      }, cancellationToken)).ToList();
+
+      gate.Release(RACERS);
+
+      // The assertion that matters: not one of them fails. A losing racer that threw would have
+      // its event routed to the failure channel with the row silently missing that apply.
+      await Task.WhenAll(racers);
+
+      await using var connection = new NpgsqlConnection(_connectionString);
+      await connection.OpenAsync(cancellationToken);
+      var rows = await connection.ExecuteScalarAsync<long>(
+        "SELECT COUNT(*) FROM wh_per_product_search WHERE id = @id", new { id = testId });
+
+      await Assert.That(rows).IsEqualTo(1L)
+        .Because("every racer targeted one id — more than one row would mean the key is not "
+               + "actually unique, and fewer would mean an apply was lost");
+    } finally {
+      foreach (var ctx in contexts) {
+        await ctx.DisposeAsync();
+      }
+    }
+  }
+
+  /// <summary>
+  /// A concurrent burst actually exercises the retry, rather than passing because the race
+  /// never happened.
+  /// </summary>
+  /// <remarks>
+  /// The test above asserts the outcome, which would also hold if every racer happened to
+  /// serialize. This one keeps racing until the recovery counter moves, so it is evidence the
+  /// dup-key path ran at all — and it fails loudly if the race can no longer be produced, which
+  /// is what would happen if the SELECT-then-INSERT were replaced without this loop being
+  /// retired alongside it.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AConcurrentBurst_RecoversThroughTheDuplicateKeyRetryAsync(
+      CancellationToken cancellationToken) {
+    const int RACERS = 8;
+    const int MAX_BURSTS = 25;
+    var strategy = new PostgresUpsertStrategy();
+    var before = PostgresUpsertStrategy.DuplicateKeyRetriesRecovered;
+
+    var contexts = new List<PhysicalFieldIntegrationDbContext>(RACERS);
+    for (var i = 0; i < RACERS; i++) {
+      var ob = new DbContextOptionsBuilder<PhysicalFieldIntegrationDbContext>();
+      ob.UseNpgsql(_dataSource!)
+        .ConfigureWarnings(w => w.Ignore(
+          Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+      contexts.Add(new PhysicalFieldIntegrationDbContext(ob.Options));
+    }
+
+    try {
+      for (var burst = 0; burst < MAX_BURSTS; burst++) {
+        if (PostgresUpsertStrategy.DuplicateKeyRetriesRecovered > before) {
+          break;
+        }
+        var testId = _idProvider.NewGuid();
+        using var gate = new SemaphoreSlim(0, RACERS);
+        var racers = contexts.Select((ctx, i) => Task.Run(async () => {
+          await gate.WaitAsync(cancellationToken);
+          await strategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+            ctx, "wh_per_product_search", testId,
+            new ProductSearchModel { Name = $"burst-{burst}-{i}", Price = i, IsActive = true },
+            new PerspectiveMetadata {
+              EventType = "ProductCreated",
+              EventId = Guid.NewGuid().ToString(),
+              Timestamp = DateTime.UtcNow,
+            },
+            new PerspectiveScope { TenantId = "tenant-race" },
+            new Dictionary<string, object?> {
+              { "name", $"burst-{burst}-{i}" }, { "price", (decimal)i },
+              { "category", "race" }, { "is_active", true },
+            },
+            cancellationToken);
+        }, cancellationToken)).ToList();
+
+        gate.Release(RACERS);
+        await Task.WhenAll(racers);
+      }
+
+      await Assert.That(PostgresUpsertStrategy.DuplicateKeyRetriesRecovered).IsGreaterThan(before)
+        .Because("the dup-key path never ran across " + MAX_BURSTS + " concurrent bursts — either "
+               + "the race can no longer be produced (in which case this retry loop is dead code "
+               + "and should go) or the recovery stopped being counted");
+    } finally {
+      foreach (var ctx in contexts) {
+        await ctx.DisposeAsync();
+      }
+    }
+  }
 }

@@ -265,9 +265,31 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
       return;
     }
     var finalStatus = failedCount > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
-    await CompleteSagaAsync(
-      ctx, finalStatus, triggeringItemIdentifier, completed, failedCount, total, cancellationToken)
-      .ConfigureAwait(false);
+    try {
+      await CompleteSagaAsync(
+        ctx, finalStatus, triggeringItemIdentifier, completed, failedCount, total, cancellationToken)
+        .ConfigureAwait(false);
+    } catch {
+      _releaseCompletionDispatch(ctx.SagaId);
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// Undoes the tracker's optimistic "completion dispatched" mark after an emission that did NOT
+  /// happen. The flag is claimed BEFORE the emit so two threads cannot both drive one, but the
+  /// emit can still fail — and a flag left set is permanent for this instance: every later
+  /// per-item terminal short-circuits, and the watchdog's in-memory fast path declines too, so a
+  /// saga with no projection loader wired is stranded by one transient publish failure. Releasing
+  /// it costs nothing in exactly-once terms: <see cref="CompleteSagaAsync"/> claims through
+  /// <c>PublishOnceAsync</c>, which is what actually dedups a retry.
+  /// </summary>
+  private void _releaseCompletionDispatch(Guid sagaId) {
+    lock (_completionLock) {
+      if (_completionTrackers.TryGetValue(sagaId, out var tracker)) {
+        tracker.DispatchedCompletion = false;
+      }
+    }
   }
 
   /// <summary>
@@ -301,6 +323,7 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   /// (saga not registered, already terminal, projection unavailable, or projection counts
   /// not yet at terminal).
   /// </returns>
+  /// <tests>tests/Whizbang.Sagas.Tests/Services/TryRecoverViaWatchdogAsyncTests.cs</tests>
   public virtual async Task<bool> TryRecoverViaWatchdogAsync(SagaContext ctx, CancellationToken cancellationToken) {
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -327,9 +350,14 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     }
     if (inMemoryTerminal) {
       var status = failedCount > 0 ? SagaStatus.CompletedWithFailures : SagaStatus.Completed;
-      await CompleteSagaAsync(
-        ctx, status, completedByItemIdentifier: "watchdog", completed, failedCount, total, cancellationToken)
-        .ConfigureAwait(false);
+      try {
+        await CompleteSagaAsync(
+          ctx, status, completedByItemIdentifier: "watchdog", completed, failedCount, total, cancellationToken)
+          .ConfigureAwait(false);
+      } catch {
+        _releaseCompletionDispatch(ctx.SagaId);
+        throw;
+      }
       return true;
     }
 
