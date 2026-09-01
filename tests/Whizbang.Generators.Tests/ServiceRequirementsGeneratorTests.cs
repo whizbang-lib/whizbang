@@ -295,4 +295,224 @@ public class ServiceRequirementsGeneratorTests {
     // Requiring a registration for it would report a gap that cannot exist.
     await Assert.That(generated).DoesNotContain("IEnumerable");
   }
+
+  // ============================================================
+  // What a factory registration must NOT contribute
+  // ============================================================
+  //
+  // This manifest is checked at startup: anything it lists and the container cannot satisfy fails
+  // composition. That makes a false positive worse than a miss — a miss lets an existing bug stay
+  // hidden, but a false positive stops a correct service from starting, and the operator has no way
+  // to override it.
+
+  [Test]
+  public async Task GetServiceIsNotAHardRequirementAsync() {
+    // GetService returning null is a documented outcome the caller has already handled — that is
+    // the whole difference from GetRequiredService. Demanding a registration for it would refuse
+    // to start compositions that are correct today.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IOptionalHook { }
+      public interface ICloser { }
+      public sealed class Closer : ICloser { }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<ICloser>(sp => {
+            var hook = sp.GetService<IOptionalHook>();
+            return new Closer();
+          });
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    await Assert.That(generated).DoesNotContain("IOptionalHook")
+      .Because("an optional resolve is not a requirement — listing it would refuse to start a "
+             + "composition that is correct");
+  }
+
+  [Test]
+  public async Task AFactoryThatResolvesNothingContributesNoEntryAsync() {
+    // A hand-constructed service with no container dependencies is ordinary. Emitting an entry
+    // with an empty requirement list is noise in a manifest read on every startup.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface ICloser { }
+      public sealed class Closer : ICloser { }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<ICloser>(sp => new Closer());
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    await Assert.That(generated).DoesNotContain("TestApp.ICloser");
+  }
+
+  [Test]
+  public async Task AConcreteResolveIsNotRecordedAsARequirementAsync() {
+    // Only interfaces are treated as service contracts. A concrete resolve is usually a type the
+    // container constructs on demand, and requiring an explicit registration would be wrong.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public sealed class ConcreteHelper { }
+      public interface ICloser { }
+      public sealed class Closer : ICloser {
+        public Closer(ConcreteHelper helper) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<ICloser>(sp => new Closer(sp.GetRequiredService<ConcreteHelper>()));
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    await Assert.That(generated).DoesNotContain("ConcreteHelper");
+  }
+
+  [Test]
+  public async Task APrivateServiceTypeIsNotRecordedAsync() {
+    // The manifest is emitted into the same assembly but a different file. Naming a type that
+    // file cannot see turns this build-time check into a build break for everyone.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IHook { }
+      public sealed class Host {
+        private interface IPrivateCloser { }
+        private sealed class PrivateCloser : IPrivateCloser {
+          public PrivateCloser(IHook hook) { }
+        }
+        public static IServiceCollection AddThing(IServiceCollection services) {
+          services.AddSingleton<IPrivateCloser>(sp => new PrivateCloser(sp.GetRequiredService<IHook>()));
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    await Assert.That(generated).DoesNotContain("IPrivateCloser")
+      .Because("the generated manifest cannot name a private nested type");
+  }
+
+  [Test]
+  public async Task AGenericServiceOverAPrivateArgumentIsNotRecordedAsync() {
+    // The constructed type's own declaration is public, but its type argument is not — and it is
+    // the full constructed name that gets emitted.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IHook { }
+      public interface IQuery<T> { }
+      public sealed class Host {
+        private sealed class PrivateModel { }
+        public static IServiceCollection AddThing(IServiceCollection services) {
+          services.AddSingleton<IQuery<PrivateModel>>(sp => null!);
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    await Assert.That(generated).DoesNotContain("PrivateModel")
+      .Because("emitting a constructed type whose argument is invisible breaks the generated file");
+  }
+
+  [Test]
+  public async Task ANonGenericFactoryRegistrationIsSkippedAsync() {
+    // AddSingleton(typeof(X), factory) has no type argument to name the requirement after, and
+    // naming it after the lambda would produce an entry nobody can act on.
+    const string source = """
+      using System;
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IHook { }
+      public interface ICloser { }
+      public sealed class Closer : ICloser { }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton(typeof(ICloser), sp => new Closer());
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+
+    await Assert.That(result.Diagnostics.Any(d => d.Id == "CS8785")).IsFalse();
+  }
+
+  [Test]
+  public async Task AnUnknownRegistrationMethodWithALambdaIsIgnoredAsync() {
+    // The scan matches a known set of registration method names. A consumer's own fluent helper
+    // that happens to take a lambda is not a DI registration.
+    const string source = """
+      using System;
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IHook { }
+      public interface ICloser { }
+      public static class Registration {
+        public static IServiceCollection Configure<T>(this IServiceCollection services, Func<IServiceProvider, T> f)
+          => services;
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.Configure<ICloser>(sp => { sp.GetRequiredService<IHook>(); return null!; });
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    await Assert.That(generated).DoesNotContain("TestApp.ICloser")
+      .Because("a consumer's own fluent helper is not a container registration");
+  }
+
+  [Test]
+  public async Task TwoRegistrationsOfTheSameTypeContributeOneEntryAsync() {
+    // Registering the same implementation twice is ordinary in a modular composition. Emitting
+    // the requirement twice reports one gap as two and overstates how much is broken.
+    const string source = """
+      using Microsoft.Extensions.DependencyInjection;
+      namespace TestApp;
+      public interface IHook { }
+      public interface ICloser { }
+      public sealed class Closer : ICloser {
+        public Closer(IHook hook) { }
+      }
+      public static class Registration {
+        public static IServiceCollection AddThing(this IServiceCollection services) {
+          services.AddSingleton<ICloser>(sp => new Closer(sp.GetRequiredService<IHook>()));
+          services.AddSingleton<ICloser>(sp => new Closer(sp.GetRequiredService<IHook>()));
+          return services;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ServiceRequirementsGenerator>(source);
+    var generated = string.Concat(GeneratorTestHelper.GetAllGeneratedSources(result).Select(s => s.Source));
+
+    var entries = generated.Split("typeof(global::TestApp.ICloser)").Length - 1;
+    await Assert.That(entries).IsEqualTo(1)
+      .Because("the same requirement listed twice reports one gap as two");
+  }
 }
