@@ -73,6 +73,31 @@ public class PerspectiveSchemaGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_VectorFieldWithAnIndexTypeOutsideTheEnum_EmitsTheColumnWithNoIndexAsync() {
+    // C# lets any int be cast to an enum, so (VectorIndexType)99 compiles and reaches the
+    // generator as an index type it has no case for. The only safe answer is no index statement:
+    // guessing a method would emit CREATE INDEX ... USING <nothing>, and the whole schema file
+    // fails to apply — taking every other perspective's table with it, for one bad attribute
+    // argument on one field.
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
+      _vectorPerspective("[VectorField(1536, IndexType = (VectorIndexType)99)]"));
+
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+
+    await Assert.That(sql).IsNotNull();
+    await Assert.That(sql!).Contains("vector(1536)")
+      .Because("an index type it cannot name is no reason to drop the column");
+    // Scoped to the VECTOR index: the schema always emits a GIN index on the JSONB column, so
+    // asserting on "USING" alone would be answered by an index that has nothing to do with this.
+    await Assert.That(sql!).DoesNotContain("_vec")
+      .Because("an index method the generator cannot name must produce no index statement at "
+             + "all — a malformed one fails the whole schema file, not just this field");
+    await Assert.That(sql!).DoesNotContain("ivfflat");
+    await Assert.That(sql!).DoesNotContain("hnsw");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_VectorFieldDefaults_IndexTheColumnAsync() {
     // The companion to the opt-out: indexing is on unless asked otherwise, which is what makes
     // the opt-out meaningful rather than a no-op.
