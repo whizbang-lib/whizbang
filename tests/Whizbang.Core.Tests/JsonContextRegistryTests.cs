@@ -1673,4 +1673,56 @@ public partial class JsonContextRegistryTests {
     await Assert.That(deserialized!.Payload).IsNotNull();
     await Assert.That(deserialized.Payload).IsTypeOf<PolymorphicFallbackTestEvent>();
   }
+
+  // ============================================================
+  // Asking about a type nobody registered
+  // ============================================================
+
+  /// <summary>A base nothing has ever registered a derived type against.</summary>
+  private interface IUnregisteredBase;
+
+  /// <summary>A concrete type under that base, equally unknown to the registry.</summary>
+  private sealed record UnregisteredDerived : IUnregisteredBase;
+
+  [Test]
+  public async Task GetRegisteredDerivedTypes_ForABaseNobodyRegistered_IsEmptyRatherThanThrowingAsync() {
+    // These are the diagnostic entry points — a health endpoint or a startup check asking what the
+    // registry knows. An unknown base is the ordinary answer on a partially-loaded host, so it has
+    // to come back empty; throwing turns a diagnostic into the outage it was meant to describe.
+    var derived = JsonContextRegistry.GetRegisteredDerivedTypes<IUnregisteredBase>();
+
+    await Assert.That(derived).IsEmpty();
+  }
+
+  [Test]
+  public async Task GetDiscriminator_ForATypeNobodyRegistered_IsNullAsync() {
+    var discriminator = JsonContextRegistry.GetDiscriminator<IUnregisteredBase, UnregisteredDerived>();
+
+    await Assert.That(discriminator).IsNull()
+      .Because("no registration means no discriminator — inventing one would produce wire values "
+             + "that nothing on the other side can resolve");
+  }
+
+  [Test]
+  public async Task GetPolymorphicListTypeInfo_ForANonPolymorphicBase_IsNullAsync() {
+    // The caller uses null to decide whether the polymorphic path applies at all. A thrown
+    // exception here would make "this base is not polymorphic" — a normal, expected answer —
+    // indistinguishable from a broken registry.
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var typeInfo = JsonContextRegistry.GetPolymorphicListTypeInfo<IUnregisteredBase>(options);
+
+    await Assert.That(typeInfo).IsNull();
+  }
+
+  [Test]
+  public async Task GetPolymorphicEnvelopeTypeInfo_ForANonPolymorphicBase_IsNullAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    var typeInfo = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<UnregisteredDerived>(options);
+
+    await Assert.That(typeInfo).IsNull()
+      .Because("the envelope helper answers null so the caller can fall back to the concrete "
+             + "payload path rather than failing the send");
+  }
 }

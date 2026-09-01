@@ -29,6 +29,13 @@ namespace Whizbang.Sagas {
     public string SagaName { get; }
     public bool GenerateService { get; init; } = true;
   }
+
+  [System.AttributeUsage(System.AttributeTargets.Class)]
+  public sealed class SagaAttribute<TBase> : System.Attribute where TBase : class {
+    public SagaAttribute(string sagaName) { SagaName = sagaName; }
+    public string SagaName { get; }
+    public bool GenerateService { get; init; } = true;
+  }
 }
 ";
 
@@ -55,6 +62,33 @@ public partial class OrderSaga {
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(dispatcher).Contains("SagaItemCompletedRecoveryHandler");
+  }
+
+  [Test]
+  public async Task SagaDeclaredWithTheGenericAttribute_GetsTheSameRecoveryReceptorsAsync() {
+    // [Saga<TBase>("name")] is the form a consumer uses to pick the base its nine event classes
+    // derive from. It is a SEPARATE attribute — a different metadata name — so the generator
+    // registers a second discovery pipeline for it. Nothing matched that pipeline, which means a
+    // saga written the generic way got no recovery receptors at all and its completion fell back
+    // to one pod's in-memory tracker.
+    var source = _source(@"
+namespace MyApp.Contracts { public class AppSagaEventBase { } }
+
+[global::Whizbang.Sagas.Saga<global::MyApp.Contracts.AppSagaEventBase>(""orders"")]
+public partial class OrderSaga {
+  public sealed record ItemCompletedEvent;
+  public sealed record ItemFailedEvent;
+}
+");
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher).Contains("SagaItemCompletedRecoveryHandler")
+      .Because("which attribute overload declared the saga must not change whether its completion "
+             + "is recoverable");
   }
 
   [Test]

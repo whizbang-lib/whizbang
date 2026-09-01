@@ -225,6 +225,58 @@ internal partial class LandingSaga { }
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task Generator_WithAGenericSaga_SkipsSynthesisAsync() {
+    // The saga generator emits its nine event classes as nested types of the saga. On an open
+    // generic those nested types are themselves generic, and the public JSON context has no
+    // concrete type argument to name — so synthesizing metadata for them emits code that cannot
+    // compile. Skipping is the only correct answer, and it has to be a SKIP rather than a throw:
+    // one generic saga must not take down metadata generation for every other message in the
+    // assembly.
+    var source = _withSagaSurface(@"
+namespace ConsumerApp.Sagas;
+
+[Whizbang.Sagas.Saga(""landing"")]
+public partial class LandingSaga<TPayload> where TPayload : class { }
+");
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error)
+      .Because("an unusable saga shape is skipped, not reported as a build break");
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).DoesNotContain("LandingSaga")
+      .Because("there is no concrete type argument to name, so any reference the context emitted "
+             + "would fail to compile");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithAGenericSaga_LeavesOtherMessagesIntactAsync() {
+    // The blast-radius half: skipping the saga must not skip the assembly.
+    var source = _withSagaSurface(@"
+using Whizbang.Core;
+
+namespace ConsumerApp.Sagas;
+
+[Whizbang.Sagas.Saga(""landing"")]
+public partial class LandingSaga<TPayload> where TPayload : class { }
+
+public record CreateOrder(string OrderId) : ICommand;
+");
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("CreateOrder")
+      .Because("one saga the generator cannot synthesize must not cost every other message in the "
+             + "assembly its JSON metadata");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task Generator_WithNoSagas_GeneratesUnchangedContextAsync() {
     const string source = @"
 using Whizbang.Core;
