@@ -131,6 +131,55 @@ public class AutoPopulateEdgeCaseTests {
     await Assert.That(registry).Contains("UserId");
   }
 
+  // ============================================================
+  // Kinds outside the enum
+  // ============================================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("PopulateFromContext", "ContextKind", "UserId")]
+  [Arguments("PopulateFromService", "ServiceKind", "ServiceName")]
+  [Arguments("PopulateFromIdentifier", "IdentifierKind", "MessageId")]
+  public async Task AKindOutsideTheEnum_FallsBackToTheFirstKindRatherThanEmittingNothingAsync(
+      string attribute, string enumName, string expectedFallback) {
+    // C# lets any int be cast to an enum, so `(ContextKind)99` compiles and reaches the extractor
+    // as a constructor argument the switch has no case for. The extractor reads these as ints, so
+    // an unmatched value has to land somewhere: it picks the first kind. The alternative — no
+    // registry entry — would leave the property silently unpopulated at runtime, which reads as
+    // "auto-populate is broken" rather than "that attribute argument was nonsense".
+    var registry = _registry($$"""
+      public record ProbeEvent(
+        Guid Id,
+        [property: {{attribute}}(({{enumName}})99)] string? Value = null
+      );
+      """);
+
+    await Assert.That(registry).Contains(expectedFallback)
+      .Because("an out-of-range kind must still produce a registry entry — dropping it makes the "
+             + "property quietly stay null with nothing anywhere saying why");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task AKindOutsideTheEnum_StillProducesCompilableRegistryCodeAsync() {
+    // The fallback picks a name; this proves the name it picks is one the emitted code can use.
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors<AutoPopulateDiscoveryGenerator>("""
+      using System;
+      using Whizbang.Core.Attributes;
+
+      namespace TestApp;
+
+      public record ProbeEvent(
+        Guid Id,
+        [property: PopulateFromContext((ContextKind)99)] string? Ctx = null,
+        [property: PopulateFromService((ServiceKind)42)] string? Svc = null,
+        [property: PopulateFromIdentifier((IdentifierKind)7)] string? Ident = null
+      );
+      """);
+
+    await Assert.That(errors).IsEmpty();
+  }
+
   [Test]
   [RequiresAssemblyFiles()]
   public async Task TheGeneratedRegistryCompilesForEveryAttributeAsync() {
