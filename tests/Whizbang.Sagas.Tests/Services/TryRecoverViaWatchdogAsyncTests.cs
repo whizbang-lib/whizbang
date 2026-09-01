@@ -33,6 +33,12 @@ namespace Whizbang.Sagas.Tests.Services;
 /// calls <see cref="SagaItemCompletionReconciler.ResolveCompletionCountsAsync"/>
 /// to compute authoritative counts and emits <c>SagaCompletedEvent</c> via
 /// <c>PublishOnceAsync</c>.</para>
+///
+/// <para>Also locks the FAST path — the in-memory tracker re-check that runs before any
+/// projection is loaded. Its reachability is the whole point: the tracker claims
+/// "completion dispatched" before emitting, so a failed emission leaves a claim for an
+/// event that never landed. That claim is permanent for the instance, and a saga with no
+/// projection loader wired has nothing else to recover it.</para>
 /// </summary>
 [Category("Unit")]
 [Category("Saga")]
@@ -111,7 +117,118 @@ public class TryRecoverViaWatchdogAsyncTests {
     await Assert.That(emitter.Published.OfType<TestCompletedEvent>().Count()).IsEqualTo(1);
   }
 
+  // ── Fast path: the in-memory tracker ────────────────────────────────────
+
+  [Test]
+  public async Task FastPath_AfterAFailedAutoCompleteEmit_RecoversFromTheInMemoryTrackerAsync() {
+    // The auto-complete path claims "completion dispatched" on the tracker BEFORE emitting, so
+    // two racing per-item terminals cannot both drive one. When the emit then FAILS, that claim
+    // is a lie — and it is permanent for this instance: every later per-item terminal
+    // short-circuits on it, and the watchdog's in-memory fast path declines too. A saga with no
+    // projection loader wired (the default) is then stranded by one transient publish failure.
+    var emitter = new FailOnceEmitter();
+    var svc = new TestSagaService(emitter, itemRepository: null, terminalReader: null, projectionOverride: null);
+    var ctx = new SagaContext(_sagaId, _entityId);
+
+    await svc.InitiateSagaAsync(ctx, ["a", "b"], hookNames: null, CancellationToken.None);
+    await svc.UpdateItemAsync(ctx, "a", SagaItemState.Completed, displayName: null, CancellationToken.None);
+
+    // The item that takes the saga terminal — its completion emit is the one that fails.
+    await Assert.That(async () => await svc.UpdateItemAsync(
+        ctx, "b", SagaItemState.Completed, displayName: null, CancellationToken.None))
+      .Throws<InvalidOperationException>()
+      .Because("the emitter failure must surface to the caller, not be swallowed");
+    await Assert.That(emitter.Published.OfType<TestCompletedEvent>()).IsEmpty()
+      .Because("the failed emit published nothing — that is the whole problem the watchdog exists for");
+
+    // Act — the watchdog tick that follows. There is no projection loader, so the ONLY thing
+    // that can recover this saga is the in-memory tracker.
+    var recovered = await svc.TryRecoverViaWatchdogAsync(ctx, CancellationToken.None);
+
+    await Assert.That(recovered).IsTrue()
+      .Because("the tracker still shows 2 of 2 terminal; a dispatch that never happened must not "
+             + "keep the fast path from retrying");
+    var completed = emitter.Published.OfType<TestCompletedEvent>().Single();
+    await Assert.That(completed.CompletedByItemIdentifier).IsEqualTo("watchdog");
+    await Assert.That(completed.CompletedItems).IsEqualTo(2);
+    await Assert.That(completed.FailedItems).IsEqualTo(0);
+    await Assert.That(completed.TotalItems).IsEqualTo(2);
+    await Assert.That(completed.FinalStatus).IsEqualTo(SagaStatus.Completed);
+  }
+
+  [Test]
+  public async Task FastPath_WhenItsOwnEmitFails_StaysRecoverableOnTheNextTickAsync() {
+    // The fast path claims the same flag before emitting, so it can strand the saga exactly the
+    // way the auto-complete path could. Two failures, then a tick that works.
+    var emitter = new FailOnceEmitter { FailuresRemaining = 2 };
+    var svc = new TestSagaService(emitter, itemRepository: null, terminalReader: null, projectionOverride: null);
+    var ctx = new SagaContext(_sagaId, _entityId);
+
+    await svc.InitiateSagaAsync(ctx, ["only"], hookNames: null, CancellationToken.None);
+    await Assert.That(async () => await svc.UpdateItemAsync(
+        ctx, "only", SagaItemState.Completed, displayName: null, CancellationToken.None))
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(async () => await svc.TryRecoverViaWatchdogAsync(ctx, CancellationToken.None))
+      .Throws<InvalidOperationException>()
+      .Because("a watchdog tick whose own emit fails reports the failure so the tick can re-arm");
+
+    var recovered = await svc.TryRecoverViaWatchdogAsync(ctx, CancellationToken.None);
+
+    await Assert.That(recovered).IsTrue()
+      .Because("nothing has been emitted yet, so the saga must still be recoverable");
+    await Assert.That(emitter.Published.OfType<TestCompletedEvent>().Count()).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task FastPath_AfterASuccessfulAutoComplete_DoesNotEmitAgainAsync() {
+    // The other half of the contract: a dispatch that DID happen must keep the fast path quiet,
+    // or every watchdog tick pays a PublishOnceAsync round-trip to lose the claim it already won.
+    var emitter = new FailOnceEmitter { FailuresRemaining = 0 };
+    var svc = new TestSagaService(emitter, itemRepository: null, terminalReader: null, projectionOverride: null);
+    var ctx = new SagaContext(_sagaId, _entityId);
+
+    await svc.InitiateSagaAsync(ctx, ["only"], hookNames: null, CancellationToken.None);
+    await svc.UpdateItemAsync(ctx, "only", SagaItemState.Completed, displayName: null, CancellationToken.None);
+
+    var recovered = await svc.TryRecoverViaWatchdogAsync(ctx, CancellationToken.None);
+
+    await Assert.That(recovered).IsFalse()
+      .Because("completion was already emitted and no projection is wired — there is nothing to recover");
+    await Assert.That(emitter.Published.OfType<TestCompletedEvent>().Count()).IsEqualTo(1)
+      .Because("releasing the flag on failure must not also release it on success");
+  }
+
   // ── Test doubles ────────────────────────────────────────────────────────
+
+  /// <summary>
+  /// Fails the first <see cref="FailuresRemaining"/> completion emissions
+  /// (<c>PublishOnceAsync</c>) and records everything that does get published. Only the
+  /// completion emit is faulted — per-item events publish normally, which is the realistic
+  /// shape: the saga's items are all terminal and only the completion never landed.
+  /// </summary>
+  private sealed class FailOnceEmitter : ISagaEventEmitter {
+    public List<IEvent> Published { get; } = [];
+    public int FailuresRemaining { get; init; } = 1;
+    private int _failures;
+
+    public Task PublishAsync<TEvent>(TEvent eventData) where TEvent : IEvent {
+      Published.Add(eventData);
+      return Task.CompletedTask;
+    }
+    public Task PublishAsync<TEvent>(TEvent eventData, DateTimeOffset? scheduledFor) where TEvent : IEvent {
+      Published.Add(eventData);
+      return Task.CompletedTask;
+    }
+    public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken) where TEvent : IEvent {
+      if (_failures < FailuresRemaining) {
+        _failures++;
+        return Task.FromException<bool>(new InvalidOperationException("completion emit failed"));
+      }
+      Published.Add(eventData);
+      return Task.FromResult(true);
+    }
+  }
 
   private sealed class FakeItemRepository(SagaItemAggregate aggregate, IReadOnlyList<SagaItemModel> items) : ISagaItemRepository {
     public Task<SagaItemAggregate> GetAggregateForSagaAsync(Guid sagaId, CancellationToken cancellationToken)
