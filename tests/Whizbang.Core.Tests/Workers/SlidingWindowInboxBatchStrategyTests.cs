@@ -342,4 +342,132 @@ public class SlidingWindowInboxBatchStrategyTests {
       StreamId = streamId,
     };
   }
+
+  // ============================================================
+  // Flush failure and shutdown
+  // ============================================================
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AppendAsync_WhenAFlushFails_TheStreamKeepsAcceptingWorkAsync(
+      CancellationToken testToken) {
+    // The flush writes to the database, which can be unavailable. Letting that kill the stream's
+    // drain loop would silently stop batching for that stream for the life of the process, with
+    // messages accepted into a buffer nothing reads.
+    var attempts = 0;
+    var secondFlush = new TaskCompletionSource();
+    var logger = new RecordingLogger();
+
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (msgs, ct) => {
+        var n = Interlocked.Increment(ref attempts);
+        if (n == 1) {
+          return Task.FromException(new InvalidOperationException("database unavailable"));
+        }
+        secondFlush.TrySetResult();
+        return Task.CompletedTask;
+      },
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      },
+      logger: logger);
+
+    var streamId = Guid.CreateVersion7();
+    await sut.AppendAsync(_makeMessage(streamId), testToken);
+    // Give the first (failing) flush time to land before the second batch.
+    await Task.Delay(120, testToken);
+    await sut.AppendAsync(_makeMessage(streamId), testToken);
+
+    await secondFlush.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    await Assert.That(attempts).IsGreaterThanOrEqualTo(2)
+      .Because("a failed flush must not end the stream's drain loop — the next batch still runs");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AppendAsync_AFailedFlushIsReportedAsync(CancellationToken testToken) {
+    // The batch is dropped on failure and recovered only by transport redelivery, so the log
+    // line is the sole record that it happened. Without it a silent drop looks like a message
+    // that was never sent.
+    var failed = new TaskCompletionSource();
+    var logger = new RecordingLogger();
+
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (msgs, ct) => {
+        failed.TrySetResult();
+        return Task.FromException(new InvalidOperationException("database unavailable"));
+      },
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      },
+      logger: logger);
+
+    await sut.AppendAsync(_makeMessage(), testToken);
+    await failed.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    // The log happens just after the flush task faults.
+    await Task.Delay(150, testToken);
+
+    await Assert.That(logger.Errors.Any(e => e.Contains("bulk flush", StringComparison.Ordinal))).IsTrue()
+      .Because("the batch is dropped and only transport redelivery recovers it — the log line is "
+             + "the only record that it happened");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DisposeAsync_IsIdempotentAsync(CancellationToken testToken) {
+    // `await using` plus an explicit stop in the host's shutdown is an ordinary shape, and the
+    // second pass must not re-dispose the timer or cancel an already-disposed source.
+    var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (msgs, ct) => Task.CompletedTask,
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      });
+
+    await sut.FlushAndStopAsync(testToken);
+    await sut.DisposeAsync();
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task FlushAndStop_WithNothingBuffered_IsCleanAsync(CancellationToken testToken) {
+    await using var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (msgs, ct) => Task.CompletedTask,
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(30),
+        MaxWait = TimeSpan.FromMilliseconds(200),
+        MaxSize = 100,
+      });
+
+    await sut.FlushAndStopAsync(testToken);
+  }
+
+  /// <summary>Captures error-level messages so a dropped batch can be shown to be reported.</summary>
+  private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Workers.SlidingWindowInboxBatchStrategy> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _errors = [];
+
+    public List<string> Errors {
+      get { lock (_lock) { return [.. _errors]; } }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (logLevel >= Microsoft.Extensions.Logging.LogLevel.Error) {
+        lock (_lock) { _errors.Add(formatter(state, exception)); }
+      }
+    }
+  }
 }
