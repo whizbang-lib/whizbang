@@ -266,11 +266,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // the store into a periodic full scan of it. The cap is high enough that the logged number is
     // still useful ("at least N") and low enough to stay cheap.
 #pragma warning disable S2077
+    // The third column is the lag measure: age of the oldest unprocessed row. ORDER BY received_at
+    // LIMIT 1 walks idx_inbox_received_at and stops at the first unprocessed row; completed rows are
+    // deleted on the normal path, so the walk stays short even when the queue is large.
     cmd.CommandText = $@"
       SELECT
         (SELECT count(*) FROM (SELECT 1 FROM {inbox} WHERE processed_at IS NULL LIMIT 1000) a),
         (SELECT count(*) FROM (SELECT 1 FROM {inbox}
-           WHERE instance_id IS NOT NULL AND lease_expiry > now() LIMIT 1000) b)";
+           WHERE instance_id IS NOT NULL AND lease_expiry > now() LIMIT 1000) b),
+        COALESCE(EXTRACT(EPOCH FROM (now() - (
+          SELECT received_at FROM {inbox} WHERE processed_at IS NULL
+          ORDER BY received_at LIMIT 1))), 0)";
 #pragma warning restore S2077
 
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -283,6 +289,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return new ServiceBacklog {
       UnprocessedInboxRows = reader.GetInt64(0),
       ActiveLeasedRows = reader.GetInt64(1),
+      // Clamped at zero: clock skew between writer and reader must not report negative lag.
+      OldestUnprocessedAge = TimeSpan.FromSeconds(Math.Max(0, reader.GetDouble(2))),
     };
   }
 

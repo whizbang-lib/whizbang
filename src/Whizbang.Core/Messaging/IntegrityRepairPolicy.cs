@@ -133,6 +133,9 @@ public sealed class IntegrityRepairPolicy {
 
   private readonly Settings _settings;
   private readonly Dictionary<string, WindowState> _windows = [];
+  // Checkpoints from different origins are handled concurrently, and every verdict reads or writes
+  // the shared window table. The sections are tiny (a dictionary probe), so one lock is enough.
+  private readonly object _sync = new();
 
   /// <summary>Initializes a new instance of the <see cref="IntegrityRepairPolicy"/> class.</summary>
   /// <param name="settings">Tuning; defaults are production-safe.</param>
@@ -146,6 +149,12 @@ public sealed class IntegrityRepairPolicy {
   /// <returns>The decision and the reason behind it.</returns>
   public Decision Evaluate(GapObservation observation) {
     ArgumentNullException.ThrowIfNull(observation);
+    lock (_sync) {
+      return _evaluateLocked(observation);
+    }
+  }
+
+  private Decision _evaluateLocked(GapObservation observation) {
 
     // Settledness first, and it is not overridable by how large the deficit looks. A big apparent
     // gap on a backlogged consumer is the STRONGEST evidence of lag, not the strongest case for
@@ -186,6 +195,12 @@ public sealed class IntegrityRepairPolicy {
   /// <param name="observation">The window that was requested.</param>
   public void RecordRequested(GapObservation observation) {
     ArgumentNullException.ThrowIfNull(observation);
+    lock (_sync) {
+      _recordRequestedLocked(observation);
+    }
+  }
+
+  private void _recordRequestedLocked(GapObservation observation) {
     var key = _key(observation);
     var state = _windows.TryGetValue(key, out var existing)
       ? existing
@@ -197,7 +212,9 @@ public sealed class IntegrityRepairPolicy {
   /// <param name="observation">The window that is now complete.</param>
   public void RecordHealed(GapObservation observation) {
     ArgumentNullException.ThrowIfNull(observation);
-    _windows.Remove(_key(observation));
+    lock (_sync) {
+      _windows.Remove(_key(observation));
+    }
   }
 
   private static string _key(GapObservation o) =>

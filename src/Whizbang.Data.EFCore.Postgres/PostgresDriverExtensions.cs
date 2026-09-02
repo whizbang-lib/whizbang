@@ -218,6 +218,13 @@ public static class PostgresDriverExtensions {
         // it, and each replica reported the same divergence independently.
         selector.Services.TryAddSingleton<Whizbang.Core.Messaging.IIntegrityRepairLedger,
           CoordinatorIntegrityRepairLedger>();
+        // The repair-decision policy the checkpoint receptor consults (issue #582). Singleton
+        // because its window state IS the protection: per-window attempts and the global
+        // under-repair budget only bound anything if they persist across checkpoints. TryAdd so a
+        // host can supply its own tuning by registering first.
+        selector.Services.TryAddSingleton(
+          new Whizbang.Core.Messaging.IntegrityRepairPolicy(
+            new Whizbang.Core.Messaging.IntegrityRepairPolicy.Settings()));
         selector.Services.AddHostedService<TableStatisticsCollector>();
 
         // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the

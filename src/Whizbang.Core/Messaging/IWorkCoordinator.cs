@@ -40,6 +40,16 @@ public sealed record ServiceBacklog {
   /// </summary>
   public long ActiveLeasedRows { get; init; }
 
+  /// <summary>
+  /// Age of the oldest unprocessed inbox row, or <see cref="TimeSpan.Zero"/> when nothing is queued.
+  /// </summary>
+  /// <remarks>
+  /// The lag signal <see cref="IntegrityRepairPolicy"/> needs alongside depth and leases. Depth is a
+  /// bounded count and a snapshot; an operator who raises the settled-depth threshold to tolerate a
+  /// small queue still needs to see that something in that small queue has been sitting for an hour.
+  /// </remarks>
+  public TimeSpan OldestUnprocessedAge { get; init; }
+
   /// <summary>True when nothing is queued and no instance holds a live lease.</summary>
   public bool IsSettled => UnprocessedInboxRows == 0 && ActiveLeasedRows == 0;
 }
