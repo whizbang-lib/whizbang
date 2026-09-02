@@ -77,6 +77,31 @@ public class WhizbangLifecycleStateTests {
   }
 
   [Test]
+  public async Task AdvanceTo_ParticipantCancelled_DoesNotFaultOrHaltAsync() {
+    // The companion to ParticipantThrows_FaultsThenHalts, and by far the more consequential
+    // direction. A participant that throws means the transition is unsafe, so the host faults and
+    // then HALTS. A participant cancelled by shutdown means the host is already stopping — taking
+    // the fault path there halts a clean shutdown and records a fault that never happened, which
+    // is what an operator would then go looking for.
+    var time = new FakeTimeProvider();
+    var options = new WhizbangLifecycleOptions { FaultRecordWindow = TimeSpan.FromSeconds(5) };
+    var participant = new FakeParticipant("workers", phase =>
+      phase == LifecyclePhase.Running ? throw new OperationCanceledException() : default);
+    var coordinator = new WhizbangLifecycleCoordinator([participant], options, time);
+    var state = new WhizbangLifecycleState(coordinator, options, time);
+
+    await Assert.That(async () => await state.AdvanceToAsync(LifecyclePhase.Running, CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("cancellation travels to the caller instead of being converted into a fault the "
+             + "host then halts on");
+    await Assert.That(state.Phase).IsNotEqualTo(LifecyclePhase.Faulted)
+      .Because("a shutdown recorded as a fault sends an operator hunting for a failure that never "
+             + "happened");
+    await Assert.That(participant.Seen).DoesNotContain(LifecyclePhase.Halted)
+      .Because("halting is the response to an unsafe transition, not to being asked to stop");
+  }
+
+  [Test]
   public async Task FaultAsync_DrivesFaultedThenHaltsAfterRecordWindowAsync() {
     var time = new FakeTimeProvider();
     var options = new WhizbangLifecycleOptions { FaultRecordWindow = TimeSpan.FromSeconds(5) };

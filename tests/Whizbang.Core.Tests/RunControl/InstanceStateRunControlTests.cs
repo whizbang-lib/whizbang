@@ -36,10 +36,15 @@ public class InstanceStateRunControlTests {
   private sealed class _recordingCoordinator : IWorkCoordinator {
     public List<(Guid InstanceId, string Phase, string? Version)> Recorded { get; } = [];
     public bool Throw { get; init; }
+    /// <summary>Thrown in place of the generic failure, for the cancellation contract.</summary>
+    public Exception? ThrowSpecific { get; init; }
 
     public Task<bool> RecordInstanceStateAsync(
         Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
         CancellationToken cancellationToken = default) {
+      if (ThrowSpecific is not null) {
+        throw ThrowSpecific;
+      }
       if (Throw) {
         throw new InvalidOperationException("relation wh_service_instances does not exist");
       }
@@ -62,8 +67,12 @@ public class InstanceStateRunControlTests {
   }
 
   private static (InstanceStateRunControl Control, _recordingCoordinator Coordinator, _stubInstanceProvider Provider) _build(
-      bool withVersion = true, bool coordinatorThrows = false, bool withCoordinator = true) {
-    var coordinator = new _recordingCoordinator { Throw = coordinatorThrows };
+      bool withVersion = true, bool coordinatorThrows = false, bool withCoordinator = true,
+      Exception? coordinatorThrowsSpecific = null) {
+    var coordinator = new _recordingCoordinator {
+      Throw = coordinatorThrows,
+      ThrowSpecific = coordinatorThrowsSpecific,
+    };
     var services = new ServiceCollection();
     if (withCoordinator) {
       services.AddSingleton<IWorkCoordinator>(coordinator);
@@ -118,5 +127,33 @@ public class InstanceStateRunControlTests {
 
     await Assert.That(coordinator.Recorded).IsEmpty()
       .Because("a host with no storage has no instance rows for anyone to observe");
+  }
+
+  [Test]
+  public async Task OnPhase_CancelledByShutdown_PropagatesRatherThanBeingLoggedAsync() {
+    // The catch that keeps a recording failure from breaking a transition is FILTERED on the
+    // caller's token. That distinction is the whole design: the write is wrapped in its own
+    // timeout, so a slow store cancels the INNER token and is treated as a failure — logged,
+    // transition proceeds. Only the caller's own cancellation travels.
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+    var (control, _, _) = _build(coordinatorThrowsSpecific: new OperationCanceledException());
+
+    await Assert.That(async () => await control.OnPhaseAsync(LifecyclePhase.Running, stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("the host is stopping; recording a phase it is leaving is not worth holding "
+             + "shutdown open for");
+  }
+
+  [Test]
+  public async Task OnPhase_WriteTimingOutWithNoShutdown_IsTreatedAsARecordingFailureAsync() {
+    // The other side of that filter, and the reason it is written that way. A store slow enough
+    // to blow the write timeout raises the same exception type, with no shutdown behind it. That
+    // has to be a logged failure rather than a propagated cancellation: a lifecycle transition
+    // must not fail because an observability row was slow to write.
+    var (control, _, _) = _build(coordinatorThrowsSpecific: new OperationCanceledException());
+
+    await control.OnPhaseAsync(LifecyclePhase.Connecting, CancellationToken.None);
+    // Reaching here IS the assertion — the transition completed despite the cancellation type.
   }
 }
