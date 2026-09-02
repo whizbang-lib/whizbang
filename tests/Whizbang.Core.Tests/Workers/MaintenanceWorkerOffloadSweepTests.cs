@@ -46,6 +46,8 @@ public class MaintenanceWorkerOffloadSweepTests {
   private sealed class SweepCoordinator : IWorkCoordinator {
     public bool GrantSweep { get; init; } = true;
     public Exception? ScanThrows { get; init; }
+    /// <summary>Fails the claim-removal step, which sits outside the per-blob try.</summary>
+    public Exception? RemoveThrows { get; init; }
     public List<OffloadClaimRecord> Expired { get; init; } = [];
     public List<string> Removed { get; } = [];
     private int _batches;
@@ -65,6 +67,9 @@ public class MaintenanceWorkerOffloadSweepTests {
 
     public Task RemoveOffloadClaimsAsync(
         IReadOnlyCollection<string> storageKeys, CancellationToken ct = default) {
+      if (RemoveThrows is not null) {
+        return Task.FromException(RemoveThrows);
+      }
       lock (Removed) { Removed.AddRange(storageKeys); }
       return Task.CompletedTask;
     }
@@ -254,5 +259,55 @@ public class MaintenanceWorkerOffloadSweepTests {
 
     await Assert.That(failures).IsNotEmpty();
     await Assert.That(store.Deleted).IsEmpty();
+  }
+
+  // ============================================================
+  // Cancellation, which each of these steps must let through
+  // ============================================================
+
+  [Test]
+  public async Task ABlobDeleteCancelled_StopsTheSweepInsteadOfMovingToTheNextBlobAsync() {
+    // The companion to OneBlobDeleteFails_TheRestOfTheBatchStillSweeps, and the opposite answer.
+    // One unreachable blob must not strand the others; a cancelled delete is a stopping host, and
+    // continuing means more provider round trips while shutdown waits on them. The claims stay
+    // either way, so nothing is lost by ending the pass here.
+    var coord = new SweepCoordinator {
+      Expired = { new OffloadClaimRecord("first", "blob"), new OffloadClaimRecord("second", "blob") },
+    };
+    var store = new RecordingStore("blob", new OperationCanceledException());
+    var (worker, _) = _build(coord, TimeSpan.FromHours(1), ("blob", store));
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("a sweep that keeps calling the blob provider after shutdown is what makes a host "
+             + "hang on exit; the claims are still there for the next cycle");
+    await Assert.That(coord.Removed).IsEmpty()
+      .Because("nothing was deleted, so nothing may be forgotten — a claim removed without its "
+             + "blob gone is a leak the passive sweep can no longer find");
+  }
+
+  [Test]
+  public async Task ClaimRemovalCancelled_StopsTheCycleRatherThanBeingLoggedAsync() {
+    // The step after the deletes, and the one that matters most to get right: the blobs are gone
+    // and the claims are the only record that they were. Its failure is logged and swallowed like
+    // any sweep failure, but cancellation has to travel — the rest of the cycle reaps rows.
+    var coord = new SweepCoordinator {
+      Expired = { new OffloadClaimRecord("gone", "blob") },
+      RemoveThrows = new OperationCanceledException(),
+    };
+    var store = new RecordingStore("blob");
+    var (worker, logger) = _build(coord, TimeSpan.FromHours(1), ("blob", store));
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>();
+    await Assert.That(store.Deleted).Contains("gone")
+      .Because("the delete happened before the cancellation — the claim it left behind is exactly "
+             + "the record a later cycle needs to finish the job");
+    List<LogEntry> failures;
+    lock (logger.Entries) {
+      failures = logger.Entries.Where(e => e.Exception is OperationCanceledException).ToList();
+    }
+    await Assert.That(failures).IsEmpty()
+      .Because("a shutdown logged as a sweep failure is noise on every deploy");
   }
 }
