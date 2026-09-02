@@ -68,6 +68,10 @@ public partial class DeadLetterRecoveryWorker(
   private long _totalHeld;
   private long _totalPermanentlyFailed;
   private long _totalGenerationReplays;
+  private DateTimeOffset? _previousScanStartedAt;
+  private int _consecutiveSelfInflicted;
+  private DateTimeOffset? _breakerOpenedAt;
+  private long _totalLoopBreakerTrips;
 
   /// <summary>Number of scan cycles since process start.</summary>
   public long TotalScans => Interlocked.Read(ref _totalScans);
@@ -79,6 +83,12 @@ public partial class DeadLetterRecoveryWorker(
   public long TotalPermanentlyFailed => Interlocked.Read(ref _totalPermanentlyFailed);
   /// <summary>Total rows scheduled by the generation-replay sweep on startup.</summary>
   public long TotalGenerationReplays => Interlocked.Read(ref _totalGenerationReplays);
+
+  /// <summary>How many times the loop breaker has suspended recovery in this process.</summary>
+  public long TotalLoopBreakerTrips => Interlocked.Read(ref _totalLoopBreakerTrips);
+
+  /// <summary>Whether recovery is currently suspended by the loop breaker.</summary>
+  public bool IsLoopBreakerOpen => _breakerOpenedAt is not null;
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -158,7 +168,24 @@ public partial class DeadLetterRecoveryWorker(
     LogStopped(_logger);
   }
 
+  /// <summary>
+  /// Whether the loop breaker is currently suppressing recovery, closing it when the cooldown has
+  /// elapsed so a transient condition recovers without an operator.
+  /// </summary>
+  private bool _isBreakerOpen(DateTimeOffset now) {
+    if (_breakerOpenedAt is not { } openedAt) { return false; }
+    // Cooldown 0 means stay open until the process restarts: the deliberate choice for a
+    // deployment where an operator wants to look before recovery runs again.
+    if (_options.LoopBreakerCooldownMinutes <= 0) { return true; }
+    if (now - openedAt < TimeSpan.FromMinutes(_options.LoopBreakerCooldownMinutes)) { return true; }
+    _breakerOpenedAt = null;
+    _consecutiveSelfInflicted = 0;
+    LogLoopBreakerClosed(_logger, _options.LoopBreakerCooldownMinutes);
+    return false;
+  }
+
   private async Task _scanOnceAsync(CancellationToken ct) {
+    var scanStartedAt = DateTimeOffset.UtcNow;
     using var scope = _scopeFactory.CreateScope();
     // Optional — no persistence layer wired = no scanning. Same as the startup-replay
     // branch above; keeps the worker safe to register everywhere.
@@ -172,8 +199,45 @@ public partial class DeadLetterRecoveryWorker(
     // an enormous backlog in one breath. Subsequent scans pick up where this one stopped.
     var entries = await svc.FetchDueAsync(_options.ScanBatchSize, ct).ConfigureAwait(false);
     if (entries.Count == 0) {
+      // A quiet cycle is evidence the cycle is NOT feeding itself, so it clears the consecutive
+      // run. Without this, a self-inflicted burst followed by genuine quiet would keep its count
+      // and trip later on an unrelated batch.
+      _consecutiveSelfInflicted = 0;
+      _previousScanStartedAt = scanStartedAt;
       return;
     }
+
+    if (_options.LoopBreakerEnabled) {
+      if (_isBreakerOpen(scanStartedAt)) {
+        LogLoopBreakerSuppressed(_logger, entries.Count);
+        _previousScanStartedAt = scanStartedAt;
+        return;
+      }
+
+      var timestamps = new DateTimeOffset[entries.Count];
+      for (var i = 0; i < entries.Count; i++) {
+        timestamps[i] = entries[i].DeadLetteredAt;
+      }
+      var signal = DeadLetterRecoveryLoopSignal.Measure(
+        timestamps, _previousScanStartedAt, _options.LoopBreakerFreshFraction);
+
+      if (signal.IsSelfInflicted) {
+        _consecutiveSelfInflicted++;
+        if (_consecutiveSelfInflicted >= _options.LoopBreakerConsecutiveCycles) {
+          _breakerOpenedAt = scanStartedAt;
+          Interlocked.Increment(ref _totalLoopBreakerTrips);
+          LogLoopBreakerTripped(
+            _logger, signal.Fresh, signal.Considered, _consecutiveSelfInflicted,
+            _options.LoopBreakerCooldownMinutes);
+          _previousScanStartedAt = scanStartedAt;
+          return;
+        }
+      } else {
+        _consecutiveSelfInflicted = 0;
+      }
+    }
+
+    _previousScanStartedAt = scanStartedAt;
 
     foreach (var entry in entries) {
       if (ct.IsCancellationRequested) { return; }
@@ -253,6 +317,18 @@ public partial class DeadLetterRecoveryWorker(
   [LoggerMessage(EventId = 5, Level = LogLevel.Information,
     Message = "DeadLetterRecoveryWorker generation-replay scheduled {Count} row(s) for current generation '{Generation}'")]
   static partial void LogGenerationReplay(ILogger logger, int count, string generation);
+
+  [LoggerMessage(EventId = 12, Level = LogLevel.Error,
+    Message = "DeadLetterRecoveryWorker SUSPENDED recovery: {Fresh} of {Considered} rows in this batch were dead-lettered after the previous scan began, for {Cycles} consecutive cycles — recovery is re-creating the dead letters it is clearing. Recovery is off for {CooldownMinutes} minute(s); dead letters accumulate meanwhile and the underlying failure needs fixing")]
+  static partial void LogLoopBreakerTripped(ILogger logger, int fresh, int considered, int cycles, int cooldownMinutes);
+
+  [LoggerMessage(EventId = 13, Level = LogLevel.Warning,
+    Message = "DeadLetterRecoveryWorker is suspended by the loop breaker; skipped {Count} due row(s) this cycle")]
+  static partial void LogLoopBreakerSuppressed(ILogger logger, int count);
+
+  [LoggerMessage(EventId = 14, Level = LogLevel.Information,
+    Message = "DeadLetterRecoveryWorker loop breaker closed after {CooldownMinutes} minute(s); recovery resumes")]
+  static partial void LogLoopBreakerClosed(ILogger logger, int cooldownMinutes);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Information,
     Message = "DeadLetterRecoveryWorker recovered DLQ row {DeadLetterId} ({SourceTable})")]

@@ -152,6 +152,47 @@ public sealed class DeadLetterRecoveryOptions {
   public bool EnableGenerationReplay { get; set; } = true;
 
   /// <summary>
+  /// Whether recovery stops itself when it detects that it is generating the dead letters it is
+  /// recovering. Default <c>true</c>.
+  /// </summary>
+  /// <remarks>
+  /// Turn this off only when something else bounds the cycle. Recovery republishes a failed message,
+  /// and a message that fails again is recorded as a NEW row, so the per-row
+  /// <see cref="RecoveryPolicy.MaxRecoveryAttempts"/> check never sees the same message twice and
+  /// cannot end the cycle.
+  /// </remarks>
+  public bool LoopBreakerEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Share of a scan batch that must postdate the previous scan before that cycle counts as
+  /// self-inflicted. Default <c>0.5</c>.
+  /// </summary>
+  /// <remarks>
+  /// At half, recovery is already only breaking even: it is replacing dead letters as fast as it
+  /// clears them. New failures arriving while a real backlog drains stay well under this.
+  /// </remarks>
+  public double LoopBreakerFreshFraction { get; set; } = 0.5;
+
+  /// <summary>
+  /// Consecutive self-inflicted cycles required before recovery suspends itself. Default <c>3</c>.
+  /// </summary>
+  /// <remarks>
+  /// One cycle proves nothing: an unrelated burst of failures arriving mid-scan looks identical for
+  /// a single tick. Requiring persistence keeps a spike from disabling recovery.
+  /// </remarks>
+  public int LoopBreakerConsecutiveCycles { get; set; } = 3;
+
+  /// <summary>
+  /// Minutes recovery stays suspended after the breaker trips, before it retries. Default <c>60</c>.
+  /// </summary>
+  /// <remarks>
+  /// The breaker closes again on its own so a transient condition does not need an operator, but the
+  /// window is long enough that a genuinely stuck deployment is not re-storming every few minutes.
+  /// Set to 0 to keep it open until the process restarts.
+  /// </remarks>
+  public int LoopBreakerCooldownMinutes { get; set; } = 60;
+
+  /// <summary>
   /// Per-<see cref="MessageFailureReason"/> recovery rules. Defaults follow the
   /// design doc's matrix (see plans/dlq-recovery.md).
   /// </summary>
