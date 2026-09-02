@@ -67,12 +67,17 @@ public class OutstandingBudgetChurnFeedbackTests {
     public int LastStreamsRequested { get; private set; }
     /// <summary>How many times the worker asked the store what it was holding.</summary>
     public int OutstandingProbeCount;
+    /// <summary>The most recent claim request, for asserting what the worker asked for.</summary>
+    public ClaimWorkRequest? LastRequest;
+    /// <summary>When set, claims carry these counts on the batch — the coalesced round trip.</summary>
+    public OutstandingWork? BatchOutstanding { get; set; }
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
       var inbox = new List<InboxWork>();
       lock (_lock) {
         CallCount++;
         LastStreamsRequested = req.MaxStreams;
+        LastRequest = req;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
       // Report healthy drain. Without it the budget's stall rule ("work held, nothing completing →
@@ -90,7 +95,12 @@ public class OutstandingBudgetChurnFeedbackTests {
           Attempts = 1,
         });
       }
-      return Task.FromResult(new WorkBatch { OutboxWork = [], InboxWork = inbox, PerspectiveWork = [] });
+      return Task.FromResult(new WorkBatch {
+        Outstanding = BatchOutstanding,
+        OutboxWork = [],
+        InboxWork = inbox,
+        PerspectiveWork = []
+      });
     }
 
     public ValueTask<OutstandingWork?> CountOutstandingWorkAsync(
@@ -143,6 +153,14 @@ public class OutstandingBudgetChurnFeedbackTests {
       }),
       NullLogger<ClaimWorker>.Instance,
       completionMeter: meter);
+  }
+
+  private static async Task _driveAsync(_reportingCoordinator coord, WorkCompletionMeter? meter, int cycles) {
+    var worker = _worker(coord, meter);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.WaitForCallsAsync(cycles, TimeSpan.FromSeconds(20));
+    await worker.StopAsync(CancellationToken.None);
   }
 
   private static async Task<_reportingCoordinator> _runAsync(
@@ -246,4 +264,42 @@ public class OutstandingBudgetChurnFeedbackTests {
       .Because("an unmeasured budget must not throttle — it would look exactly like a performance "
              + "problem with no signal pointing at the throttle");
   }
+
+  /// <summary>
+  /// #635 lever: the budget needs the outstanding counts on EVERY cycle, and fetching them as a
+  /// second call doubled the claim loop's round trips. The worker must ask for them batched into
+  /// the claim itself.
+  /// </summary>
+  [Test]
+  public async Task BudgetEngaged_AsksForOutstandingInTheClaimRoundTripAsync() {
+    var meter = new WorkCompletionMeter();
+    var coord = await _runAsync(outstanding: BUDGET_FLOOR, measurable: true, meter, cycles: 3);
+
+    await Assert.That(coord.LastRequest!.IncludeOutstanding).IsTrue()
+      .Because("with the budget engaged, the outstanding counts are needed every cycle; asking for "
+             + "them in the claim's own round trip halves the loop's chatter");
+  }
+
+  /// <summary>
+  /// When the store answers the batched ask, the separate probe must not fire at all — and when it
+  /// does not answer (older store, other driver), the fallback probe must still run. Null means
+  /// "not measured here", never zero.
+  /// </summary>
+  [Test]
+  public async Task BatchCarriedOutstanding_SkipsTheSeparateProbe_AndNullFallsBackAsync() {
+    var meter = new WorkCompletionMeter();
+    var withBatch = new _reportingCoordinator(BUDGET_FLOOR, measurable: true, meter) {
+      BatchOutstanding = new OutstandingWork { InboxRows = BUDGET_FLOOR },
+    };
+    await _driveAsync(withBatch, meter, cycles: 3);
+    await Assert.That(withBatch.OutstandingProbeCount).IsEqualTo(0)
+      .Because("counts carried on the claim make the separate probe a pure duplicate");
+
+    var meter2 = new WorkCompletionMeter();
+    var withoutBatch = await _runAsync(outstanding: BUDGET_FLOOR, measurable: true, meter2, cycles: 3);
+    await Assert.That(withoutBatch.OutstandingProbeCount).IsGreaterThan(0)
+      .Because("a store that does not carry the counts must still be probed; null is unmeasured, "
+             + "not zero");
+  }
+
 }

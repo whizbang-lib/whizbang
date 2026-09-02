@@ -28,12 +28,25 @@ namespace Whizbang.Core.Tests.Diagnostics;
 public class DebuggerAwareClockCpuSamplingTests {
 
   private static DebuggerAwareClock _samplingClock(
-      double frozenThreshold = 10.0, int samplingMs = 100) =>
+      double frozenThreshold = 10.0, int samplingMs = 100, Func<TimeSpan>? cpuTimeSource = null) =>
     new(new DebuggerAwareClockOptions {
       Mode = DebuggerDetectionMode.CpuTimeSampling,
       SamplingInterval = TimeSpan.FromMilliseconds(samplingMs),
       FrozenThreshold = frozenThreshold,
+      CpuTimeSource = cpuTimeSource,
     });
+
+  /// <summary>
+  /// A CPU source that never advances: to the sampler, the process is perfectly frozen. The two
+  /// freeze-detection tests used the REAL process idling, which made them hostage to CI load — on
+  /// a busy runner the test process keeps accruing CPU and "frozen" never fires inside the
+  /// timeout. The transition under test is a property of the sampler's arithmetic, not of the
+  /// machine's mood, so the source is what gets pinned.
+  /// </summary>
+  private static Func<TimeSpan> _frozenCpu() {
+    var fixed_ = TimeSpan.FromSeconds(1);
+    return () => fixed_;
+  }
 
   // ============================================================
   // Invariants that hold on any schedule
@@ -171,7 +184,7 @@ public class DebuggerAwareClockCpuSamplingTests {
     // clock, time the process was not running. An idle await reproduces exactly that shape —
     // which is why the heuristic needs the CPU-delta floor below to avoid firing on ordinary
     // idleness in production.
-    using var clock = _samplingClock(frozenThreshold: 1.0, samplingMs: 250);
+    using var clock = _samplingClock(frozenThreshold: 1.0, samplingMs: 250, cpuTimeSource: _frozenCpu());
 
     while (!clock.IsPaused && !cancellationToken.IsCancellationRequested) {
       await Task.Delay(50, cancellationToken);
@@ -188,7 +201,7 @@ public class DebuggerAwareClockCpuSamplingTests {
       CancellationToken cancellationToken) {
     // Subscribers are how a caller reacts to a freeze rather than polling for it — a worker can
     // extend its lease instead of losing it while the developer reads a stack.
-    using var clock = _samplingClock(frozenThreshold: 1.0, samplingMs: 250);
+    using var clock = _samplingClock(frozenThreshold: 1.0, samplingMs: 250, cpuTimeSource: _frozenCpu());
     var observed = new List<bool>();
     using var subscription = clock.OnPauseStateChanged(paused => {
       lock (observed) { observed.Add(paused); }

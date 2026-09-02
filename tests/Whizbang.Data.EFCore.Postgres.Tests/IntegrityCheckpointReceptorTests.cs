@@ -253,7 +253,8 @@ public class IntegrityCheckpointReceptorTests {
 
   private static _fixtureState _fixture(
       StreamIntegrityOptions? options = null,
-      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null) {
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
+      IntegrityRepairPolicy? policy = null) {
     var coordinator = new _verifyCoordinator();
     var dispatcher = new _captureDispatcher();
     var transport = new _captureTransport();
@@ -267,7 +268,7 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     // A fresh policy per fixture: its window state is the subject under test, and the receptor's
     // static fallback is process-wide, which would leak state between parallel tests.
-    services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
+    services.AddSingleton(policy ?? new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("consumer-svc"));
@@ -536,6 +537,38 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(fx.Transport.Published.Count).IsEqualTo(8)
       .Because("windows under repair are globally budgeted at 8 by default; past that the deficit "
              + "is still detected and reported, but repair stops adding load");
+  }
+
+
+  [Test]
+  public async Task UnhealableGap_StopsBeingRescannedOnEveryCheckpointAsync() {
+    // #634: repair was bounded per window, but the recount that CONFIRMS the gap was not, so a gap
+    // whose events are genuinely gone paid a full event-store scan on every checkpoint for the life
+    // of the service. With the governor, an answer that stops changing stops being re-asked: after
+    // the unchanged threshold the window cools down, and one recount per cooldown keeps it honest.
+    var policy = new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings {
+      RecountBackoffAfterUnchanged = 2,
+      UnchangedRecountCooldown = TimeSpan.FromHours(1),
+    });
+    var fx = _fixture(
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped },
+      policy: policy);
+    var scans = 0;
+    fx.Coordinator.Counts = _ => { scans++; return []; };
+
+    for (var cycle = 0; cycle < 6; cycle++) {
+      await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+      await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+    }
+    var total = scans;
+
+    // Every checkpoint still pays a first-sight count of its OWN window (both halves of each pair,
+    // so 12 across six cycles); those windows advance in production and are per-checkpoint cost,
+    // not per-gap cost. The governor bounds the repeated CONFIRMATION recount of the same stale
+    // window: two (the unchanged threshold), then the cooldown holds.
+    await Assert.That(total).IsEqualTo(14)
+      .Because("detection cost on an unchanged answer must be bounded: 12 first-sight counts + 2 "
+             + "confirmation recounts, then the cooldown holds. Unbounded is 18");
   }
 
 }

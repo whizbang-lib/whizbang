@@ -400,6 +400,14 @@ public sealed partial class ClaimWorker : BackgroundService {
         // resets the streak. Startup catch-up never counts: it requires a previously-observed
         // empty claim, and _lastClaimWasEmpty starts false.
         var doorbellRang = Interlocked.Exchange(ref _doorbellSinceLastClaim, 0) == 1;
+        // A doorbell that lands DURING an empty claim raced past the claim it was meant to cause:
+        // an empty batch cannot have served it. Consuming it here would both charge the NEXT
+        // discovery as a missed doorbell and let the idle spacing below nap through a genuinely
+        // fresh row (SignalNewWork's cancel only reaches a nap that has already registered its
+        // token). Put it back so the next cycle sees it — for the spacing skip and for liveness.
+        if (!hadWork && doorbellRang) {
+          Volatile.Write(ref _doorbellSinceLastClaim, 1);
+        }
         if (_busLiveness is not null && _lastClaimWasEmpty && hadWork && !_lastClaimWasRepeat
             && (_signalingGate?.IsAvailable ?? false)) {
           if (doorbellRang) {
@@ -446,7 +454,22 @@ public sealed partial class ClaimWorker : BackgroundService {
         // one. When the last claim was a pure re-offer, space the next one out BEFORE waiting on
         // the permit. New work stays responsive: it sets the permit during this delay, so the
         // wait below returns immediately and the added latency is bounded by the delay itself.
-        if (_lastClaimWasRepeat) {
+        // #635: a pure-EMPTY claim spaces out exactly like a re-offer, but only while the
+        // signaling gate reports NOTIFY healthy — the doorbell will announce new work, so the
+        // permit-per-completion feedback that keeps short-circuiting the wait below must not set
+        // the idle cadence. Measured before this: ~27 claim cycles/sec fleet-wide on a deployment
+        // with zero application traffic, each cycle a rank + claim + outstanding-count round trip.
+        // When the gate is unavailable (or absent), idle polling stays tight, because polling is
+        // then the only way work is discovered at all.
+        // A doorbell that rang between the claim above and this point must skip the nap outright:
+        // SignalNewWork's cancel only reaches a nap that has already registered its token, so
+        // without this check a doorbell in that window would wait out the full floor. The flag is
+        // not consumed here — the next claim's liveness accounting still reads it.
+        var doorbellPending = Volatile.Read(ref _doorbellSinceLastClaim) == 1;
+        var spaceOut = !doorbellPending
+          && (_lastClaimWasRepeat
+            || (Volatile.Read(ref _consecutiveEmptyPolls) > 0 && _signalingGate?.IsAvailable == true));
+        if (spaceOut) {
           var floorMs = Math.Min(_computeAdaptivePollWaitMs(), _options.PollingMaxIntervalMilliseconds);
           if (floorMs > 0) {
             // Interruptible nap: a NEW-WORK doorbell (SignalNewWork) cancels it so a fresh row
@@ -652,7 +675,11 @@ public sealed partial class ClaimWorker : BackgroundService {
       ProcessId: _instanceProvider.ProcessId,
       MaxStreams: maxStreams,
       PartitionCount: _options.PartitionCount,
-      LeaseSeconds: _options.LeaseSeconds), ct);
+      LeaseSeconds: _options.LeaseSeconds,
+      // #635: the budget reads these counts every cycle; carrying them on the claim's own round
+      // trip removes a per-cycle call. Stores that ignore the flag leave batch.Outstanding null
+      // and the fallback probe below still runs.
+      IncludeOutstanding: _budgetEngaged), ct);
 
     // Feed the claim back into the window. A row arriving with attempts > 1 is work already claimed
     // and not finished, so a high share means the batch outruns what this instance can dispatch
@@ -680,7 +707,10 @@ public sealed partial class ClaimWorker : BackgroundService {
       // from them can never exceed that limit no matter how much work is held. Sizing the budget
       // from it means reading our own output instead of the system state — the budget stays wide
       // open, more work is claimed each poll, and held work grows without the number ever moving.
-      var outstanding = await coordinator.CountOutstandingWorkAsync(_instanceProvider.InstanceId, ct);
+      // Prefer the counts the claim itself carried (#635) — same round trip, same snapshot. Null
+      // means the store did not measure them there, so probe separately; it never means zero.
+      var outstanding = batch.Outstanding
+        ?? await coordinator.CountOutstandingWorkAsync(_instanceProvider.InstanceId, ct);
       if (outstanding is null) {
         // Unmeasurable is not zero. Zero would license a full-size claim on the strength of a
         // reading that was never taken, so the bound stands down instead — loudly, once.

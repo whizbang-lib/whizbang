@@ -108,6 +108,15 @@ public sealed partial class IntegrityCheckpointReceptor(
 
     // 1) Two-cycle confirmation: deficits recorded on the PREVIOUS checkpoint, recounted now.
     foreach (var pending in tracker.TakePending(message.OriginServiceId)) {
+      // Recount governor (#634). Repair is bounded per window; the recount that CONFIRMS the gap
+      // was not, so an unhealable gap paid a full event-store scan on every checkpoint forever.
+      // Inside the cooldown the gap stays known and reported from its last confirmation; only the
+      // repeated scan is skipped, and the window re-registers from the current checkpoint as usual.
+      if (!repairPolicy.ShouldRecount(
+            pending.OriginServiceId, pending.EventType, pending.TenantScope,
+            pending.FromCommitSequence, pending.ToCommitSequence, repairNow)) {
+        continue;
+      }
       var recount = await coordinator
         .CountReceivedFromOriginAsync(pending.OriginServiceId, pending.FromCommitSequence, pending.ToCommitSequence, cancellationToken)
         .ConfigureAwait(false);
@@ -125,6 +134,11 @@ public sealed partial class IntegrityCheckpointReceptor(
         // starve a genuinely stuck one.
         repairPolicy.RecordHealed(observation);
         continue;
+      }
+
+      if (repairPolicy.RecordRecount(observation, repairNow)) {
+        LogRecountCooldownArmed(
+          logger, pending.EventType, pending.TenantScope, pending.OriginServiceName, actual, pending.ExpectedCount);
       }
 
       // The policy decides from the SERVICE's settledness, never this instance's. Any of depth,
@@ -336,4 +350,9 @@ public sealed partial class IntegrityCheckpointReceptor(
     Message = "Repair request to '{OriginServiceName}' withheld ({EventType}) — no origin-carried " +
               "request address yet; the origin's next checkpoint teaches it")]
   static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType);
+
+  [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
+    Message = "Recount cooldown armed for {EventType} (tenant {TenantScope}) from origin {OriginServiceName}: the count has not moved ({Actual}/{Expected}) across the configured threshold. The gap stays reported; one recount runs per cooldown period, and any improvement lifts it immediately")]
+  static partial void LogRecountCooldownArmed(
+    ILogger logger, string eventType, string? tenantScope, string originServiceName, int actual, int expected);
 }
