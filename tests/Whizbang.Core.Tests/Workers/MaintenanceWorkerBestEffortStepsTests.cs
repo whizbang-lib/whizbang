@@ -149,4 +149,41 @@ public class MaintenanceWorkerBestEffortStepsTests {
 
     await Assert.That(logger.Snapshot().Any(e => e.Exception is InvalidOperationException)).IsTrue();
   }
+
+  // ============================================================
+  // Cancellation is the one thing a best-effort step must NOT swallow
+  // ============================================================
+
+  [Test]
+  public async Task DebugRetentionSyncCancelled_PropagatesInsteadOfContinuingTheCycleAsync() {
+    // Each of these steps is wrapped so it cannot fail the cycle it rides in — but the catch that
+    // does that sits under a narrower one that rethrows cancellation, and only the wide arm was
+    // tested. Swallowing a shutdown here would let the rest of the cycle run on, including the
+    // sweep, which takes the locks the completion path needs. The host asked it to stop.
+    var coord = new StepCoordinator {
+      RetentionSyncThrows = new OperationCanceledException(),
+    };
+    var (worker, logger) = _build(coord);
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("a cancelled step is a stopping host, not a step that failed — continuing the "
+             + "cycle runs a sweep the host is trying to stop");
+    await Assert.That(logger.Snapshot().Any(e => e.Level == LogLevel.Warning)).IsFalse()
+      .Because("cancellation is not a failure to report; logging it as one turns every shutdown "
+             + "into noise that hides the failures that matter");
+  }
+
+  [Test]
+  public async Task PointerPruneCancelled_PropagatesInsteadOfContinuingTheCycleAsync() {
+    var coord = new StepCoordinator {
+      PointerPruneThrows = new OperationCanceledException(),
+    };
+    var (worker, _) = _build(coord);
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("the same contract, one step later — every best-effort step has its own pair of "
+             + "catches, so each needs its own proof that the narrow one is there");
+  }
 }

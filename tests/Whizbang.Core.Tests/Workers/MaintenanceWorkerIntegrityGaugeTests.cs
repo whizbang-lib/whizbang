@@ -33,11 +33,16 @@ public class MaintenanceWorkerIntegrityGaugeTests {
   private sealed class LedgerCoordinator : IWorkCoordinator {
     public LedgerGaugeSnapshot Snapshot { get; init; } = LedgerGaugeSnapshot.Empty;
     public bool Throw { get; init; }
+    /// <summary>Thrown in place of the generic failure, for the cancellation contract.</summary>
+    public Exception? ThrowSpecific { get; init; }
     public int MaxAttemptsSeen { get; private set; } = -1;
 
     public Task<LedgerGaugeSnapshot> GetIntegrityLedgerSummaryAsync(
         int maxRepairAttempts, CancellationToken cancellationToken = default) {
       MaxAttemptsSeen = maxRepairAttempts;
+      if (ThrowSpecific is not null) {
+        return Task.FromException<LedgerGaugeSnapshot>(ThrowSpecific);
+      }
       return Throw
         ? Task.FromException<LedgerGaugeSnapshot>(new InvalidOperationException("ledger unavailable"))
         : Task.FromResult(Snapshot);
@@ -117,5 +122,19 @@ public class MaintenanceWorkerIntegrityGaugeTests {
 
     await Assert.That(metrics.CurrentLedgerGaugesForTest.UnhealedBuckets).IsEqualTo(0)
       .Because("the reading is simply absent — and the cycle completed rather than throwing");
+  }
+
+  [Test]
+  public async Task LedgerReadCancelled_StopsTheCycleInsteadOfContinuingAsync() {
+    // The companion to the failure case above, and the opposite answer. A metrics read must not
+    // abort the cycle when it FAILS — but a cancelled read is a stopping host, and the steps that
+    // follow include the reap and the sweep, which take locks the completion path needs. The
+    // narrow catch above the wide one is what separates the two, and nothing was holding it.
+    var (worker, _) = _build(new LedgerCoordinator { ThrowSpecific = new OperationCanceledException() });
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown has to travel through a best-effort step, or the cycle keeps reaping on "
+             + "a host that asked to stop");
   }
 }

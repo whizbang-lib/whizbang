@@ -257,4 +257,41 @@ public class MaintenanceWorkerRowGuardTests {
 
     await Assert.That(logger.Snapshot().Any(e => e.Exception is InvalidOperationException)).IsTrue();
   }
+
+  [Test]
+  public async Task AGuardCancelledDuringShutdown_StopsTheCycleInsteadOfBeingLoggedAsync() {
+    // The post-reap hook is best-effort — a throwing observer is logged and ignored, because a
+    // guard's bookkeeping must never block destruction. Cancellation is the exception, and the
+    // catch that makes it one is FILTERED on the token: an OperationCanceledException with no
+    // cancellation behind it is still just a failing observer. Only a real shutdown travels.
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+    var (worker, logger) = _build(
+      new GuardCoordinator { AboutToReap = { _target() } },
+      new StubGuard(_ => PerspectiveRowDecision.Proceed(), afterThrows: new OperationCanceledException()));
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("the rows are already released at this point; continuing runs the rest of the "
+             + "cycle on a host that asked to stop");
+    await Assert.That(logger.Snapshot().Any(e => e.Level == LogLevel.Warning)).IsFalse()
+      .Because("a shutdown logged as a guard failure is noise on every deploy, and it hides the "
+             + "observer errors this log exists to surface");
+  }
+
+  [Test]
+  public async Task AGuardThrowingCancellationWithNoShutdown_IsTreatedAsAFailingObserverAsync() {
+    // The other side of the filter. Without a cancelled token this is just an observer that threw
+    // an unfortunate exception type, and swallowing it is correct: destruction already happened,
+    // and failing the cycle over bookkeeping would stop the reaper.
+    var (worker, logger) = _build(
+      new GuardCoordinator { AboutToReap = { _target() } },
+      new StubGuard(_ => PerspectiveRowDecision.Proceed(), afterThrows: new OperationCanceledException()));
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Snapshot().Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("no shutdown means no reason to stop — the observer failed and that is what the "
+             + "wide catch is for");
+  }
 }

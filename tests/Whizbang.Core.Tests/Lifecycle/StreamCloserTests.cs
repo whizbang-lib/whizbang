@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -26,19 +27,24 @@ public class StreamCloserTests {
     private readonly DestructionResult _result;
     private readonly bool _throwOnBefore;
     private readonly bool _throwOnAfter;
+    private readonly Exception? _beforeThrows;
     public DestructionReason LastReason { get; private set; }
     public DestructionGranularity LastGranularity { get; private set; }
 
     public RecordingHook(List<string> log, DestructionResult? result = null,
-        bool throwOnBefore = false, bool throwOnAfter = false) {
+        bool throwOnBefore = false, bool throwOnAfter = false, Exception? beforeThrows = null) {
       _log = log; _result = result ?? DestructionResult.Proceed();
       _throwOnBefore = throwOnBefore; _throwOnAfter = throwOnAfter;
+      _beforeThrows = beforeThrows;
     }
 
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
       _log.Add("before");
       LastReason = context.Reason;
       LastGranularity = context.Granularity;
+      if (_beforeThrows is not null) {
+        throw _beforeThrows;
+      }
       if (_throwOnBefore) {
         throw new InvalidOperationException("carry-forward failed");
       }
@@ -223,5 +229,39 @@ public class StreamCloserTests {
     await Assert.That(result.Status).IsEqualTo("closed")
       .Because("The truncate already committed; a throwing post-hook (notify/metrics) is non-fatal.");
     await Assert.That(coord.CloseCalls).IsEqualTo(1);
+  }
+
+  private sealed class CapturingCloserLogger : ILogger<StreamCloser> {
+    private readonly List<LogLevel> _levels = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_levels) { _levels.Add(logLevel); }
+    }
+    public bool LoggedAnyWarning() { lock (_levels) { return _levels.Contains(LogLevel.Warning); } }
+  }
+
+  [Test]
+  public async Task Close_PreHookCancelled_AbortsWithoutRecordingAHookFailureAsync() {
+    // Both catches around the pre-hook rethrow, so the close aborts either way and nothing is
+    // truncated. The narrow one exists purely so a shutdown is not RECORDED as a hook failure:
+    // this log is how an operator finds a carry-forward that is genuinely broken, and every
+    // deploy adding an entry to it is how that signal gets lost.
+    var log = new List<string>();
+    var coord = new FakeCloseCoordinator(log);
+    var logger = new CapturingCloserLogger();
+    var closer = new StreamCloser(
+      coord, logger, new RecordingHook(log, beforeThrows: new OperationCanceledException()));
+
+    await Assert.That(async () => await closer.CloseAsync(Guid.NewGuid(), throughVersion: 10))
+      .Throws<OperationCanceledException>()
+      .Because("cancellation aborts the close like any pre-hook throw — durable detail is never "
+             + "truncated when the preserve-work did not finish");
+    await Assert.That(coord.CloseCalls).IsEqualTo(0);
+    await Assert.That(logger.LoggedAnyWarning()).IsFalse()
+      .Because("a shutdown is not a carry-forward failure, and logging it as one buries the "
+             + "failures this log exists to surface");
   }
 }

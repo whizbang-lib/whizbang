@@ -28,10 +28,15 @@ public class TransportDeadLetterDrainWorkerTests {
     public int? LastMaxCount;
     public int ReturnValue { get; set; }
     public bool Throw { get; set; }
+    /// <summary>Thrown in place of the generic failure, for the cancellation contract.</summary>
+    public Exception? ThrowSpecific { get; set; }
 
     public Task<int> DrainDeadLetterQueueAsync(int maxCount, CancellationToken ct = default) {
       CallCount++;
       LastMaxCount = maxCount;
+      if (ThrowSpecific is not null) {
+        throw ThrowSpecific;
+      }
       if (Throw) {
         throw new InvalidOperationException($"simulated failure in {TransportName}");
       }
@@ -176,5 +181,26 @@ public class TransportDeadLetterDrainWorkerTests {
       .Because("the silent-no-op failure mode must be visible, but a 10-minute cadence must not "
              + "produce warning spam");
   }
-}
 
+  [Test]
+  public async Task OneDrainerCancelled_StopsTheWholePassAsync() {
+    // The companion to OneDrainerThrows_OthersStillRun, and the opposite answer. One drainer
+    // failing must not cost the others their pass — but a cancelled drainer is a stopping host,
+    // and carrying on means opening more broker receivers while shutdown waits on them. The
+    // drainers that follow are skipped on purpose; their queues keep until the next tick.
+    var cancelled = new FakeDrainer("asb:stopping") { ThrowSpecific = new OperationCanceledException() };
+    var next = new FakeDrainer("rmq:next") { ReturnValue = 3 };
+    var worker = _buildWorker(new TransportDeadLetterDrainWorkerOptions {
+      Enabled = true,
+      MaxPerTick = 100,
+    }, cancelled, next);
+
+    await Assert.That(async () => await worker.DrainOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("a drain pass that keeps opening receivers after shutdown is what makes a host "
+             + "hang on exit — the remaining queues are not going anywhere");
+    await Assert.That(next.CallCount).IsEqualTo(0)
+      .Because("the pass stops where the cancellation was seen, rather than draining on through "
+             + "the rest of the fleet");
+  }
+}
