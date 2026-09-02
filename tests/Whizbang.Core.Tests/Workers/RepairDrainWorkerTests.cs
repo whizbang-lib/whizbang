@@ -81,6 +81,33 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
+  public async Task DrainTick_ASendCancelledByShutdown_StopsTheTickAsync() {
+    // The companion to OneFailedGroupSend_StillDispatchesTheRemainingGroups, and the opposite
+    // answer. A throttled send costs THAT group's attempt and no more, because the later groups
+    // already burned backoff budget on their claims and deserve their shot at the wire. A
+    // cancelled send is a stopping host: the later groups' claims are already stamped, so their
+    // budget is spent either way, and continuing only puts more traffic on a broker the process
+    // is disconnecting from.
+    var origin = TrackedGuid.NewMedo().Value;
+    var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairDrainRatePerSecond = 10,
+    }, origin, learnTopic: true);
+    transport.FailFirst = 1;
+    transport.FailFirstWith = new OperationCanceledException();
+    coordinator.Eligible.AddRange([
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 100, 500),
+      new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeB", TrackedGuid.NewMedo().Value, 300, 700),
+    ]);
+
+    await Assert.That(async () =>
+        await worker.DrainTickAsync(1.0, DateTimeOffset.UtcNow, CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown ends the tick rather than being absorbed as one group's bad luck");
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("the second group never reaches the wire — the ladder re-offers both after backoff");
+  }
+
+  [Test]
   public async Task DrainTick_ReportOnlyMode_NeverClaimsOrDispatchesAsync() {
     // RepairMode.ReportOnly is the operator's explicit opt-DOWN from auto-repair — and the drain
     // is a repair dispatcher. A ReportOnly service whose drain kept claiming and sending
@@ -215,6 +242,8 @@ public class RepairDrainWorkerTests {
   private sealed class _captureTransport : ITransport {
     public List<(IMessageEnvelope Envelope, TransportDestination Destination, string? EnvelopeType)> Published { get; } = [];
     public int FailFirst { get; set; }
+    /// <summary>Thrown in place of the throttle timeout, for the cancellation contract.</summary>
+    public Exception? FailFirstWith { get; set; }
     public int Attempts { get; private set; }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -223,7 +252,7 @@ public class RepairDrainWorkerTests {
       lock (Published) {
         Attempts++;
         if (Attempts <= FailFirst) {
-          throw new TimeoutException("SendMessageAsync timed out (simulated broker throttle)");
+          throw FailFirstWith ?? new TimeoutException("SendMessageAsync timed out (simulated broker throttle)");
         }
         Published.Add((envelope, destination, envelopeType));
       }
