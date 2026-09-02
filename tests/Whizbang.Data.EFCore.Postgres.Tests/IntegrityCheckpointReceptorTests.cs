@@ -264,6 +264,7 @@ public class IntegrityCheckpointReceptorTests {
     services.AddSingleton(metrics
       ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
     services.AddSingleton(new IntegrityGapTracker());
+    services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("consumer-svc"));
@@ -454,4 +455,35 @@ public class IntegrityCheckpointReceptorTests {
       public Guid? StreamId => null;
     }
   }
+
+  [Test]
+  public async Task UnhealableGap_IsNotRepairRequestedForeverAcrossCheckpointsAsync() {
+    // IntegrityRepairMode.AutoRepairCapped documents itself as "hard-capped at every rung so a mass
+    // divergence can never storm". MaxAutoRepairRequestsPerCheckpoint caps ONE checkpoint's batch,
+    // and checkpoints fire on CheckpointIntervalSeconds (60 by default), so a gap whose events are
+    // genuinely gone is re-requested on every checkpoint for as long as the service runs. Capping
+    // the batch does not cap the repeat.
+    //
+    // The manifest path already guards this with the repair ledger's backoff and
+    // MaxRepairAttemptsPerBucket. This is the same guard on the checkpoint path.
+    var fx = _fixture(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      MaxRepairAttemptsPerBucket = 2,
+      RepairRequestBackoffSeconds = 300,
+    });
+    // Never heals: the events are gone, so every recount reports the same deficit.
+    fx.Coordinator.Counts = _ => [];
+
+    // Six confirmation cycles, which at the default interval is six minutes of a service running.
+    for (var cycle = 0; cycle < 6; cycle++) {
+      await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+      await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+    }
+
+    await Assert.That(fx.Transport.Published.Count).IsLessThanOrEqualTo(2)
+      .Because("the same unrepairable bucket must stop being re-requested once it has burned its "
+               + "MaxRepairAttemptsPerBucket; otherwise every checkpoint re-asks forever and the "
+               + "per-checkpoint cap only sets the storm's rate, not its size");
+  }
+
 }

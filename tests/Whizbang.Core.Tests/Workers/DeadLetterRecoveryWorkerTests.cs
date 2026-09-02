@@ -41,9 +41,16 @@ public class DeadLetterRecoveryWorkerTests {
     // happens AFTER FetchDueAsync returns and the batch is processed), not just the fetch.
     public TaskCompletionSource RecoverSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _fetchCount;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, TaskCompletionSource> _fetchSignals = new();
+
+    /// <summary>Completes once the Nth (1-based) fetch has happened, so a test can drive successive
+    /// scans deterministically instead of waiting on the poll interval.</summary>
+    public Task FetchSignal(int ordinal) =>
+      _fetchSignals.GetOrAdd(ordinal, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
 
     public Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
       _fetchCount++;
+      _fetchSignals.GetOrAdd(_fetchCount, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
       if (_fetchCount == 1) { FirstFetchSignal.TrySetResult(); } else if (_fetchCount == 2) { SecondFetchSignal.TrySetResult(); }
       var batch = FetchBatches.Count > 0 ? FetchBatches.Dequeue() : [];
       return Task.FromResult<IReadOnlyList<DeadLetterEntry>>(batch);
@@ -442,4 +449,93 @@ public class DeadLetterRecoveryWorkerTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  [Test]
+  public async Task RecoveryThatKeepsRecreatingItsOwnDeadLetters_TripsTheLoopBreakerAsync() {
+    // Every batch is dead-lettered AFTER the scan that will observe it, which is the shape of
+    // recovery re-driving a message that fails and lands back as a brand-new row. The per-row
+    // MaxRecoveryAttempts check cannot see this, because each row really is on its first attempt.
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      ScanBatchSize = 50,
+      LoopBreakerConsecutiveCycles = 2,
+      EnableGenerationReplay = false,
+    };
+    var listener = new FakeNotificationListener();
+    var (worker, svc) = _newWorker(options, listener: listener);
+
+    static DeadLetterEntry Fresh() => new(
+      DeadLetterId: Guid.NewGuid(),
+      SourceTable: DeadLetterSourceTable.OUTBOX,
+      SourceId: Guid.NewGuid(),
+      StreamId: null,
+      MessageType: "Test.Event",
+      FailureReason: MessageFailureReason.Throttled,
+      AttemptsWhenDlq: 10,
+      // Ahead of any scan start in this test: the row did not exist when the last scan began.
+      DeadLetteredAt: DateTimeOffset.UtcNow.AddMinutes(5),
+      RecoveryStatus: DeadLetterRecoveryStatus.Pending,
+      RecoveryAttempts: 0,
+      Generation: "test/0.0.1");
+
+    for (var i = 0; i < 4; i++) { svc.FetchBatches.Enqueue([Fresh(), Fresh()]); }
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    // Scan 1 establishes the baseline and must NOT trip: nothing to compare against yet.
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(0);
+
+    // Scans 2 and 3 each see a wholly fresh batch; the second consecutive one trips.
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(2).WaitAsync(TimeSpan.FromSeconds(5));
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(3).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(1);
+    await Assert.That(worker.IsLoopBreakerOpen).IsTrue();
+
+    // And it stops recovering: the tripping cycle's rows were left alone.
+    var recoveredAfterTrip = svc.RecoverCalls.Count;
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(4).WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(svc.RecoverCalls.Count).IsEqualTo(recoveredAfterTrip);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task GenuineBacklogOfOldDeadLetters_DoesNotTripTheBreakerAsync() {
+    // The case the breaker must never harm: a real backlog from an outage. Every row predates the
+    // scan, so draining it is the worker doing its job however many cycles it takes.
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      ScanBatchSize = 50,
+      LoopBreakerConsecutiveCycles = 2,
+      EnableGenerationReplay = false,
+    };
+    var listener = new FakeNotificationListener();
+    var (worker, svc) = _newWorker(options, listener: listener);
+
+    for (var i = 0; i < 3; i++) { svc.FetchBatches.Enqueue([_entry(), _entry()]); }
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(5));
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(2).WaitAsync(TimeSpan.FromSeconds(5));
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(3).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(0);
+    await Assert.That(worker.IsLoopBreakerOpen).IsFalse();
+    await Assert.That(svc.RecoverCalls.Count).IsGreaterThanOrEqualTo(2);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
 }

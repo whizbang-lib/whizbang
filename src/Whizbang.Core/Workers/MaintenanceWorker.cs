@@ -193,6 +193,25 @@ public sealed partial class MaintenanceWorker(
     // E2 PostDestruction hooks — detached, after the reap committed.
     await _firePostDestructionHooksAsync(sp, destructionTargets, ct);
 
+    // Lifecycle-completion markers. IWorkCoordinator has always exposed this sweep and migration 035
+    // documented the table as periodically cleaned, but no production path ever called it, so the
+    // table grew once per event forever while appearing to have retention. Best-effort: a failed
+    // sweep must not fail the cycle, but it is logged with the retention it was trying to apply so a
+    // permanently detached sweep is visible instead of silently reverting to unbounded growth.
+    if (_options.LifecycleCompletionRetentionDays > 0) {
+      try {
+        var retention = TimeSpan.FromDays(_options.LifecycleCompletionRetentionDays);
+        var removed = await coordinator.CleanupLifecycleCompletionsAsync(retention, ct);
+        if (removed > 0) {
+          LogLifecycleCompletionsPurged(_logger, removed, _options.LifecycleCompletionRetentionDays);
+        }
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogLifecycleCompletionPurgeFailed(_logger, _options.LifecycleCompletionRetentionDays, ex);
+      }
+    }
+
     // Tier-2 deep maintenance (E1 #13b3): prune ancient ephemeral pointers. The backing SQL self-gates on
     // the opt-in flag (disabled by default) and a ~monthly interval, so this per-cycle call is a cheap
     // no-op when disabled or not due. Best-effort: a prune failure is logged and never fails the cycle.
@@ -787,6 +806,14 @@ public sealed partial class MaintenanceWorker(
     Message = "Tier-2 ephemeral pointer prune failed (non-fatal — retried next due interval)")]
   static partial void LogPointerPruneFailed(ILogger logger, Exception ex);
 
+  [LoggerMessage(EventId = 51, Level = LogLevel.Information,
+    Message = "Purged {Removed} lifecycle-completion markers older than {RetentionDays} days")]
+  static partial void LogLifecycleCompletionsPurged(ILogger logger, int removed, int retentionDays);
+
+  [LoggerMessage(EventId = 52, Level = LogLevel.Warning,
+    Message = "Lifecycle-completion purge failed at {RetentionDays}-day retention; wh_lifecycle_completions keeps growing until a later cycle succeeds")]
+  static partial void LogLifecycleCompletionPurgeFailed(ILogger logger, int retentionDays, Exception ex);
+
   [LoggerMessage(EventId = 24, Level = LogLevel.Debug,
     Message = "Stream-integrity ledger gauge refresh failed — convergence gauges will read stale until the next cycle")]
   static partial void LogLedgerGaugeRefreshFailed(ILogger logger, Exception ex);
@@ -982,6 +1009,18 @@ public sealed class MaintenanceWorkerOptions {
   /// across cycles instead of in one statement. Default 5000.
   /// </summary>
   public int RowReapBatchSize { get; set; } = 5000;
+
+  /// <summary>
+  /// Days a lifecycle-completion marker is kept before <c>MaintenanceWorker</c> sweeps it.
+  /// </summary>
+  /// <remarks>
+  /// Matches the 7 days migration 035 documented when it created the table and its
+  /// <c>completed_at</c> index. The marker only has to outlive the window in which startup
+  /// reconciliation would look back for an event whose perspectives finished while PostLifecycle
+  /// never fired; past that it is dead weight on a table that grows once per event.
+  /// Set to 0 to disable the sweep.
+  /// </remarks>
+  public int LifecycleCompletionRetentionDays { get; set; } = 7;
 
   /// <summary>
   /// Minimum minutes between cap sweeps service-wide (fleet watermark). The cap eviction ranks
