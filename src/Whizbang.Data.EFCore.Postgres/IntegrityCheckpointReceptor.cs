@@ -63,6 +63,18 @@ public sealed partial class IntegrityCheckpointReceptor(
     metrics?.CheckpointsReceived.Add(1, new KeyValuePair<string, object?>("origin", message.OriginServiceName));
     var repairBudget = options.MaxAutoRepairRequestsPerCheckpoint;
 
+    // MaxAutoRepairRequestsPerCheckpoint caps ONE checkpoint's batch. Checkpoints fire every
+    // CheckpointIntervalSeconds, so on its own that bounds the storm's RATE and not its size: a
+    // bucket whose events are genuinely gone never heals, is re-confirmed on every checkpoint, and
+    // is re-requested for as long as the service runs. The repair ledger is what bounds the repeat,
+    // through RepairRequestBackoffSeconds and MaxRepairAttemptsPerBucket, and the manifest path has
+    // always consulted it. Same guard here, so both rungs are bounded in both dimensions.
+    var ledger = services.GetService<IIntegrityRepairLedger>()
+      ?? (IIntegrityRepairLedger?)services.GetService<IntegrityRepairLedger>()
+      ?? new IntegrityRepairLedger();
+    var repairBackoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
+    var repairNow = DateTimeOffset.UtcNow;
+
     // Settledness is measured ONCE per checkpoint, service-wide. A consumer that is merely BEHIND
     // reports the same deficit on both confirmation cycles and confirms a gap while nothing has
     // been lost — the events are queued, not missing. Repairing then re-delivers work that is
@@ -106,6 +118,17 @@ public sealed partial class IntegrityCheckpointReceptor(
       metrics?.GapsDetected.Add(1,
         new KeyValuePair<string, object?>("origin", pending.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", pending.EventType));
+      if (autoRepair) {
+        // Burns an attempt against this bucket, returning false once it has spent
+        // MaxRepairAttemptsPerBucket or is still inside its backoff window. Consulted only after the
+        // cheaper gates: a grant records an attempt, so a grant we then discard would spend the
+        // bucket's budget on a request that was never sent.
+        autoRepair = await ledger.TryBeginRepairAsync(
+          new IntegrityRepairLedger.DivergenceKey(
+            pending.OriginServiceId, pending.TenantScope, pending.EventType, Guid.Empty),
+          repairNow, repairBackoff, options.MaxRepairAttemptsPerBucket, cancellationToken)
+          .ConfigureAwait(false);
+      }
       if (autoRepair) {
         repairBudget--;
         metrics?.RepairsRequested.Add(1,
