@@ -334,4 +334,89 @@ public class DeadLetterRecoverySqlTests : EFCoreTestBase {
     var result = await cmd.ExecuteScalarAsync();
     return result is int n ? n : -1;
   }
+
+  // ================================================================
+  // Redelivery accounting on the recovery path
+  //
+  // fe3e88c04 established that a broker delivery counter cannot bound a redelivery loop on a
+  // session-enabled entity, and replaced it with an observation counter the framework maintains
+  // itself: store_inbox_messages upserts wh_message_deduplication and increments observation_count
+  // on every arrival, and PoisonMessageDetector acts on that count.
+  //
+  // recover_dead_letter re-drives a message by INSERTing straight into wh_inbox. That bypasses
+  // store_inbox_messages, so the arrival it creates is never counted. A message can therefore be
+  // recovered without limit: each pass re-delivers it, no pass is observed, and the detector that
+  // exists to stop exactly this never sees a single redelivery. The loop is unbounded by
+  // construction, and raising MaxRecoveryAttempts cannot help because the count it reads is reset
+  // to zero by the same INSERT.
+  // ================================================================
+
+  private static async Task<long?> _observationCountAsync(NpgsqlConnection conn, Guid messageId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT observation_count FROM wh_message_deduplication WHERE message_id = @m";
+    cmd.Parameters.AddWithValue("m", messageId);
+    var r = await cmd.ExecuteScalarAsync();
+    return r is null or DBNull ? null : Convert.ToInt64(r, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  [Test]
+  public async Task Recover_CountsTheRedeliveryItCauses_SoTheLoopIsBoundableAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var (dlqId, messageId) = await _moveToDlqWithMessageIdAsync(conn, sourceTable: "wh_inbox");
+
+    await _callRecoverAsync(conn, dlqId);
+
+    // Recovery re-delivered the message. That arrival must be observable, or nothing downstream
+    // can ever conclude "this message keeps coming back".
+    var observations = await _observationCountAsync(conn, messageId);
+    await Assert.That(observations.HasValue).IsTrue()
+      .Because("a recovery re-delivers the message, and an uncounted re-delivery is invisible to poison detection");
+    await Assert.That(observations!.Value).IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task Recover_Twice_CountsBothRedeliveries_NotJustTheLastAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var (dlqId, messageId) = await _moveToDlqWithMessageIdAsync(conn, sourceTable: "wh_inbox");
+
+    // First recovery re-delivers it.
+    await _callRecoverAsync(conn, dlqId);
+    var afterFirst = await _observationCountAsync(conn, messageId);
+
+    // The message fails again and is dead-lettered again. The framework records this as a NEW row,
+    // which is exactly why the per-row attempt counter cannot see the cycle.
+    var secondDlqId = await _redeadLetterAsync(conn, messageId);
+
+    await _callRecoverAsync(conn, secondDlqId);
+    var afterSecond = await _observationCountAsync(conn, messageId);
+
+    // The count must ACCUMULATE across recoveries. If each pass resets it, the loop is unbounded
+    // no matter what threshold the detector is configured with.
+    await Assert.That(afterSecond.HasValue).IsTrue();
+    await Assert.That(afterSecond!.Value).IsGreaterThan(afterFirst ?? 0)
+      .Because("each recovery is another re-delivery of the same message and must add to its history");
+  }
+
+  /// <summary>
+  /// Dead-letters an already-recovered message again through the real path, which records it as a
+  /// NEW row rather than updating the one it came from. That is the shape the per-row attempt
+  /// counter cannot see.
+  /// </summary>
+  private static async Task<Guid> _redeadLetterAsync(NpgsqlConnection conn, Guid messageId) {
+    var dlqId = (Guid)TrackedGuid.NewMedo();
+    await using var move = conn.CreateCommand();
+    move.CommandText = "SELECT move_to_dead_letters(@dlq, @tbl, @src, @reason, @err, @inst, @gen)";
+    move.Parameters.AddWithValue("dlq", dlqId);
+    move.Parameters.AddWithValue("tbl", "wh_inbox");
+    move.Parameters.AddWithValue("src", messageId);
+    move.Parameters.AddWithValue("reason", 5);
+    move.Parameters.AddWithValue("err", "failed again after recovery");
+    move.Parameters.AddWithValue("inst", (Guid)TrackedGuid.NewMedo());
+    move.Parameters.AddWithValue("gen", "v0.502");
+    await move.ExecuteNonQueryAsync();
+    return dlqId;
+  }
+
 }
