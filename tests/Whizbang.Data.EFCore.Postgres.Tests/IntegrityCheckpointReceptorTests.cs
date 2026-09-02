@@ -265,6 +265,9 @@ public class IntegrityCheckpointReceptorTests {
       ?? new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics()));
     services.AddSingleton(new IntegrityGapTracker());
     services.AddSingleton<Whizbang.Core.Messaging.IntegrityRepairLedger>();
+    // A fresh policy per fixture: its window state is the subject under test, and the receptor's
+    // static fallback is process-wide, which would leak state between parallel tests.
+    services.AddSingleton(new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings()));
     services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("consumer-svc"));
@@ -355,6 +358,10 @@ public class IntegrityCheckpointReceptorTests {
   private sealed class _verifyCoordinator : IWorkCoordinator {
     public Guid LocalServiceId { get; } = TrackedGuid.NewMedo().Value;
     public Func<(Guid Origin, long From, long To), IReadOnlyList<CheckpointBucket>> Counts { get; set; } = _ => [];
+    public ServiceBacklog? Backlog { get; set; }
+
+    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken cancellationToken = default) =>
+      ValueTask.FromResult(Backlog);
 
     public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(LocalServiceId);
@@ -484,6 +491,51 @@ public class IntegrityCheckpointReceptorTests {
       .Because("the same unrepairable bucket must stop being re-requested once it has burned its "
                + "MaxRepairAttemptsPerBucket; otherwise every checkpoint re-asks forever and the "
                + "per-checkpoint cap only sets the storm's rate, not its size");
+  }
+
+
+  [Test]
+  public async Task ConfirmedGap_OnLaggingService_IsNotRepairedAsync() {
+    // The third settledness signal, and the one the depth gate cannot provide: an operator who
+    // raises the settled-depth threshold to tolerate a small queue still must not repair while
+    // something in that queue has been sitting far beyond the checkpoint cadence. The events being
+    // counted as missing may be exactly what the service is stuck behind. IntegrityRepairPolicy
+    // vetoes this as ConsumerBehind; before it was wired, the receptor only asked depth and leases.
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Backlog = new ServiceBacklog {
+      UnprocessedInboxRows = 0,
+      ActiveLeasedRows = 0,
+      OldestUnprocessedAge = TimeSpan.FromMinutes(30),
+    };
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests"));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Transport.Published).IsEmpty()
+      .Because("a service running half an hour behind must not repair: the missing events are late, "
+             + "not lost, and repairing re-delivers into the very queue that is behind");
+  }
+
+  [Test]
+  public async Task ConfirmedGaps_BeyondTheGlobalWindowBudget_StopAtTheBudgetAsync() {
+    // The per-checkpoint budget bounds ONE checkpoint; the policy's MaxConcurrentWindowsUnderRepair
+    // bounds how many windows may be under repair AT ONCE, which is the only cap that limits the
+    // total rate at which repair adds load. Twelve tenants confirm gaps in the same window with the
+    // per-checkpoint budget out of the way; only the global budget should hold the line.
+    var fx = _fixture(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      MaxAutoRepairRequestsPerCheckpoint = 20,
+    });
+    fx.Coordinator.Counts = _ => [];
+    var tenants = Enumerable.Range(0, 12).Select(i => $"tenant-{i}").ToList();
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 10, to: 20, count: 4, requestTopic: "origin.requests", tenantScopes: tenants));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 20, to: 20, count: 0, emptyBuckets: true, requestTopic: "origin.requests"));
+
+    await Assert.That(fx.Transport.Published.Count).IsEqualTo(8)
+      .Because("windows under repair are globally budgeted at 8 by default; past that the deficit "
+             + "is still detected and reported, but repair stops adding load");
   }
 
 }

@@ -133,4 +133,46 @@ public class CountServiceBacklogSqlTests : EFCoreTestBase {
       .Because("a lapsed lease means nobody is dispatching those rows — treating it as active would "
              + "keep the service unsettled on the strength of an instance that may be long gone");
   }
+
+  [Test]
+  public async Task OldestUnprocessedRowSetsTheLagMeasureAsync() {
+    // The lag signal IntegrityRepairPolicy evaluates: depth alone cannot distinguish a small queue
+    // that is flowing from a small queue holding a row that has been stuck for an hour. Without
+    // this measure the receptor would pass Zero, and a signal wired as a constant is the same
+    // silent half-wiring that left the policy itself dormant.
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+           stream_id, partition_number, failure_reason)
+        VALUES (gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 1, NOW() - INTERVAL '90 minutes',
+                gen_random_uuid(), 0, 99),
+               (gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 1, NOW() - INTERVAL '5 minutes',
+                gen_random_uuid(), 0, 99)";
+      await ins.ExecuteNonQueryAsync();
+    }
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var backlog = await coordinator.CountServiceBacklogAsync();
+
+    await Assert.That(backlog!.OldestUnprocessedAge >= TimeSpan.FromMinutes(80)).IsTrue()
+      .Because("the OLDEST unprocessed row defines the lag, not the newest");
+  }
+
+  [Test]
+  public async Task AnEmptyServiceReportsZeroLagAsync() {
+    await using var ctx = CreateDbContext();
+    await _openAsync(ctx);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var backlog = await coordinator.CountServiceBacklogAsync();
+
+    await Assert.That(backlog!.OldestUnprocessedAge).IsEqualTo(TimeSpan.Zero)
+      .Because("no queue means no lag; anything else would read an idle service as behind");
+  }
+
 }
