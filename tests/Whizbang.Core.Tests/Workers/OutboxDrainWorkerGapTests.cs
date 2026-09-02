@@ -1113,6 +1113,57 @@ public class OutboxDrainWorkerGapTests {
   }
 
   /// <summary>
+  /// The lifecycle-stage counterpart of the publish-path shutdown branch below. The stage
+  /// invocation routes any throw to the failure channel so operators get a triage signal
+  /// instead of a silent infinite retry — but a shutdown is not a fault to triage.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_LifecycleStageCancelledByShutdown_DoesNotEnqueueAFailureAsync() {
+    // Recording this as a lifecycle failure stamps wh_outbox.error with a TaskCanceledException
+    // and burns an attempt on a message nothing rejected. Deploy often enough and rows accumulate
+    // failures they never earned; the row is still leased for the next claim cycle either way.
+    var failure = new GapFailureChannel();
+    var coord = new GapWorkCoordinator();
+    var sp = _sp(coord);
+    var drainChannel = new GapDrainChannel();
+    var completion = new GapCompletionChannel();
+
+    var worker = _worker(sp, drainChannel, completion, failure,
+      new OutboxDrainWorkerOptions { Enabled = true }, new GapPublishStrategy());
+
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = [],
+    };
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "gap-test-topic",
+      MessageType = "TestMessage",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName ?? "MessageEnvelope",
+      Envelope = envelope,
+      Attempts = 1,
+      Status = MessageProcessingStatus.Stored,
+    };
+
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await worker.InvokeOutboxLifecycleStageAsync(
+        work, envelope, new GapThrowingReceptorInvoker(new OperationCanceledException()),
+        LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
+        "PreOutbox", stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown reaches the drain loop's own cancellation handling rather than being "
+             + "converted into a fault record on the way");
+    await Assert.That(failure.All).IsEmpty()
+      .Because("a stage interrupted by shutdown is not a message that failed — recording it burns "
+             + "an attempt no receptor asked for");
+  }
+
+  /// <summary>
   /// Graceful-shutdown rethrow branch: cancellation firing while a publish is in flight must
   /// propagate as OperationCanceledException (NOT get converted into a failure record) and
   /// end the worker loop cleanly.
