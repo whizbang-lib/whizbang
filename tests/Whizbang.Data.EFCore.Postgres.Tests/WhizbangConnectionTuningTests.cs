@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// transaction-pooling proxy sits between them and the database.
 /// </summary>
 /// <code-under-test>src/Whizbang.Data.Postgres/WhizbangConnectionTuning.cs</code-under-test>
+[Category("Shard2")]
 public class WhizbangConnectionTuningTests {
 
   [Test]
