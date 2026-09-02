@@ -2005,6 +2005,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var functionName = BuildSchemaQualifiedName(schema, "claim_work");
+    var outstandingFn = BuildSchemaQualifiedName(schema, "count_outstanding_work");
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -2014,6 +2015,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
       $"SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       $"envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
       $"perspective_name FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease)";
+    if (request.IncludeOutstanding) {
+      // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
+      // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
+      // come from count_outstanding_work, never from the claim's LIMITed CTEs.
+      cmd.CommandText += $"; SELECT inbox_rows, outbox_rows, perspective_rows FROM {outstandingFn}(@p_id)";
+    }
     cmd.Parameters.Add(new NpgsqlParameter("p_id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = request.InstanceId });
     cmd.Parameters.Add(new NpgsqlParameter("p_svc", NpgsqlTypes.NpgsqlDbType.Text) { Value = request.ServiceName });
     cmd.Parameters.Add(new NpgsqlParameter("p_host", NpgsqlTypes.NpgsqlDbType.Text) { Value = request.HostName });
@@ -2023,6 +2030,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_lease", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.LeaseSeconds });
 
     var rows = new List<WorkBatchRow>();
+    OutstandingWork? outstanding = null;
     await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
       while (await reader.ReadAsync(cancellationToken)) {
         rows.Add(new WorkBatchRow {
@@ -2041,6 +2049,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
           IsOrphaned = reader.IsDBNull(12) ? null : reader.GetBoolean(12),
           PerspectiveName = reader.IsDBNull(13) ? null : reader.GetString(13)
         });
+      }
+      if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
+          && await reader.ReadAsync(cancellationToken)) {
+        outstanding = new OutstandingWork {
+          InboxRows = reader.GetInt64(0),
+          OutboxRows = reader.GetInt64(1),
+          PerspectiveRows = reader.GetInt64(2),
+        };
       }
     }
 
@@ -2062,7 +2078,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       PerspectiveWork = [],
       PerspectiveStreamIds = perspectiveStreamIds,
       OutboxStreamIds = outboxStreamIds,
-      InboxStreamIds = inboxStreamIds
+      InboxStreamIds = inboxStreamIds,
+      Outstanding = outstanding
     };
   }
 

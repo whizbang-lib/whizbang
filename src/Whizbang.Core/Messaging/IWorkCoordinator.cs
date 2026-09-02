@@ -2483,6 +2483,14 @@ public record WorkBatch {
   public List<Guid> OutboxStreamIds { get; init; } = [];
 
   /// <summary>
+  /// This instance's untruncated outstanding-work counts, taken in the SAME round trip and snapshot
+  /// as the claim, when the request asked for them (<see cref="ClaimWorkRequest.IncludeOutstanding"/>)
+  /// and the store supports it. Null means "not measured here" — the caller must fall back to
+  /// <see cref="IWorkCoordinator.CountOutstandingWorkAsync"/>, never treat it as zero.
+  /// </summary>
+  public OutstandingWork? Outstanding { get; init; }
+
+  /// <summary>
   /// Distinct stream IDs that have leased inbox messages for this instance — the per-stream-id
   /// drain channel surface for the new <c>InboxDrainWorker</c>. Mirror of
   /// <see cref="OutboxStreamIds"/> for inbox dispatch.
