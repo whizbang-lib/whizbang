@@ -392,7 +392,12 @@ public class OutboxDrainWorkerTests {
     foreach (var sid in streamIds) {
       await drainChannel.WriteAsync(sid);
     }
-    await completion.WaitForCountAsync(streamCount, TimeSpan.FromSeconds(30));
+    // Every ROW completes, not every stream. This test is the only one here with more than one
+    // row per stream, so waiting for streamCount completions is satisfied by six messages from
+    // any streams at all — four from one and two from another will do it — and the assertions
+    // below then read a drain that is still running. An idle machine finishes the rest before
+    // the read and hides it; a loaded one does not.
+    await completion.WaitForCountAsync(streamCount * rowsPerStream, TimeSpan.FromSeconds(30));
     await worker.StopAsync(CancellationToken.None);
 
     List<IReadOnlyList<OutboxWork>> batches;
