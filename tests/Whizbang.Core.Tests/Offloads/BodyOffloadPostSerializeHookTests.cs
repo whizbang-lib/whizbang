@@ -198,6 +198,28 @@ public class BodyOffloadPostSerializeHookTests {
   }
 
   [Test]
+  public async Task RunAsync_LedgerInsertCancelled_SurfacesInsteadOfProceedingAsync() {
+    // The companion to LedgerInsertThrows_OffloadStillProceeds, and the opposite answer. A failed
+    // insert orphans one blob into the provider-side backstop's territory, which is recoverable,
+    // so dispatch continues. A cancelled insert means the host is stopping — and the blob is
+    // already uploaded, so continuing would hand the dispatcher a claim envelope to publish on
+    // the way out. Surfacing here leaves the blob orphaned to the same recoverable backstop.
+    var coordinator = new _ledgerCoordinator { ThrowSpecific = new OperationCanceledException() };
+    var (hook, store) = _build(
+      opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100; },
+      coordinator: coordinator);
+    var ctx = _buildContext(new byte[5_000]);
+
+    await Assert.That(async () => await hook.RunAsync(ctx, CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown has to reach the dispatcher rather than being absorbed as bookkeeping "
+             + "noise, or the send proceeds on a host that is stopping");
+    await Assert.That(store.UploadCount).IsEqualTo(1)
+      .Because("the upload already happened — the orphaned blob is the backstop's problem, which "
+             + "is exactly the trade the failure path makes too");
+  }
+
+  [Test]
   public async Task RunAsync_PassThrough_RecordsNothingAsync() {
     var coordinator = new _ledgerCoordinator();
     var (hook, _) = _build(
@@ -216,9 +238,14 @@ public class BodyOffloadPostSerializeHookTests {
   private sealed class _ledgerCoordinator : Whizbang.Core.Tests.Workers.NoOpWorkCoordinator, Whizbang.Core.Messaging.IWorkCoordinator {
     public List<(string StorageKey, string ProviderName)> Recorded { get; } = [];
     public bool ThrowOnRecord { get; init; }
+    /// <summary>Thrown in place of the generic failure, for the cancellation contract.</summary>
+    public Exception? ThrowSpecific { get; init; }
 
     public Task RecordOffloadClaimAsync(
         string storageKey, string providerName, CancellationToken cancellationToken = default) {
+      if (ThrowSpecific is not null) {
+        throw ThrowSpecific;
+      }
       if (ThrowOnRecord) {
         throw new InvalidOperationException("ledger unavailable");
       }
