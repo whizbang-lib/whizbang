@@ -294,4 +294,27 @@ public class MaintenanceWorkerRowGuardTests {
       .Because("no shutdown means no reason to stop — the observer failed and that is what the "
              + "wide catch is for");
   }
+
+  [Test]
+  public async Task AGuardCancelledBeforeReap_DoesNotBurnADestructionAttemptAsync() {
+    // The companion to the guard-failure test above, which records a destruction failure and
+    // burns a retry attempt on every row in the batch. That is right for a guard that failed:
+    // the rows could not be judged, so the attempt counts and the backoff applies.
+    //
+    // A shutdown is not a judgement. MaxDestructionRetries is bounded and OnDestroyFailure
+    // decides what happens at the end of it, so counting an attempt here means a few restarts
+    // during a deploy can spend a row's whole budget without a guard ever having been asked.
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+    var coord = new GuardCoordinator { AboutToReap = { _target() } };
+    var (worker, _) = _build(coord, new StubGuard(beforeThrows: new OperationCanceledException()));
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(stopping.Token))
+      .Throws<OperationCanceledException>();
+    await Assert.That(coord.FailuresRecorded).IsEqualTo(0)
+      .Because("no guard was ever asked, so no row may spend part of a retry budget it will need "
+             + "when the host comes back");
+    await Assert.That(coord.Held).IsEmpty()
+      .Because("nothing was decided, so nothing may be held or deferred on the strength of it");
+  }
 }
