@@ -52,7 +52,7 @@ public sealed class HousekeepingMetrics {
   /// When present, publishes <c>whizbang.idle.seconds_since_activity</c> with the last activity's
   /// source as a tag, so active-versus-idle is a dashboard fact rather than a log grep.
   /// </param>
-  public HousekeepingMetrics(WhizbangMetrics whizbangMetrics, IIdleActivityTracker? idleTracker = null) {
+  public HousekeepingMetrics(WhizbangMetrics whizbangMetrics, IIdleActivityTracker? idleTracker) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
