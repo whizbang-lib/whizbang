@@ -20,13 +20,16 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// connection string (e.g., it was configured with an open <c>DbConnection</c>).
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
-public sealed class DbContextNotificationConnectionStringFallback : INotificationConnectionStringFallback {
+public sealed class DbContextNotificationConnectionStringFallback
+  : INotificationConnectionStringFallback, Whizbang.Data.Postgres.Notifications.INotificationDataSourceFallback {
   private readonly IServiceProvider _serviceProvider;
   private readonly Type _dbContextType;
   private string? _cached;
   private bool _resolved;
   private string? _cachedSearchPath;
   private bool _searchPathResolved;
+  private NpgsqlDataSource? _cachedDataSource;
+  private bool _dataSourceResolved;
   private readonly Lock _gate = new();
 
   /// <summary>
@@ -95,6 +98,41 @@ public sealed class DbContextNotificationConnectionStringFallback : INotificatio
       }
       _searchPathResolved = true;
       return _cachedSearchPath;
+    }
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Surfaces the <see cref="NpgsqlDataSource"/> a <c>UseNpgsql(NpgsqlDataSource)</c> context was
+  /// configured with — the one object in the host that still holds the credentials Npgsql redacts
+  /// from every connection-string surface. Read from the Npgsql options extension, the same way the
+  /// generated schema initializer already does for <c>VACUUM</c>. Returns <c>null</c> for
+  /// string-configured and non-Npgsql contexts, where the string path above already carries
+  /// credentials. Cached after the first lookup, like the string.
+  /// </remarks>
+  /// <docs>data/drivers#bring-your-own-dbcontext</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextNotificationConnectionStringFallbackTests.cs:GetDataSource_UseNpgsqlDataSource_ReturnsTheDbContextsDataSourceAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionByoDataSourceE2ETests.cs</tests>
+  public NpgsqlDataSource? GetDataSource() {
+    if (_dataSourceResolved) {
+      return _cachedDataSource;
+    }
+
+    lock (_gate) {
+      if (_dataSourceResolved) {
+        return _cachedDataSource;
+      }
+
+      using var scope = _serviceProvider.CreateScope();
+      var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
+#pragma warning disable EF1001 // Internal EF Core API usage — the data source behind UseNpgsql(NpgsqlDataSource) is only exposed on the provider's options extension; the generated schema initializer reads it the same way
+      _cachedDataSource = dbContext.GetService<IDbContextOptions>()
+        .Extensions
+        .OfType<Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal.NpgsqlOptionsExtension>()
+        .FirstOrDefault()?.DataSource as NpgsqlDataSource;
+#pragma warning restore EF1001
+      _dataSourceResolved = true;
+      return _cachedDataSource;
     }
   }
 
