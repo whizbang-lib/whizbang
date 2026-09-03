@@ -636,7 +636,7 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CancelledBeforeSchemaReady_ReturnsCleanlyAsync(CancellationToken testToken) {
+  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(CancellationToken testToken) {
     // A host that fails during migration stops everything it built. The audit reads integrity
     // tables that do not exist yet, so it must return rather than run or fault.
     var coordinator = new _auditCoordinator();

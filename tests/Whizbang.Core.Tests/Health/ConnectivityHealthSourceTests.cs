@@ -99,9 +99,9 @@ public class ConnectivityHealthSourceTests {
   }
 
   [Test]
-  public async Task CancelledProbe_PropagatesRatherThanReportingUnreachableAsync() {
+  public async Task CanceledProbe_PropagatesRatherThanReportingUnreachableAsync() {
     // The companion to ThrowingProbe_TreatedAsUnreachable, and the opposite answer. A probe that
-    // throws cannot answer the question, so "unreachable" is the safe reading. A probe cancelled
+    // throws cannot answer the question, so "unreachable" is the safe reading. A probe canceled
     // by shutdown answers nothing either, but calling that unreachable faults the component on
     // every deploy — the health surface would flap on the way down, and an operator watching for
     // a real outage learns to ignore it.

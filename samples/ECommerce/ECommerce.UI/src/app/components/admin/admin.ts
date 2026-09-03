@@ -44,9 +44,9 @@ export class Admin implements OnInit, OnDestroy {
       map(orders => ({
         totalOrders: orders.length,
         totalRevenue: orders.reduce((sum, order) => sum + order.totalAmount, 0),
-        pendingOrders: orders.filter(o => !['Completed', 'Cancelled', 'PaymentFailed'].includes(o.status)).length,
+        pendingOrders: orders.filter(o => !['Completed', 'Canceled', 'PaymentFailed'].includes(o.status)).length,
         completedOrders: orders.filter(o => o.status === 'Completed').length,
-        failedOrders: orders.filter(o => o.status === 'PaymentFailed' || o.status === 'Cancelled').length
+        failedOrders: orders.filter(o => o.status === 'PaymentFailed' || o.status === 'Canceled').length
       }))
     );
   }
@@ -88,7 +88,7 @@ export class Admin implements OnInit, OnDestroy {
       'PaymentFailed': 'badge-danger',
       'ShipmentCreated': 'badge-success',
       'Completed': 'badge-success',
-      'Cancelled': 'badge-danger'
+      'Canceled': 'badge-danger'
     };
     return statusMap[status] || 'badge-secondary';
   }

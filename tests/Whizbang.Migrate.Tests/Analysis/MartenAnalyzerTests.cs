@@ -73,13 +73,13 @@ public class MartenAnalyzerTests {
       public class OrderProjection : SingleStreamProjection<Order> {
         public void Apply(OrderCreated @event, Order state) { }
         public void Apply(OrderUpdated @event, Order state) { }
-        public void Apply(OrderCancelled @event, Order state) { }
+        public void Apply(OrderCanceled @event, Order state) { }
       }
 
       public class Order { }
       public record OrderCreated(string Id);
       public record OrderUpdated(string Id);
-      public record OrderCancelled(string Id);
+      public record OrderCanceled(string Id);
       """;
 
     // Act
@@ -89,7 +89,7 @@ public class MartenAnalyzerTests {
     await Assert.That(result.Projections[0].EventTypes.Count).IsEqualTo(3);
     await Assert.That(result.Projections[0].EventTypes).Contains("OrderCreated");
     await Assert.That(result.Projections[0].EventTypes).Contains("OrderUpdated");
-    await Assert.That(result.Projections[0].EventTypes).Contains("OrderCancelled");
+    await Assert.That(result.Projections[0].EventTypes).Contains("OrderCanceled");
   }
 
   [Test]

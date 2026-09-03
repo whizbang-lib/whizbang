@@ -18,7 +18,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
 public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor) : DapperSequenceProviderBase(connectionFactory, executor) {
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for updating a sequence value atomically using RETURNING.

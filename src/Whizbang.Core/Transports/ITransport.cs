@@ -40,7 +40,7 @@ public interface ITransport {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when initialization is successful</returns>
   /// <exception cref="InvalidOperationException">Thrown when transport cannot be initialized</exception>
-  /// <exception cref="OperationCanceledException">Thrown when initialization is cancelled</exception>
+  /// <exception cref="OperationCanceledException">Thrown when initialization is canceled</exception>
   Task InitializeAsync(CancellationToken cancellationToken = default);
 
   /// <summary>

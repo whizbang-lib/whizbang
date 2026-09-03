@@ -39,7 +39,7 @@ public class MaintenanceWorkerSettlednessProbeFailureTests {
   }
 
   [Test]
-  public async Task AProbeCancelledByShutdown_PropagatesInsteadOfSweepingAsync() {
+  public async Task AProbeCanceledByShutdown_PropagatesInsteadOfSweepingAsync() {
     var (worker, coord) = _build(new OperationCanceledException());
 
     await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))

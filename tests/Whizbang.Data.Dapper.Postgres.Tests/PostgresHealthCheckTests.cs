@@ -52,9 +52,9 @@ public class PostgresHealthCheckTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task CheckHealthAsync_WithACancelledToken_ReportsUnhealthyAsync() {
+  public async Task CheckHealthAsync_WithACanceledToken_ReportsUnhealthyAsync() {
     // Regression lock. The probe query used to be issued through Dapper's string overload,
-    // which takes no token, so a cancelled probe ran to completion regardless — during
+    // which takes no token, so a canceled probe ran to completion regardless — during
     // shutdown that means waiting on a server that may already be unreachable, with the
     // health pipeline held open behind it. Opening the connection alone is not enough of a
     // check: a pooled connection is handed back synchronously and never observes the token.

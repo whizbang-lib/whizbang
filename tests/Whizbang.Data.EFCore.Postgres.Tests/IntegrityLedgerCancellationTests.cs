@@ -20,7 +20,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// None of them is a correct answer to "the host is shutting down". A swallowed cancellation is
 /// indistinguishable from a real negative result at the call site, so the caller reads it as
 /// settled fact and acts: it dispatches nothing and records the pass as clean, or it falls back to
-/// per-key calls that each have to be cancelled in turn on the way out. That is why every one of
+/// per-key calls that each have to be canceled in turn on the way out. That is why every one of
 /// these wrappers rethrows cancellation ahead of its wide catch, and why the wide catch alone
 /// having a test is not enough.
 /// </para>
@@ -28,7 +28,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <remarks>
 /// Live PostgreSQL, because these are thin wrappers over plpgsql functions and the cancellation
 /// has to travel through the real command execution the wrapper is built around. The token is
-/// cancelled before the call: the guard clauses these methods have are on their arguments, not on
+/// canceled before the call: the guard clauses these methods have are on their arguments, not on
 /// the token, so every call below still enters the try and reaches the arm under test.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/EFCoreWorkCoordinator.cs</code-under-test>
@@ -75,7 +75,7 @@ public class IntegrityLedgerCancellationTests : EFCoreTestBase {
         DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5), stopping.Token))
       .Throws<OperationCanceledException>()
       .Because("null means 'batch unavailable, use the single-key path', so swallowing a shutdown "
-             + "here sends the caller into a per-key loop that has to be cancelled all over again");
+             + "here sends the caller into a per-key loop that has to be canceled all over again");
   }
 
   [Test]

@@ -283,9 +283,9 @@ public class PerStreamSerializerTests {
   }
 
   [Test]
-  public async Task FlushAndStopAsync_WithCancelledToken_AbandonsTheDrainAsync() {
+  public async Task FlushAndStopAsync_WithCanceledToken_AbandonsTheDrainAsync() {
     // Shutdown deadline reached with a processor still running: the drain is abandoned
-    // and the stop token cancelled, rather than waiting on it forever.
+    // and the stop token canceled, rather than waiting on it forever.
     var releaseProcessor = new TaskCompletionSource();
     var processorEntered = new TaskCompletionSource();
 

@@ -22,7 +22,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// // Complex filter with AND/OR
 /// var options = SyncFilter.ForStream(orderId)
 ///     .AndEventTypes&lt;OrderCreatedEvent, OrderUpdatedEvent&gt;()
-///     .Or(SyncFilter.ForEventTypes&lt;OrderCancelledEvent&gt;())
+///     .Or(SyncFilter.ForEventTypes&lt;OrderCanceledEvent&gt;())
 ///     .Distributed()
 ///     .Build();
 /// </code>

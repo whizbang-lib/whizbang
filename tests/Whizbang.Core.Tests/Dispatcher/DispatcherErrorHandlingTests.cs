@@ -301,7 +301,7 @@ public class DispatcherErrorHandlingTests {
   // ========================================
 
   [Test]
-  public async Task LocalInvokeWithReceiptAsync_WithCancelledOptions_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeWithReceiptAsync_WithCanceledOptions_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new SimpleCommand("test");
     using var cts = new CancellationTokenSource();

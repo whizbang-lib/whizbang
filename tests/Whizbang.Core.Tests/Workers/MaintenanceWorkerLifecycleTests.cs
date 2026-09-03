@@ -110,7 +110,7 @@ public class MaintenanceWorkerLifecycleTests {
   }
 
   [Test]
-  public async Task ExecuteAsync_CancelledWhileWaitingOnTheSchemaGate_StopsWithoutSweepingAsync() {
+  public async Task ExecuteAsync_CanceledWhileWaitingOnTheSchemaGate_StopsWithoutSweepingAsync() {
     // Shutdown during startup must not be treated as an error, and must not run a sweep
     // against a schema that was never confirmed ready.
     var coord = new FakeCoordinator();
@@ -166,7 +166,7 @@ public class MaintenanceWorkerLifecycleTests {
   }
 
   [Test]
-  public async Task RunMaintenanceOnceAsync_SettlednessProbeCancelled_PropagatesAsync() {
+  public async Task RunMaintenanceOnceAsync_SettlednessProbeCanceled_PropagatesAsync() {
     // Cancellation is shutdown, not a probe failure: it must surface rather than be
     // swallowed into "unmeasured" and trigger a sweep during teardown.
     var coord = new FakeCoordinator { BacklogThrows = new OperationCanceledException() };

@@ -133,9 +133,9 @@ public class MaintenanceWorkerEpochClosureTests {
   }
 
   [Test]
-  public async Task ClosureCancelled_StopsTheCycleRatherThanAdvancingToTheReaperAsync() {
+  public async Task ClosureCanceled_StopsTheCycleRatherThanAdvancingToTheReaperAsync() {
     // The companion to ClosureFailure_DoesNotFailTheMaintenanceCycle, and the opposite answer.
-    // Convergence bookkeeping must never stop the reaper when it FAILS — but a cancelled closure
+    // Convergence bookkeeping must never stop the reaper when it FAILS — but a canceled closure
     // is a stopping host, and what follows it in the cycle is the reap and the sweep, which take
     // the locks the completion path needs.
     var coord = new ClosureCoordinator { ThrowSpecific = new OperationCanceledException() };

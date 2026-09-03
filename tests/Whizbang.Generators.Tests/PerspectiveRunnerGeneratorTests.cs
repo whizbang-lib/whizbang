@@ -1406,7 +1406,7 @@ using Whizbang.Core.Perspectives;
 using System;
 
 namespace TestNamespace {
-  public record OrderCancelledEvent : IEvent {
+  public record OrderCanceledEvent : IEvent {
     [StreamId]
     public Guid OrderId { get; init; }
   }
@@ -1418,8 +1418,8 @@ namespace TestNamespace {
     public DateTimeOffset? DeletedAt { get; init; }
   }
 
-  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCancelledEvent> {
-    public ModelAction Apply(OrderModel currentData, OrderCancelledEvent @event) {
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCanceledEvent> {
+    public ModelAction Apply(OrderModel currentData, OrderCanceledEvent @event) {
       return ModelAction.Delete;
     }
   }
@@ -1583,7 +1583,7 @@ namespace TestNamespace {
     public Guid OrderId { get; init; }
   }
 
-  public record OrderCancelledEvent : IEvent {
+  public record OrderCanceledEvent : IEvent {
     [StreamId]
     public Guid OrderId { get; init; }
   }
@@ -1597,7 +1597,7 @@ namespace TestNamespace {
 
   public class OrderPerspective :
     IPerspectiveFor<OrderModel, OrderCreatedEvent>,
-    IPerspectiveFor<OrderModel, OrderCancelledEvent> {
+    IPerspectiveFor<OrderModel, OrderCanceledEvent> {
 
     // Standard return - returns model
     public OrderModel Apply(OrderModel? currentData, OrderCreatedEvent @event) {
@@ -1605,7 +1605,7 @@ namespace TestNamespace {
     }
 
     // Action return - returns ModelAction for deletion
-    public ModelAction Apply(OrderModel currentData, OrderCancelledEvent @event) {
+    public ModelAction Apply(OrderModel currentData, OrderCanceledEvent @event) {
       return ModelAction.Delete;
     }
   }
@@ -1620,7 +1620,7 @@ namespace TestNamespace {
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource).Contains("OrderPerspectiveRunner");
     await Assert.That(runnerSource).Contains("OrderCreatedEvent");
-    await Assert.That(runnerSource).Contains("OrderCancelledEvent");
+    await Assert.That(runnerSource).Contains("OrderCanceledEvent");
   }
 
   [Test]
@@ -2389,7 +2389,7 @@ using Whizbang.Core.Perspectives;
 using System;
 
 namespace TestNamespace {
-  public record OrderCancelledEvent : IEvent {
+  public record OrderCanceledEvent : IEvent {
     [StreamId]
     public Guid OrderId { get; init; }
   }
@@ -2405,8 +2405,8 @@ namespace TestNamespace {
     public string Status { get; init; } = "";
   }
 
-  public class OrderPerspective : IPerspectiveWithActionsFor<OrderModel, OrderCancelledEvent, OrderArchivedEvent> {
-    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderCancelledEvent @event) {
+  public class OrderPerspective : IPerspectiveWithActionsFor<OrderModel, OrderCanceledEvent, OrderArchivedEvent> {
+    public ApplyResult<OrderModel> Apply(OrderModel currentData, OrderCanceledEvent @event) {
       return ApplyResult<OrderModel>.Delete();
     }
 
@@ -2426,7 +2426,7 @@ namespace TestNamespace {
 
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
-    await Assert.That(runnerSource).Contains("OrderCancelledEvent");
+    await Assert.That(runnerSource).Contains("OrderCanceledEvent");
     await Assert.That(runnerSource).Contains("OrderArchivedEvent");
   }
 

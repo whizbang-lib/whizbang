@@ -43,7 +43,7 @@ public class StartupStatusReporterFleetTests {
   }
 
   [Test]
-  public async Task AFleetReadCancelledByShutdown_PropagatesRatherThanStatingAnOutageAsync() {
+  public async Task AFleetReadCanceledByShutdown_PropagatesRatherThanStatingAnOutageAsync() {
     using var stopping = new CancellationTokenSource();
     await stopping.CancelAsync();
 
@@ -58,7 +58,7 @@ public class StartupStatusReporterFleetTests {
   }
 
   [Test]
-  public async Task AFleetReadCancelledWithNoShutdown_IsStillJustAFailedReadAsync() {
+  public async Task AFleetReadCanceledWithNoShutdown_IsStillJustAFailedReadAsync() {
     // The catch is filtered on the caller's token: a source that throws this type for its own
     // reasons — an internal timeout, a linked token of its own — has not been asked to stop, and
     // the surface owes its caller a stated condition rather than an exception.

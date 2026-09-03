@@ -1200,7 +1200,7 @@ public class SystemEventEmitterTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - should not throw with non-cancelled token
+    // Act - should not throw with non-canceled token
     await emitter.EmitAsync(systemEvent, cts.Token);
 
     // Assert

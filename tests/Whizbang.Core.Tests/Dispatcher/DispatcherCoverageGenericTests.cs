@@ -133,7 +133,7 @@ public class DispatcherCoverageGenericTests {
 
   [Test]
   [NotInParallel]
-  public async Task SendAsync_Generic_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_Generic_CanceledToken_ThrowsAsync() {
     var provider = _buildProvider();
     var dispatcher = new GenericTestDispatcher(provider);
     var command = new GenericCommand(Guid.NewGuid());

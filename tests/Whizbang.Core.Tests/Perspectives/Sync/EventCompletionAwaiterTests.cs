@@ -150,7 +150,7 @@ public class EventCompletionAwaiterTests {
     await Task.Delay(50);
     cts.Cancel();
 
-    // Assert - should return false (cancelled)
+    // Assert - should return false (canceled)
     var result = await waitTask;
     await Assert.That(result).IsFalse();
   }

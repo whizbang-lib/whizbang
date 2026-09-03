@@ -95,7 +95,7 @@ public class DispatcherCoveragePublishTests {
 
   [Test]
   [NotInParallel]
-  public async Task PublishAsync_WithCancelledToken_ThrowsOperationCancelledExceptionAsync() {
+  public async Task PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = new PublishTestDispatcher(_buildProvider());
     var cts = new CancellationTokenSource();
     await cts.CancelAsync();
@@ -118,7 +118,7 @@ public class DispatcherCoveragePublishTests {
 
   [Test]
   [NotInParallel]
-  public async Task SendAsync_WithDispatchOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_WithDispatchOptions_CanceledToken_ThrowsAsync() {
     var dispatcher = new PublishTestDispatcher(_buildProvider());
     var cts = new CancellationTokenSource();
     await cts.CancelAsync();
@@ -127,7 +127,7 @@ public class DispatcherCoveragePublishTests {
 
   [Test]
   [NotInParallel]
-  public async Task SendAsync_ObjectOverload_WithDispatchOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_ObjectOverload_WithDispatchOptions_CanceledToken_ThrowsAsync() {
     var dispatcher = new PublishTestDispatcher(_buildProvider());
     object command = new TestCommand(Guid.NewGuid());
     var cts = new CancellationTokenSource();

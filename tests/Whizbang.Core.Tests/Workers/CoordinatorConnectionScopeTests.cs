@@ -121,7 +121,7 @@ public class CoordinatorConnectionScopeTests {
   }
 
   [Test]
-  public async Task AcquireAsync_CancelledToken_PropagatesOperationCanceledAsync() {
+  public async Task AcquireAsync_CanceledToken_PropagatesOperationCanceledAsync() {
     var connString = "Host=192.0.2.60;Port=1;Database=x;Username=x;Password=x;Timeout=1";
     using var cts = new CancellationTokenSource();
     cts.Cancel();
@@ -129,6 +129,6 @@ public class CoordinatorConnectionScopeTests {
     await Assert.That(async () =>
         await CoordinatorConnectionScope.AcquireAsync(connString, cts.Token))
       .Throws<OperationCanceledException>()
-      .Because("Already-cancelled CT MUST short-circuit before any network round-trip — workers rely on CT for graceful shutdown.");
+      .Because("Already-canceled CT MUST short-circuit before any network round-trip — workers rely on CT for graceful shutdown.");
   }
 }

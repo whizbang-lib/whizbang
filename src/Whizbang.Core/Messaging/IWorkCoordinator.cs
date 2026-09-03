@@ -69,7 +69,7 @@ public sealed record ServiceBacklog {
 /// </para>
 /// <para>
 /// It is also read from the store rather than accumulated in memory. A counter the worker maintains
-/// itself can be stranded by a hung or cancelled task and then never recovers without a restart —
+/// itself can be stranded by a hung or canceled task and then never recovers without a restart —
 /// a failure mode this claim path has already produced in production once.
 /// </para>
 /// </remarks>

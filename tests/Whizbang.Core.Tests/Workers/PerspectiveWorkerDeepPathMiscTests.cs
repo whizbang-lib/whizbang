@@ -225,7 +225,7 @@ public class PerspectiveWorkerDeepPathMiscTests {
   }
 
   [Test]
-  public async Task Worker_CancelledDuringSlidingWindowAccumulation_ShutsDownPromptlyAsync() {
+  public async Task Worker_CanceledDuringSlidingWindowAccumulation_ShutsDownPromptlyAsync() {
     // Arrange — a long sliding window (30 s). After the first drain signal is consumed the
     // worker parks inside the accumulation window; cancelling must exit promptly instead of
     // waiting out the window.

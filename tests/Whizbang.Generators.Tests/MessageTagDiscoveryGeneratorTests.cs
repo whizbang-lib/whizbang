@@ -143,8 +143,8 @@ public class MessageTagDiscoveryGeneratorTests {
             [SignalTag(Tag = "order-shipped")]
             public record OrderShippedEvent(Guid OrderId, string TrackingNumber);
 
-            [SignalTag(Tag = "order-cancelled")]
-            public record OrderCancelledEvent(Guid OrderId, string Reason);
+            [SignalTag(Tag = "order-canceled")]
+            public record OrderCanceledEvent(Guid OrderId, string Reason);
             """;
 
     // Act
@@ -155,7 +155,7 @@ public class MessageTagDiscoveryGeneratorTests {
     await Assert.That(code).IsNotNull();
     await Assert.That(code).Contains("order-created");
     await Assert.That(code).Contains("order-shipped");
-    await Assert.That(code).Contains("order-cancelled");
+    await Assert.That(code).Contains("order-canceled");
   }
 
   /// <summary>

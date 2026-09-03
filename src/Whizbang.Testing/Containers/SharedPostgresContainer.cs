@@ -411,7 +411,7 @@ public static class SharedPostgresContainer {
         Console.WriteLine($"[SharedPostgresContainer] Connection verified on attempt {attempt}");
         return; // Success
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-        throw; // Propagate if main token cancelled
+        throw; // Propagate if main token canceled
       } catch (Exception ex) {
         lastException = ex;
         Console.WriteLine($"[SharedPostgresContainer] Connection attempt {attempt} failed: {ex.Message}");

@@ -125,9 +125,9 @@ public class MaintenanceWorkerIntegrityGaugeTests {
   }
 
   [Test]
-  public async Task LedgerReadCancelled_StopsTheCycleInsteadOfContinuingAsync() {
+  public async Task LedgerReadCanceled_StopsTheCycleInsteadOfContinuingAsync() {
     // The companion to the failure case above, and the opposite answer. A metrics read must not
-    // abort the cycle when it FAILS — but a cancelled read is a stopping host, and the steps that
+    // abort the cycle when it FAILS — but a canceled read is a stopping host, and the steps that
     // follow include the reap and the sweep, which take locks the completion path needs. The
     // narrow catch above the wide one is what separates the two, and nothing was holding it.
     var (worker, _) = _build(new LedgerCoordinator { ThrowSpecific = new OperationCanceledException() });

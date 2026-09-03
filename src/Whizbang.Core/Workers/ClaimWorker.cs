@@ -521,7 +521,7 @@ public sealed partial class ClaimWorker : BackgroundService {
       // duplicate copies of work already being dispatched.
       //
       // Safe ONLY because in-flight entries now age out. An earlier IsInFlight write-time filter on
-      // this path proved unrecoverable in production: a flag stranded by a hung or cancelled task
+      // this path proved unrecoverable in production: a flag stranded by a hung or canceled task
       // made this worker discard that row's emits forever, and only restarting the process cleared
       // it. With ageing, a stranded flag stops mattering once the lease has lapsed — the row becomes
       // eligible again on its own, so the failure is self-healing rather than permanent.
@@ -553,7 +553,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     // we just forward every stream_id every poll. We deliberately do NOT consult IsInFlight
     // here — Phase H step 6 slice 5 / Part B introduced an IsInFlight write-time filter that
     // turned out to be unrecoverable in production: a drain task that hung past its try/finally
-    // (or crashed before MarkDrained ran, or got cancelled mid-`_drainStreamInnerAsync`) left
+    // (or crashed before MarkDrained ran, or got canceled mid-`_drainStreamInnerAsync`) left
     // the in-memory flag stuck forever, and ClaimWorker silently discarded every subsequent
     // claim_work emit for that stream. Observed in production — thousands of inbox rows leased to a
     // healthy instance with zero drain progress; only restart unstuck them. The reconciliation
@@ -583,7 +583,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// </summary>
   /// <remarks>
   /// Deliberately does NOT take the caller's cancellation token: this runs on the shutdown path,
-  /// where that token is already cancelled. Using it would skip the release precisely when it
+  /// where that token is already canceled. Using it would skip the release precisely when it
   /// matters most and leave the rows to burn their budget. Failures are swallowed and logged — a
   /// release that does not happen costs an attempt, which is strictly better than a shutdown that
   /// throws.
@@ -644,7 +644,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     //
     // The outstanding figure comes from the STORE, never from an in-memory flag. That is not a
     // stylistic preference: an earlier in-memory IsInFlight filter on this path proved unrecoverable
-    // in production (see the emit loop below) — a flag stranded by a hung or cancelled task made
+    // in production (see the emit loop below) — a flag stranded by a hung or canceled task made
     // this worker silently discard every later emit for that stream, and only a restart cleared it.
     // Any counter we maintain ourselves can be stranded the same way. claim_work's eligible_* CTEs
     // re-emit every row still leased to us and unprocessed on EVERY poll, so the previous claim's

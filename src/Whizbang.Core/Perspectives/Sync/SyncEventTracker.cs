@@ -23,7 +23,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <para>
 /// <strong>Per-awaiter tracking:</strong> Waiter registrations are keyed by awaiter ID,
 /// enabling precise cleanup via <see cref="UnregisterAwaiter"/> when an awaiter is
-/// cancelled — without affecting other awaiters waiting on the same events.
+/// canceled — without affecting other awaiters waiting on the same events.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>

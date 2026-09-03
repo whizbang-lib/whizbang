@@ -23,13 +23,13 @@ public class WhizbangDatabaseInitializerServiceTests {
 
   [Test]
   public async Task TryRecompute_QueryCancellation_NonShutdownToken_IsSwallowedAsync() {
-    // A plain OCE with a live (uncancelled) token is a query cancellation — must NOT escape.
+    // A plain OCE with a live (uncanceled) token is a query cancellation — must NOT escape.
     var service = _create(coordinator: new _ThrowingCoordinator(new OperationCanceledException()));
     await service.TryRecomputePartitionsAsync(CancellationToken.None);
   }
 
   [Test]
-  public async Task TryRecompute_HostShutdown_CancelledToken_PropagatesAsync() {
+  public async Task TryRecompute_HostShutdown_CanceledToken_PropagatesAsync() {
     var service = _create(coordinator: new _ThrowingCoordinator(new OperationCanceledException()));
     using var cts = new CancellationTokenSource();
     cts.Cancel();

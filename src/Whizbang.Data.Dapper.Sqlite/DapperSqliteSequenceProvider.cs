@@ -18,7 +18,7 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
 public class DapperSqliteSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor) : DapperSequenceProviderBase(connectionFactory, executor) {
   protected override string GetUpdateSequenceSql() => @"
     UPDATE whizbang_sequences

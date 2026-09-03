@@ -77,7 +77,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
   public Task<long> GetNextAsync(string streamKey, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
     return _getNextCoreAsync(streamKey, ct);
@@ -140,7 +140,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
   public Task<long> GetCurrentAsync(string streamKey, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
     return _getCurrentCoreAsync(streamKey, ct);
@@ -172,7 +172,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
   public Task ResetAsync(string streamKey, long newValue = 0, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
     return _resetCoreAsync(streamKey, newValue, ct);

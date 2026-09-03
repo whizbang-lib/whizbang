@@ -183,17 +183,17 @@ public class TransportDeadLetterDrainWorkerTests {
   }
 
   [Test]
-  public async Task OneDrainerCancelled_StopsTheWholePassAsync() {
+  public async Task OneDrainerCanceled_StopsTheWholePassAsync() {
     // The companion to OneDrainerThrows_OthersStillRun, and the opposite answer. One drainer
-    // failing must not cost the others their pass — but a cancelled drainer is a stopping host,
+    // failing must not cost the others their pass — but a canceled drainer is a stopping host,
     // and carrying on means opening more broker receivers while shutdown waits on them. The
     // drainers that follow are skipped on purpose; their queues keep until the next tick.
-    var cancelled = new FakeDrainer("asb:stopping") { ThrowSpecific = new OperationCanceledException() };
+    var canceled = new FakeDrainer("asb:stopping") { ThrowSpecific = new OperationCanceledException() };
     var next = new FakeDrainer("rmq:next") { ReturnValue = 3 };
     var worker = _buildWorker(new TransportDeadLetterDrainWorkerOptions {
       Enabled = true,
       MaxPerTick = 100,
-    }, cancelled, next);
+    }, canceled, next);
 
     await Assert.That(async () => await worker.DrainOnceAsync(CancellationToken.None))
       .Throws<OperationCanceledException>()

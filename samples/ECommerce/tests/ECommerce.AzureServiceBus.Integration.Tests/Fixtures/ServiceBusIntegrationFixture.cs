@@ -1146,7 +1146,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       // CRITICAL: Require 3 consecutive checks with 0 pending to prevent race conditions
       // Without this, work might complete momentarily (pending=0), we return immediately,
       // then event cascades trigger new work (e.g., perspective → outbox → ServiceBus → BFF)
-      // and disposal happens while new work is in-flight, causing "Query was cancelled" errors
+      // and disposal happens while new work is in-flight, causing "Query was canceled" errors
       if (totalPending == 0) {
         consecutiveEmptyChecks++;
         if (consecutiveEmptyChecks >= 3) {

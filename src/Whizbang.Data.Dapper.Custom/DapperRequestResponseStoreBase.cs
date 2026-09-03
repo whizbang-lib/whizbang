@@ -151,10 +151,10 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
 
       return null;
     } catch (TaskCanceledException) {
-      // Return null when cancelled (contract expects null, not exception)
+      // Return null when canceled (contract expects null, not exception)
       return null;
     } catch (OperationCanceledException) {
-      // Return null when cancelled (contract expects null, not exception)
+      // Return null when canceled (contract expects null, not exception)
       return null;
     }
   }

@@ -83,10 +83,10 @@ public class DestructionContractTests {
   }
 
   [Test]
-  public async Task DestructionResult_Cancelled_SetsCancelAsync() {
-    await Assert.That(DestructionResult.Cancelled.Cancel).IsTrue()
+  public async Task DestructionResult_Canceled_SetsCancelAsync() {
+    await Assert.That(DestructionResult.Canceled.Cancel).IsTrue()
       .Because("Cancel keeps the data ephemeral — no destruction, and no promotion to durable.");
-    await Assert.That(DestructionResult.Cancelled.DeferUntil).IsNull();
+    await Assert.That(DestructionResult.Canceled.DeferUntil).IsNull();
   }
 
   [Test]

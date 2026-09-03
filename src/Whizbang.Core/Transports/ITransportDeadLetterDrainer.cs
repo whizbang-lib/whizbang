@@ -37,7 +37,7 @@ public interface ITransportDeadLetterDrainer {
   /// Drains up to <paramref name="maxCount"/> messages from the broker's dead-letter queue,
   /// re-submitting each one onto the normal receive path before settling it off the DLQ.
   /// Returns the number of messages re-submitted. Stops early if the DLQ is empty, the
-  /// cap is hit, or <paramref name="ct"/> is cancelled.
+  /// cap is hit, or <paramref name="ct"/> is canceled.
   /// </summary>
   /// <remarks>
   /// Implementations MUST be idempotent under concurrent execution — the worker may invoke

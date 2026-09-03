@@ -332,7 +332,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
   }
 
   [Test]
-  public async Task FlushAndStopAsync_WithCancelledToken_StopsWithoutHangingAsync() {
+  public async Task FlushAndStopAsync_WithCanceledToken_StopsWithoutHangingAsync() {
     // Shutdown deadline reached with a flush still in flight: the drain is abandoned
     // rather than waited on forever.
     var releaseFlush = new TaskCompletionSource();

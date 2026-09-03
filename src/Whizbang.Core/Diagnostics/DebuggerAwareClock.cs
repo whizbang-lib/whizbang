@@ -311,7 +311,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       _disposed = true;
       _cts.Cancel();
       _cts.Dispose();
-      // Don't wait for task - it will complete when cancelled
+      // Don't wait for task - it will complete when canceled
     }
 
     private static async Task _readLoopAsync(ChannelReader<bool> reader, Action<bool> handler, CancellationToken ct) {

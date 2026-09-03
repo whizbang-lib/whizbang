@@ -25,7 +25,7 @@ public class CommandAuditingIntegrationTests {
   // Test responses (past tense - events) - unique names to avoid generator conflicts
   public sealed record CmdAuditTestOrderCreated([property: StreamId] Guid OrderId, Guid CustomerId) : IEvent;
   public sealed record CmdAuditTestPaymentProcessed([property: StreamId] Guid PaymentId, Guid OrderId) : IEvent;
-  public sealed record CmdAuditTestOrderCancelled([property: StreamId] Guid OrderId, DateTimeOffset CancelledAt) : IEvent;
+  public sealed record CmdAuditTestOrderCanceled([property: StreamId] Guid OrderId, DateTimeOffset CanceledAt) : IEvent;
 
   [Test]
   public async Task CommandAuditing_WhenEnabled_EmitsCommandAudited_Async() {
@@ -112,7 +112,7 @@ public class CommandAuditingIntegrationTests {
 
     await emitter.EmitCommandAuditedAsync(
         new CancelOrder(Guid.NewGuid(), "Customer request"),
-        new CmdAuditTestOrderCancelled(Guid.NewGuid(), DateTimeOffset.UtcNow),
+        new CmdAuditTestOrderCanceled(Guid.NewGuid(), DateTimeOffset.UtcNow),
         "OrderReceptor", null, default);
 
     // Assert - 3 audit events
@@ -189,12 +189,12 @@ public class CommandAuditingIntegrationTests {
     // Act
     await emitter.EmitCommandAuditedAsync(
         new CancelOrder(Guid.NewGuid(), "Out of stock"),
-        new CmdAuditTestOrderCancelled(Guid.NewGuid(), DateTimeOffset.UtcNow),
+        new CmdAuditTestOrderCanceled(Guid.NewGuid(), DateTimeOffset.UtcNow),
         "OrderReceptor", null, default);
 
     // Assert
     var audited = capturedEvents.Events[0] as CommandAudited;
-    await Assert.That(audited!.ResponseType).IsEqualTo("CmdAuditTestOrderCancelled");
+    await Assert.That(audited!.ResponseType).IsEqualTo("CmdAuditTestOrderCanceled");
   }
 
   [Test]

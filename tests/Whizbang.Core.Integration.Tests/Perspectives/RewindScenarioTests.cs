@@ -106,7 +106,7 @@ public class RewindScenarioTests {
     // load while passing in isolation.
     await spy.WaitForInvocationAsync(LifecycleStage.PostPerspectiveInline, event3Id, TimeSpan.FromSeconds(10));
     // Then let a further cycle run, so the "must NOT double-fire" assertions below are made against
-    // a worker that had another opportunity to fire, rather than one merely cancelled early.
+    // a worker that had another opportunity to fire, rather than one merely canceled early.
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }

@@ -31,7 +31,7 @@ public class SignalHandlerListTests {
   }
 
   [Test]
-  public async Task InvokeAsync_CancelledBetweenHandlers_ThrowsAsync() {
+  public async Task InvokeAsync_CanceledBetweenHandlers_ThrowsAsync() {
     var bus = new SignalBus([]);
     using var cts = new CancellationTokenSource();
     var firstInvoked = false;

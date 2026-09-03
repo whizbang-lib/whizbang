@@ -22,7 +22,7 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WaitsForAllInFlightWork_CompletesAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_SerialExecution_MaintainsStrictOrderAsync</tests>
-/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCancelledWorkAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
@@ -183,7 +183,7 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
         // Kept as safety net for unexpected cancellation timing edge cases
         WhizbangActivitySource.RecordDefensiveCancellation(
           activity,
-          "Worker cancelled during DrainAsync after channel completion"
+          "Worker canceled during DrainAsync after channel completion"
         );
         // Note: We still swallow the exception but now it's observable via OpenTelemetry
       }
@@ -194,14 +194,14 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.ProcessWorkItems");
 
     await foreach (var workItem in _channel.Reader.ReadAllAsync(ct)) {
-      // DEFENSIVE: Should never happen - WriteAsync throws before queueing cancelled work
+      // DEFENSIVE: Should never happen - WriteAsync throws before queueing canceled work
       // Kept as safety net if cancellation happens between WriteAsync and processing
       if (workItem.CancellationToken.IsCancellationRequested) {
         WhizbangActivitySource.RecordDefensiveCancellation(
           activity,
-          "Work item cancelled after queueing but before execution"
+          "Work item canceled after queueing but before execution"
         );
-        continue; // Skip cancelled work
+        continue; // Skip canceled work
       }
 
       try {

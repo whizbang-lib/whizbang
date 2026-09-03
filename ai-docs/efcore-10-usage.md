@@ -582,7 +582,7 @@ public enum OrderStatus {
     Processing,
     Shipped,
     Delivered,
-    Cancelled
+    Canceled
 }
 
 // Configuration

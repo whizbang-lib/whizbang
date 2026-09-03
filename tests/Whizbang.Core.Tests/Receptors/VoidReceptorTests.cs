@@ -47,7 +47,7 @@ public class VoidReceptorTests : DiagnosticTestBase {
     /// <summary>
     /// Optional completion gate. When set, HandleAsync stays pending on this gate instead of a timer —
     /// letting a test assert "not yet complete" deterministically, then release. When null, falls back to
-    /// a short timer so the cancellation test can still observe a token-cancelled await.
+    /// a short timer so the cancellation test can still observe a token-canceled await.
     /// </summary>
     public TaskCompletionSource? Gate { get; set; }
 

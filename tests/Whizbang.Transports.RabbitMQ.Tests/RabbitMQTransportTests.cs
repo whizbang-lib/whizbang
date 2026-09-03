@@ -388,7 +388,7 @@ public class RabbitMQTransportTests {
     // Give the fire-and-forget disposal task time to complete
     await Task.Delay(100);
 
-    // Assert - Verify consumer was cancelled
+    // Assert - Verify consumer was canceled
     await Assert.That(fakeChannel.BasicCancelAsyncCalled).IsTrue();
     await Assert.That(fakeChannel.IsDisposed).IsTrue();
   }

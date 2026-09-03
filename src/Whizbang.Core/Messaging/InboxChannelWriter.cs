@@ -52,7 +52,7 @@ public class InboxChannelWriter : IInboxChannelWriter {
   /// <remarks>
   /// Runs opportunistically on write rather than on a timer: writes are the only moment the set can
   /// grow, so amortising the sweep there keeps it bounded without adding a background worker. It is
-  /// also what stops an entry stranded by a hung or cancelled task from blocking its message
+  /// also what stops an entry stranded by a hung or canceled task from blocking its message
   /// permanently — the failure mode that made an earlier in-memory filter on this path
   /// unrecoverable without restarting the process.
   /// </remarks>

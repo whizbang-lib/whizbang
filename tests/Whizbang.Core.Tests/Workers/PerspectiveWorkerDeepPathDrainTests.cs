@@ -622,7 +622,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
     var eventStore = new DrainEventStore();
     eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("hung"))]);
-    var runner = new DrainRunner { BlockUntilCancelled = true };
+    var runner = new DrainRunner { BlockUntilCanceled = true };
     var registry = _registry(runner);
 
     var (worker, harness, _) = _createWorker(
@@ -1038,7 +1038,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     public Exception? RunWithEventsException { get; init; }
     /// <summary>Runs immediately before <see cref="RunWithEventsException"/> is thrown.</summary>
     public Action? BeforeThrow { get; init; }
-    public bool BlockUntilCancelled { get; init; }
+    public bool BlockUntilCanceled { get; init; }
     public ConcurrentQueue<List<Guid>> ReceivedBatches { get; } = new();
     public ConcurrentQueue<Guid?> ObservedCursors { get; } = new();
     public ConcurrentQueue<(Guid TriggerEventId, long? CommitSequence)> RewindCalls { get; } = new();
@@ -1058,7 +1058,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
       ObservedCursors.Enqueue(lastProcessedEventId);
       _started.TrySetResult();
       _firstRunWithEvents.TrySetResult();
-      if (BlockUntilCancelled) {
+      if (BlockUntilCanceled) {
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var registration = cancellationToken.Register(() => blocked.TrySetResult());
         await blocked.Task;

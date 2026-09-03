@@ -63,14 +63,14 @@ public class PinnedConnectionPoolPrimitivesTests {
   }
 
   [Test]
-  public async Task NoOp_TryPin_CancelledToken_ThrowsOperationCanceledAsync() {
+  public async Task NoOp_TryPin_CanceledToken_ThrowsOperationCanceledAsync() {
     var pool = NoOpPinnedConnectionPool.Instance;
     using var cts = new CancellationTokenSource();
     cts.Cancel();
 
     await Assert.That(async () => await pool.TryPinForAsync(typeof(_fakeWorker), cts.Token))
       .Throws<OperationCanceledException>()
-      .Because("Even on the no-op path, an already-cancelled CT MUST be honoured — workers rely on CT propagation for graceful shutdown.");
+      .Because("Even on the no-op path, an already-canceled CT MUST be honoured — workers rely on CT propagation for graceful shutdown.");
   }
 
   // ============================================================

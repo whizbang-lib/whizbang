@@ -259,7 +259,7 @@ public class MaintenanceWorkerRowGuardTests {
   }
 
   [Test]
-  public async Task AGuardCancelledDuringShutdown_StopsTheCycleInsteadOfBeingLoggedAsync() {
+  public async Task AGuardCanceledDuringShutdown_StopsTheCycleInsteadOfBeingLoggedAsync() {
     // The post-reap hook is best-effort — a throwing observer is logged and ignored, because a
     // guard's bookkeeping must never block destruction. Cancellation is the exception, and the
     // catch that makes it one is FILTERED on the token: an OperationCanceledException with no
@@ -281,7 +281,7 @@ public class MaintenanceWorkerRowGuardTests {
 
   [Test]
   public async Task AGuardThrowingCancellationWithNoShutdown_IsTreatedAsAFailingObserverAsync() {
-    // The other side of the filter. Without a cancelled token this is just an observer that threw
+    // The other side of the filter. Without a canceled token this is just an observer that threw
     // an unfortunate exception type, and swallowing it is correct: destruction already happened,
     // and failing the cycle over bookkeeping would stop the reaper.
     var (worker, logger) = _build(
@@ -296,7 +296,7 @@ public class MaintenanceWorkerRowGuardTests {
   }
 
   [Test]
-  public async Task AGuardCancelledBeforeReap_DoesNotBurnADestructionAttemptAsync() {
+  public async Task AGuardCanceledBeforeReap_DoesNotBurnADestructionAttemptAsync() {
     // The companion to the guard-failure test above, which records a destruction failure and
     // burns a retry attempt on every row in the batch. That is right for a guard that failed:
     // the rows could not be judged, so the attempt counts and the backoff applies.

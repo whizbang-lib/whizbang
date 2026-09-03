@@ -3254,7 +3254,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   /// <docs>fundamentals/sagas/completion-orchestration</docs>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithDispatchOptions_CompletesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInFuture_DoesNotInvokeLocalReceptorInlineAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithoutScheduledFor_InvokesLocalReceptorInlineAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherScheduledForLocalReceptorTests.cs:PublishAsync_WithScheduledForInPast_InvokesLocalReceptorInlineAsync</tests>

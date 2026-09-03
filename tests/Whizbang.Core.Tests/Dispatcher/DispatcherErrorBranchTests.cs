@@ -17,7 +17,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 /// DispatcherEdgeCaseCoverageTests / DispatcherCoverageWave3Tests):
 /// <list type="bullet">
 /// <item><description>SendAsync(object, IMessageContext) RoutedNone rejection</description></item>
-/// <item><description>SendAsync(object, IMessageContext, DispatchOptions) RoutedNone rejection + pre-cancelled token</description></item>
+/// <item><description>SendAsync(object, IMessageContext, DispatchOptions) RoutedNone rejection + pre-canceled token</description></item>
 /// <item><description>LocalInvokeWithReceiptAsync&lt;TResult&gt;(object, IMessageContext) RoutedNone rejection</description></item>
 /// <item><description>Routed&lt;T&gt; unwrap on SendAsync / LocalInvokeAsync context overloads (happy path
 /// proving the unwrap hands the INNER message to the receptor)</description></item>
@@ -77,7 +77,7 @@ public class DispatcherErrorBranchTests {
   }
 
   [Test]
-  public async Task SendAsync_ContextAndOptionsOverload_PreCancelledToken_ThrowsBeforeValidationAsync() {
+  public async Task SendAsync_ContextAndOptionsOverload_PreCanceledToken_ThrowsBeforeValidationAsync() {
     var dispatcher = _createDispatcher();
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();

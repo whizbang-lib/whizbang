@@ -19,7 +19,7 @@ public static class AsyncTimeoutHelper {
   /// <param name="timeoutMessage">Message for the <see cref="TimeoutException"/> if timeout is exceeded.</param>
   /// <param name="cancellationToken">External cancellation token.</param>
   /// <exception cref="TimeoutException">Thrown when the timeout expires before the task completes.</exception>
-  /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is cancelled.</exception>
+  /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is canceled.</exception>
   public static Task WaitWithTimeoutAsync(
       Task task,
       TimeSpan timeout,
@@ -39,7 +39,7 @@ public static class AsyncTimeoutHelper {
   /// <param name="cancellationToken">External cancellation token.</param>
   /// <returns>The result of the completed task.</returns>
   /// <exception cref="TimeoutException">Thrown when the timeout expires before the task completes.</exception>
-  /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is cancelled.</exception>
+  /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is canceled.</exception>
   public static Task<T> WaitWithTimeoutAsync<T>(
       Task<T> task,
       TimeSpan timeout,

@@ -28,14 +28,14 @@ public class TransportBatchGuardTests {
   }
 
   private static OperationCanceledException _statementTimeout()
-    => new("Query was cancelled", new PostgresException(
+    => new("Query was canceled", new PostgresException(
         messageText: "canceling statement due to user request",
         severity: "ERROR", invariantSeverity: "ERROR", sqlState: "57014"));
 
   [Test]
   public async Task AStatementTimeoutDoesNotEscapeAsync() {
     var logger = new CapturingLogger();
-    var cts = new CancellationTokenSource();   // NOT cancelled
+    var cts = new CancellationTokenSource();   // NOT canceled
 
     Exception? escaped = null;
     try {
@@ -117,7 +117,7 @@ public class TransportBatchGuardTests {
   // ---------- the two tokens are NOT interchangeable ----------
 
   [Test]
-  public async Task ACancelledBATCHTokenIsStillContainedWhileTheHostIsAliveAsync() {
+  public async Task ACanceledBATCHTokenIsStillContainedWhileTheHostIsAliveAsync() {
     // The transport supplies its own per-batch token and cancels it for reasons that have nothing
     // to do with host shutdown — a lost session lock, a draining processor, a message-level timeout.
     // Classifying against THAT token makes every such cancellation look like a shutdown request,
@@ -128,7 +128,7 @@ public class TransportBatchGuardTests {
     var logger = new CapturingLogger();
     using var batchToken = new CancellationTokenSource();
     using var hostToken = new CancellationTokenSource();
-    await batchToken.CancelAsync();          // transport cancelled this batch
+    await batchToken.CancelAsync();          // transport canceled this batch
                                              // host is NOT stopping
 
     Exception? escaped = null;

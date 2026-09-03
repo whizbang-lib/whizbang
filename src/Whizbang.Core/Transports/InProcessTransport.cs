@@ -13,17 +13,17 @@ namespace Whizbang.Core.Transports;
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithNoSubscribers_CompletesSuccessfullyAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithSingleSubscriber_InvokesHandlerAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithMultipleSubscribers_InvokesAllHandlersAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_ToDifferentTopics_OnlyInvokesMatchingSubscribersAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_ReturnsActiveSubscriptionAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_PauseAsync_SetsIsActiveToFalseAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_ResumeAsync_SetsIsActiveToTrueAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_Dispose_RemovesHandlerFromTransportAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_DisposeMultipleTimes_IsIdempotentAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithResponder_ReturnsResponseEnvelopeAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_ConcurrentPublishes_AllHandlersInvokedAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_ConcurrentSubscriptions_AllRegisteredAsync</tests>
@@ -70,7 +70,7 @@ public class InProcessTransport : ITransport {
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithNoSubscribers_CompletesSuccessfullyAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithSingleSubscriber_InvokesHandlerAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithMultipleSubscribers_InvokesAllHandlersAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_ToDifferentTopics_OnlyInvokesMatchingSubscribersAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_ConcurrentPublishes_AllHandlersInvokedAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_HandlerThrowsException_ContinuesWithOtherHandlersAsync</tests>
@@ -137,7 +137,7 @@ public class InProcessTransport : ITransport {
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithResponder_ReturnsResponseEnvelopeAsync</tests>
-  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithCancellationDuringPublish_ExecutesFinallyBlockAsync</tests>
   public async Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(

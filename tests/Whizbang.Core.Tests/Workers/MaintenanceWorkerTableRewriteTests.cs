@@ -178,7 +178,7 @@ public class MaintenanceWorkerTableRewriteTests {
   }
 
   [Test]
-  public async Task CancelledMidCandidates_StopsWithoutRecordingFurtherTablesAsync() {
+  public async Task CanceledMidCandidates_StopsWithoutRecordingFurtherTablesAsync() {
     var coord = new RewriteCoordinator {
       Candidates = { new TableRewriteCandidate("wh_event_store", 4.2, Requested: false) },
     };
@@ -195,9 +195,9 @@ public class MaintenanceWorkerTableRewriteTests {
   }
 
   [Test]
-  public async Task BloatScanCancelled_StopsTheCycleInsteadOfContinuingAsync() {
+  public async Task BloatScanCanceled_StopsTheCycleInsteadOfContinuingAsync() {
     // The companion to BloatScanFails_MaintenanceCycleStillCompletes. A pg_stat read that fails is
-    // no reason to lose the reap that shares the tick — bloat reporting is advisory. A cancelled
+    // no reason to lose the reap that shares the tick — bloat reporting is advisory. A canceled
     // read is a stopping host, and the reap and sweep that follow take the locks the completion
     // path needs.
     var coord = new RewriteCoordinator { ScanThrows = new OperationCanceledException() };
@@ -211,7 +211,7 @@ public class MaintenanceWorkerTableRewriteTests {
   }
 
   [Test]
-  public async Task RecordingARewriteRequestCancelled_StopsInsteadOfMovingToTheNextTableAsync() {
+  public async Task RecordingARewriteRequestCanceled_StopsInsteadOfMovingToTheNextTableAsync() {
     // The companion to RecordingARewriteRequestFails_OtherCandidatesAreStillRecorded. One table
     // failing to record must not skip the rest of the list; a cancellation ends the pass, and the
     // candidates that were not reached are re-detected on the next scan — bloat does not go away

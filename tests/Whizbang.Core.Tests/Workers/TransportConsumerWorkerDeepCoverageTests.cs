@@ -946,7 +946,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
   // ========================================
 
   [Test]
-  public async Task ExecuteAsync_WhenCancelled_LogsCancellationRequestedAsync() {
+  public async Task ExecuteAsync_WhenCanceled_LogsCancellationRequestedAsync() {
     // Arrange
     var transport = new DeepCoverageTransport();
     var options = new TransportConsumerOptions();

@@ -22,7 +22,7 @@ public interface ISequenceProvider {
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
   Task<long> GetNextAsync(string streamKey, CancellationToken ct = default);
 
   /// <summary>
@@ -35,7 +35,7 @@ public interface ISequenceProvider {
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
   Task<long> GetCurrentAsync(string streamKey, CancellationToken ct = default);
 
   /// <summary>
@@ -50,6 +50,6 @@ public interface ISequenceProvider {
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
-  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
   Task ResetAsync(string streamKey, long newValue = 0, CancellationToken ct = default);
 }

@@ -362,7 +362,7 @@ if (-not $Force -and -not $DryRun) {
 
     $confirm = Read-Host "Are you sure you want to proceed? (y/N)"
     if ($confirm -ne "y" -and $confirm -ne "Y") {
-        Write-Host "Cancelled." -ForegroundColor Yellow
+        Write-Host "Canceled." -ForegroundColor Yellow
         exit 0
     }
 }

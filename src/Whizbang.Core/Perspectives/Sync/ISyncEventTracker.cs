@@ -17,7 +17,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// <para>
 /// Wait methods accept an optional <c>awaiterId</c> parameter that keys waiter
 /// registrations. This enables precise cleanup via <see cref="UnregisterAwaiter"/>
-/// when an awaiter is cancelled — without affecting other awaiters waiting on
+/// when an awaiter is canceled — without affecting other awaiters waiting on
 /// the same events.
 /// </para>
 /// </remarks>
@@ -136,9 +136,9 @@ public interface ISyncEventTracker {
 
   /// <summary>
   /// Unregisters all waiter entries for a specific awaiter, cancelling any pending TCS.
-  /// Called when an awaiter is cancelled or disposed to prevent stale TCS accumulation.
+  /// Called when an awaiter is canceled or disposed to prevent stale TCS accumulation.
   /// </summary>
-  /// <param name="awaiterId">The awaiter ID whose entries should be removed and cancelled.</param>
+  /// <param name="awaiterId">The awaiter ID whose entries should be removed and canceled.</param>
   void UnregisterAwaiter(Guid awaiterId);
 
   /// <summary>

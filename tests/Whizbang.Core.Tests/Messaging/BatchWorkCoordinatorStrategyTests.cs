@@ -931,7 +931,7 @@ public class BatchWorkCoordinatorStrategyTests {
         caught = ex;
       }
       await Assert.That(caught).IsNotNull()
-        .Because("Flushing with a cancelled token should throw");
+        .Because("Flushing with a canceled token should throw");
       await Assert.That(caught is OperationCanceledException).IsTrue()
         .Because("Should throw OperationCanceledException (or its subclass TaskCanceledException)");
     } finally {

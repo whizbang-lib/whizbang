@@ -53,7 +53,7 @@ public class TransportReadinessCheckTests {
   }
 
   [Test]
-  public async Task ConfigurableCheck_RespectsCancellationToken_WhenCancelledAsync() {
+  public async Task ConfigurableCheck_RespectsCancellationToken_WhenCanceledAsync() {
     // Arrange
     var check = new ConfigurableReadinessCheck(isReady: true);
     var cts = new CancellationTokenSource();

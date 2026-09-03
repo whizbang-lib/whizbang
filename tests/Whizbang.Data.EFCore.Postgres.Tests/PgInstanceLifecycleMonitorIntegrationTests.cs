@@ -138,7 +138,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task Tick_PublishCancelledByShutdown_SurfacesRatherThanRetryingAsync(
+  public async Task Tick_PublishCanceledByShutdown_SurfacesRatherThanRetryingAsync(
       CancellationToken cancellationToken) {
     // The failure arm un-marks the death so the next tick retries. Shutdown does not need that:
     // the loop breaks, the monitor ends, and the marked-but-unannounced death goes with the
@@ -153,7 +153,7 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
       .Throws<OperationCanceledException>()
       .Because("the announcement is not retryable work when the host is on its way down");
     await Assert.That(bus.Attempts).IsEqualTo(1)
-      .Because("the tick stops at the first cancelled publish rather than walking the rest of "
+      .Because("the tick stops at the first canceled publish rather than walking the rest of "
              + "the dead list on a stopping host");
   }
 }

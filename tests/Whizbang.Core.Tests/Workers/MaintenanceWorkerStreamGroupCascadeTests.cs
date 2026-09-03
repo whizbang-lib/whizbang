@@ -254,10 +254,10 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
   }
 
   [Test]
-  public async Task DrainCancelled_StopsTheCycleInsteadOfContinuingAsync() {
+  public async Task DrainCanceled_StopsTheCycleInsteadOfContinuingAsync() {
     // The companion to DrainFailing_DoesNotFailTheCycle. A journal drain that fails leaves the
     // seeds in place for the next cycle to recompute the closure, so losing this pass costs
-    // nothing but time. A cancelled drain is a stopping host, and the cascade that follows issues
+    // nothing but time. A canceled drain is a stopping host, and the cascade that follows issues
     // deletes across follower tables — work that should not start on the way down.
     _registerGroup();
     var coord = new CascadeCoordinator {
@@ -266,7 +266,7 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
     };
     var (worker, logger) = _build(coord);
 
-    // The catch is FILTERED on the token: an OperationCanceledException with nothing cancelled
+    // The catch is FILTERED on the token: an OperationCanceledException with nothing canceled
     // behind it is just a drain that threw an unfortunate type, and belongs in the wide arm.
     using var stopping = new CancellationTokenSource();
     await stopping.CancelAsync();

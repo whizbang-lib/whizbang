@@ -149,7 +149,7 @@ public sealed class RabbitMQSubscription : ISubscription {
           if (_logger?.IsEnabled(LogLevel.Debug) == true) {
             var consumerTag = _consumerTag;
             var queueName = _queueName;
-            _logger.LogDebug("Cancelled consumer {ConsumerTag} for queue {QueueName}", consumerTag, queueName);
+            _logger.LogDebug("Canceled consumer {ConsumerTag} for queue {QueueName}", consumerTag, queueName);
           }
         }
 

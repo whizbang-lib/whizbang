@@ -231,7 +231,7 @@ public class ClaimWorkerAttemptAccountingTests {
   /// <para>
   /// The dedup is safe here ONLY because in-flight entries now age out. An earlier IsInFlight
   /// write-time filter on this path was unrecoverable in production: a flag stranded by a hung or
-  /// cancelled task made the worker discard that row's emits forever, and only a restart cleared it.
+  /// canceled task made the worker discard that row's emits forever, and only a restart cleared it.
   /// With ageing, a stranded flag stops mattering once the lease has lapsed — the row becomes
   /// eligible again on its own.
   /// </para>

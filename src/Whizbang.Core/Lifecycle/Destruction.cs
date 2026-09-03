@@ -132,7 +132,7 @@ public sealed record DestructionResult {
     new() { Disposition = disposition };
 
   /// <summary>Keep the data — cancel this destruction.</summary>
-  public static DestructionResult Cancelled { get; } = new() { Cancel = true };
+  public static DestructionResult Canceled { get; } = new() { Cancel = true };
 
   /// <summary>Reschedule the destruction to <paramref name="until"/>.</summary>
   public static DestructionResult Defer(DateTimeOffset until) => new() { DeferUntil = until };

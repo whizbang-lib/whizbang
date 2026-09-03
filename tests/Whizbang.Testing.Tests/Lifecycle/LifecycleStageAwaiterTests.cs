@@ -208,7 +208,7 @@ public class LifecycleStageAwaiterTests {
   }
 
   [Test]
-  public async Task WaitAsync_PreCancelledToken_ThrowsOperationCanceledAsync() {
+  public async Task WaitAsync_PreCanceledToken_ThrowsOperationCanceledAsync() {
     var (_, host) = _makeHost();
     using var awaiter = new LifecycleStageAwaiter<TestEvent>(host, LifecycleStage.PostPerspectiveInline);
     using var cts = new CancellationTokenSource();

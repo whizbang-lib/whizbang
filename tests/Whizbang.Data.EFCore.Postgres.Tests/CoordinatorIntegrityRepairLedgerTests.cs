@@ -216,7 +216,7 @@ public class CoordinatorIntegrityRepairLedgerTests {
   private static IntegrityReportObservation _observation() => new(_key(), 1, 2, 3, 4);
 
   [Test]
-  public async Task TryBeginReportAsync_WhenCancelled_PropagatesAsync() {
+  public async Task TryBeginReportAsync_WhenCanceled_PropagatesAsync() {
     var ledger = new CoordinatorIntegrityRepairLedger(_factoryWith(new CancellingCoordinator()));
 
     await Assert.That(async () => await ledger.TryBeginReportAsync(
@@ -225,7 +225,7 @@ public class CoordinatorIntegrityRepairLedgerTests {
   }
 
   [Test]
-  public async Task TryBeginRepairAsync_WhenCancelled_PropagatesAsync() {
+  public async Task TryBeginRepairAsync_WhenCanceled_PropagatesAsync() {
     var ledger = new CoordinatorIntegrityRepairLedger(_factoryWith(new CancellingCoordinator()));
 
     await Assert.That(async () => await ledger.TryBeginRepairAsync(
@@ -234,7 +234,7 @@ public class CoordinatorIntegrityRepairLedgerTests {
   }
 
   [Test]
-  public async Task MarkHealedAsync_WhenCancelled_PropagatesAsync() {
+  public async Task MarkHealedAsync_WhenCanceled_PropagatesAsync() {
     var ledger = new CoordinatorIntegrityRepairLedger(_factoryWith(new CancellingCoordinator()));
 
     await Assert.That(async () => await ledger.MarkHealedAsync(_key()))
@@ -242,7 +242,7 @@ public class CoordinatorIntegrityRepairLedgerTests {
   }
 
   [Test]
-  public async Task TryBeginReportBatchAsync_WhenCancelled_PropagatesAsync() {
+  public async Task TryBeginReportBatchAsync_WhenCanceled_PropagatesAsync() {
     var ledger = new CoordinatorIntegrityRepairLedger(_factoryWith(new CancellingCoordinator()));
 
     await Assert.That(async () => await ledger.TryBeginReportBatchAsync(
@@ -251,7 +251,7 @@ public class CoordinatorIntegrityRepairLedgerTests {
   }
 
   [Test]
-  public async Task TryBeginRepairBatchAsync_WhenCancelled_PropagatesAsync() {
+  public async Task TryBeginRepairBatchAsync_WhenCanceled_PropagatesAsync() {
     var ledger = new CoordinatorIntegrityRepairLedger(_factoryWith(new CancellingCoordinator()));
 
     await Assert.That(async () => await ledger.TryBeginRepairBatchAsync(
@@ -260,7 +260,7 @@ public class CoordinatorIntegrityRepairLedgerTests {
   }
 
   [Test]
-  public async Task MarkHealedBatchWithAgesAsync_WhenCancelled_PropagatesAsync() {
+  public async Task MarkHealedBatchWithAgesAsync_WhenCanceled_PropagatesAsync() {
     var ledger = new CoordinatorIntegrityRepairLedger(_factoryWith(new CancellingCoordinator()));
 
     await Assert.That(async () => await ledger.MarkHealedBatchWithAgesAsync([_key()]))

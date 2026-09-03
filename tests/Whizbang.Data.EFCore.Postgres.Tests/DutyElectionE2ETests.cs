@@ -223,12 +223,12 @@ public class DutyElectionE2ETests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task AVerifyCancelledByShutdown_DoesNotMarkTheDutyLostAsync(CancellationToken cancellationToken) {
+  public async Task AVerifyCanceledByShutdown_DoesNotMarkTheDutyLostAsync(CancellationToken cancellationToken) {
     // VerifyStillHeldAsync pings the session that holds the advisory lock. A ping that FAILS means
     // the session is gone and so is the lock, so the grant latches _lost and the caller stops its
     // exclusive work — correct, and deliberately sticky, because a lock cannot come back.
     //
-    // A ping cancelled by shutdown proves nothing about the lock. Latching there would leave a
+    // A ping canceled by shutdown proves nothing about the lock. Latching there would leave a
     // grant that reports "not held" for the rest of its life while still owning the lock, and the
     // stickiness that makes the real case safe is exactly what makes this one unrecoverable.
     var pod = new _pod();
@@ -242,7 +242,7 @@ public class DutyElectionE2ETests : EFCoreTestBase {
     await stopping.CancelAsync();
     await Assert.That(async () => await grant.VerifyStillHeldAsync(stopping.Token))
       .Throws<OperationCanceledException>()
-      .Because("a cancelled ping says nothing about whether the lock is still held");
+      .Because("a canceled ping says nothing about whether the lock is still held");
 
     await Assert.That(await grant.VerifyStillHeldAsync(cancellationToken)).IsTrue()
       .Because("the grant still owns the lock — had the shutdown latched _lost, this would report "

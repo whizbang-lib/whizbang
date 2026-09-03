@@ -312,7 +312,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
   }
 
   [Test]
-  public async Task ExecuteAsync_CancellationToken_SkipsCancelledWorkAsync() {
+  public async Task ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync() {
     // Arrange - Use bounded channel with capacity of 1
     var executor = new SerialExecutor(channelCapacity: 1);
     await executor.StartAsync();
@@ -347,11 +347,11 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Cancel AFTER work is queued but BEFORE worker processes it
     cts.Cancel();
 
-    // Unblock worker to process the cancelled work (should skip it via line 165)
+    // Unblock worker to process the canceled work (should skip it via line 165)
     blockingTcs.SetResult(1);
     await blockingTask;
 
-    // Give worker time to process (and skip) the cancelled work
+    // Give worker time to process (and skip) the canceled work
     await Task.Delay(200);
 
     // Assert - Handler should not have been called (work was skipped via continue)
@@ -380,7 +380,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     try {
       await task; // Wait for work to complete
     } catch {
-      // Work may have been cancelled
+      // Work may have been canceled
     }
 
     // Stop executor (triggers cancellation of worker)

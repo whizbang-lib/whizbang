@@ -182,7 +182,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     }
 
     // SET LOCAL statement_timeout is the only form that survives PgBouncer transaction pooling, so a runaway
-    // batch is cancelled by Postgres rather than left a zombie when the client gives up.
+    // batch is canceled by Postgres rather than left a zombie when the client gives up.
     await using var tx = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
 
     if (options.StatementTimeoutSeconds is int secs && secs > 0) {

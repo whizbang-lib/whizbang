@@ -182,7 +182,7 @@ public class PgDurableSignalTailIntegrationTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task ExecuteAsync_CancelledBeforeSchemaReady_ReturnsCleanlyAsync(
+  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(
       CancellationToken testToken) {
     // The first act of the loop is an INSERT into wh_signal_cursors, a table the migration
     // creates. A host that fails during migration has to get a clean shutdown here.

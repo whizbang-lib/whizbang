@@ -171,7 +171,7 @@ internal sealed partial class WhizbangDatabaseInitializerService(
       // Query-level cancellation (e.g. a command timeout under startup load) — NOT host shutdown.
       // Recompute is best-effort and self-heals on the next claim cycle, so swallowing it honors the
       // documented "never blocks MarkReady" contract instead of letting the OCE escape and abort. A
-      // genuine host-shutdown cancellation (the token IS cancelled) still propagates.
+      // genuine host-shutdown cancellation (the token IS canceled) still propagates.
       LogPartitionRecomputeFailed(_logger, ex);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogPartitionRecomputeFailed(_logger, ex);

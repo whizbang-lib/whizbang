@@ -251,7 +251,7 @@ public class DispatcherInvokeWithReceiptTests {
   }
 
   [Test]
-  public async Task LocalInvokeWithReceipt_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeWithReceipt_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new CreateOrderCommand(Guid.NewGuid(), "Test Order");

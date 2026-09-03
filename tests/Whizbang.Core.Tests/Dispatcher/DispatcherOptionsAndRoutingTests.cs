@@ -74,7 +74,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
   }
 
   [Test]
-  public async Task SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
@@ -88,7 +88,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
   }
 
   [Test]
-  public async Task SendAsync_WithDispatchOptionsAndCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithDispatchOptionsAndCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");
@@ -133,7 +133,7 @@ public sealed class DispatcherOptionsAndRoutingTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithDispatchOptionsAndCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeAsync_WithDispatchOptionsAndCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new TestCommand("test data");

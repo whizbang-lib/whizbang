@@ -469,7 +469,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   #region CancellationToken Tests
 
   [Test]
-  public async Task CreateSnapshotAsync_CancelledToken_ThrowsAsync() {
+  public async Task CreateSnapshotAsync_CanceledToken_ThrowsAsync() {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
@@ -481,7 +481,7 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
   }
 
   [Test]
-  public async Task GetLatestSnapshotAsync_CancelledToken_ThrowsAsync() {
+  public async Task GetLatestSnapshotAsync_CanceledToken_ThrowsAsync() {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 

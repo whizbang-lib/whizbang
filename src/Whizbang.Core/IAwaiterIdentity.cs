@@ -8,7 +8,7 @@ namespace Whizbang.Core;
 /// <para>
 /// Every awaiter instance gets a unique <see cref="AwaiterId"/> at construction time.
 /// This ID is used to key waiter registrations in <see cref="Perspectives.Sync.ISyncEventTracker"/>,
-/// allowing precise cleanup when an awaiter is cancelled or disposed — without affecting
+/// allowing precise cleanup when an awaiter is canceled or disposed — without affecting
 /// other awaiters waiting on the same events.
 /// </para>
 /// </remarks>

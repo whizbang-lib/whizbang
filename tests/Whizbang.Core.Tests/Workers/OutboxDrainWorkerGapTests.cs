@@ -429,7 +429,7 @@ public class OutboxDrainWorkerGapTests {
     // scheduler timing the disabled branch's awaited Task.Delay(Infinite) may surface
     // cancellation as either RanToCompletion (OCE caught) or Canceled (observed before
     // the catch) — both are non-faulted clean exits. Asserting RanToCompletion exactly
-    // is a scheduling-dependent flake (matches the SchemaGateCancelled sibling fix).
+    // is a scheduling-dependent flake (matches the SchemaGateCanceled sibling fix).
     await Assert.That(execTask!.IsCompleted).IsTrue()
       .Because("the disabled drainer must complete on shutdown");
     await Assert.That(execTask!.IsFaulted).IsFalse()
@@ -476,7 +476,7 @@ public class OutboxDrainWorkerGapTests {
   /// worker must return before resolving the local service id or fetching anything.
   /// </summary>
   [Test]
-  public async Task OutboxDrainWorker_SchemaGateCancelled_ReturnsWithoutFetchingAsync() {
+  public async Task OutboxDrainWorker_SchemaGateCanceled_ReturnsWithoutFetchingAsync() {
     var coord = new GapWorkCoordinator();
     var drainChannel = new GapDrainChannel();
     var completion = new GapCompletionChannel();
@@ -496,7 +496,7 @@ public class OutboxDrainWorkerGapTests {
     var execTask = worker.ExecuteTask;
     await Assert.That(execTask is not null).IsTrue();
     // Graceful shutdown: the worker either catches the OCE and returns (RanToCompletion) or,
-    // when StopAsync's token is already cancelled before ExecuteAsync's body runs, the async
+    // when StopAsync's token is already canceled before ExecuteAsync's body runs, the async
     // state machine surfaces the cancellation (Canceled). Both are clean; only a fault is a bug.
     await Assert.That(execTask!.IsCompleted).IsTrue();
     await Assert.That(execTask.IsFaulted).IsFalse()
@@ -1118,7 +1118,7 @@ public class OutboxDrainWorkerGapTests {
   /// instead of a silent infinite retry — but a shutdown is not a fault to triage.
   /// </summary>
   [Test]
-  public async Task OutboxDrainWorker_LifecycleStageCancelledByShutdown_DoesNotEnqueueAFailureAsync() {
+  public async Task OutboxDrainWorker_LifecycleStageCanceledByShutdown_DoesNotEnqueueAFailureAsync() {
     // Recording this as a lifecycle failure stamps wh_outbox.error with a TaskCanceledException
     // and burns an attempt on a message nothing rejected. Deploy often enough and rows accumulate
     // failures they never earned; the row is still leased for the next claim cycle either way.
@@ -1169,7 +1169,7 @@ public class OutboxDrainWorkerGapTests {
   /// end the worker loop cleanly.
   /// </summary>
   [Test]
-  public async Task OutboxDrainWorker_CancelledDuringPublish_NoFailureRecord_StopsCleanlyAsync() {
+  public async Task OutboxDrainWorker_CanceledDuringPublish_NoFailureRecord_StopsCleanlyAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var msgId = (Guid)TrackedGuid.NewMedo();
 
@@ -1208,7 +1208,7 @@ public class OutboxDrainWorkerGapTests {
   /// paths handle cancellation separately, and only the singular one was held.
   /// </summary>
   [Test]
-  public async Task OutboxDrainWorker_CancelledDuringBulkPublish_NoFailureRecord_StopsCleanlyAsync() {
+  public async Task OutboxDrainWorker_CanceledDuringBulkPublish_NoFailureRecord_StopsCleanlyAsync() {
     // The bulk path awaits through WaitAsync(timeout, ct), so it has to separate a publish that
     // ran long from a host that is stopping. A timeout is a failure: the rows are recorded failed
     // and the abandoned publish is observed. Shutdown is not — recording these rows as failed

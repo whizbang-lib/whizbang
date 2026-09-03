@@ -152,7 +152,7 @@ public class MaintenanceWorkerDestructionHookTests {
       Targets = [new EphemeralDestructionTarget(e1, Guid.NewGuid(), "A"), new EphemeralDestructionTarget(e2, Guid.NewGuid(), "B")],
     };
 
-    await _buildWorker(coord, new RecordingHook(log, DestructionResult.Cancelled)).RunMaintenanceOnceAsync(CancellationToken.None);
+    await _buildWorker(coord, new RecordingHook(log, DestructionResult.Canceled)).RunMaintenanceOnceAsync(CancellationToken.None);
 
     await Assert.That(coord.Holds.Count).IsEqualTo(1).Because("Cancel holds the whole batch in one call.");
     await Assert.That(coord.Holds[0].Ids).IsEquivalentTo(new[] { e1, e2 });
@@ -224,7 +224,7 @@ public class MaintenanceWorkerDestructionHookTests {
   }
 
   [Test]
-  public async Task RunMaintenanceOnce_HookCancelled_DoesNotRecordADestructionFailureAsync() {
+  public async Task RunMaintenanceOnce_HookCanceled_DoesNotRecordADestructionFailureAsync() {
     // The companion to HookThrows_RecordsFailureForRetry. A hook that throws could not judge the
     // batch, so recording a failure is right: the batch retries under a bounded cap and is
     // force-deleted past it. A shutdown judged nothing — counting an attempt spends part of a
@@ -249,7 +249,7 @@ public class MaintenanceWorkerDestructionHookTests {
   }
 
   [Test]
-  public async Task RunMaintenanceOnce_PostDestructionHookCancelled_StopsAfterTheReapAsync() {
+  public async Task RunMaintenanceOnce_PostDestructionHookCanceled_StopsAfterTheReapAsync() {
     // The post-destruction hook runs AFTER the bodies are gone, so by the time a shutdown lands
     // here the destructive work is committed and stopping cannot undo it. What the cancellation
     // buys is the rest of the cycle: the steps that follow take locks and open connections on a

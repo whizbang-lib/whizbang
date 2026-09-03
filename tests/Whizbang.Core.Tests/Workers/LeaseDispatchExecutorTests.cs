@@ -52,7 +52,7 @@ public class LeaseDispatchExecutorTests {
     await LeaseDispatchExecutor.RunWithLeaseAsync(lease, _ => Task.CompletedTask);
 
     await Assert.That(lease.Token.IsCancellationRequested).IsFalse()
-      .Because("lease shouldn't have cancelled — dispatch completed cleanly");
+      .Because("lease shouldn't have canceled — dispatch completed cleanly");
   }
 
   [Test]
@@ -74,7 +74,7 @@ public class LeaseDispatchExecutorTests {
     var time = _provider();
     using var lease = _newLease(time);
 
-    // Receptor that honors CT: awaits the ct, throws OCE when cancelled.
+    // Receptor that honors CT: awaits the ct, throws OCE when canceled.
     var helper = LeaseDispatchExecutor.RunWithLeaseAsync(lease, async ct => {
       var honorTcs = new TaskCompletionSource();
       using var reg = ct.Register(() => honorTcs.TrySetResult());

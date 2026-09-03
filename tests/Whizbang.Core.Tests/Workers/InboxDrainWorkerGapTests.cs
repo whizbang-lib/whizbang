@@ -357,7 +357,7 @@ public class InboxDrainWorkerGapTests {
   /// early return skips line 133 entirely.
   /// </summary>
   [Test]
-  public async Task ExecuteAsync_CancelledWhileWaitingForSchemaGate_ReturnsWithoutBatchingAsync() {
+  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_ReturnsWithoutBatchingAsync() {
     var coord = new ScriptedCoordinator();
     var drain = new RecordingDrainChannel();
     var writer = new TestInboxWriter();
@@ -767,12 +767,12 @@ public class InboxDrainWorkerGapTests {
 
   /// <summary>
   /// Covers the cancellation short-circuit in the batch dispatch loop (lines 191-193): the
-  /// stopping token is cancelled DURING the fetch, so even though rows came back, the per-sid
+  /// stopping token is canceled DURING the fetch, so even though rows came back, the per-sid
   /// loop breaks before any write. The stream is still marked drained and the worker exits its
   /// loop via the outer OCE catch, logging LogStopped (EventId 2).
   /// </summary>
   [Test]
-  public async Task ExecuteAsync_CancelledDuringBatchFetch_BreaksBeforeDispatch_StopsCleanlyAsync() {
+  public async Task ExecuteAsync_CanceledDuringBatchFetch_BreaksBeforeDispatch_StopsCleanlyAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     using var cts = new CancellationTokenSource();
 
@@ -811,12 +811,12 @@ public class InboxDrainWorkerGapTests {
 
   /// <summary>
   /// Covers the OperationCanceledException rethrow filter in the batch dispatch loop
-  /// (lines 229-230): a write that throws OCE while the stopping token IS cancelled must be
+  /// (lines 229-230): a write that throws OCE while the stopping token IS canceled must be
   /// rethrown (not swallowed as a per-stream error), unwinding through the marker-release
   /// finally into the outer OCE catch — clean stop, LogStopped, no LogDrainError.
   /// </summary>
   [Test]
-  public async Task ExecuteAsync_WriterThrowsOceWhileCancelled_RethrowsAndStopsCleanlyAsync() {
+  public async Task ExecuteAsync_WriterThrowsOceWhileCanceled_RethrowsAndStopsCleanlyAsync() {
     var streamId = (Guid)TrackedGuid.NewMedo();
     using var cts = new CancellationTokenSource();
 

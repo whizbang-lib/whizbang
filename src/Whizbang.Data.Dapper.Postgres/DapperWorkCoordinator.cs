@@ -700,9 +700,9 @@ public partial class DapperWorkCoordinator(
 
   [LoggerMessage(
     Level = LogLevel.Information,
-    Message = "process_work_batch cancelled for instance {InstanceId} ({ServiceName})"
+    Message = "process_work_batch canceled for instance {InstanceId} ({ServiceName})"
   )]
-  static partial void LogWorkBatchCancelled(ILogger logger, Guid instanceId, string serviceName, Exception ex);
+  static partial void LogWorkBatchCanceled(ILogger logger, Guid instanceId, string serviceName, Exception ex);
 
   [LoggerMessage(
     Level = LogLevel.Error,

@@ -179,7 +179,7 @@ public class AsyncTestHelpersTests {
   }
 
   [Test]
-  public async Task AssertNever_PreCancelledToken_ThrowsOperationCanceledAsync() {
+  public async Task AssertNever_PreCanceledToken_ThrowsOperationCanceledAsync() {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
@@ -257,7 +257,7 @@ public class AsyncTestHelpersTests {
   }
 
   [Test]
-  public async Task AssertNeverAsyncOverload_PreCancelledToken_ThrowsAsync() {
+  public async Task AssertNeverAsyncOverload_PreCanceledToken_ThrowsAsync() {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 

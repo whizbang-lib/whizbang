@@ -36,7 +36,7 @@ public static partial class TransportBatchGuard {
   /// <para>
   /// The first version of this guard took a single token and the call site passed the per-batch one.
   /// It shipped, and a host still terminated silently with the guard present in the assembly:
-  /// the transport cancelled the batch, the guard read that as a shutdown, and the exception
+  /// the transport canceled the batch, the guard read that as a shutdown, and the exception
   /// escaped. Splitting the parameters makes that substitution impossible to write by accident.
   /// </para>
   /// </remarks>

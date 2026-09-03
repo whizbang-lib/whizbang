@@ -85,7 +85,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
   [Test]
   [Timeout(30000)]
-  public async Task XactLock_WhenCancelled_ThrowsOperationCanceledAsync(CancellationToken cancellationToken) {
+  public async Task XactLock_WhenCanceled_ThrowsOperationCanceledAsync(CancellationToken cancellationToken) {
     // Arrange — acquire lock from a separate connection so try-lock will need to retry
     var lockId = Math.Abs(Guid.NewGuid().GetHashCode()) % int.MaxValue;
 
@@ -120,7 +120,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       threw = true;
     }
 
-    // Assert — should have been cancelled
+    // Assert — should have been canceled
     await Assert.That(threw).IsTrue();
 
     // Cleanup — release holding lock
@@ -299,7 +299,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
     cts.CancelAfter(TimeSpan.FromSeconds(5));
 
-    // Assert — excluded, so it waited and was cancelled rather than running DDL alongside the
+    // Assert — excluded, so it waited and was canceled rather than running DDL alongside the
     // holder. On a per-process key it would take its own lock, sail through, and throw nothing.
     await Assert.That(async () =>
         await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cts.Token))
@@ -511,8 +511,8 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
   [Test]
   [Timeout(30000)]
-  public async Task Initialization_WhenCancelled_ThrowsOperationCanceledAsync(CancellationToken cancellationToken) {
-    // Arrange — create a pre-cancelled token
+  public async Task Initialization_WhenCanceled_ThrowsOperationCanceledAsync(CancellationToken cancellationToken) {
+    // Arrange — create a pre-canceled token
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
     await using var context = CreateDbContext();

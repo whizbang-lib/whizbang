@@ -346,7 +346,7 @@ public class ImmediateDetachedDrainerTests {
   // ==========================================================================
 
   [Test]
-  public async Task DrainAsync_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task DrainAsync_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var drainer = new ImmediateDetachedDrainer();
     var invoker = new TrackingReceptorInvoker();
@@ -361,7 +361,7 @@ public class ImmediateDetachedDrainerTests {
   }
 
   [Test]
-  public async Task DrainAsync_CancelledDuringDrain_StopsProcessingAsync() {
+  public async Task DrainAsync_CanceledDuringDrain_StopsProcessingAsync() {
     // Arrange
     var drainer = new ImmediateDetachedDrainer();
     using var cts = new CancellationTokenSource();

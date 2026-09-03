@@ -23,7 +23,7 @@ public class ReceptorTests : DiagnosticTestBase {
   public record UpdateOrder(Guid OrderId, string[] Changes);
   public record OrderUpdated(Guid OrderId, string[] Changes);
   public record CancelOrder(Guid OrderId);
-  public record OrderCancelled(Guid OrderId);
+  public record OrderCanceled(Guid OrderId);
 
   // Test receptor implementations (will be created when implementing)
   public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {

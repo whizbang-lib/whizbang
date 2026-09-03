@@ -7,7 +7,7 @@
 --                wh_transition_schedule — pause / resume / cancel via a target status, with optional
 --                                         optimistic-concurrency version check.
 --              Adds a partial UNIQUE index on schedule_key so create-or-update-by-key is race-safe.
--- Dependencies: 066 (wh_schedules), 067 (wh_cron_next). Status: 0=Active 1=Paused 2=Completed 3=Cancelled.
+-- Dependencies: 066 (wh_schedules), 067 (wh_cron_next). Status: 0=Active 1=Paused 2=Completed 3=Canceled.
 
 -- Idempotent-by-key needs a unique key (partial: null keys are never deduplicated).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_wh_schedules_key
@@ -136,7 +136,7 @@ DECLARE
   v_version BIGINT;
   v_stream UUID;
 BEGIN
-  -- Only Active(0) / Paused(1) are transitionable; Completed(2) / Cancelled(3) are terminal.
+  -- Only Active(0) / Paused(1) are transitionable; Completed(2) / Canceled(3) are terminal.
   UPDATE __SCHEMA__.wh_schedules
   SET status = p_target_status,
       version = version + 1

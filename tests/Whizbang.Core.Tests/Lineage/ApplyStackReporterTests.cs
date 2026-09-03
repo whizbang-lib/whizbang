@@ -106,7 +106,7 @@ public class ApplyStackReporterTests {
     await Assert.That(async () => await ApplyStackReporter.BuildAsync(
         query, new ApplyStackQueryOptions(), cancellationToken: cts.Token))
       .Throws<OperationCanceledException>()
-      .Because("a cancelled caller is not a degraded store — cancellation is never converted into a reason string");
+      .Because("a canceled caller is not a degraded store — cancellation is never converted into a reason string");
   }
 
   [Test]

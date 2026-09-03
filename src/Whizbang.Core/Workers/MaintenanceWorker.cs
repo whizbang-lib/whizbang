@@ -425,7 +425,7 @@ public sealed partial class MaintenanceWorker(
         var decisions = await guard.OnBeforeReapAsync(batch, ct).ConfigureAwait(false);
         var proceed = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
         var proceedTargets = new List<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>();
-        var cancelled = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
+        var canceled = new List<Whizbang.Core.Lifecycle.PerspectiveRowRef>();
         var deferred = new Dictionary<DateTimeOffset, List<Whizbang.Core.Lifecycle.PerspectiveRowRef>>();
         var defaultDefer = DateTimeOffset.UtcNow.AddSeconds(_options.DestructionRetryBackoffSeconds);
         foreach (var target in batch) {
@@ -439,7 +439,7 @@ public sealed partial class MaintenanceWorker(
               proceedTargets.Add(target);
               break;
             case Whizbang.Core.Lifecycle.PerspectiveRowDispositionKind.Cancel:
-              cancelled.Add(rowRef);
+              canceled.Add(rowRef);
               break;
             default:
               var until = decision.DeferUntil ?? defaultDefer;
@@ -457,11 +457,11 @@ public sealed partial class MaintenanceWorker(
         foreach (var (until, refs) in deferred) {
           await coordinator.HoldPerspectiveRowDestructionAsync(refs, until, ct).ConfigureAwait(false);
         }
-        if (cancelled.Count > 0) {
-          await coordinator.HoldPerspectiveRowDestructionAsync(cancelled, DateTimeOffset.MaxValue, ct).ConfigureAwait(false);
+        if (canceled.Count > 0) {
+          await coordinator.HoldPerspectiveRowDestructionAsync(canceled, DateTimeOffset.MaxValue, ct).ConfigureAwait(false);
         }
         LogRowGuardDecisions(_logger, batch.Count, proceed.Count,
-          batch.Count - proceed.Count - cancelled.Count, cancelled.Count);
+          batch.Count - proceed.Count - canceled.Count, canceled.Count);
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
         throw;
       } catch (Exception ex) {
@@ -882,8 +882,8 @@ public sealed partial class MaintenanceWorker(
   private static partial void LogOffloadSweepFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 39, Level = LogLevel.Information,
-    Message = "Row guard decisions: offered {Offered}, proceeded {Proceeded}, deferred {Deferred}, cancelled {Cancelled}")]
-  private static partial void LogRowGuardDecisions(ILogger logger, int offered, int proceeded, int deferred, int cancelled);
+    Message = "Row guard decisions: offered {Offered}, proceeded {Proceeded}, deferred {Deferred}, canceled {Canceled}")]
+  private static partial void LogRowGuardDecisions(ILogger logger, int offered, int proceeded, int deferred, int canceled);
 
   [LoggerMessage(EventId = 40, Level = LogLevel.Warning,
     Message = "Row guard offering failed for {RowCount} row(s) (attempt {Attempt}/{MaxRetries}); the batch is held and re-offered next cycle")]

@@ -201,7 +201,7 @@ public class RabbitMQConnectionRetryTests {
   }
 
   [Test]
-  public async Task CreateConnectionWithRetryAsync_WhenCancelled_ThrowsOperationCanceledExceptionAsync() {
+  public async Task CreateConnectionWithRetryAsync_WhenCanceled_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var options = new RabbitMQOptions {
       InitialRetryAttempts = 5,

@@ -418,7 +418,7 @@ public class StandbyWatcherTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CancelledBeforeSchemaReady_ReturnsCleanlyAsync(
+  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(
       CancellationToken testToken) {
     // A host that fails during migration stops everything it built. The watcher reads the
     // standby table, which may not exist yet.

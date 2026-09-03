@@ -176,7 +176,7 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
 
     var cancel = await _transitionAsync(conn, id, target: 3);
     await Assert.That(cancel.Updated).IsTrue();
-    await Assert.That((await _readAsync(conn, id)).Status).IsEqualTo((short)3);   // Cancelled
+    await Assert.That((await _readAsync(conn, id)).Status).IsEqualTo((short)3);   // Canceled
   }
 
   [Test]
@@ -203,6 +203,6 @@ public class TemporalScheduleManagementSqlTests : EFCoreTestBase {
     var pauseAfterCancel = await _transitionAsync(conn, id, target: 1);
 
     await Assert.That(pauseAfterCancel.Updated).IsFalse();
-    await Assert.That((await _readAsync(conn, id)).Status).IsEqualTo((short)3);   // still Cancelled
+    await Assert.That((await _readAsync(conn, id)).Status).IsEqualTo((short)3);   // still Canceled
   }
 }

@@ -156,9 +156,9 @@ public class AzureServiceBusProvisioningPathTests {
     await Assert.That(transport.IsInitialized).IsFalse();
   }
 
-  /// <summary>Pre-cancelled token short-circuits before any work.</summary>
+  /// <summary>Pre-canceled token short-circuits before any work.</summary>
   [Test]
-  public async Task InitializeAsync_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task InitializeAsync_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var adminClient = new RecordingAdminClient();
     var transport = _createTransport(new FakeServiceBusClient(CLOUD_NAMESPACE), adminClient);
     using var cts = new CancellationTokenSource();

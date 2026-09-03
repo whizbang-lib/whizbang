@@ -305,8 +305,8 @@ and `start-release minor` after the stable computes `0.960.0`.
 - **Never** push directly to `develop` or `main` — both are protected; use a PR. Automated jobs that
   need to reach a protected branch must open a PR (see `sync-develop`).
 - **Concurrency:** the CI concurrency group includes `github.event_name` so a release **PR** run can
-  never cancel the release-branch **push** run (a publish must never be cancelled mid-push). Don't
-  collapse them back into one group — that reintroduces the spurious cancelled-`CI Result` that
+  never cancel the release-branch **push** run (a publish must never be canceled mid-push). Don't
+  collapse them back into one group — that reintroduces the spurious canceled-`CI Result` that
   blocks release merges.
 - **Required status checks** on `main`/`develop` must match the *current* CI job names. If you rename
   a job (e.g. split "Service Bus Integration" into `(whizbang)`/`(ecommerce)`), update the branch

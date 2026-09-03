@@ -140,11 +140,11 @@ public class StreamCloserTests {
   public async Task Close_HookCancels_DoesNotTruncateAsync() {
     var log = new List<string>();
     var coord = new FakeCloseCoordinator(log);
-    var hook = new RecordingHook(log, DestructionResult.Cancelled);
+    var hook = new RecordingHook(log, DestructionResult.Canceled);
 
     var result = await _closer(coord, hook).CloseAsync(Guid.NewGuid(), throughVersion: 10);
 
-    await Assert.That(result.Status).IsEqualTo("cancelled");
+    await Assert.That(result.Status).IsEqualTo("canceled");
     await Assert.That(coord.CloseCalls).IsEqualTo(0)
       .Because("A hook that cancels vetoes the close — nothing is truncated.");
     await Assert.That(string.Join(",", log)).IsEqualTo("before")
@@ -249,7 +249,7 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_PreHookCancelled_AbortsWithoutRecordingAHookFailureAsync() {
+  public async Task Close_PreHookCanceled_AbortsWithoutRecordingAHookFailureAsync() {
     // Both catches around the pre-hook rethrow, so the close aborts either way and nothing is
     // truncated. The narrow one exists purely so a shutdown is not RECORDED as a hook failure:
     // this log is how an operator finds a carry-forward that is genuinely broken, and every
@@ -271,7 +271,7 @@ public class StreamCloserTests {
   }
 
   [Test]
-  public async Task Close_PostHookCancelled_SurfacesEvenThoughTheCloseCommittedAsync() {
+  public async Task Close_PostHookCanceled_SurfacesEvenThoughTheCloseCommittedAsync() {
     // The companion to PostHookThrows_CloseStillSucceeds. The truncate has already committed by
     // the time this hook runs, so a throwing notify or metrics call is non-fatal and the close is
     // reported as it happened. A cancellation cannot undo the truncate either — what it does is

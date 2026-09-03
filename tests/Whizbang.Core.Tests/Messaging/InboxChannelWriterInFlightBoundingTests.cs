@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <para>
 /// Entries older than the lease cannot legitimately be in flight — the lease has lapsed and the
 /// store will re-issue those rows to whoever claims them next — so ageing them out is safe and
-/// bounds the set. It also means a flag stranded by a hung or cancelled task stops blocking that
+/// bounds the set. It also means a flag stranded by a hung or canceled task stops blocking that
 /// message forever, which is the failure mode that made an earlier in-memory filter on this path
 /// unrecoverable without a process restart.
 /// </para>

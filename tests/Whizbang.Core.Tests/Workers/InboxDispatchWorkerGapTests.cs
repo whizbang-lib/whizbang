@@ -367,7 +367,7 @@ public class InboxDispatchWorkerGapTests {
   /// no dispatched work).
   /// </summary>
   [Test]
-  public async Task SchemaGateWaitCancelledByShutdown_ExitsCleanlyWithoutDispatchingAsync() {
+  public async Task SchemaGateWaitCanceledByShutdown_ExitsCleanlyWithoutDispatchingAsync() {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();

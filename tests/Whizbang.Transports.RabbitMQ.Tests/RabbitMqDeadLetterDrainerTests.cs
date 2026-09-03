@@ -230,7 +230,7 @@ public class RabbitMqDeadLetterDrainerTests {
   }
 
   [Test]
-  public async Task Drain_CancelledAfterAck_ReturnsPartialCountAsync() {
+  public async Task Drain_CanceledAfterAck_ReturnsPartialCountAsync() {
     using var cts = new CancellationTokenSource();
     var channel = new DrainFakeChannel { OnAck = () => cts.Cancel() };
     channel.GetResults.Enqueue(_dlqResult(1, _withEnvelopeType(), messageId: _id1));

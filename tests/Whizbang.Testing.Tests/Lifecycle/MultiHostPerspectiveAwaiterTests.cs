@@ -137,7 +137,7 @@ public class MultiHostPerspectiveAwaiterTests {
   }
 
   [Test]
-  public async Task WaitAsync_PreCancelledToken_PropagatesCancellationAsync() {
+  public async Task WaitAsync_PreCanceledToken_PropagatesCancellationAsync() {
     var (_, host) = _makeHost();
     using var awaiter = new MultiHostPerspectiveAwaiter<TestEvent>((host, 1));
     using var cts = new CancellationTokenSource();

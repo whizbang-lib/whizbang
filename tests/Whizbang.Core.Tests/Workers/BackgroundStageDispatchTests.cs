@@ -126,7 +126,7 @@ public class BackgroundStageDispatchTests {
   }
 
   [Test]
-  public async Task StartLongRunning_PreCancelledToken_ReturnsCanceledTaskAsync() {
+  public async Task StartLongRunning_PreCanceledToken_ReturnsCanceledTaskAsync() {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 

@@ -194,7 +194,7 @@ public class TransportConsumerWorkerResilienceTests {
   }
 
   [Test]
-  public async Task SubscribeWithRetry_WhenCancelled_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SubscribeWithRetry_WhenCanceled_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var transport = new FailingTransport(failureCount: 100); // Always fails
     var options = _createResilienceOptions();

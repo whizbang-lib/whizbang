@@ -671,7 +671,7 @@ public class SyncEventTrackerTests {
   }
 
   [Test]
-  public async Task WaitForEventsAsync_CancelledDuringWaitAsync() {
+  public async Task WaitForEventsAsync_CanceledDuringWaitAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -727,7 +727,7 @@ public class SyncEventTrackerTests {
   }
 
   [Test]
-  public async Task WaitForPerspectiveEventsAsync_CancelledDuringWaitAsync() {
+  public async Task WaitForPerspectiveEventsAsync_CanceledDuringWaitAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();
@@ -769,7 +769,7 @@ public class SyncEventTrackerTests {
   }
 
   [Test]
-  public async Task WaitForAllPerspectivesAsync_CancelledDuringWaitAsync() {
+  public async Task WaitForAllPerspectivesAsync_CanceledDuringWaitAsync() {
     var tracker = new SyncEventTracker();
     var streamId = Guid.NewGuid();
     var eventId = Guid.NewGuid();

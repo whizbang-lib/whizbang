@@ -322,7 +322,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task SendAsync_Generic_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_Generic_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new W3Command("cancel");
@@ -365,7 +365,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task SendAsync_NonGeneric_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_NonGeneric_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
@@ -393,7 +393,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task SendAsync_WithContextAndOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_WithContextAndOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
@@ -445,7 +445,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithOptions_Result_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_WithOptions_Result_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
@@ -475,7 +475,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithOptions_Void_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_WithOptions_Void_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(voidInvoker: _defaultVoidInvoker());
     using var cts = new CancellationTokenSource();
@@ -739,7 +739,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task LocalInvokeWithReceiptAsync_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeWithReceiptAsync_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     using var cts = new CancellationTokenSource();
@@ -858,7 +858,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task PublishAsync_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task PublishAsync_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     using var cts = new CancellationTokenSource();
@@ -907,7 +907,7 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task CascadeMessageAsync_CancelledToken_ThrowsAsync() {
+  public async Task CascadeMessageAsync_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     using var cts = new CancellationTokenSource();

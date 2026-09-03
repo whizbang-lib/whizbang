@@ -430,7 +430,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task SendAsync_WithOptionsAndCancelledToken_ThrowsOperationCanceledAsync() {
+  public async Task SendAsync_WithOptionsAndCanceledToken_ThrowsOperationCanceledAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("cancel-test");
@@ -567,7 +567,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_Void_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_Void_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(voidInvoker: _defaultVoidInvoker());
     var command = new TestCommand("cancel-void");
@@ -626,7 +626,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_Typed_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_Typed_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("typed-cancel");
@@ -731,7 +731,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeWithReceiptAsync_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeWithReceiptAsync_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     var command = new TestCommand("receipt-cancel");
@@ -984,7 +984,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task CascadeMessageAsync_WithCancelledToken_ThrowsOperationCanceledAsync() {
+  public async Task CascadeMessageAsync_WithCanceledToken_ThrowsOperationCanceledAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var evt = new TestEvent(Guid.NewGuid());
@@ -1040,7 +1040,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task PublishAsync_WithOptions_CancelledToken_ThrowsAsync() {
+  public async Task PublishAsync_WithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var evt = new TestEvent(Guid.NewGuid());
@@ -1438,7 +1438,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task SendAsync_ObjectWithOptions_CancelledToken_ThrowsAsync() {
+  public async Task SendAsync_ObjectWithOptions_CanceledToken_ThrowsAsync() {
     // Arrange
     var dispatcher = _createDispatcher(invoker: _defaultInvoker());
     object command = new TestCommand("obj-cancel");
@@ -1506,7 +1506,7 @@ public class DispatcherComprehensiveCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_Typed_WithTracingOptionsAndCancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_Typed_WithTracingOptionsAndCanceledToken_ThrowsAsync() {
     // Arrange - covers cancellation check in _localInvokeWithTracingAndOptionsAsync
     var traceStore = new StubTraceStore();
     var dispatcher = _createDispatcher(traceStore: traceStore, invoker: _defaultInvoker());

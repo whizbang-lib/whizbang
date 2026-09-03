@@ -148,11 +148,11 @@ public class StartupPipelineRunnerTests {
   }
 
   [Test]
-  public async Task RunAsync_WhenAStepIsCancelledByShutdown_UnwindsInsteadOfReportingFailedAsync() {
+  public async Task RunAsync_WhenAStepIsCanceledByShutdown_UnwindsInsteadOfReportingFailedAsync() {
     // The companion to WhenAStepThrows_ReportsFailedWithTheReason, and the opposite answer. A step
     // that throws is mapped into the report rather than unwinding the runner, because the report
     // is how everything downstream learns what happened and an exception destroys that record.
-    // A step cancelled by shutdown has no such record to preserve: writing "Failed" for it would
+    // A step canceled by shutdown has no such record to preserve: writing "Failed" for it would
     // claim a startup failure that did not happen, and the steps after it would still run on a
     // host that is stopping.
     using var stopping = new CancellationTokenSource();

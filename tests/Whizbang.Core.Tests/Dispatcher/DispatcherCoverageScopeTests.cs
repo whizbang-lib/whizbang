@@ -107,7 +107,7 @@ public class DispatcherCoverageScopeTests {
 
   [Test]
   [NotInParallel]
-  public async Task CascadeMessageAsync_WithCancelledToken_ThrowsOperationCancelledAsync() {
+  public async Task CascadeMessageAsync_WithCanceledToken_ThrowsOperationCanceledAsync() {
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     var cts = new CancellationTokenSource();
     await cts.CancelAsync();
@@ -137,7 +137,7 @@ public class DispatcherCoverageScopeTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_VoidWithDispatchOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_VoidWithDispatchOptions_CanceledToken_ThrowsAsync() {
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     var cts = new CancellationTokenSource();
     await cts.CancelAsync();
@@ -155,7 +155,7 @@ public class DispatcherCoverageScopeTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_WithDispatchOptions_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_WithDispatchOptions_CanceledToken_ThrowsAsync() {
     var dispatcher = new ScopeTestDispatcher(_buildProvider());
     var cts = new CancellationTokenSource();
     await cts.CancelAsync();

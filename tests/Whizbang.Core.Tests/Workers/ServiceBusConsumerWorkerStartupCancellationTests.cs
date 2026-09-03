@@ -26,7 +26,7 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task CancelledWhileWaitingForTheSchemaGate_CancelsTheReadinessSignalAsync(
+  public async Task CanceledWhileWaitingForTheSchemaGate_CancelsTheReadinessSignalAsync(
       CancellationToken cancellationToken) {
     // A host whose schema step never completes: the gate is never marked ready, so the worker is
     // still parked on it when shutdown arrives.
@@ -46,11 +46,11 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task CancelledWhileSubscribing_CancelsTheReadinessSignalAsync(
+  public async Task CanceledWhileSubscribing_CancelsTheReadinessSignalAsync(
       CancellationToken cancellationToken) {
     // Past the gate and into subscription setup, which is where a broker that is slow to answer
     // leaves the worker when shutdown arrives.
-    var transport = new StubTransport { BlockSubscribeUntilCancelled = true };
+    var transport = new StubTransport { BlockSubscribeUntilCanceled = true };
     var worker = _worker(transport, SchemaReadyGate.AlreadyReady());
 
     using var stopping = new CancellationTokenSource();
@@ -83,11 +83,11 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
   }
 
   /// <summary>
-  /// Subscribes instantly by default; with <see cref="BlockSubscribeUntilCancelled"/> it parks
+  /// Subscribes instantly by default; with <see cref="BlockSubscribeUntilCanceled"/> it parks
   /// inside the subscribe call, which is the window the second test needs.
   /// </summary>
   private sealed class StubTransport : ITransport {
-    public bool BlockSubscribeUntilCancelled { get; init; }
+    public bool BlockSubscribeUntilCanceled { get; init; }
     public TaskCompletionSource SubscribeEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public bool IsInitialized => true;
@@ -100,7 +100,7 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
         TransportDestination destination,
         CancellationToken cancellationToken = default) {
       SubscribeEntered.TrySetResult();
-      if (BlockSubscribeUntilCancelled) {
+      if (BlockSubscribeUntilCanceled) {
         await Task.Delay(Timeout.Infinite, cancellationToken);
       }
       return new StubSubscription();
@@ -112,7 +112,7 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
         TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       SubscribeEntered.TrySetResult();
-      if (BlockSubscribeUntilCancelled) {
+      if (BlockSubscribeUntilCanceled) {
         await Task.Delay(Timeout.Infinite, cancellationToken);
       }
       return new StubSubscription();

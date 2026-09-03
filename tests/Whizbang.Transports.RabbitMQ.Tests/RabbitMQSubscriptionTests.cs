@@ -227,7 +227,7 @@ public class RabbitMQSubscriptionTests {
 
     await Assert.That(channel.BasicCancelAsyncCalled).IsTrue();
     await Assert.That(channel.IsDisposed).IsTrue();
-    await Assert.That(logger.HasMessageContaining("Cancelled consumer")).IsTrue();
+    await Assert.That(logger.HasMessageContaining("Canceled consumer")).IsTrue();
     await Assert.That(logger.HasMessageContaining("Disposed channel")).IsTrue();
   }
 
