@@ -498,6 +498,17 @@ public static class WorkerPipelineExtensions {
     // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();
     services.AddOptions<ClaimWorkerOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<ClaimWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<ClaimWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Claim"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddOptions<OutboxCompletionFlushWorkerOptions>();
     services.AddOptions<PerspectiveCompletionFlushWorkerOptions>();
     services.AddOptions<FailureFlushWorkerOptions>();
@@ -516,8 +527,10 @@ public static class WorkerPipelineExtensions {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<DeadLetterRecoveryOptions>(options => {
         if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
           Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
             configuration.GetSection("Whizbang:DeadLetterRecovery"), options);
+#pragma warning restore IL2026
         }
       });
     });
@@ -526,8 +539,10 @@ public static class WorkerPipelineExtensions {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
       return new Microsoft.Extensions.Options.ConfigureOptions<TransportDeadLetterDrainWorkerOptions>(options => {
         if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
           Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
             configuration.GetSection("Whizbang:Workers:TransportDeadLetterDrain"), options);
+#pragma warning restore IL2026
         }
       });
     });

@@ -895,7 +895,7 @@ public partial class DapperWorkCoordinator(
     // Phase C lands the full envelope-deserializing path. For now Dapper backend
     // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
     var rows = await connection.QueryAsync<ClaimWorkRow>(
-      "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease)",
+      "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh)",
       new {
         Id = request.InstanceId,
         Svc = request.ServiceName,
@@ -903,7 +903,8 @@ public partial class DapperWorkCoordinator(
         Pid = request.ProcessId,
         Max = request.MaxStreams,
         Part = request.PartitionCount,
-        Lease = request.LeaseSeconds
+        Lease = request.LeaseSeconds,
+        Fresh = request.FreshWorkShare
       });
     var perspectiveStreamIds = new List<Guid>();
     var sawOutboxOrInbox = false;

@@ -30,4 +30,5 @@ public sealed record ClaimWorkRequest(
   int MaxStreams = 1000,
   int PartitionCount = 10000,
   int LeaseSeconds = 300,
-  bool IncludeOutstanding = false);
+  bool IncludeOutstanding = false,
+  double FreshWorkShare = 0.5);
