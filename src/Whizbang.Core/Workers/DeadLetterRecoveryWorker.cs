@@ -68,6 +68,14 @@ public partial class DeadLetterRecoveryWorker(
     return base.StopAsync(cancellationToken);
   }
 
+  private int _noServiceLogged;
+
+  private void _logNoRecoveryServiceOnce() {
+    if (Interlocked.Exchange(ref _noServiceLogged, 1) == 0) {
+      LogNoRecoveryService(_logger);
+    }
+  }
+
   private long _totalScans;
   private long _totalRecovered;
   private long _totalHeld;
@@ -131,14 +139,18 @@ public partial class DeadLetterRecoveryWorker(
         // in the DLQ surface.
         var svc = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
         if (svc is null) {
-          return;
-        }
-        var scheduled = await svc.ResetForGenerationAsync(current, stoppingToken).ConfigureAwait(false);
-        if (scheduled > 0) {
-          Interlocked.Add(ref _totalGenerationReplays, scheduled);
-          LogGenerationReplay(_logger, scheduled, current);
-          _metrics?.GenerationReplayScheduled.Add(scheduled,
-            new KeyValuePair<string, object?>("generation", current));
+          // Loudly, and only the sweep: the old code returned here, which killed the WHOLE
+          // worker — a host missing the service looked identical to a healthy quiet one,
+          // and in production 20,000 due rows sat behind that silence for a day.
+          _logNoRecoveryServiceOnce();
+        } else {
+          var scheduled = await svc.ResetForGenerationAsync(current, stoppingToken).ConfigureAwait(false);
+          if (scheduled > 0) {
+            Interlocked.Add(ref _totalGenerationReplays, scheduled);
+            LogGenerationReplay(_logger, scheduled, current);
+            _metrics?.GenerationReplayScheduled.Add(scheduled,
+              new KeyValuePair<string, object?>("generation", current));
+          }
         }
       } catch (Exception ex) {
         LogError(_logger, ex);
@@ -218,9 +230,11 @@ public partial class DeadLetterRecoveryWorker(
     var scanRecovered = 0;
     try {
       // Optional — no persistence layer wired = no scanning. Same as the startup-replay
-      // branch above; keeps the worker safe to register everywhere.
+      // branch above; keeps the worker safe to register everywhere. Said once, not swallowed:
+      // silent absence is indistinguishable from healthy quiet.
       var svc = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
       if (svc is null) {
+        _logNoRecoveryServiceOnce();
         return;
       }
       var policy = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryPolicy>();
@@ -340,6 +354,13 @@ public partial class DeadLetterRecoveryWorker(
       }
     }
   }
+
+  [LoggerMessage(EventId = 16, Level = LogLevel.Warning,
+    Message = "IDeadLetterRecoveryService is not registered: dead-letter recovery cannot scan and "
+            + "no dead-lettered rows will be re-driven on this host. Wire a persistence driver "
+            + "(e.g. the Postgres data package) or set Whizbang:DeadLetterRecovery:Enabled=false "
+            + "to silence this worker deliberately.")]
+  static partial void LogNoRecoveryService(ILogger logger);
 
   [LoggerMessage(EventId = 15, Level = LogLevel.Debug,
     Message = "DeadLetterRecoveryWorker deferred: {Reason} (unprocessed inbox rows={InboxRows})")]

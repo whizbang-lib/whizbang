@@ -225,6 +225,11 @@ public sealed class DeadLetterRecoveryOptions {
     // sane cadence (generation replay additionally re-offers after every deploy), don't park on
     // arrival, and hold for review once the budget is spent so poison stays visible.
     [MessageFailureReason.BrokerDeadLetter] = new("MediumRetry", 3, TimeSpan.FromHours(1), HoldForReviewAfterExhaustion: true),
+    // The observation counter proved redelivery is NOT making progress for this message —
+    // re-driving it mints a fresh dead letter and recovery ping-pongs with the quarantine
+    // (measured in production at ~190 rows/minute, throttled only by the loop breaker).
+    // Hold it where an operator can see it; auto-re-drive is the one certainly-wrong answer.
+    [MessageFailureReason.PoisonRedeliveryLoop] = new("HoldForReview", 0, TimeSpan.Zero, HoldForReviewAfterExhaustion: true),
   };
 }
 
