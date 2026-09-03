@@ -370,4 +370,57 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
 
     await Assert.That(coord.Deleted.Any(d => d.Table == FOLLOWER_TABLE)).IsTrue();
   }
+
+  /// <summary>
+  /// A guard that cancels the cycle from inside its own verdict, then throws cancellation.
+  /// </summary>
+  /// <remarks>
+  /// Cancelling before the call would be a weaker test: the cycle has cancellation checks of its
+  /// own ahead of the cascade block, and one of those would throw first — the arm under test would
+  /// never be entered and the assertion would pass on the wrong exception.
+  /// </remarks>
+  private sealed class CancellingFollowerGuard(CancellationTokenSource stopping)
+      : IPerspectiveRowDestructionGuard {
+    public IReadOnlyCollection<Type> GuardedModels => [typeof(FollowerModel)];
+
+    public ValueTask<IReadOnlyDictionary<Guid, PerspectiveRowDecision>> OnBeforeReapAsync(
+        IReadOnlyList<PerspectiveRowDestructionTarget> targets, CancellationToken ct = default) {
+      stopping.Cancel();
+      return ValueTask.FromException<IReadOnlyDictionary<Guid, PerspectiveRowDecision>>(
+        new OperationCanceledException());
+    }
+
+    public ValueTask OnAfterReapAsync(
+        IReadOnlyList<PerspectiveRowDestructionTarget> released, CancellationToken ct = default)
+      => ValueTask.CompletedTask;
+  }
+
+  [Test]
+  public async Task GuardedFollower_CanceledDuringShutdown_DoesNotBurnADestructionAttemptAsync() {
+    // The companion to the guard-failure test above. A guard that FAILED leaves rows unjudged, so
+    // recording a destruction failure and burning a retry attempt is right. A shutdown leaves them
+    // unjudged too, but it is not a verdict about the rows: MaxDestructionRetries is bounded and
+    // OnDestroyFailure decides what happens at the end of it, so counting an attempt here lets a
+    // few restarts during a deploy spend a cascaded row's whole budget without a guard ever having
+    // returned an opinion.
+    _registerGroup();
+    using var stopping = new CancellationTokenSource();
+    var coord = new CascadeCoordinator {
+      Journal = { new PerspectiveRowRef(ANNOUNCER_TABLE, Guid.CreateVersion7()) },
+      Tables = _tables(),
+      RowsById = { _followerTarget(Guid.CreateVersion7()) },
+    };
+    var (worker, logger) = _build(coord, new CancellingFollowerGuard(stopping));
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("the host asked to stop, and the rest of the cycle takes the same locks the "
+             + "shutdown path needs");
+    await Assert.That(coord.FailuresRecorded).IsEqualTo(0)
+      .Because("no guard returned a verdict, so no cascaded row may spend part of a retry budget "
+             + "it will need when the host comes back");
+    await Assert.That(logger.Snapshot().Any(e => e.Level == LogLevel.Warning)).IsFalse()
+      .Because("a shutdown logged as a guard failure is noise on every deploy, and it buries the "
+             + "observer errors this log exists to surface");
+  }
 }
