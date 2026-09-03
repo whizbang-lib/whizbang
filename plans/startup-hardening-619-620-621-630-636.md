@@ -27,14 +27,14 @@ design intent and is not a declaration the consumer wrote).
 | Date | Item | Status | Notes |
 |---|---|---|---|
 | 2026-09-03 | Discovery + plan | complete | All six items verified on develop e26cb1668. Branch `fix/startup-hardening-619-620-621-630-636` off `origin/develop`. |
-| 2026-09-03 | A. #621 idempotent registrations | pending | |
-| 2026-09-03 | B. #636 own+subscribe guard | pending | |
-| 2026-09-03 | C. #630 schema-qualified service id + logged fallback | pending | |
-| 2026-09-03 | D. #620 per-provider init guard | pending | |
-| 2026-09-03 | E. #619 library version always registered | pending | |
-| 2026-09-03 | F. notification data source reuse (redacted credentials) | pending | |
-| 2026-09-03 | G. docs site + `<docs>`/`<tests>` tags + ai-docs summary | pending | |
-| 2026-09-03 | H. full build, format, tests, coverage, PR | pending | |
+| 2026-09-03 | A. #621 idempotent registrations | GREEN (Core) | RED: `WorkerPipelineIdempotencyTests` 4 failures (6 steps, 6 observers, hosted count doubled 33→66, resolver "Assess registered more than once"). GREEN: marker guard at the top of `AddWhizbangWorkers` + `TryAddEnumerable` for the six enumerable registrations. Finding: hosted workers DID double on a second call; the marker fixes that too. |
+| 2026-09-03 | B. #636 own+subscribe guard | GREEN (Core) | RED: `RoutingBuilderExtensionsTests`, `EventSubscriptionDiscoveryTests` (no throw); wave 2 compile RED for `OwnedNamespaceMatcher` and `ThrowIfSubscribedNamespaceIsOwned`. GREEN: new `OwnedNamespaceMatcher`, guard on `RoutingOptions`, called from the factory and from discovery; three discovery tests re-arranged onto auto-discovered namespaces (names kept, docs cite them). |
+| 2026-09-03 | C. #630 schema-qualified service id + logged fallback | GREEN | RED: `OutboxDrainWorkerTests` log test (no line); `EFCoreWorkCoordinatorServiceIdTests` read PUBLIC's row instead of the service schema's (`ef-red.log`, the "worse" case: wrong identity, no error). GREEN: `GetSchemaWithFallback` + `BuildSchemaQualifiedName` in `GetLocalServiceIdAsync`; Warning EventId 49 in the drain worker's catch. |
+| 2026-09-03 | D. #620 per-provider init guard | GREEN | RED: two providers → 1 callback; two hosts → 1 (`ef-red.log`). GREEN: `ConditionalWeakTable<IServiceProvider,…>` keyed guard; `EnsureWhizbangInitializedAsync` passes `host.Services`. |
+| 2026-09-03 | E. #619 library version always registered | GREEN | RED: `ILibraryVersionProvider` null under a consumer-owned DbContext; `ComputeVerdict(null)` reason lacked the registration name (`ef-red.log`). GREEN: MSBuild target emits `LibraryVersionInfo.g.cs` from `$(Version)`; driver `TryAddSingleton<ILibraryVersionProvider>`; `ComputeVerdict(null)` names the missing registration. |
+| 2026-09-03 | F. notification data source reuse (redacted credentials) | GREEN | RED: three auto-discovery tests (data source not reused) and the E2E elector failed with the reporter's exact error, "No password has been provided but the backend requires one (in SASL/SCRAM-SHA-256)" (`ef-red.log`). GREEN: `INotificationDataSourceFallback`; fallback reads `NpgsqlOptionsExtension.DataSource` (EF1001 suppressed, same as the existing translator); auto-discovery borrows fallback → DI `NpgsqlDataSource`, logged once. RED pass method: `git stash push` of the six production files whose fixes define no new symbols, rebuild, run, `git stash pop`, `git diff` byte-identical to the pre-stash snapshot. |
+| 2026-09-03 | G. docs site + `<docs>`/`<tests>` tags + ai-docs summary | in progress | Docs worktree `docs/startup-hardening-619-636` off `origin/main` (develop there is stale; recent PRs land on main). Edited: routing.md (`#owned-and-subscribed`), turnkey-initialization.md, rolling-upgrades.md, drivers.md (`#bring-your-own-dbcontext`), troubleshooting.md. Pending: work-coordinator.md (#630), map regeneration, ai-docs summary. |
+| 2026-09-03 | H. full build, format, tests, coverage, PR | pending | Logs in the session scratchpad: `core-red-wave1.log`, `core-green.log`, `ef-green.log`. |
 
 ## Goals
 
