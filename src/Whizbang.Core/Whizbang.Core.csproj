@@ -5,6 +5,10 @@
     <RootNamespace>Whizbang.Core</RootNamespace>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <!-- Configuration binding uses the interceptor-based source generator, so the
+         BindConfiguration/Bind calls below compile to typed property assignments — the
+         zero-reflection rule holds without hand-written per-key binders. -->
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
     <!-- Emit source-generated files to disk for debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>

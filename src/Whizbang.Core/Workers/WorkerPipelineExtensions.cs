@@ -505,8 +505,32 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxHandlerWorkerOptions>();
     services.AddOptions<OutboxPublishWorkerOptions>();
     services.AddOptions<InboxDispatchWorkerOptions>();
+    // Bound, not just registered: AddOptions<T>() alone leaves the object on code defaults,
+    // which shipped a kill switch that bound to nothing — Whizbang__DeadLetterRecovery__Enabled=false
+    // sat on production pods while recovery ran Enabled=true. Binding is turnkey (the section
+    // names below are the documented operational keys) and degrades to code defaults when the
+    // host registers no IConfiguration at all. The configuration binder source generator
+    // intercepts these Bind calls, so no reflection reaches the AOT path.
     services.AddOptions<DeadLetterRecoveryOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<DeadLetterRecoveryOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<DeadLetterRecoveryOptions>(options => {
+        if (configuration is not null) {
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:DeadLetterRecovery"), options);
+        }
+      });
+    });
     services.AddOptions<TransportDeadLetterDrainWorkerOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<TransportDeadLetterDrainWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<TransportDeadLetterDrainWorkerOptions>(options => {
+        if (configuration is not null) {
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:TransportDeadLetterDrain"), options);
+        }
+      });
+    });
     services.AddOptions<MaintenanceWorkerOptions>();
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();
