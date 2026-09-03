@@ -28,14 +28,16 @@ public class StreamCloserTests {
     private readonly bool _throwOnBefore;
     private readonly bool _throwOnAfter;
     private readonly Exception? _beforeThrows;
+    private readonly Exception? _afterThrows;
     public DestructionReason LastReason { get; private set; }
     public DestructionGranularity LastGranularity { get; private set; }
 
     public RecordingHook(List<string> log, DestructionResult? result = null,
-        bool throwOnBefore = false, bool throwOnAfter = false, Exception? beforeThrows = null) {
+        bool throwOnBefore = false, bool throwOnAfter = false, Exception? beforeThrows = null,
+        Exception? afterThrows = null) {
       _log = log; _result = result ?? DestructionResult.Proceed();
       _throwOnBefore = throwOnBefore; _throwOnAfter = throwOnAfter;
-      _beforeThrows = beforeThrows;
+      _beforeThrows = beforeThrows; _afterThrows = afterThrows;
     }
 
     public ValueTask<DestructionResult> OnBeforeDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
@@ -53,6 +55,9 @@ public class StreamCloserTests {
 
     public ValueTask OnAfterDestructionAsync(DestructionContext context, CancellationToken cancellationToken = default) {
       _log.Add("after");
+      if (_afterThrows is not null) {
+        throw _afterThrows;
+      }
       if (_throwOnAfter) {
         throw new InvalidOperationException("notify failed");
       }
@@ -263,5 +268,25 @@ public class StreamCloserTests {
     await Assert.That(logger.LoggedAnyWarning()).IsFalse()
       .Because("a shutdown is not a carry-forward failure, and logging it as one buries the "
              + "failures this log exists to surface");
+  }
+
+  [Test]
+  public async Task Close_PostHookCancelled_SurfacesEvenThoughTheCloseCommittedAsync() {
+    // The companion to PostHookThrows_CloseStillSucceeds. The truncate has already committed by
+    // the time this hook runs, so a throwing notify or metrics call is non-fatal and the close is
+    // reported as it happened. A cancellation cannot undo the truncate either — what it does is
+    // stop the CALLER, which is mid-shutdown and has more streams queued behind this one.
+    var log = new List<string>();
+    var coord = new FakeCloseCoordinator(log);
+    var hook = new RecordingHook(log, afterThrows: new OperationCanceledException());
+
+    await Assert.That(async () =>
+        await _closer(coord, hook).CloseAsync(Guid.NewGuid(), throughVersion: 10))
+      .Throws<OperationCanceledException>()
+      .Because("the close is done and cannot be taken back, but the caller still has to learn "
+             + "the host is stopping before it starts the next one");
+    await Assert.That(coord.CloseCalls).IsEqualTo(1)
+      .Because("the truncate committed before the hook ran — the cancellation does not roll it "
+             + "back and the test must not imply it does");
   }
 }
