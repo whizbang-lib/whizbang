@@ -123,6 +123,27 @@ dedicated source. Tests: `NotificationDataSourceAutoDiscoveryTests`,
 `DbContextNotificationConnectionStringFallbackTests`, `DutyElectionByoDataSourceE2ETests` (real
 container, SCRAM-SHA-256).
 
+## 7. A gate transition wakes the claim loop from either wait
+
+`ClaimWorker` has two waits: a **spacing nap** (a delay after a repeat claim or an empty poll
+with the gate healthy) and the **semaphore wait**. `RequestImmediatePoll` (completion feedback
+from the flush workers) only releases the semaphore, deliberately, so a burst of completions
+cannot turn the nap into a tight loop; `SignalNewWork` (new rows) also cancels the nap. The
+NOTIFY gate's availability transition used to call `RequestImmediatePoll`, so an outage edge that
+landed during a nap waited the nap out, and the "immediate catch-up poll" the handler's own comment
+promised depended on which wait the worker happened to be in.
+
+- `_wakeNow()` releases the semaphore and cancels the nap; `SignalNewWork` and
+  `_onGateAvailabilityChanged` use it. `RequestImmediatePoll` is unchanged.
+- Tests that prove "prompt" behavior must not race a cadence: `ClaimWorkerGateCadenceTests.
+  GateFlipsToAvailable_TriggersImmediatePollAsync` uses an hour-long interval so the only way a poll
+  can arrive inside the safety-net wait is the transition waking the loop. Likewise, tests that
+  prove "nothing before the gate" (`UngatedWorkerAdoptionTests`) use an `ISchemaReadyGate` double
+  that reports when the worker is parked on it instead of sleeping and hoping.
+- Both tests failed exactly once each under the coverage-instrumented parallel suite before this
+  change and never in isolation; that pattern (timing budget, passes alone) is the signature to look
+  for. `ClaimWorkerReemissionBackoffTests` pins that completion feedback still cannot reach the nap.
+
 ---
 
 ## Verifying a change here
