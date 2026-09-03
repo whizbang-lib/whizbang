@@ -253,6 +253,33 @@ public class MaintenanceWorkerStreamGroupCascadeTests {
     await Assert.That(coord.Deleted).IsEmpty();
   }
 
+  [Test]
+  public async Task DrainCancelled_StopsTheCycleInsteadOfContinuingAsync() {
+    // The companion to DrainFailing_DoesNotFailTheCycle. A journal drain that fails leaves the
+    // seeds in place for the next cycle to recompute the closure, so losing this pass costs
+    // nothing but time. A cancelled drain is a stopping host, and the cascade that follows issues
+    // deletes across follower tables — work that should not start on the way down.
+    _registerGroup();
+    var coord = new CascadeCoordinator {
+      Tables = _tables(),
+      DrainThrows = new OperationCanceledException(),
+    };
+    var (worker, logger) = _build(coord);
+
+    // The catch is FILTERED on the token: an OperationCanceledException with nothing cancelled
+    // behind it is just a drain that threw an unfortunate type, and belongs in the wide arm.
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("the seeds survive either way; what must not survive is a cascade of deletes "
+             + "starting on a host that has been asked to stop");
+    await Assert.That(coord.Deleted).IsEmpty();
+    await Assert.That(logger.Snapshot().Any(e => e.Exception is OperationCanceledException)).IsFalse()
+      .Because("a shutdown logged as a drain failure is noise on every deploy");
+  }
+
   // --- Guarded cascade -------------------------------------------------------
   // A follower can carry its own destruction guard. The cascade must consult it rather
   // than delete on the announcer's authority alone, so the same verdicts apply here as on

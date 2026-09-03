@@ -193,4 +193,42 @@ public class MaintenanceWorkerTableRewriteTests {
 
     await Assert.That(coord.Requested).IsEmpty();
   }
+
+  [Test]
+  public async Task BloatScanCancelled_StopsTheCycleInsteadOfContinuingAsync() {
+    // The companion to BloatScanFails_MaintenanceCycleStillCompletes. A pg_stat read that fails is
+    // no reason to lose the reap that shares the tick — bloat reporting is advisory. A cancelled
+    // read is a stopping host, and the reap and sweep that follow take the locks the completion
+    // path needs.
+    var coord = new RewriteCoordinator { ScanThrows = new OperationCanceledException() };
+
+    await Assert.That(async () =>
+        await _buildWorker(coord, allowRewrite: true).RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("advisory work may fail without stopping the cycle, but it may not keep the cycle "
+             + "running after the host has been asked to stop");
+    await Assert.That(coord.Requested).IsEmpty();
+  }
+
+  [Test]
+  public async Task RecordingARewriteRequestCancelled_StopsInsteadOfMovingToTheNextTableAsync() {
+    // The companion to RecordingARewriteRequestFails_OtherCandidatesAreStillRecorded. One table
+    // failing to record must not skip the rest of the list; a cancellation ends the pass, and the
+    // candidates that were not reached are re-detected on the next scan — bloat does not go away
+    // on its own.
+    var coord = new RewriteCoordinator {
+      Candidates = {
+        new TableRewriteCandidate("wh_event_store", 4.2, Requested: false),
+        new TableRewriteCandidate("wh_inbox", 3.9, Requested: false),
+      },
+      RequestThrows = new OperationCanceledException(),
+    };
+
+    await Assert.That(async () =>
+        await _buildWorker(coord, allowRewrite: true).RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>();
+    await Assert.That(coord.Requested).Count().IsEqualTo(1)
+      .Because("the pass stops where the cancellation was seen rather than working through the "
+             + "rest of the candidate list on a stopping host");
+  }
 }
