@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -12,7 +13,19 @@ namespace Whizbang.Data.EFCore.Postgres;
 public static class DbContextInitializationRegistry {
   private static readonly List<DbContextInitializer> _initializers = [];
   private static readonly Lock _lock = new();
-  private static int _initialized;
+
+  /// <summary>
+  /// The idempotence guard, keyed per service provider — i.e. per host — not per process (issue
+  /// #620). A process that builds several hosts (a test suite with a host per test, a composition
+  /// root hosting two services) owns several databases, and each must be initialized; a
+  /// process-wide flag told every host after the first "already initialized" and left its database
+  /// with no schema. The weak table lets disposed hosts fall away.
+  /// </summary>
+  private static readonly ConditionalWeakTable<IServiceProvider, InitializationState> _initializedByProvider = new();
+
+  private sealed class InitializationState {
+    public int Done;
+  }
 
   /// <summary>
   /// Represents a DbContext initialization delegate.
@@ -49,11 +62,17 @@ public static class DbContextInitializationRegistry {
   /// <param name="serviceProvider">The service provider to resolve DbContexts from.</param>
   /// <param name="logger">Optional logger for diagnostic messages.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>data/turnkey-initialization#idempotency</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextInitializationRegistryTests.cs:InitializeAllAsync_DifferentServiceProviders_EachInitializeAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextInitializationRegistryTests.cs:InitializeAllAsync_SameServiceProviderTwice_SkipsAndSaysSoAsync</tests>
   public static async Task InitializeAllAsync(
       IServiceProvider serviceProvider,
       ILogger? logger = null,
       CancellationToken cancellationToken = default) {
-    if (Interlocked.CompareExchange(ref _initialized, 1, 0) == 1) {
+    ArgumentNullException.ThrowIfNull(serviceProvider);
+
+    var state = _initializedByProvider.GetValue(serviceProvider, static _ => new InitializationState());
+    if (Interlocked.CompareExchange(ref state.Done, 1, 0) == 1) {
       if (logger is not null) {
         DbContextInitializationLog.AlreadyInitialized(logger);
       }

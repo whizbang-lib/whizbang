@@ -22,10 +22,12 @@ public class DbContextInitializationRegistryTests {
     var list = (System.Collections.IList)initializersField.GetValue(null)!;
     list.Clear();
 
-    // Reset _initialized flag back to 0
-    var initializedField = typeof(DbContextInitializationRegistry)
-        .GetField("_initialized", BindingFlags.Static | BindingFlags.NonPublic)!;
-    initializedField.SetValue(null, 0);
+    // The pre-#620 process-wide flag. The guard is now keyed per service provider (a weak table
+    // that fresh FakeServiceProvider instances never collide in), so this only matters for a
+    // build that still carries the flag — tolerated rather than required.
+    typeof(DbContextInitializationRegistry)
+        .GetField("_initialized", BindingFlags.Static | BindingFlags.NonPublic)
+        ?.SetValue(null, 0);
   }
 
   [Test]
@@ -71,6 +73,55 @@ public class DbContextInitializationRegistryTests {
 
     // Assert — callback invoked only once
     await Assert.That(callCount).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// The guard protects "do not initialize the same host twice", not "do not initialize more than
+  /// once per process". A process that builds several hosts against several databases — every test
+  /// suite with a host per test, and any composition root that hosts more than one service — must
+  /// initialize each of them. The process-wide flag skipped every host after the first and left its
+  /// database with no schema at all (issue #620).
+  /// </summary>
+  [Test]
+  public async Task InitializeAllAsync_DifferentServiceProviders_EachInitializeAsync() {
+    // Arrange
+    var seen = new List<IServiceProvider>();
+    DbContextInitializationRegistry.Register<FakeDbContextA>(
+        (sp, _, _) => { seen.Add(sp); return Task.CompletedTask; });
+
+    var firstHost = new FakeServiceProvider();
+    var secondHost = new FakeServiceProvider();
+
+    // Act — two hosts in one process
+    await DbContextInitializationRegistry.InitializeAllAsync(firstHost);
+    await DbContextInitializationRegistry.InitializeAllAsync(secondHost);
+
+    // Assert — both ran, each against its own provider
+    await Assert.That(seen.Count).IsEqualTo(2)
+      .Because("a second host against a different database must not be told 'already initialized' "
+             + "by a flag that knows nothing about hosts or databases");
+    await Assert.That(seen[0]).IsSameReferenceAs(firstHost);
+    await Assert.That(seen[1]).IsSameReferenceAs(secondHost);
+  }
+
+  [Test]
+  public async Task InitializeAllAsync_SameServiceProviderTwice_SkipsAndSaysSoAsync() {
+    // Arrange
+    var callCount = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>(
+        (_, _, _) => { callCount++; return Task.CompletedTask; });
+    var host = new FakeServiceProvider();
+    var sink = new List<string>();
+    var logger = new ListLogger(sink);
+
+    // Act
+    await DbContextInitializationRegistry.InitializeAllAsync(host, logger);
+    await DbContextInitializationRegistry.InitializeAllAsync(host, logger);
+
+    // Assert — the second call is a documented no-op, and it is not silent about it
+    await Assert.That(callCount).IsEqualTo(1);
+    await Assert.That(sink.Any(l => l.Contains("already initialized", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("the guard firing must remain observable — it was the only signal in #620");
   }
 
   [Test]
@@ -137,5 +188,17 @@ public class DbContextInitializationRegistryTests {
 
   private sealed class FakeServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) => null;
+  }
+
+  private sealed class ListLogger(List<string> sink) : ILogger {
+    private readonly List<string> _sink = sink;
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (_sink) {
+        _sink.Add(formatter(state, exception));
+      }
+    }
   }
 }
