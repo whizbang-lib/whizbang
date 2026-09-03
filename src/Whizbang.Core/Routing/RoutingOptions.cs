@@ -433,6 +433,54 @@ public sealed class RoutingOptions {
   }
 
   /// <summary>
+  /// The owned-and-subscribed guard (issue #636): throws when a namespace declared through
+  /// <see cref="SubscribeTo"/> or <see cref="SubscribeToNamespaceOf{T}"/> is also owned — exactly, or
+  /// as a child of an <see cref="OwnDomains"/> declaration — and is not absorbed. Event-subscription
+  /// discovery removes owned namespaces from the subscription set by design (a service does not
+  /// subscribe to the events it publishes), so such a subscription would never be created, and a
+  /// broker with no subscriber on the topic discards the events with nothing reporting it.
+  /// Called by the <c>WithRouting</c> options factory at first resolution and by
+  /// <see cref="EventSubscriptionDiscovery.DiscoverEventNamespaces"/> as defense in depth for
+  /// manually constructed options. <see cref="AbsorbNamespaces"/> is the declared way to create the
+  /// binding anyway.
+  /// </summary>
+  /// <exception cref="InvalidOperationException">Thrown when any manually subscribed namespace is
+  /// owned and not absorbed. The message names every such namespace, the owned domain that claims
+  /// it, and both remedies.</exception>
+  /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:ThrowIfSubscribedNamespaceIsOwned_ExactOverlap_ThrowsNamingBothDeclarationsAndTheRemediesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingBuilderExtensionsTests.cs:WithRouting_OwnedAndSubscribedNamespace_FailsAtFirstResolutionAsync</tests>
+  internal void ThrowIfSubscribedNamespaceIsOwned() {
+    if (_ownedDomains.Count == 0) {
+      return;
+    }
+
+    List<string>? contradictions = null;
+    foreach (var subscribed in _subscribedNamespaces.Order(StringComparer.Ordinal)) {
+      if (_absorbedNamespaces.Contains(subscribed)) {
+        continue;   // absorbing IS the declaration that the binding is wanted despite ownership
+      }
+
+      var owner = OwnedNamespaceMatcher.FindOwner(subscribed, _ownedDomains);
+      if (owner is not null) {
+        (contradictions ??= []).Add($"'{subscribed}' (owned via '{owner}')");
+      }
+    }
+
+    if (contradictions is null) {
+      return;
+    }
+
+    throw new InvalidOperationException(
+      "Routing declares a namespace as both owned and subscribed: " + string.Join(", ", contradictions)
+      + ". Event-subscription discovery removes owned namespaces from the subscription set by design "
+      + "(a service does not subscribe to the events it publishes), so this subscription would never be "
+      + "created, and a broker with no subscriber on the topic drops the events silently. Either remove "
+      + "the SubscribeTo / SubscribeToNamespaceOf declaration for it, or call AbsorbNamespaces(...) for it "
+      + "to create the binding anyway.");
+  }
+
+  /// <summary>
   /// Configures inbox routing using an action.
   /// </summary>
   /// <param name="configure">Action to configure inbox options.</param>

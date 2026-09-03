@@ -128,6 +128,10 @@ public static class RoutingBuilderExtensions {
       // once every command namespace is flipped — runs AFTER configuration binding so
       // code-callback and configuration-driven retirement are guarded identically.
       options.ThrowIfRetirementIncomplete();
+      // Startup validation (issue #636): a namespace that is both owned and manually subscribed is
+      // a subscription discovery would silently discard — refuse it here, where the failure is a
+      // clear exception at first resolution rather than a topic with no subscriber.
+      options.ThrowIfSubscribedNamespaceIsOwned();
       return Options.Create(options);
     });
 
