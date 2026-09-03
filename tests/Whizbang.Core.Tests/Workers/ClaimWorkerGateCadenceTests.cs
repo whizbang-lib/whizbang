@@ -196,36 +196,42 @@ public class ClaimWorkerGateCadenceTests {
     // RIGHT AWAY so any work that accumulated during the unavailable window doesn't wait out the
     // next tick.
     //
-    // The base interval is deliberately LONG here, and that is the whole design of the test. The
+    // The base interval is effectively INFINITE here, and that is the whole design of the test. An
     // earlier version used a 50 ms base and measured wake latency against a 500 ms budget, which
-    // could not fail: an unavailable gate pins the interval at base (see _computeAdaptiveWait's
-    // IsAvailable == false branch), so a poll landed within ~50 ms whether or not the flip woke
-    // anything — and a poll landing between the list Clear() and the timestamp read even produced
-    // a NEGATIVE latency, which also passes "< 500 ms". Deleting the behavior under test left it
-    // green. With a 5 s base, the only way the next claim can arrive promptly is the flip waking
-    // the loop; otherwise the worker sits out the interval and the wait below times out.
+    // could not fail: an unavailable gate pins the interval at base, so a poll landed within ~50 ms
+    // whether or not the flip woke anything. A later version used a 5 s base against a 2 s budget,
+    // which was a timing race instead: after an empty poll with the gate available the worker takes
+    // a spacing NAP, and a wake that only releases the semaphore does not interrupt a nap — so
+    // whether the poll arrived "promptly" depended on which wait the worker happened to be in when
+    // the gate flipped, and under a coverage-instrumented parallel run it sat out the nap.
+    //
+    // With an hour-long base there is no cadence to race against: within the safety-net wait
+    // below, a claim can arrive ONLY because the transition woke the loop — nap or wait, either
+    // direction. The safety net is a hang guard, not a latency budget.
     var (worker, coord, gate) = _newWorker(
-      pollingIntervalMilliseconds: 5_000,
-      pollingMaxIntervalMilliseconds: 5_000,
+      pollingIntervalMilliseconds: 3_600_000,
+      pollingMaxIntervalMilliseconds: 3_600_000,
       gateAvailable: true);
+    var safetyNet = TimeSpan.FromSeconds(30);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await coord.FirstCallSignal.Task.WaitAsync(safetyNet);
 
-    // Available → unavailable also wakes the loop; take that poll so the worker then parks on a
-    // full 5 s unavailable-cadence wait, which is the state the flip has to interrupt.
+    // Available → unavailable must also wake the loop. After the first (empty) poll with the gate
+    // available the worker is in its spacing nap, so this is the transition that proves a nap is
+    // interruptible. Arm BEFORE flipping so the signal cannot be missed.
     var afterGoingDown = coord.ArmNextCall();
     gate.Set(false);
-    await afterGoingDown.WaitAsync(TimeSpan.FromSeconds(10));
+    await afterGoingDown.WaitAsync(safetyNet);
 
-    // Now the discriminating step: the worker is parked for ~5 s. Arm BEFORE flipping so the
-    // signal cannot be missed, then require the poll well inside that interval.
+    // Unavailable → available: the worker is parked on the unavailable-cadence wait; the flip must
+    // end it. Same arming discipline.
     var afterComingBack = coord.ArmNextCall();
     gate.Set(true);
 
-    await afterComingBack.WaitAsync(TimeSpan.FromSeconds(2))
-      .ConfigureAwait(false);   // times out at 2 s if the flip did not RequestImmediatePoll
+    await afterComingBack.WaitAsync(safetyNet)
+      .ConfigureAwait(false);   // hangs to the safety net if the flip did not wake the loop
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
