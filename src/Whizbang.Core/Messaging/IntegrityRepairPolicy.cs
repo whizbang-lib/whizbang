@@ -81,6 +81,24 @@ public sealed class IntegrityRepairPolicy {
 
     /// <summary>Windows that may be under repair simultaneously (default 8).</summary>
     public int MaxConcurrentWindowsUnderRepair { get; set; } = 8;
+
+    /// <summary>
+    /// Identical recount answers for one window before its recount enters cooldown (default 3).
+    /// </summary>
+    /// <remarks>
+    /// Repair is bounded per window; before this, DETECTION was not. A gap whose events are
+    /// genuinely gone re-confirms on every checkpoint, and each confirmation rescans the event
+    /// store for an answer that has not moved. Three identical answers is the point where the
+    /// window has proven it is not changing on its own.
+    /// </remarks>
+    public int RecountBackoffAfterUnchanged { get; set; } = 3;
+
+    /// <summary>How long an unchanged window's recount stays in cooldown (default 10 minutes).</summary>
+    /// <remarks>
+    /// One recount runs per cooldown period, so detection never stops; it slows to a cadence
+    /// proportionate to an answer that has stopped changing. Any improvement lifts it instantly.
+    /// </remarks>
+    public TimeSpan UnchangedRecountCooldown { get; set; } = TimeSpan.FromMinutes(10);
   }
 
   /// <summary>One confirmed deficit, plus how settled the SERVICE is.</summary>
@@ -129,10 +147,22 @@ public sealed class IntegrityRepairPolicy {
   /// <param name="Reason">Why, for logs and metrics.</param>
   public readonly record struct Decision(bool ShouldRequestRepair, Verdict Reason);
 
-  private sealed record WindowState(int Attempts, int BestActualCount);
+  private sealed record WindowState(
+    int Attempts,
+    int BestActualCount,
+    int LastRecountActual = -1,
+    int UnchangedStreak = 0,
+    DateTimeOffset RecountCooldownUntil = default);
 
   private readonly Settings _settings;
   private readonly Dictionary<string, WindowState> _windows = [];
+  // Windows with Attempts > 0. The global budget counts windows UNDER REPAIR, and dictionary
+  // membership stopped being a proxy for that once the recount governor began tracking windows
+  // it has merely observed.
+  private int _windowsUnderRepair;
+  // Checkpoints from different origins are handled concurrently, and every verdict reads or writes
+  // the shared window table. The sections are tiny (a dictionary probe), so one lock is enough.
+  private readonly object _sync = new();
 
   /// <summary>Initializes a new instance of the <see cref="IntegrityRepairPolicy"/> class.</summary>
   /// <param name="settings">Tuning; defaults are production-safe.</param>
@@ -146,6 +176,12 @@ public sealed class IntegrityRepairPolicy {
   /// <returns>The decision and the reason behind it.</returns>
   public Decision Evaluate(GapObservation observation) {
     ArgumentNullException.ThrowIfNull(observation);
+    lock (_sync) {
+      return _evaluateLocked(observation);
+    }
+  }
+
+  private Decision _evaluateLocked(GapObservation observation) {
 
     // Settledness first, and it is not overridable by how large the deficit looks. A big apparent
     // gap on a backlogged consumer is the STRONGEST evidence of lag, not the strongest case for
@@ -167,7 +203,10 @@ public sealed class IntegrityRepairPolicy {
       // Healing counts as working: if more of the window has landed since the last request, the
       // budget resets rather than expiring mid-recovery.
       if (observation.ActualCount > state.BestActualCount) {
-        _windows[key] = new WindowState(0, observation.ActualCount);
+        if (state.Attempts > 0) {
+          _windowsUnderRepair--;
+        }
+        _windows[key] = state with { Attempts = 0, BestActualCount = observation.ActualCount };
       } else if (state.Attempts >= _settings.MaxAttemptsPerWindow) {
         return new Decision(false, Verdict.AttemptsExhausted);
       }
@@ -175,21 +214,101 @@ public sealed class IntegrityRepairPolicy {
 
     // A global bound is the only thing that limits the RATE at which repair adds load. The
     // per-checkpoint cap bounds a single checkpoint, and checkpoints keep arriving on cadence.
-    if (!_windows.ContainsKey(key) && _windows.Count >= _settings.MaxConcurrentWindowsUnderRepair) {
+    var thisWindowUnderRepair = _windows.TryGetValue(key, out var current) && current.Attempts > 0;
+    if (!thisWindowUnderRepair && _windowsUnderRepair >= _settings.MaxConcurrentWindowsUnderRepair) {
       return new Decision(false, Verdict.GlobalBudgetExhausted);
     }
 
     return new Decision(true, Verdict.Repair);
   }
 
+  /// <summary>
+  /// Whether this window's recount should run now, or is inside its unchanged-answer cooldown.
+  /// </summary>
+  /// <remarks>
+  /// The governor for detection cost. Repair is bounded per window by the attempt budget; the
+  /// recount that CONFIRMS the gap was not, so an unhealable gap paid a full event-store scan on
+  /// every checkpoint forever. A window whose recount has produced the same answer
+  /// <see cref="Settings.RecountBackoffAfterUnchanged"/> times cools down for
+  /// <see cref="Settings.UnchangedRecountCooldown"/>; one recount runs per cooldown period, and any
+  /// improvement observed by <see cref="RecordRecount"/> lifts the cooldown immediately. The gap
+  /// stays known and reported throughout; only the repeated scan stops.
+  /// </remarks>
+  /// <param name="originServiceId">Origin the deficit window belongs to.</param>
+  /// <param name="eventType">Wire-form event type of the bucket.</param>
+  /// <param name="tenantScope">Tenant bucket, when scoped.</param>
+  /// <param name="fromCommitSequence">Window start, exclusive.</param>
+  /// <param name="toCommitSequence">Window end, inclusive.</param>
+  /// <param name="now">The caller's clock, injected so the decision is testable.</param>
+  /// <returns>True when the recount should run.</returns>
+  public bool ShouldRecount(
+      Guid originServiceId, string eventType, string? tenantScope,
+      long fromCommitSequence, long toCommitSequence, DateTimeOffset now) {
+    ArgumentNullException.ThrowIfNull(eventType);
+    var key = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+      $"{originServiceId:N}|{tenantScope}|{eventType}|{fromCommitSequence}|{toCommitSequence}");
+    lock (_sync) {
+      return !_windows.TryGetValue(key, out var state) || now >= state.RecountCooldownUntil;
+    }
+  }
+
+  /// <summary>
+  /// Records one recount's answer for cooldown accounting.
+  /// </summary>
+  /// <param name="observation">The window and the count the recount produced.</param>
+  /// <param name="now">The caller's clock.</param>
+  /// <returns>
+  /// True when this recount ARMED (or re-armed) the cooldown, so the caller can log the transition
+  /// exactly once instead of once per suppressed cycle.
+  /// </returns>
+  public bool RecordRecount(GapObservation observation, DateTimeOffset now) {
+    ArgumentNullException.ThrowIfNull(observation);
+    var key = _key(observation);
+    lock (_sync) {
+      var state = _windows.TryGetValue(key, out var existing)
+        ? existing
+        : new WindowState(Attempts: 0, BestActualCount: observation.ActualCount);
+
+      if (state.LastRecountActual >= 0 && observation.ActualCount > state.LastRecountActual) {
+        // Healing: the one condition that must be watched CLOSELY. Clear the streak and cooldown.
+        _windows[key] = state with {
+          LastRecountActual = observation.ActualCount,
+          UnchangedStreak = 0,
+          RecountCooldownUntil = default,
+        };
+        return false;
+      }
+
+      var streak = state.LastRecountActual == observation.ActualCount
+        ? state.UnchangedStreak + 1
+        : 1;
+      var arm = streak >= _settings.RecountBackoffAfterUnchanged;
+      _windows[key] = state with {
+        LastRecountActual = observation.ActualCount,
+        UnchangedStreak = streak,
+        RecountCooldownUntil = arm ? now + _settings.UnchangedRecountCooldown : state.RecountCooldownUntil,
+      };
+      return arm;
+    }
+  }
+
   /// <summary>Records that a repair request was actually sent for this window.</summary>
   /// <param name="observation">The window that was requested.</param>
   public void RecordRequested(GapObservation observation) {
     ArgumentNullException.ThrowIfNull(observation);
+    lock (_sync) {
+      _recordRequestedLocked(observation);
+    }
+  }
+
+  private void _recordRequestedLocked(GapObservation observation) {
     var key = _key(observation);
     var state = _windows.TryGetValue(key, out var existing)
       ? existing
       : new WindowState(0, observation.ActualCount);
+    if (state.Attempts == 0) {
+      _windowsUnderRepair++;
+    }
     _windows[key] = state with { Attempts = state.Attempts + 1 };
   }
 
@@ -197,7 +316,12 @@ public sealed class IntegrityRepairPolicy {
   /// <param name="observation">The window that is now complete.</param>
   public void RecordHealed(GapObservation observation) {
     ArgumentNullException.ThrowIfNull(observation);
-    _windows.Remove(_key(observation));
+    lock (_sync) {
+      if (_windows.TryGetValue(_key(observation), out var state) && state.Attempts > 0) {
+        _windowsUnderRepair--;
+      }
+      _windows.Remove(_key(observation));
+    }
   }
 
   private static string _key(GapObservation o) =>

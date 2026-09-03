@@ -75,6 +75,14 @@ public sealed partial class IntegrityCheckpointReceptor(
     var repairBackoff = TimeSpan.FromSeconds(options.RepairRequestBackoffSeconds);
     var repairNow = DateTimeOffset.UtcNow;
 
+    // The full repair-decision policy for issue #582: three service-wide settledness signals
+    // (depth, lag, live leases — any one vetoes, because each alone is fooled), a per-window
+    // attempt budget that resets while the window is healing, and a global bound on how many
+    // windows may be under repair at once. It existed, fully tested, with no caller; the storm it
+    // was written to prevent happened anyway. The fallback keeps state per process so an unwired
+    // host still gets bounded behavior rather than none.
+    var repairPolicy = services.GetService<IntegrityRepairPolicy>() ?? _processFallbackPolicy;
+
     // Settledness is measured ONCE per checkpoint, service-wide. A consumer that is merely BEHIND
     // reports the same deficit on both confirmation cycles and confirms a gap while nothing has
     // been lost — the events are queued, not missing. Repairing then re-delivers work that is
@@ -100,21 +108,46 @@ public sealed partial class IntegrityCheckpointReceptor(
 
     // 1) Two-cycle confirmation: deficits recorded on the PREVIOUS checkpoint, recounted now.
     foreach (var pending in tracker.TakePending(message.OriginServiceId)) {
+      // Recount governor (#634). Repair is bounded per window; the recount that CONFIRMS the gap
+      // was not, so an unhealable gap paid a full event-store scan on every checkpoint forever.
+      // Inside the cooldown the gap stays known and reported from its last confirmation; only the
+      // repeated scan is skipped, and the window re-registers from the current checkpoint as usual.
+      if (!repairPolicy.ShouldRecount(
+            pending.OriginServiceId, pending.EventType, pending.TenantScope,
+            pending.FromCommitSequence, pending.ToCommitSequence, repairNow)) {
+        continue;
+      }
       var recount = await coordinator
         .CountReceivedFromOriginAsync(pending.OriginServiceId, pending.FromCommitSequence, pending.ToCommitSequence, cancellationToken)
         .ConfigureAwait(false);
       var actual = _bucketCount(recount, pending.TenantScope, pending.EventType);
+      var observation = new IntegrityRepairPolicy.GapObservation(
+        pending.OriginServiceId, pending.EventType, pending.TenantScope,
+        pending.FromCommitSequence, pending.ToCommitSequence,
+        pending.ExpectedCount, actual,
+        ServiceBacklogDepth: (int)Math.Min(backlog?.UnprocessedInboxRows ?? 0, int.MaxValue),
+        ConsumerLag: backlog?.OldestUnprocessedAge ?? TimeSpan.Zero,
+        ActiveLeaseCount: (int)Math.Min(backlog?.ActiveLeasedRows ?? 0, int.MaxValue));
       if (actual >= pending.ExpectedCount) {
-        continue;   // healed in flight — the straggler arrived between checkpoints
+        // Healed in flight — the straggler arrived between checkpoints. Releasing the window's
+        // repair slot is what lets the global budget breathe: a slot held by a healed window would
+        // starve a genuinely stuck one.
+        repairPolicy.RecordHealed(observation);
+        continue;
       }
 
-      // Gated on the SERVICE having settled, not this instance. A service runs many instances
-      // against one shared inbox; an instance that finished its own claimed streams looks idle from
-      // the inside while peers are still draining, and repairing off that local view re-requests
-      // events its own siblings are processing. See IntegrityRepairPolicy.
+      if (repairPolicy.RecordRecount(observation, repairNow)) {
+        LogRecountCooldownArmed(
+          logger, pending.EventType, pending.TenantScope, pending.OriginServiceName, actual, pending.ExpectedCount);
+      }
+
+      // The policy decides from the SERVICE's settledness, never this instance's. Any of depth,
+      // lag or live leases vetoes; a window that stopped healing exhausts its attempt budget; and
+      // the global budget bounds how many windows may be under repair at once — the only cap that
+      // limits the RATE at which repair adds load, since per-checkpoint caps reset every cadence.
       var autoRepair = options.RepairMode == IntegrityRepairMode.AutoRepairCapped
                     && repairBudget > 0
-                    && settled;
+                    && repairPolicy.Evaluate(observation).ShouldRequestRepair;
       metrics?.GapsDetected.Add(1,
         new KeyValuePair<string, object?>("origin", pending.OriginServiceName),
         new KeyValuePair<string, object?>("event_type", pending.EventType));
@@ -135,6 +168,9 @@ public sealed partial class IntegrityCheckpointReceptor(
           new KeyValuePair<string, object?>("source", "checkpoint"),
           new KeyValuePair<string, object?>("origin", pending.OriginServiceName));
         await _sendRepairRequestAsync(services, options, pending, cancellationToken).ConfigureAwait(false);
+        // Charged only for a request that was actually sent, so the per-checkpoint budget and the
+        // ledger cannot burn this window's attempt budget on requests that never left.
+        repairPolicy.RecordRequested(observation);
       }
       // Each report is a durable outbox write and pendings are keyed by (tenant, event type), so
       // their number grows with the deployment rather than with any batch size. Past the cap we
@@ -213,6 +249,11 @@ public sealed partial class IntegrityCheckpointReceptor(
 
   /// <summary>Wire-only, directed at the origin — the pump's own publish pattern. A lost request
   /// re-fires on the next confirmation cycle, so no outbox durability is needed.</summary>
+  // Per-process fallback for hosts that did not register the policy. Static so its window state
+  // survives across checkpoints, which is the entire point; a per-call instance would evaluate
+  // every checkpoint against an empty table and never exhaust anything.
+  private static readonly IntegrityRepairPolicy _processFallbackPolicy = new(new IntegrityRepairPolicy.Settings());
+
   private async Task _sendRepairRequestAsync(
       IServiceProvider services, StreamIntegrityOptions options,
       IntegrityGapTracker.PendingGap pending, CancellationToken cancellationToken) {
@@ -309,4 +350,9 @@ public sealed partial class IntegrityCheckpointReceptor(
     Message = "Repair request to '{OriginServiceName}' withheld ({EventType}) — no origin-carried " +
               "request address yet; the origin's next checkpoint teaches it")]
   static partial void LogRepairSkippedNoOriginTopic(ILogger logger, string originServiceName, string eventType);
+
+  [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
+    Message = "Recount cooldown armed for {EventType} (tenant {TenantScope}) from origin {OriginServiceName}: the count has not moved ({Actual}/{Expected}) across the configured threshold. The gap stays reported; one recount runs per cooldown period, and any improvement lifts it immediately")]
+  static partial void LogRecountCooldownArmed(
+    ILogger logger, string eventType, string? tenantScope, string originServiceName, int actual, int expected);
 }

@@ -31,6 +31,9 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
   public DebuggerAwareClock() : this(new DebuggerAwareClockOptions()) {
   }
 
+  /// <summary>Reads accumulated CPU time from the configured source, or the process.</summary>
+  private TimeSpan _readCpuTime() => _options.CpuTimeSource?.Invoke() ?? _process.TotalProcessorTime;
+
   /// <summary>
   /// Initializes a new instance of <see cref="DebuggerAwareClock"/> with the specified options.
   /// </summary>
@@ -41,7 +44,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       FullMode = BoundedChannelFullMode.DropOldest
     });
     _process = Process.GetCurrentProcess();
-    _lastCpuSample = _process.TotalProcessorTime;
+    _lastCpuSample = _readCpuTime();
     _lastSampleTime = DateTime.UtcNow;
 
     // Start sampling timer if using CPU time sampling mode
@@ -113,7 +116,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
     TimeSpan currentCpu;
 
     try {
-      currentCpu = _process.TotalProcessorTime;
+      currentCpu = _readCpuTime();
     } catch (InvalidOperationException) {
       // Process may have exited
       return;
@@ -180,7 +183,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       _wallStopwatch = Stopwatch.StartNew();
 
       try {
-        _startCpuTime = clock._process.TotalProcessorTime;
+        _startCpuTime = clock._readCpuTime();
       } catch (InvalidOperationException) {
         _startCpuTime = TimeSpan.Zero;
       }
@@ -254,7 +257,7 @@ public sealed class DebuggerAwareClock : IDebuggerAwareClock {
       // Use CPU time sampling to calculate active time
       TimeSpan currentCpuTime;
       try {
-        currentCpuTime = _clock._process.TotalProcessorTime;
+        currentCpuTime = _clock._readCpuTime();
       } catch (InvalidOperationException) {
         // Process info not available, fall back to wall time
         return _wallStopwatch.Elapsed;

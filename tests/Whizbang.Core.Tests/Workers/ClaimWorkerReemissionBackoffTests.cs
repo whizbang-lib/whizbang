@@ -72,6 +72,9 @@ public class ClaimWorkerReemissionBackoffTests {
     /// </summary>
     public Action? AfterClaim { get; set; }
 
+    /// <summary>When true, every claim returns an EMPTY batch — the true-idle shape.</summary>
+    public bool ReturnEmpty { get; set; }
+
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       lock (_lock) {
         ClaimCallTimes.Add(DateTimeOffset.UtcNow);
@@ -85,12 +88,14 @@ public class ClaimWorkerReemissionBackoffTests {
       }
       AfterClaim?.Invoke();
       // Same stream, every time. Nothing new ever appears.
-      return Task.FromResult(new WorkBatch {
-        OutboxWork = [],
-        InboxWork = [],
-        PerspectiveWork = [],
-        OutboxStreamIds = [_stuckStream],
-      });
+      return Task.FromResult(ReturnEmpty
+          ? new WorkBatch { OutboxWork = [], InboxWork = [], PerspectiveWork = [] }
+          : new WorkBatch {
+            OutboxWork = [],
+            InboxWork = [],
+            PerspectiveWork = [],
+            OutboxStreamIds = [_stuckStream],
+          });
     }
 
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) => Task.FromResult(true);
@@ -329,4 +334,100 @@ public class ClaimWorkerReemissionBackoffTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  /// <summary>
+  /// The TRUE-IDLE twin of the re-offer spacing (#635). An empty store under constant
+  /// completion-feedback wakes ran the claim cycle at permit-arrival rate: the empty streak
+  /// stretched the WAIT timeout, but a pending permit returns immediately, and the spacing nap
+  /// engaged only on re-offers. Measured fleet-wide as a ~27/s claim metronome on a deployment
+  /// with zero application traffic. Idle must space like idle regardless of what keeps ringing
+  /// the completion bell.
+  /// </summary>
+  [Test]
+  public async Task EmptyStore_UnderConstantCompletionFeedback_StillSpacesClaimsAsync() {
+    var coord = new ReemittingCoordinator { ReturnEmpty = true };
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      schemaGate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 10_000,
+        NotifyHealthyPollingIntervalMilliseconds = 3_000,
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate());
+
+    // Constant feedback: every claim pulls the wake lever, the shape a chatty fleet produces.
+    coord.AfterClaim = worker.RequestImmediatePoll;
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(8));
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(8));
+
+    var gap2to3 = coord.ClaimCallTimes[2] - coord.ClaimCallTimes[1];
+    await Assert.That(gap2to3).IsGreaterThan(TimeSpan.FromSeconds(2))
+      .Because(
+        "an EMPTY claim under healthy notify must space out even while completion-feedback "
+        + "permits keep arriving; otherwise idle cadence is set by whoever rings the bell, and "
+        + "a whole fleet of quiet services claims at tens of cycles per second forever");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// The responsiveness guard on the idle nap: a NEW-WORK doorbell must cut it short exactly as
+  /// it cuts the re-offer nap, so the spacing never taxes a genuinely fresh row.
+  /// </summary>
+  [Test]
+  public async Task EmptyStore_NewWorkDoorbellInterruptsTheIdleSpacingAsync() {
+    var coord = new ReemittingCoordinator { ReturnEmpty = true };
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var schemaGate = new SchemaReadyGate();
+    schemaGate.MarkReady();
+
+    var worker = new ClaimWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      new NoOpWorkNotificationListener(),
+      schemaGate,
+      Options.Create(new ClaimWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        PollingMaxIntervalMilliseconds = 10_000,
+        NotifyHealthyPollingIntervalMilliseconds = 3_000,
+      }),
+      NullLogger<ClaimWorker>.Instance,
+      signalingGate: new AvailableGate());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // The loop is inside the idle spacing nap that follows the empty claim. Ring the doorbell.
+    await Task.Delay(300);
+    var doorbellAt = DateTimeOffset.UtcNow;
+    worker.SignalNewWork();
+
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(8));
+    var wakeLatency = coord.ClaimCallTimes[1] - doorbellAt;
+
+    await Assert.That(wakeLatency).IsLessThan(TimeSpan.FromSeconds(1))
+      .Because("idle spacing must never tax a genuinely fresh row: the doorbell cancels the nap");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
 }

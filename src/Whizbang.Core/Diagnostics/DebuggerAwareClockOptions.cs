@@ -41,4 +41,17 @@ public sealed class DebuggerAwareClockOptions {
   /// </remarks>
   /// <value>Default: 10.0.</value>
   public double FrozenThreshold { get; set; } = 10.0;
+
+  /// <summary>
+  /// Source of accumulated CPU time for freeze detection. Null (the default) reads the current
+  /// process's <c>TotalProcessorTime</c>.
+  /// </summary>
+  /// <remarks>
+  /// The seam exists for determinism: freeze detection compares CPU delta to wall delta, and a test
+  /// that relies on the REAL process actually idling is hostage to whatever else the machine is
+  /// doing — on a loaded CI runner the process keeps accruing CPU and "frozen" never fires, which
+  /// presents as a 30-second timeout unrelated to any code change. A test injects a constant (or
+  /// scripted) source instead and the transition becomes a fact, not a race.
+  /// </remarks>
+  public Func<TimeSpan>? CpuTimeSource { get; set; }
 }
