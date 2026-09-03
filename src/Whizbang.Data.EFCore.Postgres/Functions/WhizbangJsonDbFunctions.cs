@@ -10,11 +10,11 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// <docs>fundamentals/security/security#principal-filtering</docs>
 public static class WhizbangJsonDbFunctions {
   /// <summary>
-  /// Checks if the AllowedPrincipals array within a PerspectiveScope contains any of the specified values.
-  /// Translates to PostgreSQL: <c>scope->'AllowedPrincipals' ?| ARRAY['value1', 'value2', ...]</c>
+  /// Checks whether a scope's allowed-principals array overlaps any of the specified values.
+  /// Translates to PostgreSQL: <c>scope->'ap' ?| ARRAY['value1', 'value2', ...]</c>
   /// </summary>
   /// <param name="_">The DbFunctions instance (unused, for extension method syntax).</param>
-  /// <param name="scope">The PerspectiveScope JSONB column.</param>
+  /// <param name="allowedPrincipals">The scope's allowed-principals member, e.g. <c>row.Scope.AllowedPrincipals</c>.</param>
   /// <param name="values">The principal string values to search for.</param>
   /// <returns>True if the AllowedPrincipals array contains any of the specified values.</returns>
   /// <exception cref="InvalidOperationException">
@@ -22,10 +22,10 @@ public static class WhizbangJsonDbFunctions {
   /// </exception>
   /// <example>
   /// <code>
-  /// // In a LINQ query - translates to: scope->'AllowedPrincipals' ?| ARRAY['user:alice', 'group:sales']
+  /// // In a LINQ query - translates to: scope->'ap' ?| ARRAY['user:alice', 'group:sales']
   /// var rows = await context.Set&lt;PerspectiveRow&lt;Order&gt;&gt;()
   ///   .Where(r => EF.Functions.AllowedPrincipalsContainsAny(
-  ///     r.Scope,
+  ///     r.Scope.AllowedPrincipals,
   ///     new[] { "user:alice", "group:sales" }))
   ///   .ToListAsync();
   /// </code>
@@ -38,7 +38,7 @@ public static class WhizbangJsonDbFunctions {
   /// </remarks>
   public static bool AllowedPrincipalsContainsAny(
       this DbFunctions _,
-      PerspectiveScope scope,
+      List<string> allowedPrincipals,
       string[] values) {
     throw new InvalidOperationException(
       "This method is only valid in EF Core LINQ queries and cannot be called directly.");

@@ -31,15 +31,13 @@ public class PrincipalFilterQueryTranslationTests : EFCoreTestBase {
   private static readonly string[] _onePrincipal = ["user-a"];
 
   [Test]
-  [Skip("Fails until #644 is fixed: the function never reaches its translator. Kept, not deleted — "
-      + "this is the guard that proves the fix works, and it must go green the moment it lands.")]
   [Timeout(60000)]
   public async Task APrincipalFilterQuery_TranslatesToTheIndexableOverlapOperatorAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
 
     var sql = ctx.Set<PerspectiveRow<Order>>()
-      .Where(r => EF.Functions.AllowedPrincipalsContainsAny(r.Scope, _twoPrincipals))
+      .Where(r => EF.Functions.AllowedPrincipalsContainsAny(r.Scope.AllowedPrincipals, _twoPrincipals))
       .ToQueryString();
 
     await Assert.That(sql).Contains("?|")
@@ -50,15 +48,13 @@ public class PrincipalFilterQueryTranslationTests : EFCoreTestBase {
   }
 
   [Test]
-  [Skip("Fails until #644 is fixed — see the sibling test above.")]
-  [Timeout(60000)]
   public async Task APrincipalFilterQuery_ActuallyRunsAgainstPostgresAsync(
       CancellationToken cancellationToken) {
     // Translating is necessary but not sufficient — the emitted SQL has to be valid PostgreSQL.
     await using var ctx = CreateDbContext();
 
     var count = await ctx.Set<PerspectiveRow<Order>>()
-      .Where(r => EF.Functions.AllowedPrincipalsContainsAny(r.Scope, _onePrincipal))
+      .Where(r => EF.Functions.AllowedPrincipalsContainsAny(r.Scope.AllowedPrincipals, _onePrincipal))
       .CountAsync(cancellationToken);
 
     await Assert.That(count).IsGreaterThanOrEqualTo(0)
