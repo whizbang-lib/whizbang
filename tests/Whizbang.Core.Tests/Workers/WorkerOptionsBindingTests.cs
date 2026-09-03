@@ -67,6 +67,30 @@ public sealed class WorkerOptionsBindingTests {
   }
 
   [Test]
+  public async Task HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync() {
+    // Not just the options object: the value must reach the coordinator that actually
+    // arbitrates. Two configured deferrals means the THIRD busy request forces through.
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:Housekeeping:MaxConsecutiveDeferrals"] = "2",
+    });
+    var coordinator = provider.GetRequiredService<Whizbang.Core.Workers.HousekeepingCoordinator>();
+    var busy = new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 1 };
+
+    for (var i = 0; i < 2; i++) {
+      var deferred = coordinator.TryBegin(
+        Whizbang.Core.Workers.HousekeepingCoordinator.Activity.DeadLetterRecovery, busy);
+      await Assert.That(deferred.Granted).IsFalse();
+    }
+    var forced = coordinator.TryBegin(
+      Whizbang.Core.Workers.HousekeepingCoordinator.Activity.DeadLetterRecovery, busy);
+
+    await Assert.That(forced.Reason)
+      .IsEqualTo(Whizbang.Core.Workers.HousekeepingCoordinator.Verdict.ProceedDeferralLimit)
+      .Because("an operator tuning the starvation floor from configuration must be tuning the "
+             + "coordinator the workers consult, or the knob is scenery");
+  }
+
+  [Test]
   public async Task NoConfigurationRegistered_KeepsCodeDefaultsAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangWorkers();

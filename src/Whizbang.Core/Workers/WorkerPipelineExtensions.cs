@@ -34,9 +34,25 @@ public static class WorkerPipelineExtensions {
       new Whizbang.Core.Observability.HousekeepingMetrics(
         sp.GetRequiredService<Whizbang.Core.Observability.WhizbangMetrics>(),
         sp.GetService<IIdleActivityTracker>()));
+    // Tuning binds from Whizbang:Housekeeping (same turnkey contract as the dead-letter
+    // options: the section reaches the mechanism with no host code, hosts without
+    // IConfiguration keep code defaults, and the binder source generator keeps it
+    // reflection-free).
+    services.AddOptions<HousekeepingCoordinator.Settings>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<HousekeepingCoordinator.Settings>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<HousekeepingCoordinator.Settings>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: binder source generator compiles this to typed assignments
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Housekeeping"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.TryAddSingleton(sp =>
       new HousekeepingCoordinator(
-        new HousekeepingCoordinator.Settings(),
+        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<HousekeepingCoordinator.Settings>>().Value,
         sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
   }
 
