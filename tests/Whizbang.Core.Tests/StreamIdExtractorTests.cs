@@ -49,6 +49,54 @@ public class StreamIdExtractorTests {
   public record TestMessageWithStreamId([property: StreamId] Guid Id, string Data) : IMessage;
 
   // ========================================
+  // The real extractor's dispatch, per message kind
+  // ========================================
+  //
+  // Everything else in this file drives TestStreamIdExtractor, a double — so the real class's
+  // three branches had never executed. The real extractor delegates to the SOURCE-GENERATED
+  // StreamIdExtractors, which only knows types the generator saw; fixture types declared here are
+  // not among them. That makes null the correct answer for all three, and the invariant worth
+  // pinning is that it IS an answer: the extractor is called on arbitrary messages during dispatch,
+  // so throwing for a type the generator never saw would break dispatch for every message without
+  // a generated extractor, rather than letting the caller fall back to generating an id.
+
+  [Test]
+  public async Task RealExtractor_AnUnregisteredEvent_YieldsNoIdRatherThanThrowingAsync() {
+    var extractor = new StreamIdExtractor();
+    var @event = new TestEventWithStreamId(Guid.CreateVersion7(), "created");
+
+    await Assert.That(extractor.ExtractStreamId(@event, @event.GetType())).IsNull()
+      .Because("the generated registry has no entry for this type, and dispatch must survive that "
+             + "with a fallback rather than an exception");
+  }
+
+  [Test]
+  public async Task RealExtractor_AnUnregisteredCommand_TakesTheCommandBranchAndYieldsNoIdAsync() {
+    // Commands route through their own branch rather than the generic one, so that a registered
+    // command resolves the same way a registered event does.
+    var extractor = new StreamIdExtractor();
+    var command = new TestCommandWithStreamId(Guid.CreateVersion7(), "place");
+
+    await Assert.That(extractor.ExtractStreamId(command, command.GetType())).IsNull();
+  }
+
+  [Test]
+  public async Task RealExtractor_APlainMessage_StillReachesTheGenericFallbackAsync() {
+    // Neither IEvent nor ICommand: perspective DTOs and other plain messages land here. Without
+    // this branch the extractor would be silently event-and-command only.
+    var extractor = new StreamIdExtractor();
+    var message = new TestMessageWithStreamId(Guid.CreateVersion7(), "payload");
+
+    await Assert.That(extractor.ExtractStreamId(message, message.GetType())).IsNull();
+  }
+
+  [Test]
+  public async Task RealExtractor_ANullMessage_YieldsNoIdAsync() {
+    await Assert.That(new StreamIdExtractor().ExtractStreamId(null!, typeof(object))).IsNull()
+      .Because("the guard runs before any dispatch, so a null never reaches the generated registry");
+  }
+
+  // ========================================
   // IEvent Tests
   // ========================================
 
