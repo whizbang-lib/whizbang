@@ -43,12 +43,26 @@ public static class WorkerPipelineExtensions {
   /// <summary>
   /// Registers the new work-pump worker pipeline (HeartbeatWorker, ClaimWorker, InboxHandlerWorker,
   /// and the four batched-flush workers + their channel interfaces). Idempotent — calling
-  /// multiple times has no additional effect.
+  /// multiple times has no additional effect: <c>AddWhizbang()</c> calls it, and an explicit second
+  /// call registers nothing (issue #621).
   /// </summary>
   /// <param name="services">DI service collection.</param>
   /// <returns>The same <see cref="IServiceCollection"/> for chaining.</returns>
+  /// <docs>operations/deployment/troubleshooting#workers-not-wired</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkerPipelineIdempotencyTests.cs</tests>
   public static IServiceCollection AddWhizbangWorkers(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
+
+    // Idempotent by contract, enforced once here rather than once per registration (issue #621):
+    // AddWhizbang() calls this, and the framework's own error messages tell consumers to call it
+    // too, so a second call is the common case, not a mistake. Most registrations below are TryAdd,
+    // but the additive ones — IStartupStep, IStartupStepObserver, the hosted workers — would each
+    // double, and the order resolver then refuses the duplicate step names inside a
+    // BackgroundService, where the default StopHost behavior takes the host down.
+    if (_isAlreadyRegistered(services)) {
+      return services;
+    }
+    services.AddSingleton(WorkerPipelineRegistrationMarker.Instance);
 
     // Establish the thread-pool reserve BEFORE registering the workers that will compete for it.
     // These workers run on the host's pool, so their burst of async database completions is what
@@ -138,28 +152,36 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<Whizbang.Core.Startup.StartupPipelineState>();
     services.TryAddSingleton<Whizbang.Core.Startup.IStartupPipelineState>(
       sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(
-      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>());
+    // Observers and steps are enumerable registrations: TryAddEnumerable keys them by
+    // implementation type, so a repeat of the SAME observer or step is a no-op while two DIFFERENT
+    // steps that share a name still reach the resolver's refusal, which is the case that check is for.
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.StartupPipelineState>(
+      sp => sp.GetRequiredService<Whizbang.Core.Startup.StartupPipelineState>()));
     services.TryAddSingleton<Whizbang.Core.Observability.StartupPipelineMetrics>();
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.LoggingStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.LoggingStartupStepObserver(
         (Microsoft.Extensions.Logging.ILogger?)sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Startup.Pipeline")
-          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance));
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStepObserver>(sp =>
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance)));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStepObserver, Whizbang.Core.Startup.MetricsStartupStepObserver>(sp =>
       new Whizbang.Core.Startup.MetricsStartupStepObserver(
-        sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>()));
+        sp.GetRequiredService<Whizbang.Core.Observability.StartupPipelineMetrics>())));
     // Assess (increment 9): where this instance stands — Migrate/Serve/StandDown — decided on
     // every instance before the migration barrier. StandDown reports as a failed blocking step:
     // fail-closed readiness IS not-ready-while-alive.
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStep>(sp =>
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.AssessStartupStep>(sp =>
       new Whizbang.Core.Startup.AssessStartupStep(
         sp.GetService<Whizbang.Core.Startup.IStartupAssessor>(),
-        sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.AssessStartupStep>()));
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>();
+        sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.AssessStartupStep>())));
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.MigrateStartupStep>(sp =>
+      new Whizbang.Core.Startup.MigrateStartupStep(sp.GetRequiredService<ISchemaReadyGate>())));
     // The post-ready table-rewrite step (increment 8): fleet-exclusive under the maintainer duty,
     // non-blocking with respect to Ready, deliberately unbounded. The runtime maintenance cycle
     // now only detects and records; this is where recorded rewrites actually run.
-    services.AddSingleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Startup.IStartupStep, Whizbang.Core.Startup.TableRewriteStartupStep>(sp =>
+      new Whizbang.Core.Startup.TableRewriteStartupStep(
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetService<IOptions<MaintenanceWorkerOptions>>(),
+        sp.GetService<ILoggerFactory>()?.CreateLogger<Whizbang.Core.Startup.TableRewriteStartupStep>())));
     services.TryAddSingleton(sp => new Whizbang.Core.Startup.StartupPipelineRunner(
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStep>()],
       [.. sp.GetServices<Whizbang.Core.Startup.IStartupStepObserver>()],
@@ -596,6 +618,23 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton<IInboxBatchStrategy>(sp => sp.GetRequiredService<SlidingWindowInboxBatchStrategy>());
 
     return services;
+  }
+
+  /// <summary>
+  /// The registration marker <see cref="AddWhizbangWorkers"/> leaves behind, so a second call can be
+  /// recognized without auditing every descriptor. Registered as an instance — nothing to activate.
+  /// </summary>
+  private sealed class WorkerPipelineRegistrationMarker {
+    public static readonly WorkerPipelineRegistrationMarker Instance = new();
+  }
+
+  private static bool _isAlreadyRegistered(IServiceCollection services) {
+    foreach (var descriptor in services) {
+      if (descriptor.ServiceType == typeof(WorkerPipelineRegistrationMarker)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// <summary>
