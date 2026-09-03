@@ -17,18 +17,18 @@ public class WhizbangJsonDbFunctionsTests {
 
   [Test]
   public async Task AllowedPrincipalsContainsAny_WhenCalledDirectly_ThrowsInvalidOperationAsync() {
-    var scope = new PerspectiveScope();
+    var allowedPrincipals = new PerspectiveScope().AllowedPrincipals;
 
-    await Assert.That(() => EF.Functions.AllowedPrincipalsContainsAny(scope, ["tenant-a"]))
+    await Assert.That(() => EF.Functions.AllowedPrincipalsContainsAny(allowedPrincipals, ["tenant-a"]))
         .ThrowsExactly<InvalidOperationException>();
   }
 
   [Test]
   public async Task AllowedPrincipalsContainsAny_WhenCalledDirectly_ExplainsQueryOnlyUsageAsync() {
-    var scope = new PerspectiveScope();
+    var allowedPrincipals = new PerspectiveScope().AllowedPrincipals;
 
     var exception = Assert.Throws<InvalidOperationException>(
-        () => EF.Functions.AllowedPrincipalsContainsAny(scope, ["tenant-a"]));
+        () => EF.Functions.AllowedPrincipalsContainsAny(allowedPrincipals, ["tenant-a"]));
 
     await Assert.That(exception!.Message).Contains("EF Core LINQ queries");
   }

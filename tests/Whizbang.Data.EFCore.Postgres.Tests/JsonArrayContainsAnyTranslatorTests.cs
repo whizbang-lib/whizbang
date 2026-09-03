@@ -6,11 +6,15 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Query;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Postgres.Functions;
+
+#pragma warning disable EF1001 // Internal EF Core API usage — asserting on the emitted expression requires naming its type.
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -25,11 +29,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </summary>
 /// <remarks>
-/// The traversal key is the point. <see cref="PerspectiveScope.AllowedPrincipals"/> carries
-/// <c>[JsonPropertyName("ap")]</c>, so a translator that traverses the CLR name reads a key that is
-/// not in the document: the traversal yields SQL NULL, <c>?|</c> against NULL is NULL, and every row
-/// is filtered out. That failure mode is silent — a security predicate that matches nothing looks
-/// exactly like a predicate whose subject has no matching rows.
+/// What the translator is responsible for is now only the operator. The function takes the
+/// allowed-principals MEMBER, so EF renders the traversal into the scope document itself — keyed
+/// from <c>[JsonPropertyName("ap")]</c> — and hands it in already built. The translator applying
+/// <c>?|</c> to exactly the expression it was given, rather than re-deriving a path, is what keeps
+/// the emitted key correct by construction instead of by a literal that can drift from the model.
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Functions/JsonArrayContainsAnyTranslator.cs</code-under-test>
 [Category("Shard2")]
@@ -38,7 +42,7 @@ public class JsonArrayContainsAnyTranslatorTests : EFCoreTestBase {
   private static readonly MethodInfo _method =
     typeof(WhizbangJsonDbFunctions).GetMethod(
       nameof(WhizbangJsonDbFunctions.AllowedPrincipalsContainsAny),
-      [typeof(DbFunctions), typeof(PerspectiveScope), typeof(string[])])!;
+      [typeof(DbFunctions), typeof(List<string>), typeof(string[])])!;
 
   private (JsonArrayContainsAnyTranslator Translator, NpgsqlSqlExpressionFactory Factory,
            IDiagnosticsLogger<DbLoggerCategory.Query> Logger) _build(WorkCoordinationDbContext ctx) {
@@ -50,26 +54,29 @@ public class JsonArrayContainsAnyTranslatorTests : EFCoreTestBase {
 
   [Test]
   [Timeout(60000)]
-  public async Task TheEmittedTraversal_UsesTheSerializedKeyNotTheClrNameAsync(
+  public async Task TheOperatorIsAppliedToTheExpressionItWasGivenAsync(
       CancellationToken cancellationToken) {
     await using var ctx = CreateDbContext();
     var (translator, factory, logger) = _build(ctx);
+    var principalsPath = factory.Constant("principals-path");
 
     var translated = translator.Translate(
-      instance: null,
-      _method,
-      [factory.Constant("dbfunctions"), factory.Constant("{}"), factory.Constant("user-a")],
-      logger);
+      instance: null, _method, [factory.Constant("dbfunctions"), principalsPath, factory.Constant("user-a")], logger);
 
     await Assert.That(translated).IsNotNull()
       .Because("the method matches, so the translator owes the query pipeline an expression");
-    var rendered = ExpressionPrinter.Print(translated!);
-    await Assert.That(rendered).Contains("ap")
-      .Because("the document has no AllowedPrincipals key — traversing it yields NULL, and `?|` "
-             + "against NULL filters out every row instead of failing");
-    await Assert.That(rendered).DoesNotContain("AllowedPrincipals")
-      .Because("a security predicate that silently matches nothing is indistinguishable from one "
-             + "whose subject genuinely has no rows");
+    var binary = translated as PgBinaryExpression;
+    await Assert.That(binary).IsNotNull()
+      .Because("the ?| overlap is a binary operator expression, and anything else means a different "
+             + "predicate reached the database than the one this function promises");
+    await Assert.That(binary!.OperatorType).IsEqualTo(PgExpressionType.JsonExistsAny)
+      .Because("JsonExistsAny is the GIN-indexable operator; another one silently costs the index");
+    // Not reference equality: MakePostgresBinary re-wraps its operands to apply type mappings. What
+    // matters is that the left operand is whatever EF handed in, NOT a traversal this translator
+    // built — one that rebuilt the path could key it differently from the model and match nothing.
+    await Assert.That(binary.Left.GetType().Name).DoesNotContain("JsonTraversal")
+      .Because("the traversal must come from EF, keyed off [JsonPropertyName] in the model, rather "
+             + "than from a literal in this translator that can drift from it");
   }
 
   [Test]
