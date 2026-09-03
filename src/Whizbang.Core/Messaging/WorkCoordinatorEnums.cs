@@ -4,13 +4,11 @@ namespace Whizbang.Core.Messaging;
 /// Flags indicating metadata about work items returned from ProcessWorkBatchAsync.
 /// Multiple flags can be combined using bitwise OR.
 /// </summary>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnsCorrectFlags_NewlyStoredAndOrphanedAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
 public enum WorkBatchOptions {
@@ -24,14 +22,12 @@ public enum WorkBatchOptions {
   /// This work item was just stored in this call (new message).
   /// Indicates immediate processing path vs. orphaned work recovery.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnsCorrectFlags_NewlyStoredAndOrphanedAsync</tests>
   NewlyStored = 1 << 0,
 
   /// <summary>
   /// This work item was claimed from another failed instance (orphaned work).
   /// Indicates lease expired and work was reassigned.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnsCorrectFlags_NewlyStoredAndOrphanedAsync</tests>
   Orphaned = 1 << 1,
 
   /// <summary>
@@ -68,7 +64,6 @@ public enum WorkBatchOptions {
   /// outbox work — inbox claiming should be left to WorkCoordinatorPublisherWorker.
   /// </summary>
   /// <docs>messaging/work-coordinator#skip-inbox-claiming</docs>
-  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/InboxNullLeaseTests.cs</tests>
   SkipInboxClaiming = 1 << 6
 
   // Bits 7-31 reserved for future use
@@ -79,13 +74,7 @@ public enum WorkBatchOptions {
 /// Multiple flags can be combined using bitwise OR to track partial completion.
 /// This enables retrying only failed stages instead of the entire pipeline.
 /// </summary>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_DeletesMessagesAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesInboxMessages_DeletesMessagesAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiagnosticProcessWorkBatchTest.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs</tests>
-/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs</tests>
 [Flags]
 public enum MessageProcessingStatus {
@@ -99,16 +88,12 @@ public enum MessageProcessingStatus {
   /// Message has been persisted to inbox/outbox table.
   /// First stage of any message processing.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_DeletesMessagesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesInboxMessages_DeletesMessagesAsync</tests>
   Stored = 1 << 0,
 
   /// <summary>
   /// Event has been written to the event store (events only).
   /// Occurs during outbox storage (before publishing) or inbox storage (on receipt).
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesInboxMessages_DeletesMessagesAsync</tests>
   EventStored = 1 << 1,
 
   /// <summary>
@@ -116,9 +101,6 @@ public enum MessageProcessingStatus {
   /// Indicates message left this service via Service Bus/transport.
   /// For outbox messages, this means the message is fully completed and can be deleted.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_DeletesMessagesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesInboxMessages_DeletesMessagesAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatchAsync_MarkAsPublished_SetsStatusFlagAsync</tests>
   Published = 1 << 2,
 
   // Bits 3-14 reserved for future pipeline stages
@@ -128,9 +110,6 @@ public enum MessageProcessingStatus {
   /// Combined with other flags to indicate which stages succeeded before failure.
   /// For example: (Stored | EventStored | Failed) means storage succeeded but publishing failed.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailedMessageWithSpecialCharacters_EscapesJsonCorrectlyAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsInboxMessages_MarksAsFailedAsync</tests>
   Failed = 1 << 15
 
   // Note: Receptor and perspective processing are now tracked separately in

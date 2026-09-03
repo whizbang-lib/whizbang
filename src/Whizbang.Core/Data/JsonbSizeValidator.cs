@@ -11,8 +11,8 @@ namespace Whizbang.Core.Data;
 /// Calculates byte sizes, logs warnings, and adds size metadata when thresholds crossed.
 /// Size is NOT stored in metadata unless threshold is violated (for troubleshooting).
 /// </summary>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs:CreateEventStoreAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:SetupAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs:CreateEventStoreAsync</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:SetupAsync</tests>
 public partial class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger) {
   /// <summary>
   /// TOAST compression threshold: PostgreSQL begins compressing columns > 2KB.
@@ -38,8 +38,8 @@ public partial class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger) {
   /// <param name="policy">Optional policy configuration for size limits</param>
   /// <returns>Updated model (potentially with size warning added to metadata)</returns>
   /// <exception cref="InvalidOperationException">If size exceeds threshold and policy.ThrowOnSizeExceeded is true</exception>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs:CreateEventStoreAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:SetupAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs:CreateEventStoreAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:SetupAsync</tests>
   public JsonbPersistenceModel Validate(
     JsonbPersistenceModel model,
     string typeName,

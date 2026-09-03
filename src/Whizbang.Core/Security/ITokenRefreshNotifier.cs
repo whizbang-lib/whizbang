@@ -21,7 +21,6 @@ namespace Whizbang.Core.Security;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/token-refresh</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/ITokenRefreshNotifierTests.cs</tests>
 public interface ITokenRefreshNotifier {
   /// <summary>
   /// Notifies the connected user that their token may be stale and should be refreshed.

@@ -3873,7 +3873,7 @@ public partial class PerspectiveWorker(
   /// Same pattern as ReceptorInvoker for consistency.
   /// </summary>
   /// <docs>operations/workers/perspective-worker#security-context</docs>
-  /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync</tests>

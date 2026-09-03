@@ -39,7 +39,7 @@ namespace Whizbang.Observability.Hooks;
 /// </code>
 /// </example>
 /// <docs>operations/observability/opentelemetry-integration#metrics</docs>
-/// <tests>Whizbang.Observability.Tests/Hooks/OpenTelemetryMetricHookTests.cs</tests>
+/// <tests>tests/Whizbang.Observability.Tests/Hooks/OpenTelemetryMetricHookTests.cs</tests>
 public sealed class OpenTelemetryMetricHook : IMessageTagHook<MetricTagAttribute> {
   /// <summary>
   /// The Meter used for creating metrics.

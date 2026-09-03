@@ -16,7 +16,7 @@ namespace Whizbang.Core.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>diagnostics/WHIZ070#suppression</docs>
-/// <tests>VectorFieldPackageReferenceAnalyzerTests.cs:VectorField_WithSuppressAttribute_NoDiagnosticAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorFieldPackageReferenceAnalyzerTests.cs:VectorField_WithSuppressAttribute_NoDiagnosticAsync</tests>
 /// <example>
 /// <code>
 /// [assembly: SuppressVectorPackageCheck]

@@ -6,7 +6,7 @@ namespace Whizbang.Core.Security.Exceptions;
 /// Thrown when access is denied due to insufficient permissions.
 /// </summary>
 /// <docs>fundamentals/security/security#exceptions</docs>
-/// <tests>Whizbang.Core.Tests/Security/AccessDeniedExceptionTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/AccessDeniedExceptionTests.cs</tests>
 public sealed class AccessDeniedException : Exception {
   /// <summary>
   /// The permission that was required for access.

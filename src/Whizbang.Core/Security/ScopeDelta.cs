@@ -12,7 +12,7 @@ namespace Whizbang.Core.Security;
 /// Uses byte-sized enum for minimal serialization.
 /// </summary>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// Serializes with 2-character abbreviated names via <see cref="ScopePropJsonConverter"/>:
 /// Scope=Sc, Roles=Ro, Perms=Pe, Principals=Pr, Claims=Cl, Actual=Ac, Effective=Ef, Type=Ty
@@ -49,7 +49,7 @@ public enum ScopeProp : byte {
 /// Supports Set (replace all), Add, and Remove operations.
 /// </summary>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// Apply order: Set takes precedence, otherwise Remove first then Add.
 /// Missing property = inherit from previous hop.
@@ -88,7 +88,7 @@ public readonly struct CollectionChanges {
 /// Only stores what changed from previous hop to minimize wire size.
 /// </summary>
 /// <docs>fundamentals/security/scope-propagation</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
 /// <remarks>
 /// <para>
 /// Used instead of storing full scope on every hop. Pattern:

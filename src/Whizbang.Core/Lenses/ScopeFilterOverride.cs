@@ -6,7 +6,7 @@ namespace Whizbang.Core.Lenses;
 /// Useful for system processes that need to query as a specific tenant/user.
 /// </summary>
 /// <docs>fundamentals/lenses/scoped-queries#scope-override</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterOverrideTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterOverrideTests.cs</tests>
 public readonly record struct ScopeFilterOverride {
   /// <summary>
   /// Override tenant ID. When set, used instead of the ambient TenantId.

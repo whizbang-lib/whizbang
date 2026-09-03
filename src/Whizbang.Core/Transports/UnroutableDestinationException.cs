@@ -16,7 +16,6 @@ namespace Whizbang.Core.Transports;
 /// commands return to the legacy shared inbox.
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#namespace-outbox</docs>
-/// <tests>tests/Whizbang.Transports.Tests/UnroutableDestinationExceptionTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Roslynator", "RCS1194:Implement exception constructors",
   Justification = "UnroutableDestinationException always carries the missing broker EntityName — that name IS the diagnostic (which entity to provision, which namespace to roll back). The standard parameterless / message-only constructors would allow constructing it without the one field that makes it actionable.")]
 public sealed class UnroutableDestinationException : InvalidOperationException {

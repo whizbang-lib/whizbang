@@ -9,7 +9,7 @@ namespace Whizbang.Core.Async;
 /// catch <see cref="OperationCanceledException"/> → throw <see cref="TimeoutException"/>.
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#awaiter-identity</docs>
-/// <tests>Whizbang.Core.Tests/Async/AsyncTimeoutHelperTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Async/AsyncTimeoutHelperTests.cs</tests>
 public static class AsyncTimeoutHelper {
   /// <summary>
   /// Waits for a task to complete within the specified timeout.

@@ -139,8 +139,6 @@ public partial class ServiceBusConsumerWorker(
   /// messages land in inbox tables the migration creates. Both halves are fixed by moving the
   /// subscribe here, behind the gate.
   /// </remarks>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
@@ -592,8 +590,6 @@ public partial class ServiceBusConsumerWorker(
   /// Handles envelopes from transport which may be strongly-typed or JsonElement-typed.
   /// The actual type information is preserved in envelopeTypeFromTransport for later deserialization.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope, string? envelopeTypeFromTransport, IServiceProvider scopeServiceProvider) {
     // Envelopes from transport can be:
     // 1. Strongly-typed: MessageEnvelope<ProductCreatedEvent> - needs serialization to JsonElement form
@@ -732,8 +728,6 @@ public partial class ServiceBusConsumerWorker(
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
     var firstHop = envelope.Hops?.FirstOrDefault();
@@ -752,8 +746,6 @@ public partial class ServiceBusConsumerWorker(
   /// <summary>
   /// Stops the worker and disposes all subscriptions.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public override async Task StopAsync(CancellationToken cancellationToken) {
     LogWorkerStoppingGracefully(_logger);
 
@@ -958,14 +950,10 @@ public partial class ServiceBusConsumerWorker(
 /// <summary>
 /// Configuration options for ServiceBusConsumerWorker.
 /// </summary>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public class ServiceBusConsumerOptions {
   /// <summary>
   /// List of topic subscriptions to consume messages from.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public List<TopicSubscription> Subscriptions { get; set; } = [];
 }
 
@@ -975,6 +963,4 @@ public class ServiceBusConsumerOptions {
 /// <param name="TopicName">The Service Bus topic name</param>
 /// <param name="SubscriptionName">The subscription name for this consumer</param>
 /// <param name="DestinationFilter">Optional destination filter value (e.g., "inventory-service")</param>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public record TopicSubscription(string TopicName, string SubscriptionName, string? DestinationFilter = null);

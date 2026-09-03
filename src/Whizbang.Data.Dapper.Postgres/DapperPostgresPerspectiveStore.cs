@@ -17,7 +17,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 /// <typeparam name="TModel">The read model type stored in the perspective</typeparam>
 /// <docs>fundamentals/perspectives/perspectives</docs>
-/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresPerspectiveStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/Perspectives/DapperPostgresPerspectiveStoreTests.cs</tests>
 public sealed class DapperPostgresPerspectiveStore<TModel>(
     string connectionString,
     string tableName,

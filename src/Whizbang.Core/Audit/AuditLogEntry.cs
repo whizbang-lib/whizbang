@@ -35,7 +35,7 @@ namespace Whizbang.Core.Audit;
 /// </code>
 /// </example>
 /// <docs>fundamentals/security/audit-logging</docs>
-/// <tests>Whizbang.Core.Tests/Audit/AuditLogEntryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Audit/AuditLogEntryTests.cs</tests>
 public sealed record AuditLogEntry {
   /// <summary>
   /// Unique identifier for this audit entry.

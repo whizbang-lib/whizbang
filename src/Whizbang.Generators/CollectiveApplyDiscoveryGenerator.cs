@@ -16,7 +16,7 @@ namespace Whizbang.Generators;
 /// handler/event casts statically.
 /// </summary>
 /// <docs>fundamentals/messaging/collective-events</docs>
-/// <tests>Whizbang.Generators.Tests/CollectiveApplyDiscoveryGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/CollectiveApplyDiscoveryGeneratorTests.cs</tests>
 [Generator]
 public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
   private const string ATTRIBUTE_FQN = "Whizbang.Core.Perspectives.CollectiveApplyForAttribute";

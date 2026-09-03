@@ -32,7 +32,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/backup-tick-coordinator</docs>
-/// <tests>Whizbang.Core.Tests/Workers/BackupTickCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/BackupTickCoordinatorTests.cs</tests>
 public sealed partial class BackupTickCoordinator(
   IIdleActivityTracker tracker,
   IBackupTickRegistry registry,

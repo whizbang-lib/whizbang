@@ -29,7 +29,7 @@ namespace Whizbang.Core.Tags;
 /// </code>
 /// </example>
 /// <docs>fundamentals/messages/message-tags#configuration</docs>
-/// <tests>Whizbang.Core.Tests/Tags/TagOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagOptionsTests.cs</tests>
 public sealed class TagOptions {
   private readonly List<TagHookRegistration> _hookRegistrations = [];
   private readonly Dictionary<string, CoalescePolicyOptions> _coalesceBindings = new(StringComparer.Ordinal);

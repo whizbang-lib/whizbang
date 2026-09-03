@@ -23,7 +23,6 @@ namespace Whizbang.Core.Execution;
 /// </para>
 /// </remarks>
 /// <docs>operations/workers/concurrency-governor</docs>
-/// <tests>tests/Whizbang.Core.Tests/Execution/ObservedConcurrencyGovernorTests.cs</tests>
 public sealed class ObservedConcurrencyGovernor : IConcurrencyGovernor {
   private readonly IConcurrencyGovernor _inner;
   private readonly GovernorMetrics _metrics;

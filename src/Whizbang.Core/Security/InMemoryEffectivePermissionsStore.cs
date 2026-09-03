@@ -10,7 +10,6 @@ namespace Whizbang.Core.Security;
 /// </summary>
 /// <typeparam name="TUserId">User identity type with sensible equality semantics.</typeparam>
 /// <docs>fundamentals/security/effective-permissions#in-memory</docs>
-/// <tests>tests/Whizbang.Core.Tests/Security/InMemoryEffectivePermissionsStoreTests.cs</tests>
 public sealed class InMemoryEffectivePermissionsStore<TUserId> : IEffectivePermissionsStore<TUserId>
     where TUserId : notnull {
   private readonly ConcurrentDictionary<TUserId, EffectivePermissionsSnapshot> _store = new();

@@ -6,7 +6,6 @@ namespace Whizbang.Core;
 /// Resolves stream keys from events using [StreamId] attribute.
 /// Uses source-generated code for zero-reflection AOT compatibility.
 /// </summary>
-/// <tests>tests/Whizbang.Core.Tests/StreamIdResolutionTests.cs</tests>
 public static class StreamIdResolver {
   /// <summary>
   /// Resolves the stream key from an event.

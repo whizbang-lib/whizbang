@@ -157,7 +157,6 @@ public partial class TransportPublishStrategy(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#event-store-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportPublishStrategyTests.cs:PublishAsync_WithNullDestination_*</tests>
   public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
     // Skip transport publishing for event-store-only messages (destination is null)
     // These messages are stored in event store via process_work_batch but should not be transported

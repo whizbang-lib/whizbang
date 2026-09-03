@@ -25,7 +25,7 @@ namespace Whizbang.Generators.Analyzers;
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz900</docs>
-/// <tests>Whizbang.Generators.Tests/Analyzers/PerspectiveSyncInReceptorAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveSyncInReceptorAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
   private const string RECEPTOR_INTERFACE_PREFIX = "Whizbang.Core.IReceptor<";

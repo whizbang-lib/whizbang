@@ -4,7 +4,7 @@ namespace Whizbang.Core.Lenses;
 /// Maps <see cref="QueryScope"/> enum values to their corresponding <see cref="ScopeFilters"/> flags.
 /// </summary>
 /// <docs>fundamentals/lenses/scoped-queries#query-scope</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/QueryScopeMapperTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/QueryScopeMapperTests.cs</tests>
 public static class QueryScopeMapper {
   /// <summary>
   /// Converts a <see cref="QueryScope"/> value to the corresponding <see cref="ScopeFilters"/> flags.

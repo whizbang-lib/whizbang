@@ -26,7 +26,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 public sealed class SyncFilterBuilder {
   private SyncFilterNode _filter;
   private TimeSpan _timeout = TimeSpan.FromSeconds(5);

@@ -36,7 +36,7 @@ namespace Whizbang.Generators.Analyzers;
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz500</docs>
-/// <tests>Whizbang.Generators.Tests/Analyzers/DiFactoryConstructionAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/DiFactoryConstructionAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class DiFactoryConstructionAnalyzer : DiagnosticAnalyzer {
 

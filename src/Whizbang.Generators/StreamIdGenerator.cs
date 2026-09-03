@@ -11,20 +11,6 @@ using Whizbang.Generators.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithPropertyAttribute_GeneratesExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithMultipleEvents_GeneratesAllExtractorsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithNoEvents_GeneratesEmptyExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithClassProperty_GeneratesExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_ReportsDiagnostic_ForEventWithNoStreamIdAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithNonPublicEvent_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithAbstractEvent_ProcessesAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithRecordAndClassProperties_GeneratesForBothAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithNonEventType_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithStructEvent_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:StreamIdGenerator_NullableValueTypeKey_GeneratesNullableExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:StreamIdGenerator_NullableGuidKey_GeneratesNullableExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:StreamIdGenerator_TypeNotImplementingIEvent_SkipsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:StreamIdGenerator_ClassWithStreamIdProperty_GeneratesExtractorAsync</tests>
 /// Source generator that creates zero-reflection stream key extractors.
 /// Replaces runtime reflection in StreamIdResolver with compile-time code generation.
 /// </summary>

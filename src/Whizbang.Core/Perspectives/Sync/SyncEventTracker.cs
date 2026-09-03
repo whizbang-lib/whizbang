@@ -27,7 +27,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#tracker-implementation</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncEventTrackerTests.cs</tests>
 public sealed class SyncEventTracker : ISyncEventTracker {
   // Key is (eventId, perspectiveName) to allow the same event to be tracked for multiple perspectives
   private readonly ConcurrentDictionary<(Guid EventId, string PerspectiveName), TrackedSyncEvent> _trackedEvents = new();

@@ -11,7 +11,6 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// for where the value comes from.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
-/// <tests>tests/Whizbang.Core.Tests/Notifications/PgSearchPathTests.cs</tests>
 public static class PgSearchPath {
   /// <summary>
   /// Returns <paramref name="connectionString"/> with <c>Search Path=<paramref name="searchPath"/></c>

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Lenses;
 /// Resolves lens instances from DI and applies scope filters based on current context.
 /// </summary>
 /// <docs>fundamentals/lenses/scoped-lenses</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
 /// <remarks>
 /// Creates a new ScopedLensFactory.
 /// </remarks>

@@ -129,7 +129,7 @@ public sealed class RoutingOptions {
   /// opts.OwnNamespaceOf&lt;CreateUserCommand&gt;(); // Owns "myapp.users.commands"
   /// </example>
   /// <docs>fundamentals/dispatcher/routing#own-namespace-of</docs>
-  /// <tests>Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf</tests>
   public RoutingOptions OwnNamespaceOf<T>() {
     var ns = typeof(T).Namespace
       ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");
@@ -199,7 +199,7 @@ public sealed class RoutingOptions {
   /// opts.SubscribeToNamespaceOf&lt;OrderCreatedEvent&gt;(); // Subscribes to "myapp.orders.events"
   /// </example>
   /// <docs>fundamentals/dispatcher/routing#subscribe-to-namespace-of</docs>
-  /// <tests>Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf</tests>
   public RoutingOptions SubscribeToNamespaceOf<T>() {
     var ns = typeof(T).Namespace
       ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");

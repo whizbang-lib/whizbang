@@ -300,7 +300,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>The merged ScopeContext from all current hops, or null if no hops have scope deltas</returns>
-  /// <tests>tests/Whizbang.Core.Tests/Observability/ScopeDeltaIntegrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Integration.Tests/Observability/ScopeDeltaIntegrationTests.cs</tests>
   public ScopeContext? GetCurrentScope() {
     // Defensive: Handle null or empty hops gracefully
     if (Hops == null || Hops.Count == 0) {

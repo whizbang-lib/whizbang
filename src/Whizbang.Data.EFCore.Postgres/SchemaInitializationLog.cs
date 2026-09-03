@@ -9,7 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// processed by Microsoft's logger source generator.
 /// </summary>
 /// <docs>data/turnkey-initialization#multi-instance</docs>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs:ConcurrentInitialization_BothPodsSucceedAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs:Maintenance_WithNpgsqlDataSource_SucceedsAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationTests.cs:EnsureWhizbangDatabaseInitialized_CreatesCoreInfrastructureTablesAsync</tests>

@@ -34,7 +34,7 @@ namespace Whizbang.Generators;
 /// </para>
 /// </remarks>
 /// <docs>operations/dependency-injection/registration-validation</docs>
-/// <tests>Whizbang.Generators.Tests/ServiceRequirementsGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/ServiceRequirementsGeneratorTests.cs</tests>
 [Generator]
 public class ServiceRequirementsGenerator : IIncrementalGenerator {
 

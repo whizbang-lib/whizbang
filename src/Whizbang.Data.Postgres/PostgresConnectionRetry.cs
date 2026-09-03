@@ -8,7 +8,7 @@ namespace Whizbang.Data.Postgres;
 /// Also supports waiting for schema to be fully initialized before returning success.
 /// </summary>
 /// <docs>data/postgres#connection-retry</docs>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresConnectionRetryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/PostgresConnectionRetryTests.cs</tests>
 public sealed partial class PostgresConnectionRetry {
   private readonly PostgresOptions _options;
   private readonly ILogger? _logger;

@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-store-query</docs>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableEventStoreQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableEventStoreQueryTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="EFCoreFilterableEventStoreQuery"/>.
 /// </remarks>

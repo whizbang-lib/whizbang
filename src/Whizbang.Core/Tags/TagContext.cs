@@ -45,7 +45,7 @@ namespace Whizbang.Core.Tags;
 /// </code>
 /// </example>
 /// <docs>fundamentals/messages/message-tags#tag-context</docs>
-/// <tests>Whizbang.Core.Tests/Tags/TagContextTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Tags/TagContextTests.cs</tests>
 public sealed record TagContext<TAttribute> where TAttribute : MessageTagAttribute {
   /// <summary>
   /// Gets the attribute instance from the message type.

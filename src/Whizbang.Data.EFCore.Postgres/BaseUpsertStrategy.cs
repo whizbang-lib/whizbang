@@ -661,7 +661,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// Required for EF Core 10 ComplexProperty().ToJson() to avoid index corruption.
   /// </summary>
   /// <docs>data/efcore-complex-types#in-place-updates</docs>
-  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateMetadataInPlace_AllProperties_UpdatesTargetCorrectlyAsync</tests>
   protected static void UpdateMetadataInPlace(PerspectiveMetadata target, PerspectiveMetadata source) {
     target.EventType = source.EventType;
@@ -679,7 +679,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   /// Replacing List instances corrupts those indexes causing ArgumentOutOfRangeException.
   /// </summary>
   /// <docs>data/efcore-complex-types#in-place-updates</docs>
-  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_ScalarProperties_UpdatesTargetCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_AllowedPrincipals_ClearsAndAddsNewItemsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BaseUpsertStrategyInPlaceUpdateTests.cs:UpdateScopeInPlace_AllowedPrincipals_EmptySource_ClearsTargetAsync</tests>

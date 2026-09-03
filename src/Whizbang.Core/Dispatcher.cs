@@ -1338,7 +1338,7 @@ public abstract partial class Dispatcher(
   /// complex type (tuple, array, etc.) but the caller requests a specific type.
   /// </summary>
   /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
-  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
   private async ValueTask<TResult> _localInvokeWithCastFallbackAsync<TResult>(
     ReceptorInvoker<TResult> asyncInvoker,
     object message,
@@ -1401,7 +1401,7 @@ public abstract partial class Dispatcher(
   /// <returns>The extracted TResult value.</returns>
   /// <exception cref="InvalidOperationException">Thrown when TResult cannot be extracted from the receptor result.</exception>
   /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
-  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
   private async ValueTask<TResult> _localInvokeWithRpcExtractionAsync<TResult>(
     Func<object, ValueTask<object?>> invoker,
     object message,
@@ -1456,7 +1456,7 @@ public abstract partial class Dispatcher(
   /// <param name="extractedResponse">The value that was extracted and returned to the RPC caller.</param>
   /// <param name="originalMessageType">The type of the original message for routing lookup.</param>
   /// <docs>fundamentals/dispatcher/rpc-extraction</docs>
-  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRpcExtractionTests.cs</tests>
   private async Task _cascadeEventsExcludingResponseAsync<TResult>(
     object? result,
     TResult? extractedResponse,
@@ -2637,8 +2637,8 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#routed-message-cascading</docs>
-  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeFromResult_WithRouteLocal_InvokesLocalReceptorAsync</tests>
   // S3776: Core event cascade orchestration — complexity from routing modes, logging, and event tracking
 #pragma warning disable S3776
   private async Task _cascadeEventsFromResultAsync<TResult>(TResult result, Type? originalMessageType = null, IMessageEnvelope? sourceEnvelope = null) {
@@ -3097,7 +3097,7 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
-  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_WithEventReturningReceptor_GeneratesCascadeToOutboxAsync</tests>
   protected virtual Task CascadeToOutboxAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
     // Base implementation is a no-op.
     // GeneratedDispatcher overrides this with type-switched dispatch to PublishToOutboxAsync.
@@ -3127,8 +3127,6 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#event-store-only</docs>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherRoutedCascadeTests.cs:CascadeEventStoreOnly_*</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LocalEventStorageTests.cs:RouteEventStoreOnly_*</tests>
   protected virtual Task CascadeToEventStoreOnlyAsync(IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
     // Base implementation is a no-op.
     // GeneratedDispatcher overrides this with type-switched dispatch to PublishToOutboxAsync(eventStoreOnly: true).
@@ -3586,7 +3584,7 @@ public abstract partial class Dispatcher(
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/dispatcher/message-cascade#auto-cascade-to-outbox</docs>
-  /// <tests>Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_CascadeToOutbox_CallsPublishToOutboxWithMessageIdAsync</tests>
   protected async Task PublishToOutboxAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId, IMessageEnvelope? sourceEnvelope = null, bool eventStoreOnly = false, DateTimeOffset? scheduledFor = null) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -5097,7 +5095,7 @@ public abstract partial class Dispatcher(
   /// The work coordinator will drain and write to outbox in that transaction.
   /// </summary>
   /// <docs>fundamentals/dispatcher/dispatcher#deferred-publishing</docs>
-  /// <tests>Whizbang.Core.Tests/Messaging/DeferredDispatchTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/DeferredDispatchTests.cs</tests>
   private async Task _deferEventToChannelAsync<TEvent>(
     TEvent eventData,
     Type eventType,

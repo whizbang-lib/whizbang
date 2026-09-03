@@ -36,7 +36,7 @@ namespace Whizbang.Generators.Analyzers;
 /// </code>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz300</docs>
-/// <tests>Whizbang.Generators.Tests/Analyzers/PerspectiveModelConsistencyAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveModelConsistencyAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
   // Diagnostic IDs: WHIZ300-399 reserved for perspective interface validation

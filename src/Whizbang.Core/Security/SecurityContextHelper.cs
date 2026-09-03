@@ -25,7 +25,7 @@ namespace Whizbang.Core.Security;
 /// </list>
 /// </remarks>
 /// <docs>fundamentals/security/message-security#security-context-helper</docs>
-/// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs</tests>
 public static partial class SecurityContextHelper {
   /// <summary>
   /// Establishes security context from envelope using IMessageSecurityContextProvider.
@@ -41,7 +41,6 @@ public static partial class SecurityContextHelper {
   /// but don't need IMessageContextAccessor.
   /// </para>
   /// </remarks>
-  /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishScopeContextAsync_WithProvider_SetsAccessorCurrentAsync</tests>
   public static async ValueTask<IScopeContext?> EstablishScopeContextAsync(
       IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
@@ -82,7 +81,7 @@ public static partial class SecurityContextHelper {
   /// with MessageId, CorrelationId, CausationId, Timestamp, and UserId.
   /// </para>
   /// </remarks>
-  /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_WithSecurityContext_SetsUserIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:SetMessageContextFromEnvelope_WithSecurityContext_SetsUserIdAsync</tests>
   public static void SetMessageContextFromEnvelope(
       IMessageEnvelope envelope,
       IServiceProvider scopedProvider) {
@@ -155,9 +154,9 @@ public static partial class SecurityContextHelper {
   /// <item><description>Invokes ISecurityContextCallback implementations to notify user code (e.g., a user-context callback service)</description></item>
   /// </list>
   /// </remarks>
-  /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishFullContextAsync_SetsBothContextsAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishFullContextAsync_SetsBothContextsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerSecurityContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerSecurityContextTests.cs</tests>
   public static async ValueTask EstablishFullContextAsync(
       IMessageEnvelope envelope,
       IServiceProvider scopedProvider,
@@ -229,9 +228,7 @@ public static partial class SecurityContextHelper {
   /// </remarks>
   /// <docs>fundamentals/dispatcher/dispatcher#null-envelope-cascade-paths</docs>
   /// <docs>fundamentals/security/message-security#asynclocal-context-flow</docs>
-  /// <tests>Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishMessageContextForCascade_WithScopeContext_PropagatesUserIdAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherCascadeNullEnvelopeTests.cs:Cascade_WithNullEnvelope_*</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_*ElseBranch*</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/SecurityContextHelperTests.cs:EstablishMessageContextForCascade_WithScopeContext_PropagatesUserIdAsync</tests>
   public static void EstablishMessageContextForCascade(IServiceProvider? serviceProvider = null) {
     var logger = serviceProvider?.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Core.Security.SecurityContextHelper");
 

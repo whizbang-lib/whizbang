@@ -30,8 +30,6 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_SkipsHopsWithoutTrailsAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageHop_Constructor_SetsAllPropertiesAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageHop_CallerInfo_CanBeNullAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageHop_SecurityContext_CanBeNullAsync</tests>
-/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageHop_SecurityContext_CanBeSetAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageHop_Trail_CanBeNullAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageHop_Trail_CanBeSetAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageHop_Type_DefaultsToCurrentAsync</tests>

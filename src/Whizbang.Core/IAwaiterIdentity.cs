@@ -13,7 +13,7 @@ namespace Whizbang.Core;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#awaiter-identity</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:EventCompletionAwaiter_ImplementsIAwaiterIdentityAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:PerspectiveSyncAwaiter_ImplementsIAwaiterIdentityAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaiterIdentityTests.cs:EventCompletionAwaiter_TwoInstances_HaveDifferentIdsAsync</tests>

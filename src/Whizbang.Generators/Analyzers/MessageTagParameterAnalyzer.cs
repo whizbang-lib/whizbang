@@ -22,7 +22,7 @@ namespace Whizbang.Generators.Analyzers;
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz090</docs>
-/// <tests>Whizbang.Generators.Tests/Analyzers/MessageTagParameterAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/MessageTagParameterAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class MessageTagParameterAnalyzer : DiagnosticAnalyzer {
   private const string MESSAGE_TAG_ATTRIBUTE_NAME = "Whizbang.Core.Attributes.MessageTagAttribute";

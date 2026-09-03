@@ -28,7 +28,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs:SyncFilter_ForStream_CreatesBuilderWithStreamFilterAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs:SyncFilter_ForEventTypes_Params_CreatesBuilderAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncFilterBuilderTests.cs:SyncFilter_CurrentScope_CreatesBuilderAsync</tests>

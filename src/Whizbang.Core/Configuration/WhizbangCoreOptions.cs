@@ -23,7 +23,7 @@ namespace Whizbang.Core.Configuration;
 /// </example>
 /// </remarks>
 /// <docs>operations/configuration/whizbang-options</docs>
-/// <tests>Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Configuration/WhizbangCoreOptionsTests.cs</tests>
 public sealed class WhizbangCoreOptions {
   /// <summary>
   /// Gets the tag system configuration.

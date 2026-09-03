@@ -10,7 +10,7 @@ namespace Whizbang.Core.Workers;
 /// so contention from concurrent hook callers is negligible.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/idle-activity-tracking</docs>
-/// <tests>Whizbang.Core.Tests/Workers/IdleActivityTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/IdleActivityTrackerTests.cs</tests>
 public sealed class IdleActivityTracker : IIdleActivityTracker {
   private readonly TimeProvider _timeProvider;
   private readonly Lock _lock = new();

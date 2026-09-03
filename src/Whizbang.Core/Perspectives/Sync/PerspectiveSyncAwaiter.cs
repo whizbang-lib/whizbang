@@ -21,7 +21,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
 /// <docs>operations/observability/tracing#perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="PerspectiveSyncAwaiter"/>.
 /// </remarks>

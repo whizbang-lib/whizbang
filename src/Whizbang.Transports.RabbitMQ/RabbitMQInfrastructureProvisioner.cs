@@ -13,8 +13,8 @@ namespace Whizbang.Transports.RabbitMQ;
 /// exchange per topic, queue + bindings per subscription).
 /// </summary>
 /// <docs>fundamentals/dispatcher/routing#domain-topic-provisioning</docs>
-/// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs</tests>
-/// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs</tests>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Infrastructure provisioning - startup overhead not critical")]
 public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvisioner {
   private readonly RabbitMQChannelPool _channelPool;
@@ -56,12 +56,12 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
   }
 
   /// <inheritdoc />
-  /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsDeclaresExchangeForEachDomainAsync</tests>
-  /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsUsesTopicExchangeTypeAsync</tests>
-  /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsIsDurableAsync</tests>
-  /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsLowercasesExchangeNamesAsync</tests>
-  /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsEmptySetDoesNothingAsync</tests>
-  /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsCancellationRequestedThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsDeclaresExchangeForEachDomainAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsUsesTopicExchangeTypeAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsIsDurableAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsLowercasesExchangeNamesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsEmptySetDoesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerTests.cs:ProvisionOwnedDomainsCancellationRequestedThrowsAsync</tests>
   public async Task ProvisionOwnedDomainsAsync(
       IReadOnlySet<string> ownedDomains,
       CancellationToken cancellationToken = default) {
@@ -127,8 +127,8 @@ public sealed class RabbitMQInfrastructureProvisioner : IInfrastructureProvision
   /// Idempotent via the per-process cache. The ownership drift probe runs before this
   /// service's own declares on each owned command inbox.
   /// </remarks>
-  /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs:ProvisionManifest_SecondCall_PerformsZeroDeclaresAsync</tests>
-  /// <tests>Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs:ProvisionManifest_OwnedInboxExchangeExistsWithoutOurQueue_RecordsDriftAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs:ProvisionManifest_SecondCall_PerformsZeroDeclaresAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQInfrastructureProvisionerManifestTests.cs:ProvisionManifest_OwnedInboxExchangeExistsWithoutOurQueue_RecordsDriftAsync</tests>
   public async Task ProvisionManifestAsync(
       TopologyManifest manifest,
       CancellationToken cancellationToken = default) {

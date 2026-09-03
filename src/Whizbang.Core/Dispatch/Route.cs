@@ -64,7 +64,6 @@ public static class Route {
   /// return (success: Route.None(), failure: orderFailed);
   /// </code>
   /// </example>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatch/RouteTests.cs:None_*</tests>
   public static RoutedNone None() => default;
 
   /// <summary>

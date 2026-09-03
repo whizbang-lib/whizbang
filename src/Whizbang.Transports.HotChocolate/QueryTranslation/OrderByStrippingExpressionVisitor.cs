@@ -26,7 +26,7 @@ namespace Whizbang.Transports.HotChocolate.QueryTranslation;
 /// </para>
 /// </remarks>
 /// <docs>apis/graphql/sorting</docs>
-/// <tests>Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingExpressionVisitorTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Tests/Unit/OrderByStrippingExpressionVisitorTests.cs</tests>
 public class OrderByStrippingExpressionVisitor : ExpressionVisitor {
   /// <summary>
   /// Visits a method call expression and strips ordering methods.

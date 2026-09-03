@@ -10,7 +10,7 @@ namespace Whizbang.Core.Diagnostics;
 /// </para>
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
-/// <tests>Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
 public enum DebuggerDetectionMode {
   /// <summary>
   /// Always use wall clock time (no breakpoint detection).

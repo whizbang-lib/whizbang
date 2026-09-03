@@ -24,7 +24,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/idle-activity-tracking</docs>
-/// <tests>Whizbang.Core.Tests/Workers/IdleActivityTrackerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/IdleActivityTrackerTests.cs</tests>
 public interface IIdleActivityTracker {
   /// <summary>
   /// Resets the idle timer. Called by hook consumers when real activity has

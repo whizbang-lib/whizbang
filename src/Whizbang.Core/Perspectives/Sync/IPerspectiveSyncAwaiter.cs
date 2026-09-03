@@ -20,7 +20,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:PerspectiveSyncAwaiter_WaitAsync_CompletesWhenDatabaseReturnsSyncedAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:PerspectiveSyncAwaiter_IsCaughtUpAsync_WithUnprocessedEvents_ReturnsFalseAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncAwaiterTests.cs:WaitForStreamAsync_CrossScope_WithPendingEvents_WaitsUntilProcessedAsync</tests>
