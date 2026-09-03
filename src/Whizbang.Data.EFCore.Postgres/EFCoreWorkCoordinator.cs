@@ -4568,13 +4568,24 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <inheritdoc />
-  /// <inheritdoc />
+  /// <docs>messaging/work-coordinator#local-service-identity</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorServiceIdTests.cs</tests>
   public async Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) {
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
+    // Schema-qualified like every other query here (issue #630): wh_service_config is created in
+    // the DbContext's schema, and a bare name resolves through search_path — 42P01 on a non-public
+    // schema, or another schema's row when public happens to have one.
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var table = BuildSchemaQualifiedName(schema, "wh_service_config");
     await using var cmd = dbConnection.CreateCommand();
-    cmd.CommandText = "SELECT service_id FROM wh_service_config LIMIT 1";
+#pragma warning disable S2077 // schema comes from the EF model, not user input — same pattern as every neighbor
+    cmd.CommandText = $"SELECT service_id FROM {table} LIMIT 1";
+#pragma warning restore S2077
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
     return result switch {
       null or DBNull => Guid.Empty,

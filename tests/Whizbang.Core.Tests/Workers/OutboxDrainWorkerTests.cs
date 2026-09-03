@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -128,6 +129,15 @@ public class OutboxDrainWorkerTests {
       }
       return Task.FromResult<IReadOnlyList<OutboxBatchRow>>(result);
     }
+
+    /// <summary>When set, <see cref="GetLocalServiceIdAsync"/> fails with this — the shape of a
+    /// coordinator whose <c>wh_service_config</c> lookup cannot run (issue #630).</summary>
+    public Exception? LocalServiceIdFailure { get; set; }
+
+    public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
+      LocalServiceIdFailure is null
+        ? Task.FromResult(Guid.Empty)
+        : Task.FromException<Guid>(LocalServiceIdFailure);
 
     // Required (non-default-implemented) interface members — minimal stubs.
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
@@ -1593,5 +1603,85 @@ public class OutboxDrainWorkerTests {
     await Assert.That(completion.AllIds).Contains(msgId);
     await Assert.That(invoker.Invocations.Count).IsEqualTo(0)
       .Because("With deserialize failing, lifecycle invocation must be skipped (typedEnvelope is null).");
+  }
+
+  /// <summary>
+  /// The local service identity lookup is best-effort by design (legacy coordinators return an
+  /// empty id), but a FAILED lookup used to be swallowed silently, and the two are then
+  /// indistinguishable: every envelope this instance publishes carries an empty
+  /// <c>SourceServiceId</c>, downstream consumers attribute those messages to themselves, and
+  /// nothing anywhere says so (issue #630). The worker must keep draining — the fallback is the
+  /// right behavior — and must say what is now untrue about the system.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_LocalServiceIdLookupFails_LogsTheConsequenceAndKeepsDrainingAsync() {
+    var coord = new FakeWorkCoordinator {
+      LocalServiceIdFailure = new InvalidOperationException("42P01: relation \"wh_service_config\" does not exist"),
+    };
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sink = new List<string>();
+    using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    await using var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      loggerFactory.CreateLogger<OutboxDrainWorker>(),
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await completion.WaitForCountAsync(1, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(completion.AllIds).Contains(msgId)
+      .Because("the lookup is best-effort: a failure must degrade to an empty source id, not stop the drain");
+
+    List<string> lines;
+    lock (sink) { lines = [.. sink]; }
+    var warning = lines.FirstOrDefault(l => l.Contains("SourceServiceId", StringComparison.Ordinal));
+    await Assert.That(warning).IsNotNull()
+      .Because("a swallowed lookup failure is indistinguishable from the legacy fallback; the log line "
+             + "is the only evidence that origin attribution is now wrong on every published envelope");
+    await Assert.That(warning!).Contains("attribute")
+      .Because("the message must name the consequence, not just the failure");
+  }
+
+  private sealed class ListLoggerProvider(List<string> sink) : ILoggerProvider {
+    private readonly List<string> _sink = sink;
+
+    public ILogger CreateLogger(string categoryName) => new ListLogger(_sink);
+
+    public void Dispose() {
+      // Nothing to release — the sink is owned by the test.
+    }
+
+    private sealed class ListLogger(List<string> sink) : ILogger {
+      private readonly List<string> _sink = sink;
+
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+        lock (_sink) {
+          _sink.Add(formatter(state, exception));
+        }
+      }
+    }
   }
 }
