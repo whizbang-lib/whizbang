@@ -35,6 +35,8 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>operations/workers/housekeeping-arbitration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
 public sealed class HousekeepingCoordinator {
 
   /// <summary>A periodic background activity that contends for store locks.</summary>
@@ -117,6 +119,7 @@ public sealed class HousekeepingCoordinator {
   private bool _integrityRunning;
   private bool _maintenanceRunning;
   private int _consecutiveDeferrals;
+  private int _recoveryDeferrals;
 
   /// <summary>
   /// Initializes a new instance of the <see cref="HousekeepingCoordinator"/> class with default
@@ -188,6 +191,16 @@ public sealed class HousekeepingCoordinator {
           return new Decision(true, Verdict.ProceedUnmeasured);
         }
         if (!backlog.IsSettled) {
+          _recoveryDeferrals++;
+          if (_recoveryDeferrals > _settings.MaxConsecutiveDeferrals) {
+            // Bounded deferral, recovery's own budget. A service with a permanent trickle never
+            // reads settled at scan time, and without this floor its dead letters defer forever —
+            // observed in production as 20,000 due rows behind a service whose backlog never once
+            // touched zero. One forced pass, distinctly reported; the budget re-arms on End so
+            // this is a trickle under load, never an open gate.
+            _dlqRunning = true;
+            return new Decision(true, Verdict.ProceedDeferralLimit);
+          }
           return new Decision(false, Verdict.ServiceBusy);
         }
         _dlqRunning = true;
@@ -280,6 +293,9 @@ public sealed class HousekeepingCoordinator {
     lock (_gate) {
       if (activity == Activity.DeadLetterRecovery) {
         _dlqRunning = false;
+        // Mirror of maintenance below: a recovery pass that actually ran re-arms the budget, so
+        // the forced-through branch cannot re-open every cycle on a service that stays busy.
+        _recoveryDeferrals = 0;
         return;
       }
 

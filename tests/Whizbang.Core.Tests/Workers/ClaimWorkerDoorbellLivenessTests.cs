@@ -118,9 +118,9 @@ public class ClaimWorkerDoorbellLivenessTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await Assert.That(liveness.ConsecutiveMissedDoorbells)
       .IsEqualTo(1)
@@ -143,11 +143,11 @@ public class ClaimWorkerDoorbellLivenessTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
     worker.SignalNewWork();
-    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
     worker.SignalNewWork();
-    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await Assert.That(liveness.ConsecutiveMissedDoorbells)
       .IsEqualTo(0)

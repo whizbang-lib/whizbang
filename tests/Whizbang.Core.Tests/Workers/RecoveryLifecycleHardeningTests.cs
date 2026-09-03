@@ -152,6 +152,65 @@ public sealed class RecoveryLifecycleHardeningTests {
              + "behind the silence");
   }
 
+  // ==========================================================================
+  // 4. Recovery must have the same bounded-deferral escape maintenance has.
+  //    A service with a permanent trickle of work never reads settled at scan
+  //    time, and without a floor its dead letters defer FOREVER — observed in
+  //    production as 20,000 due rows behind a service whose backlog never quite
+  //    touched zero.
+  // ==========================================================================
+  private static ServiceBacklog _busy() => new() { UnprocessedInboxRows = 500, ActiveLeasedRows = 3 };
+
+  [Test]
+  public async Task Recovery_DeferredPastTheLimit_ForcesThroughAsync() {
+    var coordinator = new HousekeepingCoordinator(
+      new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 3 });
+
+    for (var i = 0; i < 3; i++) {
+      var deferred = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _busy());
+      await Assert.That(deferred.Granted).IsFalse();
+    }
+
+    var forced = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _busy());
+    await Assert.That(forced.Granted).IsTrue()
+      .Because("a permanently-busy service must still recover its dead letters eventually — "
+             + "unbounded deferral is starvation with a politer name");
+    await Assert.That(forced.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.ProceedDeferralLimit)
+      .Because("the forced pass is reported distinctly so a dashboard can tell 'ran because idle' "
+             + "from 'ran because it was never idle once all hour'");
+  }
+
+  [Test]
+  public async Task Recovery_CompletedForcedRun_ReArmsTheDeferralBudgetAsync() {
+    var coordinator = new HousekeepingCoordinator(
+      new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 2 });
+    for (var i = 0; i < 2; i++) {
+      _ = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _busy());
+    }
+    var forced = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _busy());
+    await Assert.That(forced.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.ProceedDeferralLimit);
+    coordinator.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
+
+    var next = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _busy());
+    await Assert.That(next.Granted).IsFalse()
+      .Because("the escape is a bounded trickle, not a switch that stays open: after the forced "
+             + "run completes, busy deferrals count from zero again");
+  }
+
+  [Test]
+  public async Task RecoveryAndMaintenance_DeferralBudgets_AreIndependentAsync() {
+    var coordinator = new HousekeepingCoordinator(
+      new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 2 });
+    for (var i = 0; i < 2; i++) {
+      _ = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _busy());
+    }
+
+    var maintenance = coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _busy());
+    await Assert.That(maintenance.Granted).IsFalse()
+      .Because("recovery's spent deferrals must not open maintenance's escape — shared counters "
+             + "let the lowest rank ride the highest rank's starvation");
+  }
+
   private sealed class ImmediateGate : ISchemaReadyGate {
     public Task WaitForReadyAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     public void MarkReady() { }
