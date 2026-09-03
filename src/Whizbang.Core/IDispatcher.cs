@@ -75,7 +75,7 @@ public interface IDispatcher {
   /// <returns>Delivery receipt with correlation information</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithDispatchOptions_ReturnsDeliveryReceiptAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithDispatchOptions_Generic_PreservesTypeAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
   Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull;
 
   /// <summary>
@@ -208,7 +208,6 @@ public interface IDispatcher {
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_ShouldInvokeWithoutReturningResultAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_SynchronousCompletion_ShouldNotAllocateAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_AsynchronousCompletion_ShouldCompleteAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowReceptorNotFoundExceptionAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_WithTracing_StoresEnvelopeAsync</tests>
   ValueTask LocalInvokeAsync(object message);
 
@@ -262,7 +261,7 @@ public interface IDispatcher {
   /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
   /// <returns>The typed business result from the receptor</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_WithDispatchOptions_ReturnsResultAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
   ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options);
 
   /// <summary>
@@ -272,7 +271,7 @@ public interface IDispatcher {
   /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
   /// <returns>ValueTask representing the completion</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_Void_WithDispatchOptions_CompletesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_Void_WithCancelledToken_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_Void_WithCanceledToken_ThrowsAsync</tests>
   ValueTask LocalInvokeAsync(object message, DispatchOptions options);
 
   // ========================================
@@ -388,7 +387,7 @@ public interface IDispatcher {
   /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
   /// <returns>Delivery receipt with correlation information and StreamId</returns>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithDispatchOptions_CompletesAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync</tests>
   Task<IDeliveryReceipt> PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
 
   /// <summary>

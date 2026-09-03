@@ -50,7 +50,7 @@ public class PerspectiveRunnerTemplateInvariantTests {
   [RequiresAssemblyFiles]
   public async Task ApplyLoop_CallsThrowIfCancellationRequestedBetweenEventsAsync() {
     // Phase H step 9 slice 4 regression lock: the apply loop must check the lease CT between
-    // events. Apply is pure synchronous so can't be cancelled mid-call, but per-event CT checks
+    // events. Apply is pure synchronous so can't be canceled mid-call, but per-event CT checks
     // let a hot stream with many pending events stop respecting the deadline.
     var template = _loadTemplate();
 

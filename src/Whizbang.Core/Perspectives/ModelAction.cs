@@ -27,8 +27,8 @@ namespace Whizbang.Core.Perspectives;
 /// <example>
 /// <para><strong>Returning ModelAction from Apply:</strong></para>
 /// <code>
-/// public class OrderPerspective : IPerspectiveFor&lt;OrderView, OrderCancelled&gt; {
-///   public ModelAction Apply(OrderView current, OrderCancelled @event) {
+/// public class OrderPerspective : IPerspectiveFor&lt;OrderView, OrderCanceled&gt; {
+///   public ModelAction Apply(OrderView current, OrderCanceled @event) {
 ///     return ModelAction.Delete;  // Soft delete - sets DeletedAt
 ///   }
 /// }

@@ -37,7 +37,7 @@ public enum TransportBatchFailure {
 /// <tests>tests/Whizbang.Core.Tests/Workers/TransportBatchFailureIsolationTests.cs</tests>
 public static class TransportBatchFailureClassifier {
 
-  /// <summary>PostgreSQL SQLSTATE for a statement cancelled by request (typically a timeout).</summary>
+  /// <summary>PostgreSQL SQLSTATE for a statement canceled by request (typically a timeout).</summary>
 #pragma warning disable CA1707
   public const string SQLSTATE_STATEMENT_CANCELED = "57014";
 #pragma warning restore CA1707
@@ -67,7 +67,7 @@ public static class TransportBatchFailureClassifier {
   /// </summary>
   /// <remarks>
   /// Reported separately from <see cref="Classify"/> so the log line can name the actual database
-  /// behavior. "A batch failed" sends an operator looking at the message; "the database cancelled
+  /// behavior. "A batch failed" sends an operator looking at the message; "the database canceled
   /// the statement, SQLSTATE 57014" sends them to the query and its timeout, which is where the
   /// problem is.
   /// </remarks>

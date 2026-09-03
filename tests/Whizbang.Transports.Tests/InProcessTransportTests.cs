@@ -152,7 +152,7 @@ public class InProcessTransportTests {
   }
 
   [Test]
-  public async Task PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");
@@ -232,7 +232,7 @@ public class InProcessTransportTests {
   }
 
   [Test]
-  public async Task SubscribeBatchAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SubscribeBatchAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
@@ -433,7 +433,7 @@ public class InProcessTransportTests {
   }
 
   [Test]
-  public async Task SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var envelope = _createTestEnvelope("test");

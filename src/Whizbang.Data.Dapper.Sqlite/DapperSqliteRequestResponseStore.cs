@@ -8,13 +8,13 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// <summary>
 /// SQLite-specific implementation of IRequestResponseStore using Dapper.
 /// </summary>
-/// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
-/// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
 public class DapperSqliteRequestResponseStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
@@ -22,8 +22,8 @@ public class DapperSqliteRequestResponseStore(
   /// <summary>
   /// Returns the SQLite-specific SQL for saving a request using INSERT ON CONFLICT UPSERT.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
   protected override string GetSaveRequestSql() => @"
     INSERT INTO whizbang_request_response (correlation_id, request_id, response_envelope, expires_at, created_at)
     VALUES (@CorrelationId, @RequestId, NULL, @ExpiresAt, @CreatedAt)
@@ -33,10 +33,10 @@ public class DapperSqliteRequestResponseStore(
   /// <summary>
   /// Returns the SQLite-specific SQL for waiting for and retrieving a response.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
   protected override string GetWaitForResponseSql() => @"
     SELECT response_envelope AS ResponseEnvelope, expires_at AS ExpiresAt
     FROM whizbang_request_response
@@ -45,9 +45,9 @@ public class DapperSqliteRequestResponseStore(
   /// <summary>
   /// Returns the SQLite-specific SQL for saving a response using INSERT ON CONFLICT UPSERT.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
   protected override string GetSaveResponseSql() => @"
     INSERT INTO whizbang_request_response (correlation_id, request_id, response_envelope, expires_at, created_at)
     VALUES (@CorrelationId, '00000000-0000-0000-0000-000000000000', @ResponseEnvelope, datetime('now', '+1 day'), datetime('now'))
@@ -57,7 +57,7 @@ public class DapperSqliteRequestResponseStore(
   /// <summary>
   /// Returns the SQLite-specific SQL for cleaning up expired request-response records.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
   protected override string GetCleanupExpiredSql() => @"
     DELETE FROM whizbang_request_response
     WHERE expires_at < @Now";

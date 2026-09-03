@@ -214,7 +214,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
       await inbox.WriteAsync(work, workerCts.Token);
 
       // Wait for the inline path to complete (handler-commit channel receives the EventStored marker).
-      // After this, the dispatch's `using var lease` scope has ended → lease disposed → CT cancelled.
+      // After this, the dispatch's `using var lease` scope has ended → lease disposed → CT canceled.
       var commit = await handlerCommit.First.Task.WaitAsync(TimeSpan.FromSeconds(10));
       await Assert.That(commit.HandlerId).IsEqualTo(work.MessageId);
 

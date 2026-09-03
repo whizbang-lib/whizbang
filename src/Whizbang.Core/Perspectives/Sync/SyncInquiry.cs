@@ -23,7 +23,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </code>
 /// </remarks>
 /// <docs>fundamentals/perspectives/sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/SyncInquiryTests.cs</tests>
 public sealed record SyncInquiry {
   /// <summary>
   /// Gets the stream ID to check.

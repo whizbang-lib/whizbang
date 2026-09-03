@@ -342,7 +342,7 @@ public static class ServiceCollectionExtensions {
   /// it only stashes the connection string at construction and opens a fresh
   /// <see cref="Npgsql.NpgsqlConnection"/> per <c>MoveAsync</c> call.
   /// </summary>
-  /// <tests>Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_DeadLetterRegistrationTests.cs:AddDeadLetterStore_RegistersDeadLetterStoreAsSingletonAsync</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/ServiceCollectionExtensions_DeadLetterRegistrationTests.cs:AddDeadLetterStore_RegistersDeadLetterStoreAsSingletonAsync</tests>
   internal static void _addDeadLetterStore(IServiceCollection services, string connectionString) {
     services.TryAddSingleton<IDeadLetterStore>(sp =>
       new DapperDeadLetterStore(

@@ -42,7 +42,7 @@ public sealed class DispatchOptions {
 
   /// <summary>
   /// Token to cancel the dispatch operation.
-  /// When cancelled, the dispatch will throw <see cref="OperationCanceledException"/>.
+  /// When canceled, the dispatch will throw <see cref="OperationCanceledException"/>.
   /// Default is <see cref="CancellationToken.None"/>.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatchOptionsTests.cs:Default_CancellationToken_IsNone_Async</tests>

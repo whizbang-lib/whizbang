@@ -42,7 +42,7 @@ public sealed class SagaDeadlineScheduler : ISagaDeadlineScheduler {
     ArgumentException.ThrowIfNullOrWhiteSpace(eventType);
 
     // Keyed one-shot: create-or-update by key means re-arming moves the deadline instead of stacking
-    // a second one, and it re-activates a previously cancelled deadline.
+    // a second one, and it re-activates a previously canceled deadline.
     return _manager.CreateAsync(new ScheduleDefinition {
       ScheduleId = DeadlineScheduleId(sagaStreamId, deadlineName),
       Key = _key(sagaStreamId, deadlineName),

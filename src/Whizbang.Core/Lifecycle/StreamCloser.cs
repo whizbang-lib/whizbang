@@ -77,8 +77,8 @@ public sealed partial class StreamCloser : IStreamCloser {
         throw;
       }
       if (decision.Cancel) {
-        LogCloseVetoed(_logger, streamId, "cancelled");
-        return new StreamCloseResult("cancelled", 0);
+        LogCloseVetoed(_logger, streamId, "canceled");
+        return new StreamCloseResult("canceled", 0);
       }
       if (decision.DeferUntil.HasValue) {
         LogCloseVetoed(_logger, streamId, "deferred");

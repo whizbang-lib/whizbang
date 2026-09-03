@@ -1171,11 +1171,11 @@ public class DispatcherSecurityBuilderTests {
   /// <summary>
   /// The <see cref="DispatcherSecurityBuilder.SendAsync{TMessage}(TMessage, DispatchOptions)"/>
   /// overload (an uncovered dispatch arm) must set the explicit context and forward to the
-  /// dispatcher when the token is not cancelled — the success counterpart to the
+  /// dispatcher when the token is not canceled — the success counterpart to the
   /// already-covered cancellation throw.
   /// </summary>
   [Test]
-  public async Task SendAsync_WithDispatchOptions_UncancelledToken_SetsContextAndDispatchesAsync() {
+  public async Task SendAsync_WithDispatchOptions_UncanceledToken_SetsContextAndDispatchesAsync() {
     // Arrange
     DispatcherSecurityBuilderTestCommandReceptor.ResetCapture();
     var scopeContextAccessor = new ScopeContextAccessor();
@@ -1184,7 +1184,7 @@ public class DispatcherSecurityBuilderTests {
 
     var command = new DispatcherSecurityBuilderTestCommand("options-data");
 
-    // Act - a live (non-cancelled) token flows through the success path of the overload
+    // Act - a live (non-canceled) token flows through the success path of the overload
     using var cts = new CancellationTokenSource();
     await dispatcher.AsSystem().ForAllTenants()
       .SendAsync(command, new DispatchOptions { CancellationToken = cts.Token });

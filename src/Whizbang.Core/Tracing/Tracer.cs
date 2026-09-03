@@ -25,7 +25,7 @@ namespace Whizbang.Core.Tracing;
 /// </list>
 /// </remarks>
 /// <docs>operations/observability/tracing#tracer</docs>
-/// <tests>Whizbang.Observability.Tests/TracerTests.cs</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TracerTests.cs</tests>
 /// <tests>Whizbang.Core.Tests/Tracing/TracerOptionsIntegrationTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of the <see cref="Tracer"/> class.

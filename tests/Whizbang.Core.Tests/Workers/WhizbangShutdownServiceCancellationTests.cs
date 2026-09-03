@@ -11,7 +11,7 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// StopAsync runs on the shutdown path, where the host's token is ALREADY cancelled by the time
+/// StopAsync runs on the shutdown path, where the host's token is ALREADY canceled by the time
 /// cleanup executes. Forwarding that token cancels the deregistration DELETE precisely when it
 /// matters most, and letting the resulting OperationCanceledException escape turns a graceful stop
 /// into a crash — the process exits non-zero, the orchestrator records a restart, and the instance
@@ -20,7 +20,7 @@ namespace Whizbang.Core.Tests.Workers;
 public class WhizbangShutdownServiceCancellationTests {
 
   [Test]
-  public async Task StopAsync_WithAlreadyCancelledToken_DoesNotForwardCancellationToDeregistrationAsync() {
+  public async Task StopAsync_WithAlreadyCanceledToken_DoesNotForwardCancellationToDeregistrationAsync() {
     var coordinator = new _RecordingCoordinator();
     var service = _build(coordinator, out _);
     using var cts = new CancellationTokenSource();
@@ -29,14 +29,14 @@ public class WhizbangShutdownServiceCancellationTests {
     await service.StopAsync(cts.Token);
 
     await Assert.That(coordinator.WasCalled).IsTrue();
-    // The whole point: cleanup must run on a token that is NOT already cancelled, otherwise the
-    // DELETE is cancelled mid-statement and the row survives.
-    await Assert.That(coordinator.ReceivedCancelledToken).IsFalse();
+    // The whole point: cleanup must run on a token that is NOT already canceled, otherwise the
+    // DELETE is canceled mid-statement and the row survives.
+    await Assert.That(coordinator.ReceivedCanceledToken).IsFalse();
   }
 
   [Test]
-  public async Task StopAsync_WhenDeregistrationIsCancelled_DoesNotThrowAsync() {
-    var coordinator = new _RecordingCoordinator { ThrowOnDeregister = new OperationCanceledException("Query was cancelled") };
+  public async Task StopAsync_WhenDeregistrationIsCanceled_DoesNotThrowAsync() {
+    var coordinator = new _RecordingCoordinator { ThrowOnDeregister = new OperationCanceledException("Query was canceled") };
     var service = _build(coordinator, out _);
 
     // Must not escape StopAsync — Host.StopAsync rethrows, which is what produces the crash exit.
@@ -44,8 +44,8 @@ public class WhizbangShutdownServiceCancellationTests {
   }
 
   [Test]
-  public async Task StopAsync_WhenDeregistrationIsCancelled_LogsTheAbandonmentAsync() {
-    var coordinator = new _RecordingCoordinator { ThrowOnDeregister = new OperationCanceledException("Query was cancelled") };
+  public async Task StopAsync_WhenDeregistrationIsCanceled_LogsTheAbandonmentAsync() {
+    var coordinator = new _RecordingCoordinator { ThrowOnDeregister = new OperationCanceledException("Query was canceled") };
     var service = _build(coordinator, out var logger);
 
     await service.StopAsync(CancellationToken.None);
@@ -112,12 +112,12 @@ public class WhizbangShutdownServiceCancellationTests {
   /// <summary>Records the token deregistration actually received, and can fail on demand.</summary>
   private sealed class _RecordingCoordinator : IWorkCoordinator {
     public bool WasCalled { get; private set; }
-    public bool ReceivedCancelledToken { get; private set; }
+    public bool ReceivedCanceledToken { get; private set; }
     public Exception? ThrowOnDeregister { get; init; }
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) {
       WasCalled = true;
-      ReceivedCancelledToken = cancellationToken.IsCancellationRequested;
+      ReceivedCanceledToken = cancellationToken.IsCancellationRequested;
       return ThrowOnDeregister is not null ? Task.FromException(ThrowOnDeregister) : Task.CompletedTask;
     }
 

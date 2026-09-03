@@ -117,7 +117,7 @@ function Initialize-SonarToken {
     $response = Read-Host "Paste your token here (or press Enter to cancel)"
 
     if ([string]::IsNullOrWhiteSpace($response)) {
-        Write-Warning2 "Setup cancelled. Run the script again when you have a token."
+        Write-Warning2 "Setup canceled. Run the script again when you have a token."
         exit 1
     }
 

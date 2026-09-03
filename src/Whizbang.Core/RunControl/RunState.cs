@@ -17,6 +17,6 @@ public enum RunState {
   Running,
   /// <summary>Permit closed but resumable — awaiters block until re-opened.</summary>
   Paused,
-  /// <summary>Permit draining — awaiters are cancelled (finish in-flight, take no new).</summary>
+  /// <summary>Permit draining — awaiters are canceled (finish in-flight, take no new).</summary>
   Stopped
 }

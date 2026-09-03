@@ -34,7 +34,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/security/security-context-propagation</docs>
-/// <tests>Whizbang.Core.Tests/Messaging/SecurityContextEventStoreDecoratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/SecurityContextEventStoreDecoratorTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="SecurityContextEventStoreDecorator"/>.
 /// </remarks>

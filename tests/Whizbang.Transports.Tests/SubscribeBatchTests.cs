@@ -147,7 +147,7 @@ public class SubscribeBatchTests {
   }
 
   [Test]
-  public async Task SubscribeBatchAsync_WithCancelledToken_ThrowsAsync() {
+  public async Task SubscribeBatchAsync_WithCanceledToken_ThrowsAsync() {
     // Arrange
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");

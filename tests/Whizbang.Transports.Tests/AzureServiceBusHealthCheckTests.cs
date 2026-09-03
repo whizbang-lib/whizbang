@@ -78,7 +78,7 @@ public class AzureServiceBusHealthCheckTests {
     var cts = new CancellationTokenSource();
     cts.Cancel();
 
-    // Act - Even with cancelled token, health check should complete (it's synchronous)
+    // Act - Even with canceled token, health check should complete (it's synchronous)
     var result = await healthCheck.CheckHealthAsync(context, cts.Token);
 
     // Assert - Health check completes despite cancellation (doesn't use token internally)

@@ -5,7 +5,7 @@ namespace Whizbang.Core.Lenses;
 /// Combine with bitwise OR to apply multiple filters.
 /// </summary>
 /// <docs>fundamentals/security/scoping#composable-filters</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
 /// <example>
 /// // Single filter
 /// var tenantFilter = ScopeFilters.Tenant;
@@ -54,7 +54,7 @@ public enum ScopeFilters {
 /// Extension methods and common filter patterns for ScopeFilters.
 /// </summary>
 /// <docs>fundamentals/security/scoping#filter-patterns</docs>
-/// <tests>Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs:ScopeFilterExtensions_TenantUser_ReturnsTenantOrUserAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs:ScopeFilterExtensions_TenantPrincipal_ReturnsTenantOrPrincipalAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Lenses/ScopeFilterTests.cs:ScopeFilterExtensions_TenantUserOrPrincipal_ReturnsAllThreeAsync</tests>

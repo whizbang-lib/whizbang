@@ -47,6 +47,6 @@ public class DefaultTransportReadinessCheckTests {
     // Act & Assert
     await Assert.That(async () => await check.IsReadyAsync(cts.Token))
       .Throws<OperationCanceledException>()
-      .Because("Cancelled token should throw OperationCanceledException");
+      .Because("Canceled token should throw OperationCanceledException");
   }
 }

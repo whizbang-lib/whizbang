@@ -20,7 +20,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 public sealed class PgScheduleManager : IScheduleManager {
   private const short STATUS_ACTIVE = 0;
   private const short STATUS_PAUSED = 1;
-  private const short STATUS_CANCELLED = 3;
+  private const short STATUS_CANCELED = 3;
 
   private readonly WhizbangNotificationOptions _options;
   private readonly IConfiguration _configuration;
@@ -130,7 +130,7 @@ public sealed class PgScheduleManager : IScheduleManager {
 
   /// <inheritdoc />
   public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken cancellationToken = default) =>
-    _transitionAsync(scheduleId, STATUS_CANCELLED, expectedVersion, cancellationToken);
+    _transitionAsync(scheduleId, STATUS_CANCELED, expectedVersion, cancellationToken);
 
   /// <inheritdoc />
   public async Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken cancellationToken = default) {

@@ -352,7 +352,7 @@ public class RedeliveryPumpTests {
       .Throws<OperationCanceledException>()
       .Because("cancellation is a shutdown signal, not a transient fault.");
     await Assert.That(transport.Attempts).IsEqualTo(1)
-      .Because("a cancelled serve stops immediately — retrying it would fight the host's shutdown.");
+      .Because("a canceled serve stops immediately — retrying it would fight the host's shutdown.");
   }
 
   private sealed class _flakyTransport : ITransport {

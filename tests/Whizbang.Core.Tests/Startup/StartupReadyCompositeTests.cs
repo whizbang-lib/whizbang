@@ -371,7 +371,7 @@ public class StartupReadyCompositeTests {
   /// not be signalled — the composite stays fail-closed, and the process leaves quietly.
   /// </summary>
   [Test]
-  public async Task ReadyService_CancelledWhileWaiting_ReturnsGracefullyWithoutSignallingAsync() {
+  public async Task ReadyService_CanceledWhileWaiting_ReturnsGracefullyWithoutSignallingAsync() {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     // Never drained: the wait is still pending when cancellation arrives.
@@ -387,12 +387,12 @@ public class StartupReadyCompositeTests {
       .Because("cancellation during startup is a graceful stop — rethrowing it crashes the host "
              + "(Host.StartAsync aborts on first exception) and turns a routine rollout into a crash loop");
     await Assert.That(signal.IsReady).IsFalse()
-      .Because("the composite is fail-closed: a cancelled startup never became ready");
+      .Because("the composite is fail-closed: a canceled startup never became ready");
   }
 
   /// <summary>A contributor that never answers must cancel just as gracefully as the pipeline wait.</summary>
   [Test]
-  public async Task ReadyService_CancelledWaitingOnContributor_ReturnsGracefullyAsync() {
+  public async Task ReadyService_CanceledWaitingOnContributor_ReturnsGracefullyAsync() {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
     var stuck = new _tcsContributor("subscriptions");

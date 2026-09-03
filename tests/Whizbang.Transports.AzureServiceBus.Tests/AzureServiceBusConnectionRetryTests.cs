@@ -150,7 +150,7 @@ public class AzureServiceBusConnectionRetryTests {
   }
 
   [Test]
-  public async Task CreateClientWithRetryAsync_WhenCancelled_ThrowsOperationCanceledExceptionAsync() {
+  public async Task CreateClientWithRetryAsync_WhenCanceled_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var options = new AzureServiceBusOptions {
       InitialRetryAttempts = 5,

@@ -18,5 +18,5 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-store-query</docs>
-/// <tests>Whizbang.Core.Tests/Messaging/IFilterableEventStoreQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IFilterableEventStoreQueryTests.cs</tests>
 public interface IFilterableEventStoreQuery : IEventStoreQuery, IFilterableLens;

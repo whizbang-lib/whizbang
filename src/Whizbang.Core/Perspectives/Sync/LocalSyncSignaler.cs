@@ -14,7 +14,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs:LocalSyncSignaler_SignalCheckpointUpdated_OnlyNotifiesMatchingSubscribersAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs:LocalSyncSignaler_DisposeSubscription_StopsReceivingSignalsAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/PerspectiveSyncSignalerTests.cs:LocalSyncSignaler_HandlerThrows_LogsWarningAndStillNotifiesOthersAsync</tests>

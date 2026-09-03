@@ -1323,7 +1323,7 @@ public class DispatcherUncoveredPathsTests {
   // ========================================
 
   [Test]
-  public async Task PublishAsync_WithOptions_CancelledToken_ThrowsOperationCanceledAsync() {
+  public async Task PublishAsync_WithOptions_CanceledToken_ThrowsOperationCanceledAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var testEvent = new TestEvent(Guid.NewGuid());
@@ -1362,7 +1362,7 @@ public class DispatcherUncoveredPathsTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_VoidWithOptions_AsyncInvoker_CancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_VoidWithOptions_AsyncInvoker_CanceledToken_ThrowsAsync() {
     // Arrange
     var traceStore = new StubTraceStore();
     var dispatcher = _createDispatcher(
@@ -1791,7 +1791,7 @@ public class DispatcherUncoveredPathsTests {
   }
 
   [Test]
-  public async Task SendAsync_GenericInternal_WithOptions_CancelledAfterStore_ThrowsAsync() {
+  public async Task SendAsync_GenericInternal_WithOptions_CanceledAfterStore_ThrowsAsync() {
     // Arrange - cancel after traceStore to exercise mid-path cancellation
     using var cts = new CancellationTokenSource();
     var traceStore = new StubTraceStore();

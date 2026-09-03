@@ -5,7 +5,7 @@ namespace Whizbang.Core.Security;
 /// Used for audit trail and security policy enforcement.
 /// </summary>
 /// <docs>fundamentals/security/message-security#explicit-security-context-api</docs>
-/// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 public enum SecurityContextType {
   /// <summary>
   /// User-initiated operation from HTTP request or message with user identity.

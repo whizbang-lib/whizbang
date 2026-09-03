@@ -298,7 +298,7 @@ public class TransportConsumerWorkerCoverageTests {
     } catch (InvalidOperationException ex) {
       caughtException = ex;
     } catch (OperationCanceledException) {
-      // If cancelled before the exception was thrown, that's a timing issue
+      // If canceled before the exception was thrown, that's a timing issue
     } finally {
       try { await worker.StopAsync(CancellationToken.None); } catch { }
     }

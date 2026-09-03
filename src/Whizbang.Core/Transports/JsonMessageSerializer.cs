@@ -23,8 +23,6 @@ namespace Whizbang.Core.Transports;
 /// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:SerializeAsync_WithValidCorrelationId_ShouldSerializeAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithInvalidStartToken_ShouldThrowAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithInvalidPropertyToken_ShouldThrowAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithUnsupportedValueType_ShouldThrowAsync</tests>
-/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithUnsupportedWriteType_ShouldThrowAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithNullPropertyName_ShouldThrowAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithDoubleValue_ShouldRoundTripAsync</tests>
 /// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithLargeInt64Value_ShouldRoundTripAsync</tests>

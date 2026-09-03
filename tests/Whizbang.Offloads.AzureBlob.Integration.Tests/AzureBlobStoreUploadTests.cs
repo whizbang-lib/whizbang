@@ -22,7 +22,7 @@ namespace Whizbang.Offloads.AzureBlob.Integration.Tests;
 /// fields, storage-key shape, blob content/headers/metadata as the service
 /// stored them, caller-metadata merging, the lazy container-creation paths
 /// (fresh create, pre-existing container, per-instance short-circuit), and
-/// the ensure-retry behavior after a failed or cancelled first upload.
+/// the ensure-retry behavior after a failed or canceled first upload.
 /// </summary>
 /// <docs>fundamentals/offloads/providers/azure-blob#emulator</docs>
 public class AzureBlobStoreUploadTests {
@@ -207,9 +207,9 @@ public class AzureBlobStoreUploadTests {
   }
 
   [Test]
-  public async Task UploadAsync_PreCancelledToken_ThrowsThenNextUploadRecoversAsync() {
+  public async Task UploadAsync_PreCanceledToken_ThrowsThenNextUploadRecoversAsync() {
     var connectionString = await AzuriteFixture.EnsureStartedAsync(CancellationToken.None);
-    var containerName = $"cancelled-{Guid.NewGuid():N}";
+    var containerName = $"canceled-{Guid.NewGuid():N}";
     await using var provider = _buildProvider(connectionString, containerName);
     var store = provider.GetRequiredKeyedService<IMessageBodyStore>("azurite");
 
@@ -231,7 +231,7 @@ public class AzureBlobStoreUploadTests {
     var claim = await store.UploadAsync(body, "application/octet-stream");
     var fetched = await store.DownloadAsync(claim);
     await Assert.That(fetched.ToArray()).IsEquivalentTo(body)
-      .Because("A cancelled first upload must not poison the store instance — the container-ensure flag resets so the next call re-attempts CreateIfNotExists.");
+      .Because("A canceled first upload must not poison the store instance — the container-ensure flag resets so the next call re-attempts CreateIfNotExists.");
   }
 
   [Test]

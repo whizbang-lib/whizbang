@@ -9,7 +9,7 @@ namespace Whizbang.Core.Async;
 /// catch <see cref="OperationCanceledException"/> → throw <see cref="TimeoutException"/>.
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#awaiter-identity</docs>
-/// <tests>Whizbang.Core.Tests/Async/AsyncTimeoutHelperTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Async/AsyncTimeoutHelperTests.cs</tests>
 public static class AsyncTimeoutHelper {
   /// <summary>
   /// Waits for a task to complete within the specified timeout.
@@ -19,7 +19,7 @@ public static class AsyncTimeoutHelper {
   /// <param name="timeoutMessage">Message for the <see cref="TimeoutException"/> if timeout is exceeded.</param>
   /// <param name="cancellationToken">External cancellation token.</param>
   /// <exception cref="TimeoutException">Thrown when the timeout expires before the task completes.</exception>
-  /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is cancelled.</exception>
+  /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is canceled.</exception>
   public static Task WaitWithTimeoutAsync(
       Task task,
       TimeSpan timeout,
@@ -39,7 +39,7 @@ public static class AsyncTimeoutHelper {
   /// <param name="cancellationToken">External cancellation token.</param>
   /// <returns>The result of the completed task.</returns>
   /// <exception cref="TimeoutException">Thrown when the timeout expires before the task completes.</exception>
-  /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is cancelled.</exception>
+  /// <exception cref="OperationCanceledException">Thrown when the external <paramref name="cancellationToken"/> is canceled.</exception>
   public static Task<T> WaitWithTimeoutAsync<T>(
       Task<T> task,
       TimeSpan timeout,

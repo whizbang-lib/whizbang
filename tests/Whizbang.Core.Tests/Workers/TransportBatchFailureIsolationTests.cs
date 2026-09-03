@@ -11,9 +11,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Observed in production: PostgreSQL cancelled a <c>store_inbox_messages</c> statement
+/// Observed in production: PostgreSQL canceled a <c>store_inbox_messages</c> statement
 /// (SQLSTATE <c>57014</c>, "canceling statement due to user request"). Npgsql surfaces that as
-/// <see cref="OperationCanceledException"/>. The host's stopping token was NOT cancelled, so the
+/// <see cref="OperationCanceledException"/>. The host's stopping token was NOT canceled, so the
 /// conventional guard — <c>catch (OperationCanceledException) when (token.IsCancellationRequested)</c>
 /// — correctly declined to swallow it, and it escaped the worker's <c>ExecuteAsync</c>.
 /// </para>
@@ -33,9 +33,9 @@ namespace Whizbang.Core.Tests.Workers;
 [Category("Workers")]
 public class TransportBatchFailureIsolationTests {
 
-  /// <summary>Builds the exception Npgsql actually produces for a cancelled statement.</summary>
+  /// <summary>Builds the exception Npgsql actually produces for a canceled statement.</summary>
   private static OperationCanceledException _statementTimeout()
-    => new("Query was cancelled", new PostgresException(
+    => new("Query was canceled", new PostgresException(
         messageText: "canceling statement due to user request",
         severity: "ERROR",
         invariantSeverity: "ERROR",
@@ -43,7 +43,7 @@ public class TransportBatchFailureIsolationTests {
 
   [Test]
   public async Task AStatementTimeoutIsNotAShutdownRequestAsync() {
-    var shuttingDown = new CancellationTokenSource();   // NOT cancelled
+    var shuttingDown = new CancellationTokenSource();   // NOT canceled
 
     var verdict = TransportBatchFailureClassifier.Classify(_statementTimeout(), shuttingDown.Token);
 

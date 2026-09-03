@@ -144,7 +144,7 @@ public class BackupTickCoordinatorTests {
   }
 
   [Test]
-  public async Task FireOneCycleAsync_StoppingTokenCancelled_HaltsIterationAsync() {
+  public async Task FireOneCycleAsync_StoppingTokenCanceled_HaltsIterationAsync() {
     var registry = new BackupTickRegistry();
     var ranFirst = false;
     var ranSecond = false;

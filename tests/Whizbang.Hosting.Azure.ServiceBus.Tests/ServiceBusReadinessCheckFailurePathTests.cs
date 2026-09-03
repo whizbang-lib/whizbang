@@ -73,7 +73,7 @@ public class ServiceBusReadinessCheckFailurePathTests {
   }
 
   [Test]
-  public async Task IsReadyAsync_TransportNotInitialized_ReturnsFalseEvenWithCancelledTokenAsync() {
+  public async Task IsReadyAsync_TransportNotInitialized_ReturnsFalseEvenWithCanceledTokenAsync() {
     var transport = new TestTransport(isInitialized: false);
     var client = new TestServiceBusClient(isHealthy: true);
     using var check = new ServiceBusReadinessCheck(transport, client, NullLogger<ServiceBusReadinessCheck>.Instance);

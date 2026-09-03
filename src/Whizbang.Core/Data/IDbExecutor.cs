@@ -10,10 +10,10 @@ namespace Whizbang.Core.Data;
 /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresSequenceProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs</tests>
 public interface IDbExecutor {
   /// <summary>
   /// Executes a query and returns a collection of results.
@@ -26,7 +26,7 @@ public interface IDbExecutor {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Collection of query results</returns>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
   Task<IReadOnlyList<T>> QueryAsync<T>(
     IDbConnection connection,
     string sql,
@@ -45,7 +45,7 @@ public interface IDbExecutor {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Single query result, or null if not found</returns>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs</tests>
   Task<T?> QuerySingleOrDefaultAsync<T>(
     IDbConnection connection,
     string sql,
@@ -64,9 +64,9 @@ public interface IDbExecutor {
   /// <returns>Number of rows affected</returns>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs</tests>
   Task<int> ExecuteAsync(
     IDbConnection connection,
     string sql,
@@ -85,7 +85,7 @@ public interface IDbExecutor {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Scalar result value</returns>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperPostgresSequenceProviderTests.cs</tests>
   Task<T?> ExecuteScalarAsync<T>(
     IDbConnection connection,
     string sql,

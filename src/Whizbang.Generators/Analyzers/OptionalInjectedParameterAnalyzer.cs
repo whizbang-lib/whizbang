@@ -27,7 +27,7 @@ namespace Whizbang.Generators.Analyzers;
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz501</docs>
-/// <tests>Whizbang.Generators.Tests/Analyzers/OptionalInjectedParameterAnalyzerTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/OptionalInjectedParameterAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class OptionalInjectedParameterAnalyzer : DiagnosticAnalyzer {
 

@@ -34,7 +34,7 @@ DECLARE
   v_now TIMESTAMPTZ := NOW();
 BEGIN
   -- Only a non-terminal schedule can be triggered (Active or Paused — a paused schedule may still be
-  -- run manually by an operator). Completed/Cancelled are terminal.
+  -- run manually by an operator). Completed/Canceled are terminal.
   SELECT * INTO v_sched
   FROM __SCHEMA__.wh_schedules
   WHERE schedule_id = p_schedule_id

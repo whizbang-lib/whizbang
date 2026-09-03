@@ -77,10 +77,10 @@ public class WhizbangLifecycleStateTests {
   }
 
   [Test]
-  public async Task AdvanceTo_ParticipantCancelled_DoesNotFaultOrHaltAsync() {
+  public async Task AdvanceTo_ParticipantCanceled_DoesNotFaultOrHaltAsync() {
     // The companion to ParticipantThrows_FaultsThenHalts, and by far the more consequential
     // direction. A participant that throws means the transition is unsafe, so the host faults and
-    // then HALTS. A participant cancelled by shutdown means the host is already stopping — taking
+    // then HALTS. A participant canceled by shutdown means the host is already stopping — taking
     // the fault path there halts a clean shutdown and records a fault that never happened, which
     // is what an operator would then go looking for.
     var time = new FakeTimeProvider();

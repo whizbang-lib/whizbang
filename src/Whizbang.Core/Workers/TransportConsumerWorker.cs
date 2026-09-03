@@ -726,7 +726,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// </summary>
   /// <docs>docs/transport-routing-architecture.md#transport-echo-suppression</docs>
   /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerOwnedEventDiscardTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Workers/TransportConsumerWorkerBodyClaimRehydrateTests.cs</tests>
   private async Task<(InboxMessage? InboxMessage, Whizbang.Core.Offloads.MessageBodyClaim? PendingCleanupClaim)>
       _tryBuildInboxMessageFromTransportAsync(
       TransportMessage msg, IServiceProvider scopedProvider, CancellationToken cancellationToken) {

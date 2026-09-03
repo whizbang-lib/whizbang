@@ -937,7 +937,7 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
@@ -1003,7 +1003,7 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
@@ -1035,11 +1035,11 @@ public class DispatcherTests {
 
   [Test]
   [NotInParallel]
-  public async Task LocalInvokeAsync_Void_WithCancelledToken_ThrowsAsync() {
+  public async Task LocalInvokeAsync_Void_WithCanceledToken_ThrowsAsync() {
     // Arrange
     LogReceptor.Reset();
     var dispatcher = _createDispatcher();
-    var command = new LogCommand("Test with cancelled token");
+    var command = new LogCommand("Test with canceled token");
     using var cts = new CancellationTokenSource();
     cts.Cancel();
     var options = new Whizbang.Core.Dispatch.DispatchOptions()
@@ -1067,7 +1067,7 @@ public class DispatcherTests {
   }
 
   [Test]
-  public async Task PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task PublishAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var dispatcher = _createDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());

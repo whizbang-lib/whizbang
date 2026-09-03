@@ -46,7 +46,7 @@ public class SyncEventTrackerPartialCancellationTests {
     var result1 = await task1;
     var result2 = await task2;
 
-    // Awaiter 1 was cancelled → false
+    // Awaiter 1 was canceled → false
     await Assert.That(result1).IsFalse();
     // Awaiter 2 completed normally → true
     await Assert.That(result2).IsTrue();
@@ -80,7 +80,7 @@ public class SyncEventTrackerPartialCancellationTests {
     var result1 = await task1;
     var result2 = await task2;
 
-    await Assert.That(result1).IsFalse().Because("Awaiter 1 was cancelled");
+    await Assert.That(result1).IsFalse().Because("Awaiter 1 was canceled");
     await Assert.That(result2).IsFalse().Because("Awaiter 2 timed out");
   }
 
@@ -125,7 +125,7 @@ public class SyncEventTrackerPartialCancellationTests {
     var result3 = await task3;
 
     await Assert.That(result1).IsTrue().Because("Awaiter 1 completed normally");
-    await Assert.That(result2).IsFalse().Because("Awaiter 2 was cancelled");
+    await Assert.That(result2).IsFalse().Because("Awaiter 2 was canceled");
     await Assert.That(result3).IsTrue().Because("Awaiter 3 completed normally");
   }
 
@@ -172,7 +172,7 @@ public class SyncEventTrackerPartialCancellationTests {
     // Act - Unregister should clean up all three
     tracker.UnregisterAwaiter(awaiterId);
 
-    // Assert - All should return false (cancelled)
+    // Assert - All should return false (canceled)
     var perspectiveResult = await perspectiveTask;
     var allResult = await allPerspectivesTask;
     var eventsResult = await eventsTask;

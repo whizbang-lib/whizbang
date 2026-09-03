@@ -51,7 +51,7 @@ public class NullReceptorInvokerTests {
     using var cts = new CancellationTokenSource();
     cts.Cancel();
 
-    // Even with a pre-cancelled token, the no-op invoker doesn't observe it
+    // Even with a pre-canceled token, the no-op invoker doesn't observe it
     // — it never awaits anything cancellable.
     await invoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, cancellationToken: cts.Token);
   }

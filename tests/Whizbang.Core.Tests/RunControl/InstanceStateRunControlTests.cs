@@ -130,7 +130,7 @@ public class InstanceStateRunControlTests {
   }
 
   [Test]
-  public async Task OnPhase_CancelledByShutdown_PropagatesRatherThanBeingLoggedAsync() {
+  public async Task OnPhase_CanceledByShutdown_PropagatesRatherThanBeingLoggedAsync() {
     // The catch that keeps a recording failure from breaking a transition is FILTERED on the
     // caller's token. That distinction is the whole design: the write is wrapped in its own
     // timeout, so a slow store cancels the INNER token and is treated as a failure — logged,

@@ -36,7 +36,6 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <docs>fundamentals/messaging/collective-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs:Framework_WithHandlerWhere_AndsScopeAndHandlerAsync</tests>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/CollectiveWhereComposerTests.cs:Custom_WithHandlerWhere_UsesHandlerWhereAloneAsync</tests>
 public static class CollectiveWhereComposer {
   /// <summary>
   /// Build the effective collective-update WHERE for a handler. See the type remarks for the composition

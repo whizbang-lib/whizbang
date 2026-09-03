@@ -148,8 +148,8 @@ public class OrderReadModelTests {
     var history = new OrderStatusHistory {
       Id = 2,
       OrderId = "ORD-002",
-      Status = "Cancelled",
-      EventType = "OrderCancelledEvent",
+      Status = "Canceled",
+      EventType = "OrderCanceledEvent",
       Timestamp = DateTime.UtcNow,
       Details = null
     };

@@ -5,7 +5,7 @@ namespace Whizbang.Core.Security;
 /// Uses AsyncLocal for request-scoped propagation across async calls.
 /// </summary>
 /// <docs>fundamentals/security/security#scope-context-accessor</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorTests.cs</tests>
 /// <example>
 /// public class OrderService {
 ///   private readonly IScopeContextAccessor _scopeContextAccessor;
@@ -48,7 +48,7 @@ public interface IScopeContextAccessor {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
-  /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs:CurrentContext_WhenInitiatingContextHasScopeContext_ReadsScopeFromItAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs:InitiatingContext_CanBeSetToNull_ReturnsNullAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs:InitiatingContext_ExposesFullMessageContext_ForDebuggingAsync</tests>

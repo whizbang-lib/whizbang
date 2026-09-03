@@ -5,8 +5,5 @@ namespace Whizbang.Core;
 /// Events are emitted by Receptors and processed by Perspectives to update read models.
 /// </summary>
 /// <docs>messaging/commands-events</docs>
-/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:EventStoreContractTests</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithPropertyAttribute_GeneratesExtractorAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_WithMultipleEvents_GeneratesAllExtractorsAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/StreamIdGeneratorTests.cs:Generator_ReportsDiagnostic_ForEventWithNoStreamIdAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/EventStoreContractTests.cs:EventStoreContractTests</tests>
 public interface IEvent : IMessage;

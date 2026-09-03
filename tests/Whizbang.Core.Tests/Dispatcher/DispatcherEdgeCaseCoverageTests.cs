@@ -123,7 +123,7 @@ public class DispatcherEdgeCaseCoverageTests {
   // ========================================
 
   [Test]
-  public async Task SendAsync_GenericTyped_WithCancelledOptions_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_GenericTyped_WithCanceledOptions_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
@@ -136,7 +136,7 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task SendAsync_Object_WithCancelledOptions_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_Object_WithCanceledOptions_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = (object)new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
@@ -149,7 +149,7 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task SendAsync_WithContextAndOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task SendAsync_WithContextAndOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     var context = MessageContext.New();
@@ -217,7 +217,7 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeAsync_WithOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
@@ -230,7 +230,7 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_VoidWithOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeAsync_VoidWithOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new VoidEdgeCommand("test");
     using var cts = new CancellationTokenSource();
@@ -473,7 +473,7 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeWithReceiptAsync_WithOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task LocalInvokeWithReceiptAsync_WithOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
     var command = new EdgeCommand("test");
     using var cts = new CancellationTokenSource();
@@ -589,9 +589,9 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task CascadeMessageAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task CascadeMessageAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
-    var evt = new TestCascadeEvent { Detail = "cancelled" };
+    var evt = new TestCascadeEvent { Detail = "canceled" };
     using var cts = new CancellationTokenSource();
     cts.Cancel();
 
@@ -624,9 +624,9 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task PublishAsync_WithOptions_CancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task PublishAsync_WithOptions_CanceledToken_ThrowsOperationCanceledExceptionAsync() {
     var dispatcher = _createDispatcher();
-    var evt = new TestCascadeEvent { Detail = "cancelled-publish" };
+    var evt = new TestCascadeEvent { Detail = "canceled-publish" };
     using var cts = new CancellationTokenSource();
     cts.Cancel();
     var options = new DispatchOptions().WithCancellationToken(cts.Token);

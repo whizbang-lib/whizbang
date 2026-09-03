@@ -181,7 +181,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       try {
         await Worker.StopAsync(CancellationToken.None);
       } catch {
-        // best-effort; tests already cancelled the stoppingToken before disposal
+        // best-effort; tests already canceled the stoppingToken before disposal
       }
       await sp.DisposeAsync();
     }

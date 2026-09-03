@@ -26,7 +26,7 @@ namespace Whizbang.Generators;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync#type-registry</docs>
-/// <tests>Whizbang.Generators.Tests/SyncEventTypeRegistryGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/SyncEventTypeRegistryGeneratorTests.cs</tests>
 [Generator]
 public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   private const string AWAIT_SYNC_ATTRIBUTE = "Whizbang.Core.Perspectives.Sync.AwaitPerspectiveSyncAttribute";

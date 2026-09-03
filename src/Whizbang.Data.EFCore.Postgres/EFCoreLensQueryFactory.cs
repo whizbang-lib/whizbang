@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </remarks>
 /// <typeparam name="TDbContext">The DbContext type</typeparam>
 /// <docs>fundamentals/lenses/lens-query-factory</docs>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreLensQueryFactoryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreLensQueryFactoryTests.cs</tests>
 public sealed class EFCoreLensQueryFactory<TDbContext> : ILensQueryFactory
     where TDbContext : DbContext {
 

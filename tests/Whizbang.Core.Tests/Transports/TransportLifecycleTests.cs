@@ -62,7 +62,7 @@ public class TransportLifecycleTests {
       .Because("InitializeAsync should respect cancellation token");
 
     await Assert.That(transport.IsInitialized).IsFalse()
-      .Because("Transport should not be marked as initialized when initialization was cancelled");
+      .Because("Transport should not be marked as initialized when initialization was canceled");
   }
 
   [Test]

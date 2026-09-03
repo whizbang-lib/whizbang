@@ -112,7 +112,7 @@ public class PerspectiveApplyExactlyOnceTests {
 
     // First wait on the DISPATCH itself. Waiting only on a cycle count was racy: the coordinator
     // increments its cycle at the top of a poll, so cycle 2 can begin before cycle 1's dispatched
-    // work has actually run — the worker would then be cancelled with zero invocations recorded and
+    // work has actually run — the worker would then be canceled with zero invocations recorded and
     // the "at least one path fired" assertion would fail for reasons unrelated to the contract.
     await runner.WaitForInvocationsAsync(1, TimeSpan.FromSeconds(10));
 

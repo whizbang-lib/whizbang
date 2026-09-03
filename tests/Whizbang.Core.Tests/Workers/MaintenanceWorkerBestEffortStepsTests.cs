@@ -162,7 +162,7 @@ public class MaintenanceWorkerBestEffortStepsTests {
   // ============================================================
 
   [Test]
-  public async Task DebugRetentionSyncCancelled_PropagatesInsteadOfContinuingTheCycleAsync() {
+  public async Task DebugRetentionSyncCanceled_PropagatesInsteadOfContinuingTheCycleAsync() {
     // Each of these steps is wrapped so it cannot fail the cycle it rides in — but the catch that
     // does that sits under a narrower one that rethrows cancellation, and only the wide arm was
     // tested. Swallowing a shutdown here would let the rest of the cycle run on, including the
@@ -174,7 +174,7 @@ public class MaintenanceWorkerBestEffortStepsTests {
 
     await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
       .Throws<OperationCanceledException>()
-      .Because("a cancelled step is a stopping host, not a step that failed — continuing the "
+      .Because("a canceled step is a stopping host, not a step that failed — continuing the "
              + "cycle runs a sweep the host is trying to stop");
     await Assert.That(logger.Snapshot().Any(e => e.Level == LogLevel.Warning)).IsFalse()
       .Because("cancellation is not a failure to report; logging it as one turns every shutdown "
@@ -182,7 +182,7 @@ public class MaintenanceWorkerBestEffortStepsTests {
   }
 
   [Test]
-  public async Task PointerPruneCancelled_PropagatesInsteadOfContinuingTheCycleAsync() {
+  public async Task PointerPruneCanceled_PropagatesInsteadOfContinuingTheCycleAsync() {
     var coord = new StepCoordinator {
       PointerPruneThrows = new OperationCanceledException(),
     };
@@ -211,7 +211,7 @@ public class MaintenanceWorkerBestEffortStepsTests {
   }
 
   [Test]
-  public async Task LifecycleCleanupCancelled_PropagatesInsteadOfContinuingTheCycleAsync() {
+  public async Task LifecycleCleanupCanceled_PropagatesInsteadOfContinuingTheCycleAsync() {
     var coord = new StepCoordinator { LifecycleCleanupThrows = new OperationCanceledException() };
     var (worker, _) = _build(coord);
 

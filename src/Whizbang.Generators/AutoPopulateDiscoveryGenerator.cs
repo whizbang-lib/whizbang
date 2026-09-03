@@ -15,7 +15,7 @@ namespace Whizbang.Generators;
 /// and generates an IAutoPopulateRegistry for AOT-compatible property population.
 /// </summary>
 /// <docs>extending/attributes/auto-populate</docs>
-/// <tests>Whizbang.Generators.Tests/AutoPopulateDiscoveryGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/AutoPopulateDiscoveryGeneratorTests.cs</tests>
 [Generator]
 public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
   // Attribute full names for discovery

@@ -309,16 +309,16 @@ public class InboxDispatchWorkerParallelismTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ADispatchCancelledByShutdown_IsNotRecordedAsAFailureAsync(
+  public async Task ADispatchCanceledByShutdown_IsNotRecordedAsAFailureAsync(
       CancellationToken cancellationToken) {
     // A dispatch that throws is routed to the failure channel and dropped from in-flight, so the
-    // message can be retried or dead-lettered on its own terms. A dispatch cancelled by shutdown
+    // message can be retried or dead-lettered on its own terms. A dispatch canceled by shutdown
     // is not a message that failed — it never finished being tried. Recording it burns an attempt
     // against the poison bound on a message no receptor rejected, and enough restarts would
     // quarantine perfectly good traffic.
     //
     // The gate is held and never released, so the invoker is parked inside PreInboxInline when
-    // the worker's token is cancelled — which is exactly the window the partition consumer's
+    // the worker's token is canceled — which is exactly the window the partition consumer's
     // filtered catch exists for.
     await using var harness = _buildWorker(maxConcurrent: 4);
     var streamId = (Guid)TrackedGuid.NewMedo();

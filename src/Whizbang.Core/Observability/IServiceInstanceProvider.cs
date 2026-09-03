@@ -16,7 +16,6 @@ namespace Whizbang.Core.Observability;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs</tests>
 public interface IServiceInstanceProvider {
   /// <summary>

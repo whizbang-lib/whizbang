@@ -12,7 +12,7 @@
 --              This function answers the question directly, untruncated, in one indexed round trip.
 --              It is read-only: no leases, no attempt bumps, nothing to strand. Deliberately NOT a
 --              counter maintained in the worker — an in-memory figure stranded by a hung or
---              cancelled task stays wrong until the process restarts, a failure this claim path has
+--              canceled task stays wrong until the process restarts, a failure this claim path has
 --              already produced in production once.
 -- Dependencies: 001-122 (wh_inbox, wh_outbox, wh_perspective_events)
 

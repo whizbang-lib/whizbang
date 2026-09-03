@@ -20,7 +20,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   private readonly ConcurrentDictionary<CorrelationId, RequestRecord> _requests = new();
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public Task SaveRequestAsync(CorrelationId correlationId, MessageId requestId, TimeSpan timeout, CancellationToken cancellationToken = default) {
 
     var tcs = new TaskCompletionSource<IMessageEnvelope>();
@@ -45,7 +45,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public async Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
 
     if (!_requests.TryGetValue(correlationId, out var record)) {
@@ -65,7 +65,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   }
 
   /// <inheritdoc />
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default) {
 
     if (!_requests.TryGetValue(correlationId, out var record)) {
@@ -86,7 +86,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(response);
 
@@ -111,7 +111,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/RequestResponseStoreContractTests.cs</tests>
   public Task CleanupExpiredAsync(CancellationToken cancellationToken = default) {
     var now = DateTimeOffset.UtcNow;
     var expiredKeys = new System.Collections.Generic.List<CorrelationId>();

@@ -420,7 +420,7 @@ public class MessageHopSecurityExtractorTests {
   // ========================================
 
   [Test]
-  public async Task ExtractAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task ExtractAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var extractor = new MessageHopSecurityExtractor();
     var securityContext = new SecurityContext {

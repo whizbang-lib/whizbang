@@ -54,12 +54,12 @@ public interface ILifecycleTrackingContext : ILifecycleContext {
   void Cancel(string reason);
 
   /// <summary>
-  /// Gets whether this lifecycle has been cancelled.
+  /// Gets whether this lifecycle has been canceled.
   /// </summary>
-  bool IsCancelled { get; }
+  bool IsCanceled { get; }
 
   /// <summary>
-  /// Gets the reason for cancellation, if cancelled.
+  /// Gets the reason for cancellation, if canceled.
   /// </summary>
   string? CancellationReason { get; }
 

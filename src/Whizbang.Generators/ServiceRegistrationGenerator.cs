@@ -15,7 +15,6 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs:Generator_SelfRegistration_EnabledByDefault_RegistersBothAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs:Generator_AbstractLens_SkipsRegistrationAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs:Generator_AbstractBaseWithConcreteChild_RegistersOnlyChildAsync</tests>
-/// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs:Generator_DirectWhizbangImplementation_SkippedAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs:Generator_MultipleLenses_RegistersAllAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs:Generator_CombinedLensAndPerspective_GeneratesBothMethodsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs:Generator_NoUserInterfaces_GeneratesEmptyMethodsAsync</tests>

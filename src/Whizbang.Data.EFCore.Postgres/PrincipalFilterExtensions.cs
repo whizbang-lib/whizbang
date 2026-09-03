@@ -10,7 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Uses EF Core 10 ComplexProperty().ToJson() with native LINQ support.
 /// </summary>
 /// <docs>fundamentals/security/security#principal-filtering</docs>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/PrincipalFilterExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PrincipalFilterExtensionsTests.cs</tests>
 /// <remarks>
 /// <para>
 /// This extension provides principal-based row filtering using EF Core's native

@@ -64,7 +64,7 @@ public class PostgresConnectionRetryTests {
     // Act & Assert
     await Assert.That(async () => await retry.WaitForConnectionAsync(SharedPostgresContainer.ConnectionString, cts.Token))
       .ThrowsExactly<OperationCanceledException>()
-      .Because("Cancelled operations should throw OperationCanceledException");
+      .Because("Canceled operations should throw OperationCanceledException");
   }
 
   [Test]
@@ -163,11 +163,11 @@ public class PostgresConnectionRetryTests {
 
       using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
 
-      // Act & Assert - Should keep retrying until cancelled (schema never appears)
+      // Act & Assert - Should keep retrying until canceled (schema never appears)
       // Note: TaskCanceledException inherits from OperationCanceledException
       await Assert.That(async () => await retry.WaitForSchemaReadyAsync(connectionString, cts.Token))
         .Throws<OperationCanceledException>()
-        .Because("Should retry until cancelled when schema is missing");
+        .Because("Should retry until canceled when schema is missing");
     } finally {
       // Cleanup
       await adminConnection.ExecuteAsync($@"
@@ -360,7 +360,7 @@ public class PostgresConnectionRetryTests {
 
   [Test]
   [Timeout(60000)]
-  public async Task WaitForConnection_WhenRetryingIndefinitely_KeepsGoingUntilCancelledAsync(
+  public async Task WaitForConnection_WhenRetryingIndefinitely_KeepsGoingUntilCanceledAsync(
       CancellationToken testToken) {
     // The default. A database that is still starting must not fail the service, so the only way
     // out is cancellation — which is what host shutdown supplies.

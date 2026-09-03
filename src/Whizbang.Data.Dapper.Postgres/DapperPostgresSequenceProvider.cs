@@ -7,26 +7,26 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// PostgreSQL-specific implementation of ISequenceProvider using Dapper.
 /// Uses PostgreSQL's RETURNING clause for atomic operations.
 /// </summary>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
-/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
+/// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:CancellationToken_WhenCanceled_ShouldThrowAsync</tests>
 public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor) : DapperSequenceProviderBase(connectionFactory, executor) {
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for updating a sequence value atomically using RETURNING.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_DifferentStreamIds_ShouldMaintainSeparateSequencesAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
   protected override string GetUpdateSequenceSql() => @"
     UPDATE wh_sequences
     SET current_value = current_value + 1, last_updated_at = @Now
@@ -36,7 +36,7 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for inserting or updating a sequence using ON CONFLICT UPSERT.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
   protected override string GetInsertOrUpdateSequenceSql() => @"
     INSERT INTO wh_sequences (sequence_name, current_value, last_updated_at)
     VALUES (@SequenceKey, 0, @Now)
@@ -48,9 +48,9 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for retrieving the current sequence value without incrementing.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
   protected override string GetCurrentSequenceSql() => @"
     SELECT current_value
     FROM wh_sequences
@@ -59,9 +59,9 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for resetting a sequence to a specific value using UPSERT.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
+  /// <tests>src/Whizbang.Testing/Contracts/SequenceProviderContractTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
   protected override string GetResetSequenceSql() => @"
     INSERT INTO wh_sequences (sequence_name, current_value, last_updated_at)
     VALUES (@SequenceKey, @NewValue - 1, @Now)

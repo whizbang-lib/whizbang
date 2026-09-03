@@ -149,7 +149,7 @@ public record MessageHop {
   /// If null, scope is inherited unchanged from previous hop.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Security/ScopeDeltaTests.cs</tests>
-  /// <tests>tests/Whizbang.Core.Tests/Observability/ScopeDeltaIntegrationTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Integration.Tests/Observability/ScopeDeltaIntegrationTests.cs</tests>
   [JsonPropertyName("sc")]
   [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
   public ScopeDelta? Scope { get; init; }

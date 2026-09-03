@@ -150,7 +150,7 @@ public class BodyClaimRehydratorTests {
 
   [Test]
   public async Task MaybeRehydrateAsync_DownloadCanceled_PropagatesOperationCanceledAsync() {
-    // When the RECEIVER's own CancellationToken is cancelled (host shutdown), the rehydrator must
+    // When the RECEIVER's own CancellationToken is canceled (host shutdown), the rehydrator must
     // propagate the OperationCanceledException untouched so the consumer stops cleanly — it must NOT
     // be masked as a retryable download failure (that path is only for timeouts / store errors).
     var services = new ServiceCollection();
@@ -170,7 +170,7 @@ public class BodyClaimRehydratorTests {
         claimEnvelope, claimEnvelope.GetType().AssemblyQualifiedName,
         _buildJsonOptions(), sp, shutdownCts.Token))
       .Throws<OperationCanceledException>()
-      .Because("A cancelled receiver CT (host shutdown) propagates untouched — distinct from the retryable download-failure path.");
+      .Because("A canceled receiver CT (host shutdown) propagates untouched — distinct from the retryable download-failure path.");
   }
 
   [Test]
@@ -367,7 +367,7 @@ public class BodyClaimRehydratorTests {
       => Task.CompletedTask;
   }
 
-  /// <summary>Store whose DownloadAsync never completes until cancelled — exercises the rehydrator's bounded download timeout.</summary>
+  /// <summary>Store whose DownloadAsync never completes until canceled — exercises the rehydrator's bounded download timeout.</summary>
   private sealed class HangingStore : IMessageBodyStore {
     public HangingStore(string providerName) { ProviderName = providerName; }
     public string ProviderName { get; }

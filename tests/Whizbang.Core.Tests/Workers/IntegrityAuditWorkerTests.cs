@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -481,12 +482,125 @@ public class IntegrityAuditWorkerTests {
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
+  // ---- Digest and epoch drift reporting ----
+  //
+  // The audit's whole purpose is to notice that the digest has drifted from the events it
+  // summarizes and to heal it. Every branch below was unreached: the suite only ever ran the
+  // worker against a coordinator reporting nothing checked and nothing drifted, so the reporting
+  // that happens when drift IS found — the metrics an operator alerts on, and the log line that
+  // says how much was healed — had never executed.
+
+  [Test]
+  public async Task DigestDrift_IsCountedByKindSoHealingIsAttributableAsync() {
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics());
+    var coordinator = new _auditCoordinator {
+      DigestResult = new DigestVerificationResult {
+        BucketsChecked = 7,
+        DriftUpdated = 2,
+        DriftRemoved = 1,
+        DriftAdded = 3,
+      },
+    };
+    var logger = new _messageLogger();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
+      logger: logger);
+
+    await worker.RunSweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(1)
+      .Because("the digest sweep must actually have run, or this asserts nothing about drift");
+    await Assert.That(logger.Saw("drift")).IsTrue()
+      .Because("healing six buckets and healing none must not look the same to an operator");
+  }
+
+  [Test]
+  public async Task NoDigestDrift_TakesTheVerifiedPathInsteadOfTheHealedOneAsync() {
+    // The companion. A clean sweep and a healed sweep are different operational events: one is
+    // silence, the other is "something was wrong and I fixed it". Reporting a clean sweep through
+    // the drift counters would show permanent healing activity against a healthy system.
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics());
+    var coordinator = new _auditCoordinator {
+      DigestResult = new DigestVerificationResult {
+        BucketsChecked = 5,
+        DriftUpdated = 0,
+        DriftRemoved = 0,
+        DriftAdded = 0,
+      },
+    };
+    var logger = new _messageLogger();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
+      logger: logger);
+
+    await worker.RunSweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.VerifyCalls).IsEqualTo(1);
+    await Assert.That(logger.Saw("drift")).IsFalse()
+      .Because("a clean sweep reported through the drift path shows permanent healing activity "
+             + "against a healthy system");
+  }
+
+  [Test]
+  public async Task EpochDrift_IsReportedSeparatelyFromBucketDriftAsync() {
+    // Epoch refolding is its own repair: buckets drift within an epoch, epochs drift against the
+    // fold above them. Collapsing the two would tell an operator the wrong thing about which
+    // level of the digest is disagreeing.
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics());
+    var coordinator = new _auditCoordinator { EpochResult = new EpochVerificationResult(4, 2) };
+    var logger = new _messageLogger();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
+      logger: logger);
+
+    await worker.RunSweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.EpochVerifyCalls).IsEqualTo(1)
+      .Because("the epoch pass must have run for the drift branch to mean anything");
+    await Assert.That(logger.Saw("epoch")).IsTrue()
+      .Because("epoch drift is a different repair from bucket drift and must be told apart");
+  }
+
+  [Test]
+  public async Task EpochsCheckedWithNoDrift_LogsVerifiedRatherThanStayingSilentAsync() {
+    // Checked-and-clean and not-checked-at-all are different: the first is evidence the audit is
+    // working, the second is evidence it is not running. Only a non-zero checked count separates
+    // them, which is why this branch is guarded on EpochsChecked rather than on drift alone.
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new WhizbangMetrics());
+    var coordinator = new _auditCoordinator { EpochResult = new EpochVerificationResult(6, 0) };
+    var logger = new _messageLogger();
+    var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly }, metrics: metrics,
+      logger: logger);
+
+    await worker.RunSweepOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.EpochVerifyCalls).IsEqualTo(1);
+    await Assert.That(logger.Saw("epoch")).IsTrue()
+      .Because("checked-and-clean is evidence the audit ran; silence is evidence it did not");
+  }
+
+  /// <summary>Records rendered log messages so the branch actually taken can be asserted.</summary>
+  private sealed class _messageLogger : ILogger<IntegrityAuditWorker> {
+    private readonly List<string> _messages = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_messages) { _messages.Add(formatter(state, exception)); }
+    }
+    public bool Saw(string fragment) {
+      lock (_messages) { return _messages.Any(m => m.Contains(fragment, StringComparison.OrdinalIgnoreCase)); }
+    }
+  }
+
   private static IntegrityAuditWorker _buildWorker(
       _auditCoordinator coordinator, _captureDispatcher dispatcher, _captureTransport transport,
       StreamIntegrityOptions options, IntegrityGapTracker? tracker = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
       IntegritySweepScheduleState? sweepState = null,
-      ISchemaReadyGate? gate = null) {
+      ISchemaReadyGate? gate = null,
+      ILogger<IntegrityAuditWorker>? logger = null) {
     var services = new ServiceCollection();
     if (sweepState is not null) {
       services.AddSingleton(sweepState);
@@ -508,7 +622,7 @@ public class IntegrityAuditWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       gate ?? new SchemaReadyGate(),
       Options.Create(options),
-      NullLogger<IntegrityAuditWorker>.Instance);
+      logger ?? NullLogger<IntegrityAuditWorker>.Instance);
   }
 
   private sealed class _typeProvider : IEventTypeProvider {
@@ -549,10 +663,13 @@ public class IntegrityAuditWorkerTests {
 
     public int EpochVerifyCalls { get; private set; }
 
+    /// <summary>Epoch result to return; defaults to "nothing checked, nothing drifted".</summary>
+    public EpochVerificationResult EpochResult { get; init; } = new(0, 0);
+
     public Task<EpochVerificationResult> VerifyDigestEpochsAsync(
       TimeSpan settleWindow, int maxEpochs, CancellationToken cancellationToken = default) {
       EpochVerifyCalls++;
-      return Task.FromResult(new EpochVerificationResult(0, 0));
+      return Task.FromResult(EpochResult);
     }
 
     public Task<IReadOnlyList<PerspectiveCoverageGap>> GetPerspectiveCoverageGapsAsync(
@@ -561,15 +678,18 @@ public class IntegrityAuditWorkerTests {
       return Task.FromResult<IReadOnlyList<PerspectiveCoverageGap>>([.. Gaps.Take(maxGaps)]);
     }
 
+    /// <summary>Digest result to return; defaults to "nothing checked, nothing drifted".</summary>
+    public DigestVerificationResult DigestResult { get; init; } = new() {
+      BucketsChecked = 0,
+      DriftUpdated = 0,
+      DriftRemoved = 0,
+      DriftAdded = 0,
+    };
+
     public Task<DigestVerificationResult> VerifyDigestTableAsync(
       TimeSpan settleWindow, CancellationToken cancellationToken = default) {
       VerifyCalls++;
-      return Task.FromResult(new DigestVerificationResult {
-        BucketsChecked = 0,
-        DriftUpdated = 0,
-        DriftRemoved = 0,
-        DriftAdded = 0,
-      });
+      return Task.FromResult(DigestResult);
     }
   }
 
@@ -636,7 +756,7 @@ public class IntegrityAuditWorkerTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CancelledBeforeSchemaReady_ReturnsCleanlyAsync(CancellationToken testToken) {
+  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(CancellationToken testToken) {
     // A host that fails during migration stops everything it built. The audit reads integrity
     // tables that do not exist yet, so it must return rather than run or fault.
     var coordinator = new _auditCoordinator();

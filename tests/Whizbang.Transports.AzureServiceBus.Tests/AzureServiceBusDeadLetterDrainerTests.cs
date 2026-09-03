@@ -347,7 +347,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
   }
 
   [Test]
-  public async Task DrainDeadLetterQueueAsync_CancelledDuringReceive_ThrowsBeforeProcessingBatchAsync() {
+  public async Task DrainDeadLetterQueueAsync_CanceledDuringReceive_ThrowsBeforeProcessingBatchAsync() {
     using var cts = new CancellationTokenSource();
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
@@ -363,7 +363,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
   }
 
   [Test]
-  public async Task DrainDeadLetterQueueAsync_CancelledAfterFirstMessage_ReturnsPartialCountAsync() {
+  public async Task DrainDeadLetterQueueAsync_CanceledAfterFirstMessage_ReturnsPartialCountAsync() {
     using var cts = new CancellationTokenSource();
     var client = new FakeDrainClient();
     var importer = new FakeImporter();
@@ -376,7 +376,7 @@ public class AzureServiceBusDeadLetterDrainerTests {
 
     await Assert.That(drained).IsEqualTo(1);
     await Assert.That(client.Receiver.RequestedBatchSizes).Count().IsEqualTo(1)
-      .Because("the cancelled token must stop the loop before a second receive");
+      .Because("the canceled token must stop the loop before a second receive");
   }
 
   [Test]

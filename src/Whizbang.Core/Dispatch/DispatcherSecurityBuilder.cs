@@ -42,7 +42,7 @@ namespace Whizbang.Core.Dispatch;
 /// </code>
 /// </example>
 /// <docs>fundamentals/security/message-security#explicit-security-context-api</docs>
-/// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs</tests>
 public sealed partial class DispatcherSecurityBuilder {
   private readonly IDispatcher _dispatcher;
   private readonly SecurityContextType _contextType;
@@ -100,7 +100,7 @@ public sealed partial class DispatcherSecurityBuilder {
   /// </code>
   /// </example>
   /// <docs>fundamentals/security/message-security#cross-tenant-operations</docs>
-  /// <tests>Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_SetsTenantIdOnContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatch/DispatcherSecurityBuilderTests.cs:WithTenant_SetsTenantIdOnContextAsync</tests>
   public DispatcherSecurityBuilder WithTenant(string tenantId) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 

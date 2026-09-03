@@ -103,7 +103,7 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
   }
 
   [Test]
-  public async Task WaitForResponseAsync_WhenCancelled_ShouldReturnNullAsync() {
+  public async Task WaitForResponseAsync_WhenCanceled_ShouldReturnNullAsync() {
     // Arrange
     var store = new InMemoryRequestResponseStore();
     var correlationId = CorrelationId.New();
@@ -166,7 +166,7 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
   }
 
   [Test]
-  public async Task WaitForResponseAsyncGeneric_WhenCancelled_ShouldReturnNullAsync() {
+  public async Task WaitForResponseAsyncGeneric_WhenCanceled_ShouldReturnNullAsync() {
     // Arrange
     var store = new InMemoryRequestResponseStore();
     var correlationId = CorrelationId.New();

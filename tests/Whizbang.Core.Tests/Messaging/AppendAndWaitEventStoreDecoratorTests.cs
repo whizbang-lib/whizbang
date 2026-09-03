@@ -158,7 +158,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
   }
 
   [Test]
-  public async Task AppendAndWaitAsync_WhenCancelled_ThrowsOperationCanceledExceptionAsync() {
+  public async Task AppendAndWaitAsync_WhenCanceled_ThrowsOperationCanceledExceptionAsync() {
     var inner = new InMemoryEventStore();
     var awaiter = new FakePerspectiveSyncAwaiter {
       ShouldThrowOnCancellation = true

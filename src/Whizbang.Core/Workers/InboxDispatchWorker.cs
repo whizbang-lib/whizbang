@@ -383,7 +383,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // The lifecycle invocation no-ops cleanly when ILifecycleMessageDeserializer or IReceptorInvoker
       // is absent — same as the legacy publisher's _invokeInboxLifecycleStagesAsync.
       // Pass `ct` (lease token) for inline awaits + `stoppingToken` for fire-and-forget detached
-      // stages so the latter aren't cancelled when the lease disposes on dispatch return.
+      // stages so the latter aren't canceled when the lease disposes on dispatch return.
       await using var scope = _scopeFactory.CreateAsyncScope();
       var secTimeoutSeconds = _options.SecurityContextTimeoutSeconds;
       var secOutcome = await SecurityContextHelper.TryEstablishFullContextWithTimeoutAsync(

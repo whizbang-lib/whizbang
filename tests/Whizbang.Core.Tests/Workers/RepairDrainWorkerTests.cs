@@ -81,11 +81,11 @@ public class RepairDrainWorkerTests {
   }
 
   [Test]
-  public async Task DrainTick_ASendCancelledByShutdown_StopsTheTickAsync() {
+  public async Task DrainTick_ASendCanceledByShutdown_StopsTheTickAsync() {
     // The companion to OneFailedGroupSend_StillDispatchesTheRemainingGroups, and the opposite
     // answer. A throttled send costs THAT group's attempt and no more, because the later groups
     // already burned backoff budget on their claims and deserve their shot at the wire. A
-    // cancelled send is a stopping host: the later groups' claims are already stamped, so their
+    // canceled send is a stopping host: the later groups' claims are already stamped, so their
     // budget is spent either way, and continuing only puts more traffic on a broker the process
     // is disconnecting from.
     var origin = TrackedGuid.NewMedo().Value;

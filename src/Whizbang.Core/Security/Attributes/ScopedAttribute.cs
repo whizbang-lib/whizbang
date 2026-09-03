@@ -7,7 +7,7 @@ namespace Whizbang.Core.Security.Attributes;
 /// Applied to scope properties (TenantId, UserId, etc.) on models.
 /// </summary>
 /// <docs>fundamentals/security/security#row-level-security</docs>
-/// <tests>Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/SecurityAttributeTests.cs</tests>
 /// <example>
 /// public class Order {
 ///   [Scoped]

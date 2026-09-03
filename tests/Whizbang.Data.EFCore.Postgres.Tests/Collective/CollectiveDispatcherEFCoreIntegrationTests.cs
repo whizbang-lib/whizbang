@@ -1187,7 +1187,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
       cancellationToken: default);
 
     await Assert.That(_capturedSql.Any(c => c.Contains("set_config('statement_timeout'", StringComparison.OrdinalIgnoreCase))).IsTrue()
-      .Because("With StatementTimeoutSeconds set, the apply must bound itself server-side (set_config('statement_timeout', …, true) — the SET LOCAL equivalent, transaction-scoped so it survives PgBouncer pooling) so a runaway UPDATE is cancelled by Postgres, not left a zombie when the client gives up.");
+      .Because("With StatementTimeoutSeconds set, the apply must bound itself server-side (set_config('statement_timeout', …, true) — the SET LOCAL equivalent, transaction-scoped so it survives PgBouncer pooling) so a runaway UPDATE is canceled by Postgres, not left a zombie when the client gives up.");
     await Assert.That(await _readCellsTagAsync(id)).IsEqualTo("after")
       .Because("The apply still completes within the timeout.");
   }

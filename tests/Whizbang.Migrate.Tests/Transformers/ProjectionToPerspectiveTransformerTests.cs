@@ -42,20 +42,20 @@ public class ProjectionToPerspectiveTransformerTests {
       public class OrderProjection : SingleStreamProjection<Order> {
         public void Apply(OrderCreated @event, Order state) { }
         public void Apply(OrderUpdated @event, Order state) { }
-        public void Apply(OrderCancelled @event, Order state) { }
+        public void Apply(OrderCanceled @event, Order state) { }
       }
 
       public class Order { }
       public record OrderCreated(string Id);
       public record OrderUpdated(string Id);
-      public record OrderCancelled(string Id);
+      public record OrderCanceled(string Id);
       """;
 
     // Act
     var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
 
     // Assert
-    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated, OrderUpdated, OrderCancelled>");
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated, OrderUpdated, OrderCanceled>");
   }
 
   [Test]
@@ -434,15 +434,15 @@ public class ProjectionToPerspectiveTransformerTests {
           state.Status = "Created";
         }
 
-        public void Apply(OrderCancelled @event, OrderModel state) {
-          state.Status = "Cancelled";
+        public void Apply(OrderCanceled @event, OrderModel state) {
+          state.Status = "Canceled";
         }
 
         public bool ShouldDelete(OrderPurged @event) => true;
       }
 
       public record OrderCreated(Guid StreamId);
-      public record OrderCancelled(Guid StreamId);
+      public record OrderCanceled(Guid StreamId);
       public record OrderPurged(Guid StreamId);
       """;
 

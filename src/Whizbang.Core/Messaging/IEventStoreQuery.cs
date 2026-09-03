@@ -17,14 +17,14 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </summary>
 /// <docs>fundamentals/events/event-store-query</docs>
-/// <tests>Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs</tests>
 public interface IEventStoreQuery {
   /// <summary>
   /// Queryable access to raw event store records.
   /// Supports filtering, projection, and ordering via LINQ.
   /// Scope filters are automatically applied based on factory context.
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs:IEventStoreQuery_HasQueryPropertyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs:IEventStoreQuery_HasQueryPropertyAsync</tests>
   IQueryable<EventStoreRecord> Query { get; }
 
   /// <summary>
@@ -33,7 +33,7 @@ public interface IEventStoreQuery {
   /// </summary>
   /// <param name="streamId">The stream identifier (aggregate ID).</param>
   /// <returns>Events ordered by version ascending.</returns>
-  /// <tests>Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs:IEventStoreQuery_HasGetStreamEventsMethodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs:IEventStoreQuery_HasGetStreamEventsMethodAsync</tests>
   IQueryable<EventStoreRecord> GetStreamEvents(Guid streamId);
 
   /// <summary>
@@ -42,6 +42,6 @@ public interface IEventStoreQuery {
   /// </summary>
   /// <param name="eventType">The fully-qualified event type name (e.g., "MyApp.Events.OrderPlaced").</param>
   /// <returns>Events matching the specified type.</returns>
-  /// <tests>Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs:IEventStoreQuery_HasGetEventsByTypeMethodAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IEventStoreQueryTests.cs:IEventStoreQuery_HasGetEventsByTypeMethodAsync</tests>
   IQueryable<EventStoreRecord> GetEventsByType(string eventType);
 }

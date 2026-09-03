@@ -165,7 +165,7 @@ public class DispatcherPublishOnceTests {
   // ── Cancellation honored up front ────────────────────────────────────
 
   [Test]
-  public async Task PublishOnceAsync_CancelledToken_ThrowsAsync() {
+  public async Task PublishOnceAsync_CanceledToken_ThrowsAsync() {
     var dispatcher = _createDispatcher(new InMemoryClaimedEmissionStore());
     using var cts = new CancellationTokenSource();
     cts.Cancel();

@@ -420,7 +420,7 @@ public class IntegrityCheckpointWorkerTests {
 
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CancelledBeforeSchemaReady_ReturnsCleanlyAsync(
+  public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(
       CancellationToken testToken) {
     // The checkpoint reads integrity watermarks from tables the migration creates. A host that
     // fails during migration must get a clean shutdown, not a fault.

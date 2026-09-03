@@ -5,7 +5,7 @@ namespace Whizbang.Core.Security;
 /// Provides ambient scope context that flows across async calls within the same logical context.
 /// </summary>
 /// <docs>fundamentals/security/security#scope-context-accessor</docs>
-/// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorTests.cs</tests>
 /// <remarks>
 /// <para>
 /// Uses AsyncLocal&lt;T&gt; for proper async flow semantics:
@@ -45,7 +45,6 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
   /// initiating context's scope which may not have propagation enabled.
   /// </para>
   /// </remarks>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CascadeToOutboxIntegrationTests.cs:InitiatingContext_DoesNotShadow_ImmutableScopeContextWithPropagationAsync</tests>
   public static IScopeContext? CurrentContext {
     get {
       // Priority 1: _current if it's an ImmutableScopeContext with propagation enabled
@@ -74,7 +73,7 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
   /// </para>
   /// </remarks>
   /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
-  /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
   public static IMessageContext? CurrentInitiatingContext {
     get => _initiatingContext.Value;
     set => _initiatingContext.Value = value;
@@ -106,7 +105,7 @@ public sealed class ScopeContextAccessor : IScopeContextAccessor {
 
   /// <inheritdoc />
   /// <docs>fundamentals/messages/cascade-context#initiating-context</docs>
-  /// <tests>Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Security/ScopeContextAccessorInitiatingContextTests.cs</tests>
   public IMessageContext? InitiatingContext {
     get => _initiatingContext.Value;
     set => _initiatingContext.Value = value;

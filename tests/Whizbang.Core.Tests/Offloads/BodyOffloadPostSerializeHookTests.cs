@@ -198,10 +198,10 @@ public class BodyOffloadPostSerializeHookTests {
   }
 
   [Test]
-  public async Task RunAsync_LedgerInsertCancelled_SurfacesInsteadOfProceedingAsync() {
+  public async Task RunAsync_LedgerInsertCanceled_SurfacesInsteadOfProceedingAsync() {
     // The companion to LedgerInsertThrows_OffloadStillProceeds, and the opposite answer. A failed
     // insert orphans one blob into the provider-side backstop's territory, which is recoverable,
-    // so dispatch continues. A cancelled insert means the host is stopping — and the blob is
+    // so dispatch continues. A canceled insert means the host is stopping — and the blob is
     // already uploaded, so continuing would hand the dispatcher a claim envelope to publish on
     // the way out. Surfacing here leaves the blob orphaned to the same recoverable backstop.
     var coordinator = new _ledgerCoordinator { ThrowSpecific = new OperationCanceledException() };

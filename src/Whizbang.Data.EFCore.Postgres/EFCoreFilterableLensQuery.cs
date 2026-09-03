@@ -14,7 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Implements <see cref="IFilterableLens"/> to receive filter info from <see cref="IScopedLensFactory"/>.
 /// </summary>
 /// <docs>fundamentals/lenses/scoped-lenses#ef-core-implementation</docs>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableLensQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFilterableLensQueryTests.cs</tests>
 /// <typeparam name="TModel">The model type stored in the perspective</typeparam>
 public class EFCoreFilterableLensQuery<TModel> : ILensQuery<TModel>, IFilterableLens
     where TModel : class {

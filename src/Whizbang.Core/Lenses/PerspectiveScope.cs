@@ -44,7 +44,7 @@ public class ScopeExtension {
 /// Stored as JSONB/JSON in scope column using EF Core ComplexProperty().ToJson().
 /// </summary>
 /// <docs>fundamentals/security/scoping#perspective-scope</docs>
-/// <tests>Whizbang.Core.Tests/Scoping/PerspectiveScopeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Scoping/PerspectiveScopeTests.cs</tests>
 /// <example>
 /// var scope = new PerspectiveScope {
 ///   TenantId = "tenant-123",

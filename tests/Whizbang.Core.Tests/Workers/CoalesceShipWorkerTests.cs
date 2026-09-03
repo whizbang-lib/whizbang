@@ -630,7 +630,7 @@ public class CoalesceShipWorkerTests {
   /// </summary>
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CancelledMidLoop_StopsWithoutFaultingAsync(CancellationToken testToken) {
+  public async Task ExecuteAsync_CanceledMidLoop_StopsWithoutFaultingAsync(CancellationToken testToken) {
     // Shutdown cancels the stopping token while the worker may be inside a coordinator call.
     // A fault here surfaces as a failed host shutdown, which reads as a crash.
     var time = new FakeTimeProvider(_testNow);
@@ -655,7 +655,7 @@ public class CoalesceShipWorkerTests {
   /// </summary>
   [Test]
   [Timeout(30000)]
-  public async Task ExecuteAsync_CancelledBeforeSchemaReady_NeverStartsAsync(CancellationToken testToken) {
+  public async Task ExecuteAsync_CanceledBeforeSchemaReady_NeverStartsAsync(CancellationToken testToken) {
     // A host that fails during migration stops everything it built. The shipper must not run
     // recovery against a schema that is not there.
     var time = new FakeTimeProvider(_testNow);

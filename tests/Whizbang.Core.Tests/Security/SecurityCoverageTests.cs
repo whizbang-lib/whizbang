@@ -299,7 +299,7 @@ public class SecurityCoverageTests {
 
   [Test]
   public async Task Helper_EstablishFullContextAsync_CallbackCancellation_ThrowsAsync() {
-    // Arrange: Callback that gets cancelled - covers cancellationToken.ThrowIfCancellationRequested() in callback loop
+    // Arrange: Callback that gets canceled - covers cancellationToken.ThrowIfCancellationRequested() in callback loop
     var envelope = _createHelperEnvelopeWithScope("user-cancel", "tenant-cancel");
 
     var services = new ServiceCollection();

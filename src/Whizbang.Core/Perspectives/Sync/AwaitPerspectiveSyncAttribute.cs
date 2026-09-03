@@ -36,7 +36,7 @@ namespace Whizbang.Core.Perspectives.Sync;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/perspective-sync</docs>
-/// <tests>Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_Constructor_StoresPerspectiveTypeAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_EffectiveTimeoutMs_UsesExplicitValueWhenSetAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/Sync/AwaitPerspectiveSyncAttributeTests.cs:AwaitPerspectiveSyncAttribute_CanHaveMultipleOnSameClassAsync</tests>

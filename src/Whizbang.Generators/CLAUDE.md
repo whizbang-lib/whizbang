@@ -842,7 +842,7 @@ private static Info? Extract(GeneratorSyntaxContext ctx, CancellationToken ct) {
 }
 ```
 
-**Result**: Generator can't be cancelled, delays IDE responsiveness.
+**Result**: Generator can't be canceled, delays IDE responsiveness.
 
 ### ❌ Pitfall 8: Changing Public APIs Without Updating Documentation
 

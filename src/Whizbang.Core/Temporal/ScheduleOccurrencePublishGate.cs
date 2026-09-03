@@ -77,9 +77,9 @@ public sealed partial class ScheduleOccurrencePublishGate : IOccurrencePublishGa
         }
         if (store is not null) {
           await store.LogRunAsync(context.ScheduleId, context.OccurrenceId, RUN_SKIPPED,
-            "schedule cancelled by pre-fire hook", cancellationToken).ConfigureAwait(false);
+            "schedule canceled by pre-fire hook", cancellationToken).ConfigureAwait(false);
         }
-        LogCancelled(_logger, context.ScheduleId, context.OccurrenceId);
+        LogCanceled(_logger, context.ScheduleId, context.OccurrenceId);
         return OccurrencePublishDecision.Drop;
 
       case FireAction.Defer:
@@ -143,8 +143,8 @@ public sealed partial class ScheduleOccurrencePublishGate : IOccurrencePublishGa
   private static partial void LogSkipped(ILogger logger, Guid scheduleId, Guid occurrenceId);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information,
-    Message = "Pre-fire hook cancelled schedule {ScheduleId} (occurrence {OccurrenceId} dropped)")]
-  private static partial void LogCancelled(ILogger logger, Guid scheduleId, Guid occurrenceId);
+    Message = "Pre-fire hook canceled schedule {ScheduleId} (occurrence {OccurrenceId} dropped)")]
+  private static partial void LogCanceled(ILogger logger, Guid scheduleId, Guid occurrenceId);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "Pre-fire hook deferred occurrence {OccurrenceId} of schedule {ScheduleId}")]

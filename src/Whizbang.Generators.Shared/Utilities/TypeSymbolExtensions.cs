@@ -14,7 +14,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Properties and methods are deduplicated by name/signature, with derived class members taking precedence.
 /// </remarks>
 /// <docs>extending/source-generators/type-symbol-extensions</docs>
-/// <tests>Whizbang.Generators.Tests/Utilities/TypeSymbolExtensionsTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/TypeSymbolExtensionsTests.cs</tests>
 public static class TypeSymbolExtensions {
   /// <summary>
   /// Gets all properties from a type and its base types.

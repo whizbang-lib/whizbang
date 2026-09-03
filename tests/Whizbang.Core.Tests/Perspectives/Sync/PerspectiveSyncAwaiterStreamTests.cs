@@ -95,7 +95,7 @@ public class PerspectiveSyncAwaiterStreamTests {
   // ==========================================================================
 
   [Test]
-  public async Task WaitForStreamAsync_ReturnsNoPendingEvents_WithCancelledTokenAndEmptyTrackerAsync() {
+  public async Task WaitForStreamAsync_ReturnsNoPendingEvents_WithCanceledTokenAndEmptyTrackerAsync() {
     // Arrange - with an empty tracker, NoPendingEvents returns immediately
     // before the cancellation token is ever checked.
     var streamId = Guid.NewGuid();

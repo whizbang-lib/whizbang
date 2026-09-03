@@ -35,7 +35,7 @@ namespace Whizbang.Observability.Hooks;
 /// </code>
 /// </example>
 /// <docs>operations/observability/opentelemetry-integration</docs>
-/// <tests>Whizbang.Observability.Tests/Hooks/OpenTelemetrySpanHookTests.cs</tests>
+/// <tests>tests/Whizbang.Observability.Tests/Hooks/OpenTelemetrySpanHookTests.cs</tests>
 public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribute> {
   /// <summary>
   /// The ActivitySource used for creating spans.

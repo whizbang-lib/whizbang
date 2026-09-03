@@ -24,7 +24,7 @@ namespace __DBCONTEXT_NAMESPACE__.Generated;
 /// AOT-compatible - uses PostgresSchemaBuilder instead of EF Core's GenerateCreateScript().
 /// PgBouncer-compatible - uses transaction-level advisory locks (pg_try_advisory_xact_lock).
 /// </summary>
-/// <tests>Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaInitializationConcurrencyTests.cs</tests>
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
   // SHA256 digest of the canonical set of (MessageType, AssociationType, TargetName, ServiceName)
   // tuples emitted by the perspective association generator. Used to detect when the set of

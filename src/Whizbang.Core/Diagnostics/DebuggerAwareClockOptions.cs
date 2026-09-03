@@ -16,7 +16,7 @@ namespace Whizbang.Core.Diagnostics;
 /// </code>
 /// </remarks>
 /// <docs>extending/features/debugger-aware-clock</docs>
-/// <tests>Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClockOptions_CanSetFrozenThresholdAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClock_FrozenThreshold_CanBeConfiguredAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Diagnostics/DebuggerAwareClockTests.cs:DebuggerAwareClock_IsPaused_InAutoMode_WhenNoDebuggerAttachedAsync</tests>

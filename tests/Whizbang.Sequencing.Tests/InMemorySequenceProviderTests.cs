@@ -318,7 +318,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
   }
 
   [Test]
-  public async Task CancellationToken_Cancelled_ShouldThrowAsync() {
+  public async Task CancellationToken_Canceled_ShouldThrowAsync() {
     // Arrange
     var provider = new InMemorySequenceProvider();
     const string streamKey = "cancellation-test-stream";

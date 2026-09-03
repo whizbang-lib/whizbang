@@ -169,7 +169,7 @@ public class SlidingWindowApplyBatchStrategyTests {
   /// fires, which exercises the OCE catch + CancelAsync path.
   /// </summary>
   [Test]
-  public async Task FlushAndStopAsync_CallerCancelled_CancelsStopCtsAsync() {
+  public async Task FlushAndStopAsync_CallerCanceled_CancelsStopCtsAsync() {
     var streamId = _idProvider.NewGuid();
     var keepFlushBusy = new TaskCompletionSource();
     var sut = new SlidingWindowApplyBatchStrategy(

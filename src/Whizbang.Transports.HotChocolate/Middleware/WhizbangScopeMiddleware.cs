@@ -12,7 +12,7 @@ namespace Whizbang.Transports.HotChocolate.Middleware;
 /// Supports extraction from JWT claims and custom headers.
 /// </summary>
 /// <docs>apis/graphql/scoping#middleware</docs>
-/// <tests>Whizbang.Transports.HotChocolate.Tests/Integration/ScopedQueryTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.HotChocolate.Integration.Tests/ScopedQueryTests.cs</tests>
 /// <example>
 /// // In Program.cs or Startup.cs
 /// app.UseWhizbangScope();

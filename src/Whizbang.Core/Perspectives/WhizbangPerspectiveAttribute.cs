@@ -36,7 +36,6 @@ namespace Whizbang.Core.Perspectives;
 /// </list>
 /// </remarks>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
-/// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs</tests>
 /// <example>
 /// <para><strong>Single DbContext (no attribute needed):</strong></para>
 /// <code>

@@ -162,7 +162,7 @@ public class ScopedEventStoreQueryTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task QueryAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+  public async Task QueryAsync_WithCanceledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     await using var provider = BuildServiceProvider();
     var sut = CreateSut(provider);

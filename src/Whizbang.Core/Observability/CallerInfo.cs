@@ -4,7 +4,7 @@ namespace Whizbang.Core.Observability;
 /// Default implementation of <see cref="ICallerInfo"/>.
 /// Immutable sealed record for AOT compatibility and value semantics.
 /// </summary>
-/// <tests>Whizbang.Core.Tests/Observability/CallerInfoTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Observability/CallerInfoTests.cs</tests>
 public sealed record CallerInfo(
     string CallerMemberName,
     string CallerFilePath,

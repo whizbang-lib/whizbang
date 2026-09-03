@@ -22,7 +22,7 @@ namespace Whizbang.Core.Messaging;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/events/event-store#append-and-wait</docs>
-/// <tests>Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/AppendAndWaitEventStoreDecoratorTests.cs</tests>
 /// <remarks>
 /// Initializes a new instance of <see cref="AppendAndWaitEventStoreDecorator"/>.
 /// </remarks>

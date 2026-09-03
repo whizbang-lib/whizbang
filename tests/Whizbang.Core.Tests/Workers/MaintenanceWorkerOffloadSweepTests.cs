@@ -266,9 +266,9 @@ public class MaintenanceWorkerOffloadSweepTests {
   // ============================================================
 
   [Test]
-  public async Task ABlobDeleteCancelled_StopsTheSweepInsteadOfMovingToTheNextBlobAsync() {
+  public async Task ABlobDeleteCanceled_StopsTheSweepInsteadOfMovingToTheNextBlobAsync() {
     // The companion to OneBlobDeleteFails_TheRestOfTheBatchStillSweeps, and the opposite answer.
-    // One unreachable blob must not strand the others; a cancelled delete is a stopping host, and
+    // One unreachable blob must not strand the others; a canceled delete is a stopping host, and
     // continuing means more provider round trips while shutdown waits on them. The claims stay
     // either way, so nothing is lost by ending the pass here.
     var coord = new SweepCoordinator {
@@ -287,7 +287,7 @@ public class MaintenanceWorkerOffloadSweepTests {
   }
 
   [Test]
-  public async Task ClaimRemovalCancelled_StopsTheCycleRatherThanBeingLoggedAsync() {
+  public async Task ClaimRemovalCanceled_StopsTheCycleRatherThanBeingLoggedAsync() {
     // The step after the deletes, and the one that matters most to get right: the blobs are gone
     // and the claims are the only record that they were. Its failure is logged and swallowed like
     // any sweep failure, but cancellation has to travel — the rest of the cycle reaps rows.

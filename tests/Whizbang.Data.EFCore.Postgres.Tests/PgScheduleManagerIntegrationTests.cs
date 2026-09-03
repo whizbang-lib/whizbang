@@ -201,7 +201,7 @@ public class PgScheduleManagerIntegrationTests : EFCoreTestBase {
     await Assert.That(await mgr.ResumeAsync(handle.ScheduleId)).IsTrue();
     await Assert.That(await _statusAsync(handle.ScheduleId)).IsEqualTo((short)0);   // Active
     await Assert.That(await mgr.CancelAsync(handle.ScheduleId)).IsTrue();
-    await Assert.That(await _statusAsync(handle.ScheduleId)).IsEqualTo((short)3);   // Cancelled
+    await Assert.That(await _statusAsync(handle.ScheduleId)).IsEqualTo((short)3);   // Canceled
     await Assert.That(await mgr.PauseAsync(handle.ScheduleId)).IsFalse();           // terminal
   }
 

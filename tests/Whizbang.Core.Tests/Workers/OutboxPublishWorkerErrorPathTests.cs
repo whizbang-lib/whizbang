@@ -232,7 +232,7 @@ public class OutboxPublishWorkerErrorPathTests {
   }
 
   /// <summary>Bulk strategy that blocks until its cancellation token fires (no Task.Delay — pure signal).</summary>
-  private sealed class _BlockUntilCancelledBulkStrategy : IMessagePublishStrategy {
+  private sealed class _BlockUntilCanceledBulkStrategy : IMessagePublishStrategy {
     public bool SupportsBulkPublish => true;
     public TaskCompletionSource PublishEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
@@ -518,7 +518,7 @@ public class OutboxPublishWorkerErrorPathTests {
   }
 
   [Test]
-  public async Task SingularPublish_CancelledWhileTransportNotReady_StopsCleanlyAsync() {
+  public async Task SingularPublish_CanceledWhileTransportNotReady_StopsCleanlyAsync() {
     // Large delay parks the worker inside the not-ready Task.Delay; cancellation must
     // propagate out as OperationCanceledException and end the loop without faulting.
     var strategy = new _NeverReadyStrategy();
@@ -634,8 +634,8 @@ public class OutboxPublishWorkerErrorPathTests {
   }
 
   [Test]
-  public async Task BulkPublish_CancelledMidPublish_StopsCleanlyAsync() {
-    var strategy = new _BlockUntilCancelledBulkStrategy();
+  public async Task BulkPublish_CanceledMidPublish_StopsCleanlyAsync() {
+    var strategy = new _BlockUntilCanceledBulkStrategy();
     var fx = _build(strategy);
 
     fx.Channel.TryWrite(_work());

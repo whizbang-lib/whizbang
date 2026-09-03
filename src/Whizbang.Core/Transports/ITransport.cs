@@ -40,7 +40,7 @@ public interface ITransport {
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when initialization is successful</returns>
   /// <exception cref="InvalidOperationException">Thrown when transport cannot be initialized</exception>
-  /// <exception cref="OperationCanceledException">Thrown when initialization is cancelled</exception>
+  /// <exception cref="OperationCanceledException">Thrown when initialization is canceled</exception>
   Task InitializeAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -97,7 +97,7 @@ public interface ITransport {
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithCancellation_ThrowsOperationCanceledAsync</tests>
   /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
-  /// <tests>tests/Whizbang.Transports.AzureServiceBus.Tests/AzureServiceBusTransportUnitTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
+  /// <tests>tests/Whizbang.Transports.RabbitMQ.Tests/RabbitMQTransportTests.cs:PublishAsync_WithPreSerializedBytes_UsesHintNotSerializerAsync</tests>
   Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
@@ -158,7 +158,6 @@ public interface ITransport {
   /// <param name="destination">The destination to send the request to</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The response message envelope</returns>
-  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_SendAsync_WithRequestResponse_ReturnsResponseEnvelopeAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync</tests>
   Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
     IMessageEnvelope requestEnvelope,

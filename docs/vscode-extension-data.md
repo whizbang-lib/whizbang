@@ -249,7 +249,7 @@ Live Messages (last 10 seconds):
 - OrderCreatedEvent → orders/partition-3 (25ms) ✓
 - InventoryReservedCommand → inventory/partition-1 (12ms) ✓
 - SendEmailCommand → notifications/partition-0 (45ms) ⚠ SLOW
-- OrderCancelledEvent → orders/partition-7 (18ms) ✓
+- OrderCanceledEvent → orders/partition-7 (18ms) ✓
 
 [Click any message to see full trace]
 ```

@@ -39,7 +39,7 @@ public class RabbitMQReadinessCheckTests {
   }
 
   [Test]
-  public async Task IsReadyAsync_RespectsCancellationToken_WhenCancelledAsync() {
+  public async Task IsReadyAsync_RespectsCancellationToken_WhenCanceledAsync() {
     // Arrange
     var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(new FakeChannel()), isOpen: true);
     var readinessCheck = new RabbitMQReadinessCheck(fakeConnection);

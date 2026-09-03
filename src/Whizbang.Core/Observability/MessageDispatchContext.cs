@@ -19,7 +19,6 @@ namespace Whizbang.Core.Observability;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/dispatcher/routing#dispatch-context</docs>
-/// <tests>tests/Whizbang.Core.Tests/Observability/MessageDispatchContextTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeVersionTests.cs:NewEnvelope_DispatchContext_IsSetAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Observability/CascadeEnvelopeWrapperTests.cs:DispatchContext_FlipsIsDefaultDispatchTrueAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Observability/CascadeEnvelopeWrapperTests.cs:DispatchContext_PreservesModeAndSourceFromInnerAsync</tests>

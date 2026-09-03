@@ -10,7 +10,7 @@ namespace Whizbang.Core.SystemEvents.Security;
 /// Emitted when access to a resource is denied due to insufficient permissions.
 /// </summary>
 /// <docs>fundamentals/events/system-events#access-denied</docs>
-/// <tests>Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Integration.Tests/SecurityIntegrationTests.cs:AccessDenied_CapturesAllSecurityContext_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:AccessDenied_Constructor_AllPropertiesSetAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/SystemEvents/Security/SecuritySystemEventTests.cs:AccessDenied_IsSystemEvent_ReturnsTrueAsync</tests>

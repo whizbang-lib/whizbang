@@ -448,7 +448,7 @@ public static class SharedRabbitMqContainer {
         lastError = $"HTTP {(int)response.StatusCode} from {url}";
         Console.WriteLine($"[SharedRabbitMqContainer] Connection attempt {attempt}: {lastError}");
       } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
-        throw; // Propagate if main token cancelled
+        throw; // Propagate if main token canceled
       } catch (Exception ex) {
         lastError = ex.Message;
         Console.WriteLine($"[SharedRabbitMqContainer] Connection attempt {attempt} failed: {lastError}");

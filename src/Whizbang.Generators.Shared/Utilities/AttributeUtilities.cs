@@ -15,7 +15,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Constructor parameter names are matched case-insensitively to property names.
 /// </remarks>
 /// <docs>extending/source-generators/attribute-utilities</docs>
-/// <tests>Whizbang.Generators.Tests/Utilities/AttributeUtilitiesTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Utilities/AttributeUtilitiesTests.cs</tests>
 public static class AttributeUtilities {
   /// <summary>
   /// Gets a string property value from an attribute.

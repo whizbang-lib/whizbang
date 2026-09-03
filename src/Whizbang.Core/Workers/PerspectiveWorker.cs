@@ -1648,7 +1648,7 @@ public partial class PerspectiveWorker(
             continue;
           }
           // Slice 30 defensive: an OCE bubbling out of the drain-mode perspective method
-          // — for example shutdown cancellation with both ct + lease.Token cancelled so its
+          // — for example shutdown cancellation with both ct + lease.Token canceled so its
           // own catch filter does not match — must not abort the loop for other perspectives
           // on this stream. The single perspective's lease-handle catch already routes
           // failure-mode OCEs; anything that bubbles is either expected shutdown propagation
@@ -1938,7 +1938,7 @@ public partial class PerspectiveWorker(
     // Phase H step 9 slice 4: lease-tied cancellation. Wrap the apply + post-apply housekeeping
     // in a LeaseHandle whose token cancels at lease_expiry - LeaseGraceSeconds. The runner
     // template's apply loop now also calls ThrowIfCancellationRequested between events so a
-    // hot stream with many pending events can be cancelled mid-batch. The DispatchExecutor
+    // hot stream with many pending events can be canceled mid-batch. The DispatchExecutor
     // abandons hung receptors that ignore the CT.
     var leaseDeadline = _timeProvider.GetUtcNow()
       + TimeSpan.FromSeconds(Math.Max(1, _leaseRenewalOptions.LeaseSeconds - _leaseHandleOptions.LeaseGraceSeconds));
@@ -2415,7 +2415,7 @@ public partial class PerspectiveWorker(
     // produce that advance. Reversing this order (cursor first, cooldown later) was the
     // dominant residual inversion cause in a consumer run: when a lifecycle receptor invoker
     // between cursor update and the deferred cooldown-mark call threw or the lease
-    // cancelled, cursor advanced but cooldown stayed empty. The next drain saw pending
+    // canceled, cursor advanced but cooldown stayed empty. The next drain saw pending
     // events that weren't in cooldown, the inversion detector compared them against the
     // advanced cursor, and triggered a spurious full-replay rewind. With the order
     // flipped, the failure mode is safe: cooldown set + cursor not yet advanced means the
@@ -3728,7 +3728,7 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// Starts a background keepalive task that periodically renews a stream lock.
-  /// The task runs until the cancellation token is cancelled.
+  /// The task runs until the cancellation token is canceled.
   /// </summary>
   private async Task _startLockKeepaliveAsync(Guid streamId, string perspectiveName, CancellationToken ct) {
     if (_streamLocker is null) {
@@ -3873,7 +3873,7 @@ public partial class PerspectiveWorker(
   /// Same pattern as ReceptorInvoker for consistency.
   /// </summary>
   /// <docs>operations/workers/perspective-worker#security-context</docs>
-  /// <tests>Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:PrePerspectiveDetached_WithSecurityProvider_EstablishesSecurityContextAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorSucceeds_ButEnvelopeHasNoScope_UsesExtractorResultForMessageContextAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerSecurityContextTests.cs:EstablishSecurityContext_WhenExtractorFails_FallsBackToEnvelopeGetCurrentScopeAsync</tests>
