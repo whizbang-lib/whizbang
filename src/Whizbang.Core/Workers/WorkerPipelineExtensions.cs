@@ -208,7 +208,16 @@ public static class WorkerPipelineExtensions {
     //
     // Registered unconditionally and consumed as OPTIONAL, so a host that constructs the worker
     // directly still starts — it simply keeps the ungated behavior it has today.
-    services.TryAddSingleton<HousekeepingCoordinator>();
+    services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
+      new Whizbang.Core.Observability.HousekeepingMetrics(
+        sp.GetRequiredService<Whizbang.Core.Observability.WhizbangMetrics>(),
+        sp.GetService<IIdleActivityTracker>()));
+    // Factory, not open registration: the parameterless ctor exists for tests, and DI resolving it
+    // would silently drop the metrics — the exact built-but-unwired failure this week kept finding.
+    services.TryAddSingleton(sp =>
+      new HousekeepingCoordinator(
+        new HousekeepingCoordinator.Settings(),
+        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
     services.TryAddSingleton<ClaimWorker>();
     // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
     // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both

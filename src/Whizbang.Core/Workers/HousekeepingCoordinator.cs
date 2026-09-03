@@ -111,6 +111,7 @@ public sealed class HousekeepingCoordinator {
   public readonly record struct Decision(bool Granted, Verdict Reason);
 
   private readonly Settings _settings;
+  private Observability.HousekeepingMetrics? _metrics;
   private readonly object _gate = new();
   private bool _dlqRunning;
   private bool _integrityRunning;
@@ -123,6 +124,13 @@ public sealed class HousekeepingCoordinator {
   /// registers its own instance, which the framework's TryAdd defers to.
   /// </summary>
   public HousekeepingCoordinator() : this(new Settings()) { }
+
+  /// <summary>Initializes a new instance with metrics.</summary>
+  /// <param name="settings">Tuning.</param>
+  /// <param name="metrics">Optional observability; null records nothing.</param>
+  public HousekeepingCoordinator(Settings settings, Observability.HousekeepingMetrics? metrics) : this(settings) {
+    _metrics = metrics;
+  }
 
   /// <summary>Initializes a new instance of the <see cref="HousekeepingCoordinator"/> class.</summary>
   /// <param name="settings">Tuning; defaults are production-safe.</param>
@@ -138,6 +146,12 @@ public sealed class HousekeepingCoordinator {
   /// </param>
   /// <returns>Whether to proceed, and why.</returns>
   public Decision TryBegin(Activity activity, ServiceBacklog? backlog) {
+    var decision = _tryBeginCore(activity, backlog);
+    _metrics?.RecordDecision(activity, decision.Reason, decision.Granted);
+    return decision;
+  }
+
+  private Decision _tryBeginCore(Activity activity, ServiceBacklog? backlog) {
     lock (_gate) {
       // Self-overlap is refused for every activity: a cycle must never race itself.
       var alreadyRunning = activity switch {
@@ -262,6 +276,7 @@ public sealed class HousekeepingCoordinator {
   /// </remarks>
   /// <param name="activity">The activity that has finished.</param>
   public void End(Activity activity) {
+    _metrics?.RecordEnd(activity);
     lock (_gate) {
       if (activity == Activity.DeadLetterRecovery) {
         _dlqRunning = false;

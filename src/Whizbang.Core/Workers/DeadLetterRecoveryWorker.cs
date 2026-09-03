@@ -35,7 +35,8 @@ public partial class DeadLetterRecoveryWorker(
   ILogger<DeadLetterRecoveryWorker> logger,
   DeadLetterMetrics? metrics = null,
   Whizbang.Core.Notifications.IWorkNotificationListener? notificationListener = null,
-  HousekeepingCoordinator? housekeeping = null
+  HousekeepingCoordinator? housekeeping = null,
+  Whizbang.Core.Observability.HousekeepingMetrics? metricsRollup = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
@@ -44,6 +45,7 @@ public partial class DeadLetterRecoveryWorker(
   private readonly ILogger<DeadLetterRecoveryWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   // Optional: an unwired host keeps the pre-arbitration behavior rather than losing recovery.
   private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
+  private readonly Whizbang.Core.Observability.HousekeepingMetrics? _metricsRollup = metricsRollup;
   private readonly DeadLetterMetrics? _metrics = metrics;
   private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _notificationListener = notificationListener;
   private readonly SemaphoreSlim _wake = new(0, 1);
@@ -213,6 +215,7 @@ public partial class DeadLetterRecoveryWorker(
       }
       housekeeping = decision;
     }
+    var scanRecovered = 0;
     try {
       // Optional — no persistence layer wired = no scanning. Same as the startup-replay
       // branch above; keeps the worker safe to register everywhere.
@@ -304,6 +307,7 @@ public partial class DeadLetterRecoveryWorker(
           var recovered = await svc.RecoverAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
           if (recovered) {
             Interlocked.Increment(ref _totalRecovered);
+            scanRecovered++;
             LogRecovered(_logger, entry.DeadLetterId, entry.SourceTable);
             _metrics?.Recovered.Add(1,
               new KeyValuePair<string, object?>("source_table", entry.SourceTable));
@@ -330,6 +334,8 @@ public partial class DeadLetterRecoveryWorker(
       // In a finally: a scan that throws and never releases the slot would disable BOTH recovery
       // and every lower-ranked activity for the lifetime of the process.
       if (housekeeping is not null) {
+        // Volume rollup before the slot releases: dead letters actually re-driven this cycle.
+        _metricsRollup?.RecordItems(HousekeepingCoordinator.Activity.DeadLetterRecovery, scanRecovered);
         _housekeeping?.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
       }
     }
