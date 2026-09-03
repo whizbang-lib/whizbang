@@ -208,7 +208,16 @@ public static class WorkerPipelineExtensions {
     //
     // Registered unconditionally and consumed as OPTIONAL, so a host that constructs the worker
     // directly still starts — it simply keeps the ungated behavior it has today.
-    services.TryAddSingleton<HousekeepingCoordinator>();
+    services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
+      new Whizbang.Core.Observability.HousekeepingMetrics(
+        sp.GetRequiredService<Whizbang.Core.Observability.WhizbangMetrics>(),
+        sp.GetService<IIdleActivityTracker>()));
+    // Factory, not open registration: the parameterless ctor exists for tests, and DI resolving it
+    // would silently drop the metrics — the exact built-but-unwired failure this week kept finding.
+    services.TryAddSingleton(sp =>
+      new HousekeepingCoordinator(
+        new HousekeepingCoordinator.Settings(),
+        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
     services.TryAddSingleton<ClaimWorker>();
     // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
     // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both
@@ -489,6 +498,17 @@ public static class WorkerPipelineExtensions {
     // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();
     services.AddOptions<ClaimWorkerOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<ClaimWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<ClaimWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Claim"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddOptions<OutboxCompletionFlushWorkerOptions>();
     services.AddOptions<PerspectiveCompletionFlushWorkerOptions>();
     services.AddOptions<FailureFlushWorkerOptions>();
@@ -496,8 +516,36 @@ public static class WorkerPipelineExtensions {
     services.AddOptions<InboxHandlerWorkerOptions>();
     services.AddOptions<OutboxPublishWorkerOptions>();
     services.AddOptions<InboxDispatchWorkerOptions>();
+    // Bound, not just registered: AddOptions<T>() alone leaves the object on code defaults,
+    // which shipped a kill switch that bound to nothing — Whizbang__DeadLetterRecovery__Enabled=false
+    // sat on production pods while recovery ran Enabled=true. Binding is turnkey (the section
+    // names below are the documented operational keys) and degrades to code defaults when the
+    // host registers no IConfiguration at all. The configuration binder source generator
+    // intercepts these Bind calls, so no reflection reaches the AOT path.
     services.AddOptions<DeadLetterRecoveryOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<DeadLetterRecoveryOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<DeadLetterRecoveryOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:DeadLetterRecovery"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddOptions<TransportDeadLetterDrainWorkerOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<TransportDeadLetterDrainWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<TransportDeadLetterDrainWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:TransportDeadLetterDrain"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.AddOptions<MaintenanceWorkerOptions>();
     services.AddOptions<OutboxDrainWorkerOptions>();
     services.AddOptions<InboxDrainWorkerOptions>();

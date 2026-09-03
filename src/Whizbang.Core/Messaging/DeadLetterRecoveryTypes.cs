@@ -164,6 +164,21 @@ public sealed class DeadLetterRecoveryOptions {
   public bool LoopBreakerEnabled { get; set; } = true;
 
   /// <summary>
+  /// Whether recovery waits for the service to be idle before re-driving dead letters.
+  /// Default <c>true</c>.
+  /// </summary>
+  /// <remarks>
+  /// Re-driving puts work back onto the very queues it failed on, so recovery mid-drain is how a
+  /// backlog becomes a second storm. When true, each scan asks the housekeeping arbiter for the
+  /// slot: recovery holds the HIGHEST rank (the dead-letter table frequently contains exactly what
+  /// integrity would otherwise detect as a gap and re-request over the wire), but it still yields
+  /// to a service with unprocessed backlog and resumes on its own once the queues clear. Set false
+  /// to re-drive on the scan cadence regardless of load — appropriate only where recovery latency
+  /// matters more than interactive throughput.
+  /// </remarks>
+  public bool WaitForIdle { get; set; } = true;
+
+  /// <summary>
   /// Share of a scan batch that must postdate the previous scan before that cycle counts as
   /// self-inflicted. Default <c>0.5</c>.
   /// </summary>

@@ -244,4 +244,92 @@ public class HousekeepingCoordinatorTests {
   [Test]
   public async Task NullSettingsAreRejectedRatherThanDefaultedAsync()
     => await Assert.That(() => new HousekeepingCoordinator(null!)).Throws<ArgumentNullException>();
+
+  // ================================================================
+  // Dead-letter recovery outranks integrity
+  //
+  // The DLQ frequently CONTAINS the very messages integrity detects as gaps: a message fails, lands
+  // in the dead-letter table, and the resulting deficit is what the checkpoint path confirms. Asking
+  // the origin to redeliver over the wire what is already sitting locally is the expensive way to
+  // heal it, and it is how a backlog turns into cross-service replay traffic. Recovering first
+  // closes the gap at its source and removes the reason to ask at all — so recovery takes the slot
+  // ahead of integrity, and integrity simply runs on its next tick.
+  // ================================================================
+
+  [Test]
+  public async Task DeadLetterRecovery_TakesTheSlotAheadOfIntegrityAsync() {
+    var c = new HousekeepingCoordinator();
+
+    var dlq = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+    var integrity = c.TryBegin(HousekeepingCoordinator.Activity.Integrity, backlog: null);
+
+    await Assert.That(dlq.Granted).IsTrue();
+    await Assert.That(integrity.Granted).IsFalse()
+      .Because("recovery may be about to heal the very deficit integrity would otherwise detect");
+    await Assert.That(integrity.Reason)
+      .IsEqualTo(HousekeepingCoordinator.Verdict.HigherPriorityRunning);
+  }
+
+  [Test]
+  public async Task Integrity_DoesNotBlockDeadLetterRecoveryAsync() {
+    var c = new HousekeepingCoordinator();
+
+    var integrity = c.TryBegin(HousekeepingCoordinator.Activity.Integrity, backlog: null);
+    var dlq = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+
+    await Assert.That(integrity.Granted).IsTrue();
+    await Assert.That(dlq.Granted).IsTrue()
+      .Because("the ranking is asymmetric: recovery never waits behind lower-priority work");
+  }
+
+  [Test]
+  public async Task DeadLetterRecovery_WaitsWhileTheServiceIsBusyAsync() {
+    var c = new HousekeepingCoordinator();
+
+    var d = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _busy());
+
+    await Assert.That(d.Granted).IsFalse()
+      .Because("re-driving a dead letter puts work back onto the same queues; doing it while the "
+             + "service is still draining is how a recovery becomes a second storm");
+    await Assert.That(d.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.ServiceBusy);
+  }
+
+  [Test]
+  public async Task DeadLetterRecovery_DoesNotOverlapItselfAsync() {
+    var c = new HousekeepingCoordinator();
+
+    var first = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+    var second = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+
+    await Assert.That(first.Granted).IsTrue();
+    await Assert.That(second.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.AlreadyRunning);
+  }
+
+  [Test]
+  public async Task MaintenanceStillWaitsBehindDeadLetterRecoveryAsync() {
+    var c = new HousekeepingCoordinator();
+
+    c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+    var sweep = c.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _settled());
+
+    await Assert.That(sweep.Granted).IsFalse()
+      .Because("cleanup is the lowest rank and waits behind everything");
+    await Assert.That(sweep.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.HigherPriorityRunning);
+  }
+
+  [Test]
+  public async Task EndingRecovery_ReleasesTheSlotForIntegrityAsync() {
+    var c = new HousekeepingCoordinator();
+    c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+
+    c.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
+    var integrity = c.TryBegin(HousekeepingCoordinator.Activity.Integrity, backlog: null);
+
+    await Assert.That(integrity.Granted).IsTrue()
+      .Because("a deferred activity runs on its next tick; the slot must not leak");
+  }
+
+  private static ServiceBacklog _settled() => new() { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
+  private static ServiceBacklog _busy() => new() { UnprocessedInboxRows = 500, ActiveLeasedRows = 3 };
+
 }

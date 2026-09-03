@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel(Order = 300)]
 public class DeadLetterRecoveryWorkerTests {
 
-  private sealed class FakeRecoveryService : IDeadLetterRecoveryService {
+  private sealed class FakeRecoveryService : IDeadLetterRecoveryService, IWorkCoordinator {
     public Queue<List<DeadLetterEntry>> FetchBatches { get; } = new();
     public List<Guid> RecoverCalls { get; } = [];
     public List<Guid> HoldCalls { get; } = [];
@@ -73,6 +73,29 @@ public class DeadLetterRecoveryWorkerTests {
       if (ScheduleShouldThrow) { throw new InvalidOperationException("simulated schedule failure"); }
       ScheduleCalls.Add((deadLetterId, nextAt)); return Task.CompletedTask;
     }
+    public ServiceBacklog? Backlog { get; set; }
+    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken ct = default) =>
+      ValueTask.FromResult(Backlog);
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default)
+      => throw new NotSupportedException();
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default)
+      => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task<PartitionRecomputeResult> RecomputePartitionNumbersAsync(int partitionCount, CancellationToken cancellationToken = default)
+      => Task.FromResult(new PartitionRecomputeResult());
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default)
+      => Task.FromResult<PerspectiveCursorInfo?>(null);
+    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default)
+      => Task.FromResult(new List<PerspectiveCursorInfo>());
+    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default)
+      => Task.CompletedTask;
+
     public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) {
       ResetForGenerationCalls.Add(currentGeneration);
       return Task.FromResult(GenerationReplayReturn);
@@ -533,6 +556,96 @@ public class DeadLetterRecoveryWorkerTests {
     await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(0);
     await Assert.That(worker.IsLoopBreakerOpen).IsFalse();
     await Assert.That(svc.RecoverCalls.Count).IsGreaterThanOrEqualTo(2);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+
+  [Test]
+  public async Task RecoveryDefersWhileTheServiceIsStillDrainingAsync() {
+    // Re-driving a dead letter puts work back onto the same queues it failed on. Doing that while
+    // the service is still draining is how a recovery becomes a second storm — the exact shape that
+    // required disabling recovery by configuration in a live deployment. With arbitration, waiting
+    // is structural: recovery holds the highest housekeeping rank but still yields to a busy
+    // service, so it resumes on its own once the queues are clear.
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      ScanBatchSize = 50,
+      EnableGenerationReplay = false,
+    };
+    var svc = new FakeRecoveryService { Backlog = new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 3 } };
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeadLetterRecoveryService>(svc);
+    services.AddSingleton<IWorkCoordinator>(svc);
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(options)));
+    var sp = services.BuildServiceProvider();
+    var housekeeping = new HousekeepingCoordinator();
+    var worker = new DeadLetterRecoveryWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
+      new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: null, housekeeping: housekeeping);
+    svc.FetchBatches.Enqueue([_entry()]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await Task.Delay(250);
+
+    await Assert.That(svc.RecoverCalls).IsEmpty()
+      .Because("a busy service must not have dead letters re-driven into its queues");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task RecoveryTakesTheSlotAheadOfIntegrityAsync() {
+    // The ranking that matters: the dead-letter table often CONTAINS what integrity would detect as
+    // a gap and ask an origin to redeliver. Recovering locally first removes the reason to ask.
+    var housekeeping = new HousekeepingCoordinator();
+    var settled = new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
+
+    var dlq = housekeeping.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, settled);
+    var integrity = housekeeping.TryBegin(HousekeepingCoordinator.Activity.Integrity, null);
+
+    await Assert.That(dlq.Granted).IsTrue();
+    await Assert.That(integrity.Granted).IsFalse();
+    await Assert.That(integrity.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.HigherPriorityRunning);
+  }
+
+
+  [Test]
+  public async Task WaitForIdleFalse_RecoversEvenWhileBusyAsync() {
+    // The explicit opt-DOWN: an operator who values recovery latency over interactive throughput
+    // turns the idle gate off and gets the scan-cadence behavior. The default stays idle-gated,
+    // because the default has to be the one that cannot storm.
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      ScanBatchSize = 50,
+      EnableGenerationReplay = false,
+      WaitForIdle = false,
+    };
+    var svc = new FakeRecoveryService { Backlog = new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 3 } };
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeadLetterRecoveryService>(svc);
+    services.AddSingleton<IWorkCoordinator>(svc);
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(options)));
+    var sp = services.BuildServiceProvider();
+    var housekeeping = new HousekeepingCoordinator();
+    var worker = new DeadLetterRecoveryWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
+      new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: null, housekeeping: housekeeping);
+    svc.FetchBatches.Enqueue([_entry()]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(svc.RecoverCalls.Count).IsGreaterThanOrEqualTo(1)
+      .Because("WaitForIdle=false is the deliberate opt-down to scan-cadence recovery");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);

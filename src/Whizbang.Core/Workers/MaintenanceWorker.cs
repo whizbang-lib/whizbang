@@ -183,12 +183,17 @@ public sealed partial class MaintenanceWorker(
     }
 
     var results = await coordinator.PerformMaintenanceAsync(ct);
+    var sweptRows = 0L;
     foreach (var r in results) {
+      sweptRows += Math.Max(0, r.RowsAffected);
       LogMaintenanceResult(_logger, r.TaskName, r.RowsAffected, r.DurationMs);
       // Fleet-visible per-task outcomes (row retention's "is it working" signal rides
       // task=reap_expired_perspective_rows). Optional — null when metrics aren't registered.
       metrics?.Record(r.TaskName, r.RowsAffected, r.DurationMs);
     }
+    // Volume rollup: total rows the sweep touched, on the cross-activity housekeeping meter.
+    sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()
+      ?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, sweptRows);
 
     // E2 PostDestruction hooks — detached, after the reap committed.
     await _firePostDestructionHooksAsync(sp, destructionTargets, ct);

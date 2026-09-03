@@ -209,8 +209,10 @@ public sealed class RabbitMqHostRegistrationIntegrationTests {
   /// <summary>
   /// Completes when <paramref name="expectedMessageId"/> is sitting on the dead-letter queue, and
   /// leaves it there for the drainer under test: a consumer is the arrival signal (no polling),
-  /// and every delivery is nacked back with requeue so nothing is consumed out from under the
-  /// drain pass.
+  /// and the expected delivery is left unacked so the broker requeues it when the channel closes.
+  /// Nacking it back with requeue instead sets up a hot redeliver/nack loop with the broker, and
+  /// an in-flight nack racing the channel close is a wire error (504 CHANNEL_ERROR,
+  /// "expected 'channel.open'") that failed this suite intermittently.
   /// </summary>
   private static async Task _awaitOnDeadLetterQueueAsync(
       IServiceProvider provider, string dlqName, string expectedMessageId, CancellationToken ct) {
@@ -221,8 +223,14 @@ public sealed class RabbitMqHostRegistrationIntegrationTests {
       var consumer = new AsyncEventingBasicConsumer(channel);
       consumer.ReceivedAsync += async (_, args) => {
         if (args.BasicProperties.MessageId == expectedMessageId) {
+          // Deliberately unacked: the channel close below requeues it, and completing the signal
+          // is the last thing this consumer ever does on the channel — nothing is left in flight
+          // to race the close.
           arrived.TrySetResult(true);
+          return;
         }
+        // Anything else on this uniquely-named queue is unexpected; put it back rather than
+        // consume it out from under the drain pass.
         await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true, ct);
       };
       var consumerTag = await channel.BasicConsumeAsync(dlqName, autoAck: false, consumer, ct);

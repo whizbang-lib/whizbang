@@ -679,7 +679,8 @@ public sealed partial class ClaimWorker : BackgroundService {
       // #635: the budget reads these counts every cycle; carrying them on the claim's own round
       // trip removes a per-cycle call. Stores that ignore the flag leave batch.Outstanding null
       // and the fallback probe below still runs.
-      IncludeOutstanding: _budgetEngaged), ct);
+      IncludeOutstanding: _budgetEngaged,
+      FreshWorkShare: _options.FreshWorkShare), ct);
 
     // Feed the claim back into the window. A row arriving with attempts > 1 is work already claimed
     // and not finished, so a high share means the batch outruns what this instance can dispatch
@@ -933,6 +934,17 @@ public sealed class ClaimWorkerOptions {
   /// </para>
   /// </remarks>
   public bool EnableSafetyNetPoll { get; set; } = true;
+
+  /// <summary>
+  /// Share of each inbox claim batch reserved for fresh-head streams — streams whose earliest
+  /// unprocessed row has never been attempted. Strict oldest-first ordering let a large retry
+  /// backlog starve every new arrival (a production 28k-row control-plane backlog put a user's
+  /// brand-new stream hours out); the claim is a weighted-fair merge instead. Work-conserving:
+  /// when either class is empty the other takes the whole batch. 0.5 balances real-time work
+  /// against backlog drain; raise it on services where interactive latency outranks backlog
+  /// (1.0 = every fresh stream claims before any retry). Default 0.5.
+  /// </summary>
+  public double FreshWorkShare { get; set; } = 0.5;
 
   /// <summary>Base polling cadence in ms. Default 250.</summary>
   public int PollingIntervalMilliseconds { get; set; } = 250;

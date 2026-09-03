@@ -1,0 +1,80 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Workers;
+
+#pragma warning disable CA1707 // test method underscores
+
+namespace Whizbang.Core.Tests.Workers;
+
+/// <summary>
+/// <para>Locks in that the turnkey pipeline binds its own dead-letter options from configuration.
+/// The gap this closes was found in production: <c>Whizbang__DeadLetterRecovery__Enabled=false</c>
+/// sat on a pod for weeks while the worker ran at code defaults, because
+/// <c>AddOptions&lt;T&gt;()</c> registers defaults and nothing anywhere read the section. A kill
+/// switch that binds to nothing fails silently in the dangerous direction: the feature you
+/// disabled keeps running and every dashboard says otherwise.</para>
+/// <para>Binding must also degrade to code defaults when the host registers no
+/// <see cref="IConfiguration"/> at all — bare unit-test hosts and minimal samples stay turnkey.</para>
+/// </summary>
+/// <code-under-test>src/Whizbang.Core/Workers/WorkerPipelineExtensions.cs</code-under-test>
+[Category("Shard2")]
+public sealed class WorkerOptionsBindingTests {
+
+  private static ServiceProvider _hostWith(Dictionary<string, string?> settings) {
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+    services.AddWhizbangWorkers();
+    return services.BuildServiceProvider();
+  }
+
+  [Test]
+  public async Task DeadLetterRecovery_ReadsItsConfigurationSectionAsync() {
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:DeadLetterRecovery:Enabled"] = "false",
+      ["Whizbang:DeadLetterRecovery:WaitForIdle"] = "false",
+      ["Whizbang:DeadLetterRecovery:ScanIntervalMinutes"] = "42",
+    });
+
+    var options = provider.GetRequiredService<IOptions<DeadLetterRecoveryOptions>>().Value;
+
+    await Assert.That(options.Enabled).IsFalse()
+      .Because("Enabled=false in configuration must actually stop the worker — this exact key "
+             + "was set in production while recovery kept running on the code default");
+    await Assert.That(options.WaitForIdle).IsFalse()
+      .Because("the idle-arbitration opt-down is configuration, and unbound configuration is scenery");
+    await Assert.That(options.ScanIntervalMinutes).IsEqualTo(42)
+      .Because("numeric keys bind too, not just the booleans someone happened to test");
+  }
+
+  [Test]
+  public async Task TransportDrain_ReadsItsConfigurationSectionAsync() {
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:Workers:TransportDeadLetterDrain:Enabled"] = "false",
+      ["Whizbang:Workers:TransportDeadLetterDrain:MaxPerTick"] = "77",
+    });
+
+    var options = provider.GetRequiredService<IOptions<TransportDeadLetterDrainWorkerOptions>>().Value;
+
+    await Assert.That(options.Enabled).IsFalse()
+      .Because("the drain kill switch is deployed under this section path in operations scripts");
+    await Assert.That(options.MaxPerTick).IsEqualTo(77);
+  }
+
+  [Test]
+  public async Task NoConfigurationRegistered_KeepsCodeDefaultsAsync() {
+    var services = new ServiceCollection();
+    services.AddWhizbangWorkers();
+    await using var provider = services.BuildServiceProvider();
+
+    var options = provider.GetRequiredService<IOptions<DeadLetterRecoveryOptions>>().Value;
+
+    await Assert.That(options.Enabled).IsTrue()
+      .Because("a host with no IConfiguration must stay turnkey on code defaults, not throw");
+  }
+}

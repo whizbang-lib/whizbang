@@ -425,7 +425,9 @@ public class PerspectiveWorkerDedupTests {
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(1, _signalTimeout);
     await coordinator.WaitForClaimCallsAsync(2, _signalTimeout);
-    await Task.Delay(200);
+    // The spy's own signal, not a grace delay: under CI load the inline stage can land after
+    // any fixed pause, and asserting on a count that a delay races is exactly the flake.
+    await postLifecycleSpy.WaitForPostLifecycleInlineAsync(1, _signalTimeout);
     cts.Cancel();
     try { await workerTask; } catch (OperationCanceledException) { }
 
@@ -738,8 +740,21 @@ public class PerspectiveWorkerDedupTests {
   /// Detects whether PostLifecycle actually fires (not just whether tracking was abandoned).
   /// </summary>
   private sealed class PostLifecycleInlineSpyInvoker : IReceptorInvoker {
+    private readonly TaskCompletionSource<int>[] _fireWaiters = new TaskCompletionSource<int>[10];
     private int _postLifecycleInlineCount;
     public int PostLifecycleInlineCount => _postLifecycleInlineCount;
+
+    public PostLifecycleInlineSpyInvoker() {
+      for (var i = 0; i < _fireWaiters.Length; i++) {
+        _fireWaiters[i] = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+      }
+    }
+
+    public async Task WaitForPostLifecycleInlineAsync(int count, TimeSpan timeout) {
+      ArgumentOutOfRangeException.ThrowIfGreaterThan(count, _fireWaiters.Length);
+      using var cts = new CancellationTokenSource(timeout);
+      await _fireWaiters[count - 1].Task.WaitAsync(cts.Token);
+    }
 
     public ValueTask InvokeAsync(
       IMessageEnvelope envelope,
@@ -747,7 +762,10 @@ public class PerspectiveWorkerDedupTests {
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {
       if (stage == LifecycleStage.PostLifecycleInline) {
-        Interlocked.Increment(ref _postLifecycleInlineCount);
+        var current = Interlocked.Increment(ref _postLifecycleInlineCount);
+        for (var i = 0; i < _fireWaiters.Length && i < current; i++) {
+          _fireWaiters[i].TrySetResult(current);
+        }
       }
       return ValueTask.CompletedTask;
     }
