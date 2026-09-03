@@ -55,9 +55,10 @@ public sealed partial class ClaimWorker : BackgroundService {
   private ISignalSubscription? _perspectiveSignalSub;
   private readonly SemaphoreSlim _wake = new(0, 1);
 
-  // The current repeat-claim spacing nap, when one is in progress. SignalNewWork cancels it so a
-  // genuinely NEW row never sits out the nap; completion-feedback wakes (RequestImmediatePoll)
-  // deliberately cannot reach it. Null outside the nap window.
+  // The current repeat-claim spacing nap, when one is in progress. SignalNewWork and a gate
+  // transition (either direction) cancel it so a genuinely NEW row, or work that accumulated
+  // during a NOTIFY outage, never sits out the nap; completion-feedback wakes
+  // (RequestImmediatePoll) deliberately cannot reach it. Null outside the nap window.
   private CancellationTokenSource? _napCts;
   private int _consecutiveEmptyPolls;
 
@@ -215,7 +216,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     } else {
       Interlocked.Exchange(ref _lastUnavailableAtTicks, DateTimeOffset.UtcNow.Ticks);
     }
-    RequestImmediatePoll();
+    // Either wait, not just the semaphore: after an empty poll with the gate healthy the loop is
+    // in its spacing nap, and a wake that only releases the semaphore lets that nap run out before
+    // the catch-up poll. An outage edge is new work in effect — interrupt the nap too.
+    _wakeNow();
   }
 
   // Tracks the wall-clock ticks at which the gate last flipped to unavailable. Used to
@@ -261,6 +265,17 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// </summary>
   public void SignalNewWork() {
     Volatile.Write(ref _doorbellSinceLastClaim, 1);
+    _wakeNow();
+  }
+
+  /// <summary>
+  /// Wakes the loop from EITHER wait: releases the semaphore and cancels a spacing nap in progress.
+  /// New-work signals and gate transitions use this; completion-feedback wakes deliberately do not
+  /// (see <see cref="RequestImmediatePoll"/>), so a burst of completions cannot turn the nap into a
+  /// tight loop.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ClaimWorkerGateCadenceTests.cs:GateFlipsToAvailable_TriggersImmediatePollAsync</tests>
+  private void _wakeNow() {
     RequestImmediatePoll();
     try {
       Volatile.Read(ref _napCts)?.Cancel();

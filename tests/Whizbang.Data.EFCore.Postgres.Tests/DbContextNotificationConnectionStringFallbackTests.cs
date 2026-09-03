@@ -141,4 +141,63 @@ public class DbContextNotificationConnectionStringFallbackTests {
     await Assert.That(resolution.ConnectionString).IsEqualTo("Host=dbcontext.local;Database=resolved");
     await Assert.That(resolution.Source).IsEqualTo(NotificationConnectionStringResolver.ResolutionSource.DbContextFallback);
   }
+
+  // ── GetDataSource: the credential-bearing object behind UseNpgsql(NpgsqlDataSource) ──────────
+  //
+  // Under that overload Npgsql redacts the password from every ConnectionString surface, so the
+  // string fallback above yields a valid string that cannot authenticate. The data source itself
+  // still holds the credentials; surfacing it lets the notification stack open authenticated
+  // connections without a string ever changing hands.
+
+  [Test]
+  public async Task GetDataSource_UseNpgsqlDataSource_ReturnsTheDbContextsDataSourceAsync() {
+    await using var dataSource = Npgsql.NpgsqlDataSource.Create("Host=test.local;Database=mydb;Username=u;Password=p");
+    var services = new ServiceCollection();
+    services.AddDbContext<_FallbackTestDbContext>(o => o.UseNpgsql(dataSource));
+    using var sp = services.BuildServiceProvider();
+    Whizbang.Data.Postgres.Notifications.INotificationDataSourceFallback fallback =
+      new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+
+    var result = fallback.GetDataSource();
+
+    await Assert.That(result).IsSameReferenceAs(dataSource);
+  }
+
+  [Test]
+  public async Task GetDataSource_UseNpgsqlString_ReturnsNullAsync() {
+    // A string-configured context has no data source to lend; the string path already carries
+    // credentials for it (layer 1 of the resolution above).
+    var services = new ServiceCollection();
+    services.AddDbContext<_FallbackTestDbContext>(o =>
+      o.UseNpgsql("Host=test.local;Database=mydb;Username=u;Password=p"));
+    using var sp = services.BuildServiceProvider();
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+
+    await Assert.That(fallback.GetDataSource()).IsNull();
+  }
+
+  [Test]
+  public async Task GetDataSource_InMemoryDbContext_ReturnsNullAsync() {
+    var services = new ServiceCollection();
+    services.AddDbContext<_FallbackTestDbContext>(o => o.UseInMemoryDatabase("no-data-source"));
+    using var sp = services.BuildServiceProvider();
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+
+    await Assert.That(fallback.GetDataSource()).IsNull();
+  }
+
+  [Test]
+  public async Task GetDataSource_CachesAfterFirstCallAsync() {
+    await using var dataSource = Npgsql.NpgsqlDataSource.Create("Host=test.local;Database=mydb;Username=u;Password=p");
+    var services = new ServiceCollection();
+    services.AddDbContext<_FallbackTestDbContext>(o => o.UseNpgsql(dataSource));
+    using var sp = services.BuildServiceProvider();
+    var fallback = new DbContextNotificationConnectionStringFallback(sp, typeof(_FallbackTestDbContext));
+
+    var first = fallback.GetDataSource();
+    var second = fallback.GetDataSource();
+
+    await Assert.That(first).IsSameReferenceAs(dataSource);
+    await Assert.That(second).IsSameReferenceAs(dataSource);
+  }
 }

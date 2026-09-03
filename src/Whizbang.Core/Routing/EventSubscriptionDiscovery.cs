@@ -40,7 +40,18 @@ public sealed class EventSubscriptionDiscovery {
   /// Excludes namespaces that overlap with owned domains (this service publishes those, not subscribes).
   /// </summary>
   /// <returns>Combined set of event namespaces from auto-discovery and manual configuration, excluding owned namespaces.</returns>
+  /// <exception cref="InvalidOperationException">Thrown when a manually subscribed namespace is also
+  /// owned and not absorbed — see <see cref="RoutingOptions.ThrowIfSubscribedNamespaceIsOwned"/>.</exception>
+  /// <docs>fundamentals/dispatcher/routing#owned-and-subscribed</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ManualSubscriptionOnOwnedNamespace_ThrowsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Routing/EventSubscriptionDiscoveryTests.cs:DiscoverEventNamespaces_ExcludesOwnedDomainChildNamespacesAsync</tests>
   public IReadOnlySet<string> DiscoverEventNamespaces() {
+    // Defense in depth (issue #636): the WithRouting factory refuses an owned-and-subscribed
+    // namespace at first resolution, but hand-constructed options never pass through the factory.
+    // Refusing here too means the contradiction can never reach the owned-domain subtraction below
+    // and be discarded silently.
+    _routingOptions.ThrowIfSubscribedNamespaceIsOwned();
+
     var namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     // Add auto-discovered namespaces from perspectives and receptors
@@ -57,21 +68,11 @@ public sealed class EventSubscriptionDiscovery {
       namespaces.Add(ns);
     }
 
-    // Remove namespaces that overlap with owned domains
-    // (this service publishes to those, it shouldn't subscribe to them)
-    foreach (var ownedDomain in _routingOptions.OwnedDomains) {
-      // Remove exact matches
-      namespaces.Remove(ownedDomain);
-
-      // Remove namespaces that are children of owned domains
-      // e.g., if owned is "app.contracts", remove "app.contracts.events"
-      var ownedPrefix = ownedDomain.EndsWith('.')
-        ? ownedDomain
-        : ownedDomain + ".";
-
-      namespaces.RemoveWhere(ns =>
-        ns.StartsWith(ownedPrefix, StringComparison.OrdinalIgnoreCase));
-    }
+    // Remove namespaces that overlap with owned domains (exactly, or as children — see
+    // OwnedNamespaceMatcher): this service publishes to those, it shouldn't subscribe to them.
+    // Only auto-discovered namespaces can reach this point as owned; a MANUAL subscription on an
+    // owned namespace was refused above rather than silently discarded here.
+    namespaces.RemoveWhere(ns => OwnedNamespaceMatcher.IsOwned(ns, _routingOptions.OwnedDomains));
 
     // Absorbed namespaces are subscribed unconditionally: add them AFTER the owned-domain subtraction so it
     // can never strip a topic we explicitly chose to absorb, and so the binding is always created (otherwise

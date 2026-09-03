@@ -45,6 +45,10 @@ This directory contains focused documentation topics to help Claude Code underst
   - **When to use:** Working on ECommerce or other samples
   - **Critical:** When sample needs feature → implement in library first
 
+- **[startup-registration-invariants.md](startup-registration-invariants.md)** - Six invariants for startup and DI registration, each from a shipped defect
+  - **When to use:** Touching `AddWhizbangWorkers`, `DbContextInitializationRegistry`, `PostgresDriverExtensions`, `EventSubscriptionDiscovery`, or notification connection resolution
+  - **Critical:** Never let the framework silently do less than the consumer asked for; refuse with a reason or log the consequence
+
 ### 🛠️ Tools & Infrastructure
 - **[efcore-10-usage.md](efcore-10-usage.md)** - JsonB, UUIDv7, complex types
   - **When to use:** Database operations, entity configuration
@@ -141,6 +145,10 @@ This directory contains focused documentation topics to help Claude Code underst
 11. **[json-serialization-customizations.md](json-serialization-customizations.md)** - Custom JSON converters and edge cases
     - **When to use:** Debugging serialization errors, adding new converters
     - **Critical:** Documents PostgreSQL-specific handling (infinity, no timezone, etc.)
+
+12. **[startup-registration-invariants.md](startup-registration-invariants.md)** - Startup and DI registration invariants (issues #619, #620, #621, #630, #636)
+    - **When to use:** A host hangs or stops during startup, a second host in one process misbehaves, a subscription is missing, or notification connections fail to authenticate
+    - **Critical:** Idempotent workers registration, per-host schema initialization, always-present library version, schema-qualified queries, owned-and-subscribed refusal, borrowed notification data source
 
 ---
 

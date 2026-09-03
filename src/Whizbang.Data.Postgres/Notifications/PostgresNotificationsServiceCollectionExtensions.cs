@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Whizbang.Core.Notifications;
@@ -53,6 +54,15 @@ public static class PostgresNotificationsServiceCollectionExtensions {
   /// configuration section. Replaces the default <see cref="NoOpWorkNotificationListener"/>
   /// from <c>AddWhizbangWorkers</c>.
   /// </summary>
+  /// <remarks>
+  /// Notification data source auto-discovery, first hit wins: explicit <c>Whizbang:Database</c>
+  /// options; a credential-bearing <c>ConnectionStrings</c> entry; the application's own data source
+  /// via <see cref="INotificationDataSourceFallback"/> (borrowed); an <see cref="NpgsqlDataSource"/>
+  /// registered in DI (borrowed); otherwise the string path with its startup diagnostic.
+  /// </remarks>
+  /// <docs>data/drivers#bring-your-own-dbcontext</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/NotificationDataSourceAutoDiscoveryTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Notifications/AddWhizbangPostgresNotificationsTests.cs</tests>
   public static IServiceCollection AddWhizbangPostgresNotifications(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
 
@@ -193,6 +203,21 @@ public static class PostgresNotificationsServiceCollectionExtensions {
         connectionString = _findFirstCredentialBearingConnectionString(configuration);
       }
       if (string.IsNullOrEmpty(connectionString)) {
+        // No credential in configuration. Under UseNpgsql(NpgsqlDataSource) the string path
+        // cannot work either — Npgsql redacts the password from every ConnectionString surface —
+        // but the application's own data source still holds the credentials. Borrow it: first the
+        // DbContext's actual data source (surfaced by the storage driver), then one registered in
+        // DI. Borrowed means never disposed here and used as-is. Reported once, so a later auth
+        // failure on a LISTEN connection can be read against which source was chosen.
+        var borrowed = sp.GetService<INotificationDataSourceFallback>()?.GetDataSource()
+          ?? sp.GetService<NpgsqlDataSource>();
+        if (borrowed is not null) {
+          var logger = sp.GetService<ILoggerFactory>()?.CreateLogger("Whizbang.Data.Postgres.Notifications");
+          if (logger is not null) {
+            NotificationDataSourceDiscoveryLog.ReusingApplicationDataSource(logger);
+          }
+          return new NotificationDataSource(borrowed, ownsDataSource: false);
+        }
         // Nothing usable found — return a wrapper with DataSource=null so the
         // workers fall back to their string-based path AND surface the
         // operator-actionable startup diagnostic.

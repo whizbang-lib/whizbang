@@ -881,4 +881,86 @@ public class RoutingOptionsTests {
   }
 
   #endregion
+
+  #region ThrowIfSubscribedNamespaceIsOwned (issue #636)
+
+  // Owning a namespace and subscribing to its events are different intentions, but the framework
+  // removes owned namespaces from the event-subscription set on purpose (a service does not
+  // subscribe to what it publishes). A manual SubscribeTo on an owned namespace is therefore a
+  // declaration that will never be honored: the subscription is not created and a broker with no
+  // subscriber discards the events silently. The guard turns that silence into a startup refusal.
+
+  [Test]
+  public async Task ThrowIfSubscribedNamespaceIsOwned_NoOverlap_DoesNotThrowAsync() {
+    var options = new RoutingOptions()
+      .OwnDomains("app.contracts.identity")
+      .SubscribeTo("app.contracts.events");
+
+    await Assert.That(options.ThrowIfSubscribedNamespaceIsOwned).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task ThrowIfSubscribedNamespaceIsOwned_NoOwnedDomains_DoesNotThrowAsync() {
+    var options = new RoutingOptions().SubscribeTo("app.contracts.events", "app.contracts.identity");
+
+    await Assert.That(options.ThrowIfSubscribedNamespaceIsOwned).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task ThrowIfSubscribedNamespaceIsOwned_ExactOverlap_ThrowsNamingBothDeclarationsAndTheRemediesAsync() {
+    var options = new RoutingOptions()
+      .OwnDomains("app.contracts.identity")
+      .SubscribeTo("app.contracts.identity");
+
+    var thrown = await Assert.That(options.ThrowIfSubscribedNamespaceIsOwned)
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains("app.contracts.identity")
+      .Because("the operator must see which namespace is contradicted");
+    await Assert.That(thrown.Message).Contains("SubscribeTo")
+      .Because("one remedy is to drop the subscription");
+    await Assert.That(thrown.Message).Contains("AbsorbNamespaces")
+      .Because("the other remedy is the declared way to force the binding anyway");
+  }
+
+  [Test]
+  public async Task ThrowIfSubscribedNamespaceIsOwned_ChildOverlap_ThrowsNamingTheOwnedDomainAsync() {
+    var options = new RoutingOptions()
+      .OwnDomains("app.contracts")
+      .SubscribeTo("app.contracts.identity.events");
+
+    var thrown = await Assert.That(options.ThrowIfSubscribedNamespaceIsOwned)
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains("app.contracts.identity.events");
+    await Assert.That(thrown.Message).Contains("'app.contracts'")
+      .Because("hierarchical ownership is not obvious from the subscription alone; name the domain that claimed it");
+  }
+
+  [Test]
+  public async Task ThrowIfSubscribedNamespaceIsOwned_AbsorbedOverlap_DoesNotThrowAsync() {
+    var options = new RoutingOptions()
+      .OwnDomains("app.contracts.identity")
+      .SubscribeTo("app.contracts.identity")
+      .AbsorbNamespaces("app.contracts.identity");
+
+    await Assert.That(options.ThrowIfSubscribedNamespaceIsOwned).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task ThrowIfSubscribedNamespaceIsOwned_MultipleOffenders_NamesEveryOneAsync() {
+    var options = new RoutingOptions()
+      .OwnDomains("app.contracts.identity", "app.contracts.billing")
+      .SubscribeTo("app.contracts.identity", "app.contracts.billing.events", "app.contracts.events");
+
+    var thrown = await Assert.That(options.ThrowIfSubscribedNamespaceIsOwned)
+      .Throws<InvalidOperationException>();
+
+    await Assert.That(thrown!.Message).Contains("app.contracts.identity");
+    await Assert.That(thrown.Message).Contains("app.contracts.billing.events");
+    await Assert.That(thrown.Message.Contains("app.contracts.events", StringComparison.Ordinal)).IsFalse()
+      .Because("a namespace that is only subscribed is not part of the contradiction");
+  }
+
+  #endregion
 }

@@ -222,10 +222,14 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       _localServiceId = await initCoordinator.GetLocalServiceIdAsync(stoppingToken);
     } catch (OperationCanceledException) {
       return;
-    } catch (Exception) {
+    } catch (Exception ex) {
       // Best-effort: leave _localServiceId at Guid.Empty if the lookup fails. Downstream
-      // consumers' SQL trigger then COALESCEs to their own local service.
+      // consumers' SQL trigger then COALESCEs to their own local service. But say so: a swallowed
+      // failure here is indistinguishable from the legacy path this fallback was written for, and
+      // the consequence — every envelope this instance publishes carries an empty SourceServiceId —
+      // is invisible everywhere else (issue #630).
       _localServiceId = Guid.Empty;
+      LogLocalServiceIdLookupFailed(_logger, ex);
     }
 
     var batcher = new SlidingWindowBatcher<Guid>(_drainChannel.Reader, _options.Batcher);
@@ -1187,6 +1191,16 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Message = "OutboxDrainWorker: batched fetch failed for {StreamCount} streams; " +
               "falling back to per-stream fetches to isolate the failure")]
   static partial void LogBatchFetchFellBackToPerStream(ILogger logger, int streamCount, Exception ex);
+
+  /// <summary>Issue #630: the lookup is best-effort, but its failure must not be silent.</summary>
+  /// <docs>messaging/work-coordinator#local-service-identity</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupFails_LogsTheConsequenceAndKeepsDrainingAsync</tests>
+  [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: local service identity lookup failed; publishing continues, but every " +
+              "envelope this instance publishes will carry an empty SourceServiceId, so downstream consumers " +
+              "will attribute those messages to themselves. Check that wh_service_config is reachable in the " +
+              "DbContext's schema.")]
+  static partial void LogLocalServiceIdLookupFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Error,
     Message = "OutboxDrainWorker: failed to deserialize envelope for {MessageId}")]

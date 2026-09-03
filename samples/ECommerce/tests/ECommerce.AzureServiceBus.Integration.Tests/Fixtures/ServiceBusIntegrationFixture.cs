@@ -604,6 +604,15 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // - AddDbContext<BffDbContext> with UseNpgsql
     // - IDbContextFactory<BffDbContext> singleton registration
     // Connection string is provided via config ("ConnectionStrings:bff-db" above)
+    //
+    // CRITICAL: Clear the global Dispatcher callback before calling AddWhizbang(), as the
+    // RabbitMQ and InMemory fixtures do. A module initializer in another test assembly overwrites
+    // ServiceRegistrationCallbacks.Dispatcher with a callback that registers InventoryWorker
+    // receptors; those need IInventoryLens, which the BFF host does not register. Under
+    // DOTNET_ENVIRONMENT=Development the host builder validates on build and refuses the graph
+    // ("Unable to resolve service for type 'IInventoryLens'"), so every test in the fixture fails.
+    // The BFF dispatcher is registered explicitly below, so the auto-registration is not needed.
+    ServiceRegistrationCallbacks.Dispatcher = null;
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()

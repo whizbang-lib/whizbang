@@ -178,14 +178,17 @@ public class EventSubscriptionDiscoveryTests {
 
   [Test]
   public async Task DiscoverEventNamespaces_ExcludesOwnedDomainsExactMatchAsync() {
-    // Arrange - BFF service owns "app.contracts.bff", shouldn't subscribe to its own events
-    // Use empty registry to isolate from static EventNamespaceRegistry
+    // Arrange - BFF service owns "app.contracts.bff"; an AUTO-DISCOVERED namespace matching it
+    // (a local perspective over the service's own events) must not become a transport
+    // subscription — the service publishes those, it does not subscribe to them. A MANUAL
+    // SubscribeTo on an owned namespace is a different thing: a contradiction, refused below.
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("app.contracts.bff");
-    routingOptions.SubscribeTo("app.contracts.bff", "app.contracts.auth");
     var options = Options.Create(routingOptions);
-    var emptyRegistry = TestEventNamespaceRegistry.Create();
-    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
+    var registry = TestEventNamespaceRegistry.Create(
+        perspectiveNamespaces: "app.contracts.bff",
+        receptorNamespaces: "app.contracts.auth");
+    var discovery = new EventSubscriptionDiscovery(options, registry);
 
     // Act
     var namespaces = discovery.DiscoverEventNamespaces();
@@ -221,14 +224,15 @@ public class EventSubscriptionDiscoveryTests {
 
   [Test]
   public async Task DiscoverEventNamespaces_OwnedDomainWithTrailingDotAsync() {
-    // Arrange - owned domain already has trailing dot
-    // Use empty registry to isolate from static EventNamespaceRegistry
+    // Arrange - owned domain already has trailing dot; the auto-discovered child must still be
+    // recognized as owned (no double dot in the prefix)
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("app.contracts.bff.");
-    routingOptions.SubscribeTo("app.contracts.bff.events", "app.contracts.user.events");
     var options = Options.Create(routingOptions);
-    var emptyRegistry = TestEventNamespaceRegistry.Create();
-    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
+    var registry = TestEventNamespaceRegistry.Create(
+        perspectiveNamespaces: "app.contracts.bff.events",
+        receptorNamespaces: "app.contracts.user.events");
+    var discovery = new EventSubscriptionDiscovery(options, registry);
 
     // Act
     var namespaces = discovery.DiscoverEventNamespaces();
@@ -267,13 +271,13 @@ public class EventSubscriptionDiscoveryTests {
   [Test]
   public async Task DiscoverEventNamespaces_OwnedDomainCaseInsensitiveAsync() {
     // Arrange - owned domain matching should be case-insensitive
-    // Use empty registry to isolate from static EventNamespaceRegistry
     var routingOptions = new RoutingOptions();
     routingOptions.OwnDomains("App.Contracts.BFF");
-    routingOptions.SubscribeTo("app.contracts.bff.events", "app.contracts.auth.events");
     var options = Options.Create(routingOptions);
-    var emptyRegistry = TestEventNamespaceRegistry.Create();
-    var discovery = new EventSubscriptionDiscovery(options, emptyRegistry);
+    var registry = TestEventNamespaceRegistry.Create(
+        perspectiveNamespaces: "app.contracts.bff.events",
+        receptorNamespaces: "app.contracts.auth.events");
+    var discovery = new EventSubscriptionDiscovery(options, registry);
 
     // Act
     var namespaces = discovery.DiscoverEventNamespaces();
@@ -281,6 +285,37 @@ public class EventSubscriptionDiscoveryTests {
     // Assert - should exclude bff.events despite case difference
     await Assert.That(namespaces.Count).IsEqualTo(1);
     await Assert.That(namespaces.Contains("app.contracts.auth.events")).IsTrue();
+  }
+
+  /// <summary>
+  /// A manual <c>SubscribeTo</c> on an owned namespace used to be silently dropped by the owned-domain
+  /// subtraction: the declared subscription was never created, and a broker with no subscriber on
+  /// the topic discards the messages with no dead letter and no log line (issue #636). Discovery is
+  /// the defense-in-depth seam for that contradiction — the options factory refuses it first, but a
+  /// hand-constructed <see cref="RoutingOptions"/> never passes through the factory.
+  /// </summary>
+  [Test]
+  public async Task DiscoverEventNamespaces_ManualSubscriptionOnOwnedNamespace_ThrowsAsync() {
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("app.contracts.identity");
+    routingOptions.SubscribeTo("app.contracts.events", "app.contracts.identity");
+    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Create());
+
+    await Assert.That(() => discovery.DiscoverEventNamespaces())
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining("app.contracts.identity");
+  }
+
+  [Test]
+  public async Task DiscoverEventNamespaces_ManualSubscriptionOnOwnedChildNamespace_ThrowsAsync() {
+    var routingOptions = new RoutingOptions();
+    routingOptions.OwnDomains("app.contracts");
+    routingOptions.SubscribeTo("app.contracts.identity.events");
+    var discovery = new EventSubscriptionDiscovery(Options.Create(routingOptions), TestEventNamespaceRegistry.Create());
+
+    await Assert.That(() => discovery.DiscoverEventNamespaces())
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining("app.contracts.identity.events");
   }
 
   #endregion
