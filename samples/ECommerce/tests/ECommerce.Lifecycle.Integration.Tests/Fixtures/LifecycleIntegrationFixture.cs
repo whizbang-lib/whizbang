@@ -247,6 +247,7 @@ public sealed class LifecycleIntegrationFixture : IAsyncDisposable {
         lifecycleMessageDeserializer: sp.GetRequiredService<ILifecycleMessageDeserializer>(),
         metrics: sp.GetService<TransportMetrics>(),
         logger: sp.GetRequiredService<ILogger<TransportConsumerWorker>>(),
+        serviceInstanceProvider: sp.GetRequiredService<IServiceInstanceProvider>(),
         schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady()));
 
     // Logging
