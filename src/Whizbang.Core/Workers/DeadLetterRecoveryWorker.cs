@@ -27,6 +27,9 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+/// <docs>operations/workers/housekeeping-arbitration</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
 public partial class DeadLetterRecoveryWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,

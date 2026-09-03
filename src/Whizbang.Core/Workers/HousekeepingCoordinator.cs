@@ -35,6 +35,8 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>operations/workers/housekeeping-arbitration</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingCoordinatorTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkerOptionsBindingTests.cs:HousekeepingDeferralLimit_ReachesTheArbitrationMechanismAsync</tests>
 public sealed class HousekeepingCoordinator {
 
   /// <summary>A periodic background activity that contends for store locks.</summary>
