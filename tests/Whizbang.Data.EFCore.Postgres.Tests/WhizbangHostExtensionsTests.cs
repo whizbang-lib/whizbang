@@ -132,4 +132,33 @@ public class WhizbangHostExtensionsTests {
       .Because("the documented idempotence is per host: explicit call plus the hosted initializer "
              + "service must still add up to one initialization");
   }
+
+  [Test]
+  public async Task EnsureWhizbangInitializedAsync_HostWithoutLogging_InitializesWithANullLoggerAsync() {
+    // A bare host with no ILoggerFactory registered: initialization must still run, and the
+    // callback simply receives no logger — the logger is a convenience, never a prerequisite.
+    ILogger? seenLogger = new LoggerFactory().CreateLogger("sentinel");
+    var invoked = false;
+    DbContextInitializationRegistry.Register<FakeInitializedContext>((_, logger, _) => {
+      seenLogger = logger;
+      invoked = true;
+      return Task.CompletedTask;
+    });
+    using var host = new BareHost(new ServiceCollection().BuildServiceProvider());
+
+    await host.EnsureWhizbangInitializedAsync();
+
+    await Assert.That(invoked).IsTrue();
+    await Assert.That(seenLogger).IsNull();
+  }
+
+  /// <summary>An <see cref="IHost"/> over a provider with nothing registered, not even logging.</summary>
+  private sealed class BareHost(IServiceProvider services) : IHost {
+    public IServiceProvider Services { get; } = services;
+    public Task StartAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public void Dispose() {
+      // Nothing owned — the provider belongs to the test.
+    }
+  }
 }

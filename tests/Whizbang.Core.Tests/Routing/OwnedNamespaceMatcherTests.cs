@@ -59,6 +59,15 @@ public class OwnedNamespaceMatcherTests {
   }
 
   [Test]
+  public async Task IsOwned_OwnedDomainThatIsOnlyADot_OwnsNothingAsync() {
+    // "." normalizes to an empty domain; an empty prefix would otherwise match every namespace.
+    var owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "." };
+
+    await Assert.That(OwnedNamespaceMatcher.IsOwned("app.contracts.orders", owned)).IsFalse();
+    await Assert.That(OwnedNamespaceMatcher.FindOwner("app.contracts.orders", owned)).IsNull();
+  }
+
+  [Test]
   public async Task IsOwned_NullOwnedDomains_ThrowsAsync() {
     await Assert.That(() => OwnedNamespaceMatcher.IsOwned("app.contracts.orders", null!))
       .Throws<ArgumentNullException>();

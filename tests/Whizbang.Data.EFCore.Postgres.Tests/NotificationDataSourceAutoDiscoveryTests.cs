@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -131,7 +132,67 @@ public class NotificationDataSourceAutoDiscoveryTests {
     await Assert.That(notification.DataSource).IsSameReferenceAs(applicationDataSource);
   }
 
+  [Test]
+  public async Task AutoDiscovery_ReusingTheApplicationsDataSource_SaysSoOnceAsync() {
+    // The choice is the fact an operator needs when a LISTEN connection later fails to
+    // authenticate: which source did the notification stack end up with? Silence here would make
+    // that failure unreadable.
+    await using var applicationDataSource = NpgsqlDataSource.Create(CREDENTIAL_BEARING);
+    var sink = new List<string>();
+    var services = _host();
+    services.AddLogging(b => b.AddProvider(new ListLoggerProvider(sink)));
+    services.AddSingleton(applicationDataSource);
+    await using var provider = services.BuildServiceProvider();
+
+    _ = provider.GetRequiredService<INotificationDataSource>();
+
+    List<string> lines;
+    lock (sink) { lines = [.. sink]; }
+    await Assert.That(lines.Count(l => l.Contains("reusing the application's own NpgsqlDataSource", StringComparison.Ordinal))).IsEqualTo(1)
+      .Because("the borrow is reported exactly once, at resolution, with the remedies for a dedicated pool");
+  }
+
+  [Test]
+  public async Task AutoDiscovery_ReuseWorksWithoutLoggingRegisteredAsync() {
+    // A host with no ILoggerFactory at all still gets the borrowed data source; logging is a
+    // convenience, never a prerequisite for the credential path.
+    await using var applicationDataSource = NpgsqlDataSource.Create(CREDENTIAL_BEARING);
+    var services = new ServiceCollection();
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    services.AddSingleton<IConfiguration>(configuration);
+    services.AddSingleton<IServiceInstanceProvider>(new ServiceInstanceProvider(configuration));
+    services.AddWhizbangPostgresNotifications();
+    services.AddSingleton(applicationDataSource);
+    await using var provider = services.BuildServiceProvider();
+
+    var notification = provider.GetRequiredService<INotificationDataSource>();
+
+    await Assert.That(notification.DataSource).IsSameReferenceAs(applicationDataSource);
+  }
+
   private sealed class FixedDataSourceFallback(NpgsqlDataSource? dataSource) : INotificationDataSourceFallback {
     public NpgsqlDataSource? GetDataSource() => dataSource;
+  }
+
+  private sealed class ListLoggerProvider(List<string> sink) : Microsoft.Extensions.Logging.ILoggerProvider {
+    private readonly List<string> _sink = sink;
+
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => new ListLogger(_sink);
+
+    public void Dispose() {
+      // Nothing to release — the sink is owned by the test.
+    }
+
+    private sealed class ListLogger(List<string> sink) : Microsoft.Extensions.Logging.ILogger {
+      private readonly List<string> _sink = sink;
+
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+      public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+        lock (_sink) {
+          _sink.Add(formatter(state, exception));
+        }
+      }
+    }
   }
 }

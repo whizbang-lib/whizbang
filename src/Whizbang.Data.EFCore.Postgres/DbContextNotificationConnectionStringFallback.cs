@@ -114,24 +114,20 @@ public sealed class DbContextNotificationConnectionStringFallback
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DbContextNotificationConnectionStringFallbackTests.cs:GetDataSource_UseNpgsqlDataSource_ReturnsTheDbContextsDataSourceAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionByoDataSourceE2ETests.cs</tests>
   public NpgsqlDataSource? GetDataSource() {
-    if (_dataSourceResolved) {
-      return _cachedDataSource;
-    }
-
+    // Resolved once per startup, so a single check under the lock is enough: no fast path, no
+    // unreachable double-check.
     lock (_gate) {
-      if (_dataSourceResolved) {
-        return _cachedDataSource;
-      }
-
-      using var scope = _serviceProvider.CreateScope();
-      var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
+      if (!_dataSourceResolved) {
+        using var scope = _serviceProvider.CreateScope();
+        var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
 #pragma warning disable EF1001 // Internal EF Core API usage — the data source behind UseNpgsql(NpgsqlDataSource) is only exposed on the provider's options extension; the generated schema initializer reads it the same way
-      _cachedDataSource = dbContext.GetService<IDbContextOptions>()
-        .Extensions
-        .OfType<Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal.NpgsqlOptionsExtension>()
-        .FirstOrDefault()?.DataSource as NpgsqlDataSource;
+        _cachedDataSource = dbContext.GetService<IDbContextOptions>()
+          .Extensions
+          .OfType<Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal.NpgsqlOptionsExtension>()
+          .FirstOrDefault()?.DataSource as NpgsqlDataSource;
 #pragma warning restore EF1001
-      _dataSourceResolved = true;
+        _dataSourceResolved = true;
+      }
       return _cachedDataSource;
     }
   }
