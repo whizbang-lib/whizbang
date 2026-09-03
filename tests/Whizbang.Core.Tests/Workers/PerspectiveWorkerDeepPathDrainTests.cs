@@ -517,6 +517,55 @@ public class PerspectiveWorkerDeepPathDrainTests {
   }
 
   [Test]
+  public async Task DrainMode_OceDuringShutdown_StopsTheStreamInsteadOfLoggingPerPerspectiveAsync() {
+    // The other side of the filter above. The same exception type means opposite things depending
+    // on whether a shutdown is in flight, and only the token separates them.
+    //
+    // A bare OCE is one perspective misbehaving: log it, move to the sibling, let the lease expire
+    // so claim_orphaned re-issues the row. A shutdown is every perspective on the stream at once —
+    // continuing would work the remaining ones against a host that is tearing down their
+    // dependencies, and it would file a warning per perspective per stream on every single deploy,
+    // burying the misbehaving-perspective warnings this log exists to surface.
+    //
+    // Cancellation is requested from INSIDE the runner rather than before the call. Cancelling up
+    // front would be a weaker test: the drain loop checks the token on its way in, so it would exit
+    // before ever reaching the perspective and the arm would go untouched.
+    const string throwingPerspective = "Drain.ShutdownOceThrower";
+    var streamId = Guid.CreateVersion7();
+    var eventId = Guid.CreateVersion7();
+    var coordinator = new DrainWorkCoordinator();
+    coordinator.EnqueueStreamEvents([
+      _raw(streamId, eventId, Guid.CreateVersion7(), perspectiveName: throwingPerspective)
+    ]);
+    var eventStore = new DrainEventStore();
+    eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("shutdown"))]);
+
+    using var cts = new CancellationTokenSource();
+    var oceRunner = new DrainRunner {
+      BeforeThrow = cts.Cancel,
+      RunWithEventsException = new OperationCanceledException("shutdown reached the perspective"),
+    };
+    var registry = new MultiRunnerRegistry([typeof(DrainDeepEvent)]);
+    registry.Add(throwingPerspective, oceRunner);
+
+    var logger = new WarningCapturingLogger();
+    var (worker, harness, _) = _createWorker(coordinator, eventStore, registry, logger: logger);
+
+    await worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, CancellationToken.None);
+    await oceRunner.FirstRunWithEvents.WaitAsync(TimeSpan.FromSeconds(10));
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    await Assert.That(oceRunner.RunWithEventsCallCount).IsEqualTo(1)
+      .Because("the perspective must actually have been reached, or this asserts nothing about "
+             + "the arm it is here to cover");
+    await Assert.That(logger.Warnings.Any(w => w.Contains("skipping to next perspective", StringComparison.Ordinal)))
+      .IsFalse()
+      .Because("a shutdown is not one perspective misbehaving, and logging it as one files a "
+             + "warning per perspective per stream on every deploy");
+  }
+
+  [Test]
   public async Task DrainMode_FiveEventBatchWithDebugLogging_AppliesAllEventsAsync() {
     // Arrange — >= 5 events with Debug logging enabled exercises the PERF breakdown branch.
     var streamId = Guid.CreateVersion7();
@@ -987,6 +1036,8 @@ public class PerspectiveWorkerDeepPathDrainTests {
     private int _runWithEventsCallCount;
 
     public Exception? RunWithEventsException { get; init; }
+    /// <summary>Runs immediately before <see cref="RunWithEventsException"/> is thrown.</summary>
+    public Action? BeforeThrow { get; init; }
     public bool BlockUntilCancelled { get; init; }
     public ConcurrentQueue<List<Guid>> ReceivedBatches { get; } = new();
     public ConcurrentQueue<Guid?> ObservedCursors { get; } = new();
@@ -1014,6 +1065,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
         cancellationToken.ThrowIfCancellationRequested();
       }
       if (RunWithEventsException is not null) {
+        BeforeThrow?.Invoke();
         throw RunWithEventsException;
       }
       var lastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.Empty;
@@ -1095,6 +1147,19 @@ public class PerspectiveWorkerDeepPathDrainTests {
       _firstFailure.TrySetResult();
       return ValueTask.CompletedTask;
     }
+  }
+
+  /// <summary>Records warnings so the two cancellation arms can be told apart by their logging.</summary>
+  private sealed class WarningCapturingLogger : ILogger<PerspectiveWorker> {
+    private readonly List<string> _warnings = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (logLevel >= LogLevel.Warning) {
+        lock (_warnings) { _warnings.Add(formatter(state, exception)); }
+      }
+    }
+    public List<string> Warnings { get { lock (_warnings) { return [.. _warnings]; } } }
   }
 
   private sealed class AlwaysEnabledLogger : ILogger<PerspectiveWorker> {

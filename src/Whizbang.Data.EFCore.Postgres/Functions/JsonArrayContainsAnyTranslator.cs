@@ -44,16 +44,19 @@ public class JsonArrayContainsAnyTranslator(NpgsqlSqlExpressionFactory sqlExpres
     var scopeColumn = arguments[1];
     var values = arguments[2];
 
-    // First, extract the AllowedPrincipals array from the Scope JSONB column
-    // This generates: scope->'AllowedPrincipals'
+    // Extract the allowed-principals array from the Scope JSONB column: scope->'ap'.
+    // The key is the SERIALIZED name, not the CLR one — PerspectiveScope.AllowedPrincipals carries
+    // [JsonPropertyName("ap")], so traversing "AllowedPrincipals" reads a key that is not in the
+    // document. That returns SQL NULL, `?|` against NULL is NULL, and the row is filtered out:
+    // a security predicate that silently matches nothing rather than failing.
     var allowedPrincipalsPath = _sqlExpressionFactory.JsonTraversal(
       scopeColumn,
-      [_sqlExpressionFactory.Constant("AllowedPrincipals")],
+      [_sqlExpressionFactory.Constant("ap")],
       returnsText: false,  // Returns JSONB, not text
       typeof(string),
       scopeColumn.TypeMapping);
 
-    // Then apply the ?| operator: scope->'AllowedPrincipals' ?| ARRAY[...]
+    // Then apply the ?| operator: scope->'ap' ?| ARRAY[...]
     // The ?| operator checks if any of the text array elements exist in the JSONB array
     return _sqlExpressionFactory.MakePostgresBinary(
       PgExpressionType.JsonExistsAny,
