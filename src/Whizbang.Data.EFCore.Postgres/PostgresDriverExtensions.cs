@@ -50,6 +50,9 @@ public static class PostgresDriverExtensions {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_RegistersIClaimedEmissionStore_ScopedAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LibraryVersionRegistrationTests.cs:Postgres_WhenTheConsumerRegisteredItsOwnDbContext_StillRegistersTheLibraryVersionAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionByoDataSourceE2ETests.cs:Elector_UnderUseNpgsqlDataSource_WithNoNotificationConfiguration_AcquiresTheDutyAsync</tests>
+    /// <docs>data/drivers#bring-your-own-dbcontext</docs>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension property - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
     public WhizbangPerspectiveBuilder Postgres {
@@ -65,6 +68,14 @@ public static class PostgresDriverExtensions {
         // Handles connection string resolution, JSON config, EnableDynamicJson(), and UseVector() if needed
         // The connection string name can be overridden via WithEFCore<T>("connection-string-name")
         DbContextRegistrationRegistry.InvokeRegistration(selector.Services, selector.DbContextType, selector.ConnectionStringName);
+
+        // TURNKEY: the library version as a value, whoever owns the DbContext (issue #619). The
+        // generated callback above registers it too, but that callback is skipped when the consumer
+        // already registered the DbContext — a supported shape that then had no version at all, and
+        // an assessor with no version stands down, which is a host that never reports ready.
+        // TryAdd: the generated registration (same value) or an explicit consumer registration wins.
+        selector.Services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(
+            new Whizbang.Core.Observability.LibraryVersionProvider(LibraryVersionInfo.Value));
 
         // Invoke model registration callback (infrastructure + perspectives)
         // This is registered by source-generated module initializer in consumer assembly
@@ -259,8 +270,17 @@ public static class PostgresDriverExtensions {
         // when neither Whizbang:Database:DirectConnectionString nor ConnectionStringKey is
         // configured. Operators only need the explicit notification config when they want a
         // bypass-pgbouncer "-direct" variant.
-        selector.Services.TryAddSingleton<INotificationConnectionStringFallback>(sp =>
+        // One instance answers both questions: the connection STRING (for string-configured
+        // contexts) and the DATA SOURCE (for UseNpgsql(NpgsqlDataSource) contexts, where Npgsql
+        // redacts the password from every string surface and the data source is the only object in
+        // the host that can still open an authenticated connection). Notification auto-discovery
+        // borrows the data source when configuration carries no credential of its own.
+        selector.Services.TryAddSingleton<DbContextNotificationConnectionStringFallback>(sp =>
           new DbContextNotificationConnectionStringFallback(sp, dbContextType));
+        selector.Services.TryAddSingleton<INotificationConnectionStringFallback>(sp =>
+          sp.GetRequiredService<DbContextNotificationConnectionStringFallback>());
+        selector.Services.TryAddSingleton<Whizbang.Data.Postgres.Notifications.INotificationDataSourceFallback>(sp =>
+          sp.GetRequiredService<DbContextNotificationConnectionStringFallback>());
 
         // TURNKEY: Register Postgres LISTEN/NOTIFY listener. Binds WhizbangNotificationOptions
         // from "Whizbang:Database" so users only need to set ConnectionStringKey +

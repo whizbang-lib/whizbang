@@ -50,6 +50,19 @@ public class StartupAssessorTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task NoLibraryVersionProvider_StandsDownNamingTheMissingRegistrationAsync() {
+    // Absent and unreadable are different facts. Nobody registering a provider is a wiring gap the
+    // driver now closes on its own; an unparseable value is a genuine ambiguity. Both stand down,
+    // but the reason must say which one happened — a hang with "(none) is unreadable" cost a
+    // process dump to diagnose (issue #619).
+    var assessment = EFCorePostgresStartupAssessor.ComputeVerdict(null, ["0.9.4"]);
+    await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown)
+      .Because("with no version to compare, migrating would be a guess — stand down, as before");
+    await Assert.That(assessment.Reason).Contains("ILibraryVersionProvider")
+      .Because("the reason must name the missing registration, not describe a value that was never there");
+  }
+
+  [Test]
   public async Task UnparseableOwnVersion_RefusesRatherThanGuessesAsync() {
     var assessment = EFCorePostgresStartupAssessor.ComputeVerdict("not-a-version", ["0.9.4"]);
     await Assert.That(assessment.Verdict).IsEqualTo(StartupVerdict.StandDown)
