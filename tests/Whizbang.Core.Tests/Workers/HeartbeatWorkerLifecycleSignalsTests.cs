@@ -69,6 +69,81 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
   }
 
+  /// <summary>A bus whose publishes fail, to exercise the non-fatal announce paths.</summary>
+  private sealed class FailingBus(Exception failure) : ISignalBus {
+    public int Attempts;
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
+      where TSignal : ISignal {
+      Interlocked.Increment(ref Attempts);
+      return ValueTask.FromException(failure);
+    }
+    public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal
+      => new NoopSub();
+    private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
+  }
+
+  private static HeartbeatWorker _createWith(ISignalBus bus, ISchemaReadyGate? gate = null) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(new HeartbeatCoordinator());
+    var sp = services.BuildServiceProvider();
+    var schemaGate = gate ?? new SchemaReadyGate();
+    if (gate is null) { ((SchemaReadyGate)schemaGate).MarkReady(); }
+    return new HeartbeatWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new StubInstanceProvider(),
+      schemaGate,
+      Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
+      NullLogger<HeartbeatWorker>.Instance,
+      signalBus: bus);
+  }
+
+  [Test]
+  public async Task AFailedJoinAnnounce_IsSurvivedSoTheInstanceStillHeartbeatsAsync() {
+    // Announcing is an optimization: reconciling consumers pick a new instance up from the
+    // heartbeat scan anyway. Letting a failed announce kill the worker would trade a slower
+    // rebalance for an instance that never heartbeats at all and gets reaped as stale.
+    var bus = new FailingBus(new InvalidOperationException("signal transport down"));
+    var worker = _createWith(bus);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Wait on the attempt itself rather than on a duration — a fixed delay either flakes under
+    // load or slows every run to cover the worst case.
+    var deadline = DateTime.UtcNow.AddSeconds(10);
+    while (Volatile.Read(ref bus.Attempts) == 0 && DateTime.UtcNow < deadline) {
+      await Task.Yield();
+    }
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(bus.Attempts).IsGreaterThan(0)
+      .Because("the announce must actually have been attempted for its failure path to mean anything");
+  }
+
+  [Test]
+  public async Task AFailedLeavingAnnounce_DoesNotBlockShutdownAsync() {
+    // The InstanceDied monitor still detects departure through lease and heartbeat expiry, so a
+    // failed goodbye costs a slower rebalance — never a shutdown that hangs or throws.
+    var bus = new FailingBus(new InvalidOperationException("signal transport down"));
+    var worker = _createWith(bus);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
+    // The worker parks on the schema gate at startup. A pod stopped while still waiting has
+    // nothing to report and no schema to write to, so the exit must be silent rather than an error
+    // on every fast restart.
+    var gate = new SchemaReadyGate();   // never marked ready
+    var worker = _createWith(new CapturingBus(), gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   private static (HeartbeatWorker Worker, HeartbeatCoordinator Coord, CapturingBus Bus) _create() {
     var coord = new HeartbeatCoordinator();
     var services = new ServiceCollection();
