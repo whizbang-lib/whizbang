@@ -257,8 +257,17 @@ jobs:
     # Deliberately does NOT need the test suites: it starts its Sonar-wrapped build
     # while they run, then waits for their coverage artifacts internally (failing fast
     # if any test job fails). actions:read is required for that polling.
+    #
+    # Dependabot PR runs are excluded: workflows triggered by dependabot receive only
+    # Dependabot-scope secrets (this repo defines none), so SONAR_TOKEN arrives empty
+    # and the scanner hard-fails on auth — and a re-run keeps the original actor's
+    # restricted context, so it can never recover. Skipping is safe because ci-result
+    # accepts skipped jobs, and the merge queue re-runs quality with full secrets
+    # before anything lands on develop.
     needs: [changes]
-    if: needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group'
+    if: >-
+      (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
+      (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
     permissions:
       contents: read
       actions: read
