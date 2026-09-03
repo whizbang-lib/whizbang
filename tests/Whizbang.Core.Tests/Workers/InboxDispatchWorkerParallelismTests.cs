@@ -61,8 +61,11 @@ public class InboxDispatchWorkerParallelismTests {
   }
 
   private sealed class FakeFailureChannel : IFailureChannel {
-    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default)
-      => ValueTask.CompletedTask;
+    public List<MessageFailure> All { get; } = [];
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken ct = default) {
+      lock (All) { All.Add(failure); }
+      return ValueTask.CompletedTask;
+    }
   }
 
   private sealed class FakeReceptorRegistry : IReceptorRegistryQuery {
@@ -142,11 +145,13 @@ public class InboxDispatchWorkerParallelismTests {
       ServiceProvider sp,
       FakeInboxChannelWriter inbox,
       FakeHandlerCommitChannel handlerCommit,
-      TrackingReceptorInvoker invoker) : IAsyncDisposable {
+      TrackingReceptorInvoker invoker,
+      FakeFailureChannel failure) : IAsyncDisposable {
     public InboxDispatchWorker Worker { get; } = worker;
     public FakeInboxChannelWriter Inbox { get; } = inbox;
     public FakeHandlerCommitChannel HandlerCommit { get; } = handlerCommit;
     public TrackingReceptorInvoker Invoker { get; } = invoker;
+    public FakeFailureChannel Failure { get; } = failure;
     public async ValueTask DisposeAsync() {
       try { await Worker.StopAsync(CancellationToken.None); } catch { }
       await sp.DisposeAsync();
@@ -176,7 +181,7 @@ public class InboxDispatchWorkerParallelismTests {
       lifecycleMessageDeserializer: deserializer,
       receptorRegistry: new FakeReceptorRegistry());
 
-    return new WorkerHarness(worker, sp, inbox, handlerCommit, invoker);
+    return new WorkerHarness(worker, sp, inbox, handlerCommit, invoker, failure);
   }
 
   // ---------- TESTS ----------
@@ -300,5 +305,46 @@ public class InboxDispatchWorkerParallelismTests {
         return candidate;
       }
     }
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ADispatchCancelledByShutdown_IsNotRecordedAsAFailureAsync(
+      CancellationToken cancellationToken) {
+    // A dispatch that throws is routed to the failure channel and dropped from in-flight, so the
+    // message can be retried or dead-lettered on its own terms. A dispatch cancelled by shutdown
+    // is not a message that failed — it never finished being tried. Recording it burns an attempt
+    // against the poison bound on a message no receptor rejected, and enough restarts would
+    // quarantine perfectly good traffic.
+    //
+    // The gate is held and never released, so the invoker is parked inside PreInboxInline when
+    // the worker's token is cancelled — which is exactly the window the partition consumer's
+    // filtered catch exists for.
+    await using var harness = _buildWorker(maxConcurrent: 4);
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    harness.Invoker.ReleaseGates[messageId] =
+      new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    using var cts = new CancellationTokenSource();
+    await harness.Worker.StartAsync(cts.Token);
+    await harness.Inbox.WriteAsync(_makeWork(streamId, messageId), cts.Token);
+
+    // Wait until the dispatch is genuinely parked in the gate before cancelling.
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+    while (!harness.Invoker.HasStarted(messageId) && DateTimeOffset.UtcNow < deadline) {
+      await Task.Yield();
+    }
+    await Assert.That(harness.Invoker.HasStarted(messageId)).IsTrue()
+      .Because("the dispatch has to be inside the gate for the cancellation to land where the "
+             + "filtered catch lives");
+    await cts.CancelAsync();
+    try { await harness.Worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    List<MessageFailure> recorded;
+    lock (harness.Failure.All) { recorded = [.. harness.Failure.All]; }
+    await Assert.That(recorded).IsEmpty()
+      .Because("an interrupted dispatch is not a rejected message — recording it spends an "
+             + "attempt against the poison bound that no receptor ever asked for");
   }
 }

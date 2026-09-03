@@ -1053,6 +1053,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         var inlineCtx = lifecycleContext with { CurrentStage = inlineStage };
         await receptorInvoker.InvokeAsync(typedEnvelope, inlineStage, inlineCtx, ct);
       }
+    } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+      // A stage interrupted by shutdown is not a message that failed — it never finished being
+      // tried. Routing it below would stamp wh_outbox.error with a TaskCanceledException and burn
+      // an attempt on a message nothing rejected. The drain loop's own cancellation handling ends
+      // the pass cleanly and the row stays leased for the next claim cycle.
+      throw;
     } catch (Exception ex) {
       LogLifecycleStageError(_logger, work.MessageId, stageName, ex);
       // Slice 1 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis):

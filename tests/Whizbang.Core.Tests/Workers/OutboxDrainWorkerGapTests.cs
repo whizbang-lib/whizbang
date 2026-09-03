@@ -116,6 +116,28 @@ public class OutboxDrainWorkerGapTests {
     }
   }
 
+  /// <summary>
+  /// The bulk counterpart of <see cref="GapCancellableHangingPublishStrategy"/>. The two publish
+  /// paths have separate cancellation handling — the bulk one awaits through
+  /// <c>WaitAsync(timeout, ct)</c>, so it has to tell a publish timeout apart from a shutdown.
+  /// </summary>
+  private sealed class GapCancellableHangingBulkStrategy : IMessagePublishStrategy {
+    public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<IReadOnlyList<MessagePublishResult>> _never =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public bool SupportsBulkPublish => true;
+    public Task<bool> IsReadyAsync(CancellationToken ct = default) => Task.FromResult(true);
+    public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken ct) =>
+      throw new InvalidOperationException("PublishAsync must not be called on a bulk-capable strategy");
+
+    public async Task<IReadOnlyList<MessagePublishResult>> PublishBatchAsync(
+        IReadOnlyList<OutboxWork> works, CancellationToken ct) {
+      Started.TrySetResult();
+      return await _never.Task.WaitAsync(ct);
+    }
+  }
+
   private sealed class GapServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "gap-test-svc";
@@ -1091,6 +1113,57 @@ public class OutboxDrainWorkerGapTests {
   }
 
   /// <summary>
+  /// The lifecycle-stage counterpart of the publish-path shutdown branch below. The stage
+  /// invocation routes any throw to the failure channel so operators get a triage signal
+  /// instead of a silent infinite retry — but a shutdown is not a fault to triage.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_LifecycleStageCancelledByShutdown_DoesNotEnqueueAFailureAsync() {
+    // Recording this as a lifecycle failure stamps wh_outbox.error with a TaskCanceledException
+    // and burns an attempt on a message nothing rejected. Deploy often enough and rows accumulate
+    // failures they never earned; the row is still leased for the next claim cycle either way.
+    var failure = new GapFailureChannel();
+    var coord = new GapWorkCoordinator();
+    var sp = _sp(coord);
+    var drainChannel = new GapDrainChannel();
+    var completion = new GapCompletionChannel();
+
+    var worker = _worker(sp, drainChannel, completion, failure,
+      new OutboxDrainWorkerOptions { Enabled = true }, new GapPublishStrategy());
+
+    var messageId = (Guid)TrackedGuid.NewMedo();
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonDocument.Parse("{}").RootElement,
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Hops = [],
+    };
+    var work = new OutboxWork {
+      MessageId = messageId,
+      Destination = "gap-test-topic",
+      MessageType = "TestMessage",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName ?? "MessageEnvelope",
+      Envelope = envelope,
+      Attempts = 1,
+      Status = MessageProcessingStatus.Stored,
+    };
+
+    using var stopping = new CancellationTokenSource();
+    await stopping.CancelAsync();
+
+    await Assert.That(async () => await worker.InvokeOutboxLifecycleStageAsync(
+        work, envelope, new GapThrowingReceptorInvoker(new OperationCanceledException()),
+        LifecycleStage.PreOutboxDetached, LifecycleStage.PreOutboxInline,
+        "PreOutbox", stopping.Token))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown reaches the drain loop's own cancellation handling rather than being "
+             + "converted into a fault record on the way");
+    await Assert.That(failure.All).IsEmpty()
+      .Because("a stage interrupted by shutdown is not a message that failed — recording it burns "
+             + "an attempt no receptor asked for");
+  }
+
+  /// <summary>
   /// Graceful-shutdown rethrow branch: cancellation firing while a publish is in flight must
   /// propagate as OperationCanceledException (NOT get converted into a failure record) and
   /// end the worker loop cleanly.
@@ -1128,6 +1201,50 @@ public class OutboxDrainWorkerGapTests {
     await Assert.That(failure.All).IsEmpty()
       .Because("graceful shutdown must NOT masquerade as a publish failure — the row stays leased for the next claim cycle");
     await Assert.That(completion.AllIds).IsEmpty();
+  }
+
+  /// <summary>
+  /// The bulk path's shutdown behaviour, which the singular test above does not reach: the two
+  /// paths handle cancellation separately, and only the singular one was held.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_CancelledDuringBulkPublish_NoFailureRecord_StopsCleanlyAsync() {
+    // The bulk path awaits through WaitAsync(timeout, ct), so it has to separate a publish that
+    // ran long from a host that is stopping. A timeout is a failure: the rows are recorded failed
+    // and the abandoned publish is observed. Shutdown is not — recording these rows as failed
+    // would burn an attempt on messages that were never actually rejected, and the rows are
+    // already leased for the next claim cycle to pick up.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+
+    var coord = new GapWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new GapDrainChannel();
+    var completion = new GapCompletionChannel();
+    var failure = new GapFailureChannel();
+    var publish = new GapCancellableHangingBulkStrategy();
+    var sp = _sp(coord);
+
+    var worker = _worker(sp, drainChannel, completion, failure,
+      new OutboxDrainWorkerOptions { Enabled = true, PublishTimeoutSeconds = 30 }, publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await publish.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    var execTask = worker.ExecuteTask;
+    await Assert.That(execTask is not null).IsTrue();
+    await Assert.That(execTask!.IsFaulted).IsFalse()
+      .Because("graceful shutdown must not fault the worker on the bulk path either");
+    await Assert.That(failure.All).IsEmpty()
+      .Because("a batch interrupted by shutdown was not rejected — recording it failed burns an "
+             + "attempt on every row in it, and they are still leased for the next claim cycle");
+    await Assert.That(completion.AllIds).IsEmpty()
+      .Because("nothing was published, so nothing may be marked complete");
   }
 
   /// <summary>

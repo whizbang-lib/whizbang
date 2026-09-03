@@ -44,6 +44,8 @@ public class MaintenanceWorkerBestEffortStepsTests {
   private sealed class StepCoordinator : IWorkCoordinator {
     public Exception? RetentionSyncThrows { get; init; }
     public Exception? PointerPruneThrows { get; init; }
+    /// <summary>Fails the lifecycle-completion sweep, wired up by #629.</summary>
+    public Exception? LifecycleCleanupThrows { get; init; }
     public long PointersPruned { get; init; }
     public int RetentionSyncCalls;
     public bool? LastDebugMode { get; private set; }
@@ -58,6 +60,11 @@ public class MaintenanceWorkerBestEffortStepsTests {
       => PointerPruneThrows is not null
         ? Task.FromException<EphemeralPointerPruneResult>(PointerPruneThrows)
         : Task.FromResult(new EphemeralPointerPruneResult(PointersPruned, "ok"));
+
+    public Task<int> CleanupLifecycleCompletionsAsync(TimeSpan retentionPeriod, CancellationToken ct = default)
+      => LifecycleCleanupThrows is not null
+        ? Task.FromException<int>(LifecycleCleanupThrows)
+        : Task.FromResult(0);
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
@@ -185,5 +192,32 @@ public class MaintenanceWorkerBestEffortStepsTests {
       .Throws<OperationCanceledException>()
       .Because("the same contract, one step later — every best-effort step has its own pair of "
              + "catches, so each needs its own proof that the narrow one is there");
+  }
+
+  [Test]
+  public async Task LifecycleCleanupFailing_DoesNotFailTheCycleAsync() {
+    // The sweep wired up by #629 rides the cycle like the others, so the same trade applies: a
+    // failed cleanup of wh_lifecycle_completions must not cost the reap that shares the tick.
+    var coord = new StepCoordinator {
+      LifecycleCleanupThrows = new InvalidOperationException("relation does not exist"),
+    };
+    var (worker, logger) = _build(coord);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Snapshot().Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("the failure has to be visible — a sweep that silently stops running is a table "
+             + "that grows until someone notices the disk");
+  }
+
+  [Test]
+  public async Task LifecycleCleanupCancelled_PropagatesInsteadOfContinuingTheCycleAsync() {
+    var coord = new StepCoordinator { LifecycleCleanupThrows = new OperationCanceledException() };
+    var (worker, _) = _build(coord);
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("every best-effort step in this cycle lets shutdown through; a newly wired one is "
+             + "exactly where that gets forgotten");
   }
 }

@@ -127,6 +127,26 @@ public class StartupPipelineRunnerTests {
     await Assert.That(results[0].Reason).Contains("schema unreachable");
   }
 
+  /// <summary>
+  /// A step that cancels the run WHILE it is executing, then observes the cancellation — the only
+  /// shape that reaches the executor's own catch. Cancelling before <c>RunAsync</c> is called
+  /// instead trips the loop's <c>ThrowIfCancellationRequested</c> guard ahead of the first step,
+  /// which throws the same exception and runs no steps, so a test written that way passes without
+  /// the behaviour under test ever executing.
+  /// </summary>
+  private sealed class _cancellingStep(string name, List<string> log, CancellationTokenSource cts) : IStartupStep {
+    public StartupStepDescriptor Descriptor { get; } = new() { Name = name, DependsOn = [], Enabled = true };
+    public int Runs { get; private set; }
+
+    public async ValueTask<StartupStepReport> ExecuteAsync(CancellationToken cancellationToken) {
+      Runs++;
+      log.Add(name);
+      await cts.CancelAsync();
+      cancellationToken.ThrowIfCancellationRequested();
+      return new StartupStepReport(StartupStepOutcome.Completed, null);
+    }
+  }
+
   [Test]
   public async Task RunAsync_WhenAStepIsCancelledByShutdown_UnwindsInsteadOfReportingFailedAsync() {
     // The companion to WhenAStepThrows_ReportsFailedWithTheReason, and the opposite answer. A step
@@ -136,18 +156,18 @@ public class StartupPipelineRunnerTests {
     // claim a startup failure that did not happen, and the steps after it would still run on a
     // host that is stopping.
     using var stopping = new CancellationTokenSource();
-    await stopping.CancelAsync();
     var log = new List<string>();
+    var cancelling = new _cancellingStep("Migrate", log, stopping);
     var later = new _recordingStep("Later", log, ["Migrate"]);
-    var runner = new StartupPipelineRunner([
-      new _recordingStep("Migrate", log, null, throws: new OperationCanceledException()),
-      later,
-    ]);
+    var runner = new StartupPipelineRunner([cancelling, later]);
 
     await Assert.That(async () => await runner.RunAsync(stopping.Token))
       .Throws<OperationCanceledException>()
       .Because("a startup interrupted by shutdown is not a startup that failed, and the report "
              + "would say otherwise for the rest of the process's life");
+    await Assert.That(cancelling.Runs).IsEqualTo(1)
+      .Because("the step has to actually run for its cancellation to reach the executor's catch — "
+             + "cancelling before RunAsync trips the loop guard instead and proves nothing");
     await Assert.That(later.Runs).IsEqualTo(0)
       .Because("the steps after it must not run on a host that asked to stop");
   }

@@ -838,6 +838,13 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         await receptorInvoker.InvokeAsync(typedEnvelope, LifecycleStage.ImmediateDetached,
           lifecycleContext with { CurrentStage = LifecycleStage.ImmediateDetached }, cancellationToken);
       }
+    } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+      // A stage interrupted by shutdown is not a message that failed — it never finished being
+      // tried. Routing it to the failure channel below would stamp wh_inbox.error with a
+      // TaskCanceledException and burn an attempt against the poison bound on a message no
+      // receptor rejected; enough restarts would quarantine healthy traffic. The partition
+      // consumer catches this and ends its loop, leaving the row for the next claim cycle.
+      throw;
     } catch (Exception ex) {
       LogLifecycleError(_logger, work.MessageId, stageName, ex);
       // Slice 7 of release/v0.645.0-alpha.1 — mirrors Slice 1's outbox fix:

@@ -119,7 +119,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -164,7 +164,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -201,7 +201,12 @@ public class PerspectiveWorkerDeepPathDrainTests {
 
     var (worker, harness, _) = _createWorker(coordinator, eventStore, registry, configure: o => o.DrainBatcher = new SlidingWindowBatcherOptions {
       SlidingWindow = TimeSpan.FromMilliseconds(300),
-      MaxWait = TimeSpan.FromSeconds(3),
+      // Deliberately far from SlidingWindow. The two outcomes this test separates are "flushed at
+      // the sliding window" and "flushed at MaxWait", so the assertion is only as reliable as the
+      // gap between them: with MaxWait at 3s the midpoint budget was 1.5s, which a loaded runner
+      // beats on startup overhead alone even when the batcher is correct. Widening the gap makes
+      // the two outcomes tens of seconds apart instead of hundreds of milliseconds.
+      MaxWait = TimeSpan.FromSeconds(30),
       MaxSize = 1000
     });
 
@@ -217,16 +222,18 @@ public class PerspectiveWorkerDeepPathDrainTests {
         await Task.Delay(100, cts.Token);
       }
     });
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     sw.Stop();
     await cts.CancelAsync();
     try { await feeder; } catch (OperationCanceledException) { }
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
     // Assert — bounded by the sliding window from the first signal, not MaxWait.
-    await Assert.That(sw.Elapsed).IsLessThan(TimeSpan.FromMilliseconds(1500))
+    await Assert.That(sw.Elapsed).IsLessThan(TimeSpan.FromSeconds(5))
       .Because("claim re-offers of an already-leased stream must not extend the apply batching "
-             + "window; the flush deadline is SlidingWindow from the first drain signal, not MaxWait");
+             + "window; the flush deadline is SlidingWindow from the first drain signal, not "
+             + "MaxWait — a deadline reset on every re-ring would not flush until MaxWait, which "
+             + "is now 30s away rather than a second and a half");
   }
 
   [Test]
@@ -301,7 +308,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -344,7 +351,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.WaitForStreamEventsCallsAsync(2, TimeSpan.FromSeconds(10));
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -384,7 +391,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
@@ -459,7 +466,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     await cycleComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
@@ -538,7 +545,7 @@ public class PerspectiveWorkerDeepPathDrainTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
-    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+    await coordinator.FirstCompletion.WaitAsync(TimeSpan.FromSeconds(20));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
