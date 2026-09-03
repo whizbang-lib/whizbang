@@ -197,9 +197,11 @@ public class DeadLetterRecoveryWorkerTests {
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
-    // Worker degraded to a no-op — no scans, no replay scheduled.
-    await Assert.That(worker.TotalScans).IsEqualTo(0);
+    // Worker degrades to a LOUD no-op: the scan loop stays alive (a silent early return
+    // here once made a mis-wired production host indistinguishable from a healthy quiet one
+    // for a day), but nothing is replayed and nothing is recovered.
     await Assert.That(worker.TotalGenerationReplays).IsEqualTo(0);
+    await Assert.That(worker.TotalRecovered).IsEqualTo(0);
   }
 
   [Test]

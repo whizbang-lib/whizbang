@@ -22,6 +22,25 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Startup/StartupPipelineWiringTests.cs</tests>
 public static class WorkerPipelineExtensions {
   /// <summary>
+  /// The ONE construction recipe for the turnkey <see cref="HousekeepingCoordinator"/> and its
+  /// meter. Every registration site must call this instead of an open
+  /// <c>TryAddSingleton&lt;HousekeepingCoordinator&gt;()</c>: TryAdd means whichever site runs
+  /// first wins, and an open registration winning resolves the parameterless test constructor —
+  /// which arbitrates fine and counts nothing. Found in production as a decisions metric that
+  /// existed in code and never once reached telemetry, fleet-wide.
+  /// </summary>
+  internal static void AddHousekeepingCoordinatorCore(IServiceCollection services) {
+    services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
+      new Whizbang.Core.Observability.HousekeepingMetrics(
+        sp.GetRequiredService<Whizbang.Core.Observability.WhizbangMetrics>(),
+        sp.GetService<IIdleActivityTracker>()));
+    services.TryAddSingleton(sp =>
+      new HousekeepingCoordinator(
+        new HousekeepingCoordinator.Settings(),
+        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
+  }
+
+  /// <summary>
   /// Registers the new work-pump worker pipeline (HeartbeatWorker, ClaimWorker, InboxHandlerWorker,
   /// and the four batched-flush workers + their channel interfaces). Idempotent — calling
   /// multiple times has no additional effect.
@@ -208,16 +227,7 @@ public static class WorkerPipelineExtensions {
     //
     // Registered unconditionally and consumed as OPTIONAL, so a host that constructs the worker
     // directly still starts — it simply keeps the ungated behavior it has today.
-    services.TryAddSingleton<Whizbang.Core.Observability.HousekeepingMetrics>(sp =>
-      new Whizbang.Core.Observability.HousekeepingMetrics(
-        sp.GetRequiredService<Whizbang.Core.Observability.WhizbangMetrics>(),
-        sp.GetService<IIdleActivityTracker>()));
-    // Factory, not open registration: the parameterless ctor exists for tests, and DI resolving it
-    // would silently drop the metrics — the exact built-but-unwired failure this week kept finding.
-    services.TryAddSingleton(sp =>
-      new HousekeepingCoordinator(
-        new HousekeepingCoordinator.Settings(),
-        sp.GetService<Whizbang.Core.Observability.HousekeepingMetrics>()));
+    AddHousekeepingCoordinatorCore(services);
     services.TryAddSingleton<ClaimWorker>();
     // Turnkey: PerspectiveWorker is core pipeline, not a per-assembly generated registration.
     // The generated AddPerspectiveRunners() also TryAdd-registers it for back-compat (both

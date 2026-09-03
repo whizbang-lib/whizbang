@@ -250,13 +250,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // The third column is the lag measure: age of the oldest unprocessed row. ORDER BY received_at
     // LIMIT 1 walks idx_inbox_received_at and stops at the first unprocessed row; completed rows are
     // deleted on the normal path, so the walk stays short even when the queue is large.
+    // Settledness must use the CLAIM's eligibility predicate: rows parked with a future
+    // scheduled_for (operator quarantine, tag-bound coalescing) are deliberately not claimable,
+    // and counting them reported an idle service as busy forever — housekeeping deferred on
+    // ServiceBusy for a day against ~10,000 parked rows while the true claimable backlog was zero.
+    // The leased count stays unfiltered: a valid lease is in-flight work regardless of schedule.
     cmd.CommandText = $@"
       SELECT
-        (SELECT count(*) FROM (SELECT 1 FROM {inbox} WHERE processed_at IS NULL LIMIT 1000) a),
+        (SELECT count(*) FROM (SELECT 1 FROM {inbox} WHERE processed_at IS NULL
+           AND (scheduled_for IS NULL OR scheduled_for <= now()) LIMIT 1000) a),
         (SELECT count(*) FROM (SELECT 1 FROM {inbox}
            WHERE instance_id IS NOT NULL AND lease_expiry > now() LIMIT 1000) b),
         COALESCE(EXTRACT(EPOCH FROM (now() - (
           SELECT received_at FROM {inbox} WHERE processed_at IS NULL
+            AND (scheduled_for IS NULL OR scheduled_for <= now())
           ORDER BY received_at LIMIT 1))), 0)";
 #pragma warning restore S2077
 

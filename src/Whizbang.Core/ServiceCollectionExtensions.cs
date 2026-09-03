@@ -315,7 +315,7 @@ public static class ServiceCollectionExtensions {
     //
     // Registered unconditionally and consumed as OPTIONAL, so a host that constructs the worker
     // directly still starts — it simply keeps the ungated behavior it has today.
-    services.TryAddSingleton<Workers.HousekeepingCoordinator>();
+    Workers.WorkerPipelineExtensions.AddHousekeepingCoordinatorCore(services);
 
     // Register IWorkFlusher - resolves to the same strategy instance for manual flush support
     // IWorkCoordinatorStrategy is registered later by the storage provider (EFCore/Dapper),
