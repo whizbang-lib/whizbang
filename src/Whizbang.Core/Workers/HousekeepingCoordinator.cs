@@ -40,6 +40,19 @@ public sealed class HousekeepingCoordinator {
   /// <summary>A periodic background activity that contends for store locks.</summary>
   public enum Activity {
     /// <summary>
+    /// Re-driving dead-lettered messages. The highest rank, because the dead-letter table
+    /// frequently CONTAINS the very messages integrity detects as gaps.
+    /// </summary>
+    /// <remarks>
+    /// A message fails, lands in the dead-letter table, and the resulting deficit is what the
+    /// checkpoint path later confirms as a gap. Asking the origin to redeliver over the wire what
+    /// is already sitting locally is the expensive way to heal that, and it is how a backlog
+    /// becomes cross-service replay traffic. Recovering first closes the gap at its source and
+    /// removes the reason to ask; integrity deferred behind it runs on its next tick.
+    /// </remarks>
+    DeadLetterRecovery,
+
+    /// <summary>
     /// Stream-integrity work. Correctness-bearing and on a tight cadence, so it is not deferred
     /// behind cleanup.
     /// </summary>
@@ -48,6 +61,13 @@ public sealed class HousekeepingCoordinator {
     /// <summary>The heavy cleanup sweep: reaping, pruning, and stale-row collection.</summary>
     Maintenance,
   }
+
+  /// <summary>Rank of an activity; lower wins the slot.</summary>
+  private static int _rank(Activity activity) => activity switch {
+    Activity.DeadLetterRecovery => 0,
+    Activity.Integrity => 1,
+    _ => 2,
+  };
 
   /// <summary>Why an activity was or was not allowed to start.</summary>
   public enum Verdict {
@@ -92,6 +112,7 @@ public sealed class HousekeepingCoordinator {
 
   private readonly Settings _settings;
   private readonly object _gate = new();
+  private bool _dlqRunning;
   private bool _integrityRunning;
   private bool _maintenanceRunning;
   private int _consecutiveDeferrals;
@@ -118,24 +139,45 @@ public sealed class HousekeepingCoordinator {
   /// <returns>Whether to proceed, and why.</returns>
   public Decision TryBegin(Activity activity, ServiceBacklog? backlog) {
     lock (_gate) {
+      // Self-overlap is refused for every activity: a cycle must never race itself.
+      var alreadyRunning = activity switch {
+        Activity.DeadLetterRecovery => _dlqRunning,
+        Activity.Integrity => _integrityRunning,
+        _ => _maintenanceRunning,
+      };
+      if (alreadyRunning) {
+        return new Decision(false, Verdict.AlreadyRunning);
+      }
+
+      // Ranked, not merely serialized: an activity yields only to a STRICTLY higher rank, so
+      // recovery never waits behind integrity or cleanup, and integrity never waits behind cleanup.
+      var rank = _rank(activity);
+      if ((_dlqRunning && rank > _rank(Activity.DeadLetterRecovery))
+          || (_integrityRunning && rank > _rank(Activity.Integrity))) {
+        return new Decision(false, Verdict.HigherPriorityRunning);
+      }
+
       if (activity == Activity.Integrity) {
         // Integrity is not gated on settledness here — the checkpoint path applies its own, which
-        // distinguishes a lagging consumer from a genuine deficit. This guards only against a cycle
-        // overlapping itself.
-        if (_integrityRunning) {
-          return new Decision(false, Verdict.AlreadyRunning);
-        }
+        // distinguishes a lagging consumer from a genuine deficit.
         _integrityRunning = true;
         return new Decision(true, Verdict.Proceed);
       }
 
-      if (_maintenanceRunning) {
-        return new Decision(false, Verdict.AlreadyRunning);
-      }
-
-      // Asymmetric by design: cleanup waits for integrity, never the reverse.
-      if (_integrityRunning) {
-        return new Decision(false, Verdict.HigherPriorityRunning);
+      if (activity == Activity.DeadLetterRecovery) {
+        // Recovery IS gated on settledness: re-driving puts work back onto the same queues, so
+        // doing it mid-drain is how a recovery becomes a second storm. Unmeasured proceeds, for
+        // the same reason it does below — a gate that cannot measure must not silently disable
+        // what it gates.
+        if (backlog is null) {
+          _dlqRunning = true;
+          return new Decision(true, Verdict.ProceedUnmeasured);
+        }
+        if (!backlog.IsSettled) {
+          return new Decision(false, Verdict.ServiceBusy);
+        }
+        _dlqRunning = true;
+        return new Decision(true, Verdict.Proceed);
       }
 
       if (backlog is null) {
@@ -221,6 +263,11 @@ public sealed class HousekeepingCoordinator {
   /// <param name="activity">The activity that has finished.</param>
   public void End(Activity activity) {
     lock (_gate) {
+      if (activity == Activity.DeadLetterRecovery) {
+        _dlqRunning = false;
+        return;
+      }
+
       if (activity == Activity.Integrity) {
         _integrityRunning = false;
         return;

@@ -34,13 +34,16 @@ public partial class DeadLetterRecoveryWorker(
   IGenerationProvider generationProvider,
   ILogger<DeadLetterRecoveryWorker> logger,
   DeadLetterMetrics? metrics = null,
-  Whizbang.Core.Notifications.IWorkNotificationListener? notificationListener = null
+  Whizbang.Core.Notifications.IWorkNotificationListener? notificationListener = null,
+  HousekeepingCoordinator? housekeeping = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly DeadLetterRecoveryOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IGenerationProvider _generationProvider = generationProvider ?? throw new ArgumentNullException(nameof(generationProvider));
   private readonly ILogger<DeadLetterRecoveryWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  // Optional: an unwired host keeps the pre-arbitration behavior rather than losing recovery.
+  private readonly HousekeepingCoordinator? _housekeeping = housekeeping;
   private readonly DeadLetterMetrics? _metrics = metrics;
   private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _notificationListener = notificationListener;
   private readonly SemaphoreSlim _wake = new(0, 1);
@@ -187,119 +190,154 @@ public partial class DeadLetterRecoveryWorker(
   private async Task _scanOnceAsync(CancellationToken ct) {
     var scanStartedAt = DateTimeOffset.UtcNow;
     using var scope = _scopeFactory.CreateScope();
-    // Optional — no persistence layer wired = no scanning. Same as the startup-replay
-    // branch above; keeps the worker safe to register everywhere.
-    var svc = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
-    if (svc is null) {
-      return;
+    // Housekeeping arbitration. Recovery holds the HIGHEST rank, because the dead-letter table
+    // frequently contains the very messages integrity would otherwise detect as gaps and ask an
+    // origin to redeliver over the wire — healing locally removes the reason to ask. It is still
+    // gated on settledness: re-driving puts work back onto the same queues, so doing it mid-drain
+    // is how a recovery becomes a second storm.
+    HousekeepingCoordinator.Decision? housekeeping = null;
+    if (_housekeeping is not null && _options.WaitForIdle) {
+      var coordinatorForBacklog = scope.ServiceProvider.GetService<IWorkCoordinator>();
+      ServiceBacklog? backlog = null;
+      if (coordinatorForBacklog is not null) {
+        try {
+          backlog = await coordinatorForBacklog.CountServiceBacklogAsync(ct).ConfigureAwait(false);
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+          LogError(_logger, ex);
+        }
+      }
+      var decision = _housekeeping.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, backlog);
+      if (!decision.Granted) {
+        LogRecoveryDeferred(_logger, decision.Reason, backlog?.UnprocessedInboxRows ?? -1);
+        return;
+      }
+      housekeeping = decision;
     }
-    var policy = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryPolicy>();
+    try {
+      // Optional — no persistence layer wired = no scanning. Same as the startup-replay
+      // branch above; keeps the worker safe to register everywhere.
+      var svc = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
+      if (svc is null) {
+        return;
+      }
+      var policy = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryPolicy>();
 
-    // Fetch in batches — bounded by ScanBatchSize so a single scan doesn't try to drain
-    // an enormous backlog in one breath. Subsequent scans pick up where this one stopped.
-    var entries = await svc.FetchDueAsync(_options.ScanBatchSize, ct).ConfigureAwait(false);
-    if (entries.Count == 0) {
-      // A quiet cycle is evidence the cycle is NOT feeding itself, so it clears the consecutive
-      // run. Without this, a self-inflicted burst followed by genuine quiet would keep its count
-      // and trip later on an unrelated batch.
-      _consecutiveSelfInflicted = 0;
-      _previousScanStartedAt = scanStartedAt;
-      return;
-    }
-
-    if (_options.LoopBreakerEnabled) {
-      if (_isBreakerOpen(scanStartedAt)) {
-        LogLoopBreakerSuppressed(_logger, entries.Count);
+      // Fetch in batches — bounded by ScanBatchSize so a single scan doesn't try to drain
+      // an enormous backlog in one breath. Subsequent scans pick up where this one stopped.
+      var entries = await svc.FetchDueAsync(_options.ScanBatchSize, ct).ConfigureAwait(false);
+      if (entries.Count == 0) {
+        // A quiet cycle is evidence the cycle is NOT feeding itself, so it clears the consecutive
+        // run. Without this, a self-inflicted burst followed by genuine quiet would keep its count
+        // and trip later on an unrelated batch.
+        _consecutiveSelfInflicted = 0;
         _previousScanStartedAt = scanStartedAt;
         return;
       }
 
-      var timestamps = new DateTimeOffset[entries.Count];
-      for (var i = 0; i < entries.Count; i++) {
-        timestamps[i] = entries[i].DeadLetteredAt;
-      }
-      var signal = DeadLetterRecoveryLoopSignal.Measure(
-        timestamps, _previousScanStartedAt, _options.LoopBreakerFreshFraction);
-
-      if (signal.IsSelfInflicted) {
-        _consecutiveSelfInflicted++;
-        if (_consecutiveSelfInflicted >= _options.LoopBreakerConsecutiveCycles) {
-          _breakerOpenedAt = scanStartedAt;
-          Interlocked.Increment(ref _totalLoopBreakerTrips);
-          LogLoopBreakerTripped(
-            _logger, signal.Fresh, signal.Considered, _consecutiveSelfInflicted,
-            _options.LoopBreakerCooldownMinutes);
+      if (_options.LoopBreakerEnabled) {
+        if (_isBreakerOpen(scanStartedAt)) {
+          LogLoopBreakerSuppressed(_logger, entries.Count);
           _previousScanStartedAt = scanStartedAt;
           return;
         }
-      } else {
-        _consecutiveSelfInflicted = 0;
+
+        var timestamps = new DateTimeOffset[entries.Count];
+        for (var i = 0; i < entries.Count; i++) {
+          timestamps[i] = entries[i].DeadLetteredAt;
+        }
+        var signal = DeadLetterRecoveryLoopSignal.Measure(
+          timestamps, _previousScanStartedAt, _options.LoopBreakerFreshFraction);
+
+        if (signal.IsSelfInflicted) {
+          _consecutiveSelfInflicted++;
+          if (_consecutiveSelfInflicted >= _options.LoopBreakerConsecutiveCycles) {
+            _breakerOpenedAt = scanStartedAt;
+            Interlocked.Increment(ref _totalLoopBreakerTrips);
+            LogLoopBreakerTripped(
+              _logger, signal.Fresh, signal.Considered, _consecutiveSelfInflicted,
+              _options.LoopBreakerCooldownMinutes);
+            _previousScanStartedAt = scanStartedAt;
+            return;
+          }
+        } else {
+          _consecutiveSelfInflicted = 0;
+        }
       }
-    }
 
-    _previousScanStartedAt = scanStartedAt;
+      _previousScanStartedAt = scanStartedAt;
 
-    foreach (var entry in entries) {
-      if (ct.IsCancellationRequested) { return; }
-      if (!policy.ShouldRecover(entry)) { continue; }
+      foreach (var entry in entries) {
+        if (ct.IsCancellationRequested) { return; }
+        if (!policy.ShouldRecover(entry)) { continue; }
 
-      var rule = policy.GetPolicy(entry);
+        var rule = policy.GetPolicy(entry);
 
-      // Exhaustion check first: if RecoveryAttempts already reached MaxRecoveryAttempts,
-      // transition to terminal state per HoldForReviewAfterExhaustion.
-      if (entry.RecoveryAttempts >= rule.MaxRecoveryAttempts) {
+        // Exhaustion check first: if RecoveryAttempts already reached MaxRecoveryAttempts,
+        // transition to terminal state per HoldForReviewAfterExhaustion.
+        if (entry.RecoveryAttempts >= rule.MaxRecoveryAttempts) {
+          try {
+            if (rule.HoldForReviewAfterExhaustion) {
+              await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+              Interlocked.Increment(ref _totalHeld);
+              LogHeld(_logger, entry.DeadLetterId, rule.Name);
+              _metrics?.Held.Add(1,
+                new KeyValuePair<string, object?>("policy_name", rule.Name),
+                new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+            } else {
+              await svc.MarkPermanentlyFailedAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+              Interlocked.Increment(ref _totalPermanentlyFailed);
+              LogPermanentlyFailed(_logger, entry.DeadLetterId, rule.Name);
+              _metrics?.PermanentlyFailed.Add(1,
+                new KeyValuePair<string, object?>("policy_name", rule.Name),
+                new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+            }
+          } catch (Exception ex) {
+            LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
+          }
+          continue;
+        }
+
+        // Try the recovery.
+        _metrics?.RecoveryAttempts.Add(1,
+          new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
         try {
-          if (rule.HoldForReviewAfterExhaustion) {
-            await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
-            Interlocked.Increment(ref _totalHeld);
-            LogHeld(_logger, entry.DeadLetterId, rule.Name);
-            _metrics?.Held.Add(1,
-              new KeyValuePair<string, object?>("policy_name", rule.Name),
-              new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+          var recovered = await svc.RecoverAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+          if (recovered) {
+            Interlocked.Increment(ref _totalRecovered);
+            LogRecovered(_logger, entry.DeadLetterId, entry.SourceTable);
+            _metrics?.Recovered.Add(1,
+              new KeyValuePair<string, object?>("source_table", entry.SourceTable));
           } else {
-            await svc.MarkPermanentlyFailedAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
-            Interlocked.Increment(ref _totalPermanentlyFailed);
-            LogPermanentlyFailed(_logger, entry.DeadLetterId, rule.Name);
-            _metrics?.PermanentlyFailed.Add(1,
-              new KeyValuePair<string, object?>("policy_name", rule.Name),
-              new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+            // recover_dead_letter returned false — row was already terminal or claimed by
+            // another worker. No action needed; the other worker's path handles state.
           }
         } catch (Exception ex) {
-          LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
+          // Recovery failed (DB hiccup, transport blip, etc.). Schedule the next attempt
+          // per policy cooldown. The recovery_attempts counter was already bumped by the
+          // SQL function's UPDATE; the worker will re-evaluate exhaustion on the next scan.
+          LogRecoveryAttemptFailed(_logger, entry.DeadLetterId, ex);
+          try {
+            await svc.ScheduleNextAttemptAsync(
+              entry.DeadLetterId,
+              DateTimeOffset.UtcNow.Add(rule.Cooldown),
+              ct).ConfigureAwait(false);
+          } catch (Exception scheduleEx) {
+            LogScheduleFailed(_logger, entry.DeadLetterId, scheduleEx);
+          }
         }
-        continue;
       }
-
-      // Try the recovery.
-      _metrics?.RecoveryAttempts.Add(1,
-        new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
-      try {
-        var recovered = await svc.RecoverAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
-        if (recovered) {
-          Interlocked.Increment(ref _totalRecovered);
-          LogRecovered(_logger, entry.DeadLetterId, entry.SourceTable);
-          _metrics?.Recovered.Add(1,
-            new KeyValuePair<string, object?>("source_table", entry.SourceTable));
-        } else {
-          // recover_dead_letter returned false — row was already terminal or claimed by
-          // another worker. No action needed; the other worker's path handles state.
-        }
-      } catch (Exception ex) {
-        // Recovery failed (DB hiccup, transport blip, etc.). Schedule the next attempt
-        // per policy cooldown. The recovery_attempts counter was already bumped by the
-        // SQL function's UPDATE; the worker will re-evaluate exhaustion on the next scan.
-        LogRecoveryAttemptFailed(_logger, entry.DeadLetterId, ex);
-        try {
-          await svc.ScheduleNextAttemptAsync(
-            entry.DeadLetterId,
-            DateTimeOffset.UtcNow.Add(rule.Cooldown),
-            ct).ConfigureAwait(false);
-        } catch (Exception scheduleEx) {
-          LogScheduleFailed(_logger, entry.DeadLetterId, scheduleEx);
-        }
+    } finally {
+      // In a finally: a scan that throws and never releases the slot would disable BOTH recovery
+      // and every lower-ranked activity for the lifetime of the process.
+      if (housekeeping is not null) {
+        _housekeeping?.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
       }
     }
   }
+
+  [LoggerMessage(EventId = 15, Level = LogLevel.Debug,
+    Message = "DeadLetterRecoveryWorker deferred: {Reason} (unprocessed inbox rows={InboxRows})")]
+  static partial void LogRecoveryDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long inboxRows);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information,
     Message = "DeadLetterRecoveryWorker started: scanIntervalMinutes={ScanIntervalMinutes}")]
