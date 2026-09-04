@@ -146,8 +146,11 @@ wh_dead_letters via cohort_key.
 - P3 — generation-scoped budgets, deploy-triggered auto-canary, exponential backoff,
   operator cohort tooling (summary rollups, release/hold-cohort functions).
 
-## Open questions
+## Decisions (2026-09-03, resolved)
 
-- GenerationBudget default (3 proposed).
-- Whether P1 cohorts should grandfather the 2026-09-03 held population as first canaries.
-  (reason-18 probing: RESOLVED — observation windows scope to the generation; see 4a.)
+- GenerationBudget default: 3.
+- Grandfathering the 2026-09-03 held population: data-driven gate. Rows lacking the data
+  the machinery needs are PURGED; rows carrying it run through the new functionality as
+  the first canary campaigns. P0 already established error_text at 100% (cohort data
+  exists fleet-wide); P1's opening step audits re-drivable payload presence — payload-less
+  rows purge, the rest campaign.
