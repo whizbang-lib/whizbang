@@ -504,4 +504,37 @@ public class ProgramCliTests {
     }
   }
 
+
+  [Test]
+  [Arguments("analyze", "Sample.csproj")]
+  [Arguments("analyze", "Sample.sln")]
+  [Arguments("apply", "Sample.csproj")]
+  [Arguments("apply", "Sample.sln")]
+  public async Task Commands_GivenAProjectOrSolutionFile_ScanTheContainingDirectoryAsync(
+      string command, string projectFileName) {
+    // --project is documented as taking a project or solution file, but every analyzer walks a
+    // directory. Passing the file has to resolve to its parent; if the strip is dropped the
+    // tool scans a path that is not a directory, finds nothing, and reports a clean tree --
+    // a false all-clear on a codebase that does need migrating.
+    var (dir, _) = await _seedProjectAsync();
+    try {
+      var projectFile = Path.Combine(dir, projectFileName);
+      await File.WriteAllTextAsync(projectFile, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+
+      var exitCode = await Program.Main([command, "-p", projectFile]);
+
+      await Assert.That(exitCode).IsEqualTo(0)
+        .Because("pointing at the project file is the documented way to invoke the tool");
+
+      if (command == "apply") {
+        var rewritten = await File.ReadAllTextAsync(Path.Combine(dir, "Handler.cs"));
+        await Assert.That(rewritten).Contains("Whizbang.Core")
+          .Because("resolving the file to its directory is what lets the handler be found; "
+                 + "an unresolved path would leave the source untouched and still exit 0");
+      }
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
 }
