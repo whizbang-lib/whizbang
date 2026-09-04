@@ -90,6 +90,6 @@ which failure SHAPES are growing, shrinking, or newly born.
 
 ## Open questions
 
-- GenerationBudget default (3 proposed) and whether reason-18 (observation bound)
-  probes at reduced size or not at all.
+- GenerationBudget default (3 proposed).
 - Whether P1 cohorts should grandfather the 2026-09-03 held population as first canaries.
+  (reason-18 probing: RESOLVED — observation windows scope to the generation; see 4a.)
