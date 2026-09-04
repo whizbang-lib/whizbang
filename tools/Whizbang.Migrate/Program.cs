@@ -261,15 +261,25 @@ public static class Program {
         description: "List available checkpoints");
     rollbackCommand.AddArgument(checkpointArgument);
     rollbackCommand.AddOption(listOption);
-    rollbackCommand.SetHandler(async (checkpoint, list) => {
+    rollbackCommand.SetHandler(async context => {
+      var checkpoint = context.ParseResult.GetValueForArgument(checkpointArgument);
+      var list = context.ParseResult.GetValueForOption(listOption);
+
+      // Neither branch is implemented yet. Exiting 0 would report success for work that did
+      // not happen, so `whizbang-migrate rollback <id> && deploy` would carry on as though the
+      // tree had been restored. An unimplemented operation has to fail loudly instead.
       if (list) {
-        Console.WriteLine("Available checkpoints:");
-        Console.WriteLine("Checkpoint listing is not yet implemented.");
+        await Console.Error.WriteLineAsync("Error: checkpoint listing is not yet implemented.");
       } else if (checkpoint != null) {
-        Console.WriteLine($"Rolling back to checkpoint: {checkpoint}");
-        Console.WriteLine("Rollback is not yet implemented.");
+        await Console.Error.WriteLineAsync(
+            $"Error: rollback to checkpoint '{checkpoint}' is not yet implemented.");
+      } else {
+        await Console.Error.WriteLineAsync(
+            "Error: specify a checkpoint to roll back to, or --list to show available checkpoints.");
       }
-    }, checkpointArgument, listOption);
+
+      context.ExitCode = 1;
+    });
 
     // status command
     var statusCommand = new Command("status", "Show migration status");

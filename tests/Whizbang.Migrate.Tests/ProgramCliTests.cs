@@ -440,4 +440,39 @@ public class ProgramCliTests {
     }
   }
 
+
+  [Test]
+  [Arguments("--list")]
+  [Arguments("-l")]
+  public async Task Rollback_ListingCheckpoints_DoesNotReportSuccessWhileUnimplementedAsync(
+      string listAlias) {
+    // The listing is not built yet. Exiting 0 would tell a caller the tool had looked and found
+    // no checkpoints, which is indistinguishable from a tree that genuinely has none.
+    var exitCode = await Program.BuildRootCommand().InvokeAsync(["rollback", listAlias]);
+
+    await Assert.That(exitCode).IsNotEqualTo(0)
+      .Because("an unimplemented listing must not be reported as an empty one");
+  }
+
+  [Test]
+  public async Task Rollback_ToACheckpoint_DoesNotReportSuccessWhileUnimplementedAsync() {
+    // The dangerous case: `whizbang-migrate rollback <id> && deploy` would treat a no-op as a
+    // restored tree and deploy on top of the migration it believed it had just reverted.
+    var exitCode = await Program.BuildRootCommand()
+      .InvokeAsync(["rollback", "checkpoint-0001"]);
+
+    await Assert.That(exitCode).IsNotEqualTo(0)
+      .Because("a rollback that did not happen must not exit 0");
+  }
+
+  [Test]
+  public async Task Rollback_WithoutCheckpointOrList_FailsRatherThanDoingNothingAsync() {
+    // Neither branch matches, so the handler previously fell through and exited 0 having taken
+    // no action at all -- a silent no-op is the worst of the three outcomes.
+    var exitCode = await Program.BuildRootCommand().InvokeAsync(["rollback"]);
+
+    await Assert.That(exitCode).IsNotEqualTo(0)
+      .Because("invoking rollback with no target is a usage error, not a successful no-op");
+  }
+
 }
