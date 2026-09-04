@@ -76,15 +76,29 @@ COMMENT ON FUNCTION __SCHEMA__.list_held_dead_letter_cohorts IS
 -- ============================================================================
 -- begin_canary_probes — idempotent per (fingerprint, generation)
 -- ============================================================================
+SELECT __SCHEMA__.drop_all_overloads('begin_canary_probes');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.begin_canary_probes(
-  p_fingerprint VARCHAR(16), p_generation TEXT, p_probe_size INTEGER)
+  p_fingerprint VARCHAR(16), p_generation TEXT, p_probe_size INTEGER,
+  p_generation_budget INTEGER DEFAULT 3)
 RETURNS INTEGER
 LANGUAGE plpgsql
 AS $$
 DECLARE
   v_probe_ids UUID[];
   v_inserted  INTEGER;
+  v_failed_generations INTEGER;
 BEGIN
+  -- Generation budget: attempt counts are evidence about a BUILD. When campaigns have
+  -- already FAILED on p_generation_budget distinct generations, this cohort is permanently
+  -- pending an operator decision — return -1 and touch nothing.
+  SELECT count(*) INTO v_failed_generations
+  FROM __SCHEMA__.wh_dlq_probe_campaigns c
+  WHERE c.fingerprint = p_fingerprint AND c.verdict = 2;
+  IF v_failed_generations >= p_generation_budget THEN
+    RETURN -1;
+  END IF;
+
   -- Stratified pick: round-robin across message types (rn 1 of every type first), newest
   -- rows preferred — a probe set all of one type would hide a cohort that splits by type.
   SELECT array_agg(dead_letter_id) INTO v_probe_ids
@@ -122,12 +136,22 @@ BEGIN
   SET recovery_status = 0, next_recovery_at = NOW()
   WHERE dead_letter_id = ANY(v_probe_ids);
 
+  -- Observation windows scope to the generation, exactly like attempt budgets: a probed
+  -- message sitting AT the redelivery observation bound would re-cross it on its very
+  -- first probe redelivery and instantly requarantine — an auto-failed probe that says
+  -- nothing about the new build. Fresh window, same bound.
+  UPDATE __SCHEMA__.wh_message_deduplication d
+  SET observation_count = 0
+  WHERE d.message_id IN (
+    SELECT dl.source_id FROM __SCHEMA__.wh_dead_letters dl
+    WHERE dl.dead_letter_id = ANY(v_probe_ids));
+
   RETURN COALESCE(array_length(v_probe_ids, 1), 0);
 END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.begin_canary_probes IS
-'Starts a canary campaign (127): stratified probe rows return to Pending due-now (the paced scans re-drive them) and the campaign row records them. Idempotent per (fingerprint, generation) — a conflict returns 0 and touches nothing.';
+'Starts a canary campaign (127): stratified probe rows return to Pending due-now (the paced scans re-drive them), probed messages'' observation windows reset (generation-scoped evidence), and the campaign row records them. Idempotent per (fingerprint, generation) — a conflict returns 0; a cohort whose campaigns failed on p_generation_budget distinct generations returns -1 and touches nothing.';
 
 -- ============================================================================
 -- evaluate_canary_campaign — probe arithmetic and durable verdict

@@ -63,11 +63,14 @@ public interface IDeadLetterRecoveryService {
   /// <summary>
   /// Starts a canary campaign for one cohort: selects up to <paramref name="probeSize"/>
   /// probe rows stratified across the cohort's message types, returns them to Pending
-  /// due immediately (the normal paced scan re-drives them), and records the campaign.
-  /// Idempotent per (fingerprint, generation): an existing campaign is left untouched
-  /// and 0 is returned. Returns the number of probes actually started.
+  /// due immediately (the normal paced scan re-drives them), resets the probed messages'
+  /// redelivery observation windows (a bound-hit row would otherwise auto-fail its own
+  /// probe), and records the campaign. Idempotent per (fingerprint, generation): an
+  /// existing campaign is left untouched and 0 is returned; a cohort whose campaigns have
+  /// FAILED on <paramref name="generationBudget"/> distinct generations returns -1 and
+  /// touches nothing — permanently pending operator.
   /// </summary>
-  Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default);
+  Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default);
 
   /// <summary>
   /// Evaluates a campaign's probes: recovered probes count as successes; a probe whose

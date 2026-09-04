@@ -105,7 +105,7 @@ public class DeadLetterRecoveryWorkerTests {
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
     public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyList<HeldCohort>>([]);
-    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default) =>
+    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default) =>
       Task.FromResult(0);
     public Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) =>
       Task.FromResult(new CanaryVerdict(CanaryVerdictKind.Pass, 0, 0, 0));

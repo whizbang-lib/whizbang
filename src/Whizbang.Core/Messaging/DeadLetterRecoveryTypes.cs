@@ -204,6 +204,22 @@ public sealed class DeadLetterRecoveryOptions {
   public int CanaryProbeSize { get; set; } = 10;
 
   /// <summary>
+  /// Distinct build generations a cohort's campaigns may FAIL before the cohort becomes
+  /// permanently pending an operator decision. Attempt counts are evidence about a build;
+  /// this bounds how many builds get to re-test the hypothesis. Default 3.
+  /// </summary>
+  public int GenerationBudget { get; set; } = 3;
+
+  /// <summary>
+  /// When a NEW build generation is detected at startup (generation replay found rows from
+  /// an older build), run the canary campaign automatically even with
+  /// <see cref="RetryHeldOnStartup"/> Off: held rows are evidence about an old build, and
+  /// a deploy that fixed the bug should self-heal its cohorts at probe cost. An explicit
+  /// operator mode always wins over this default. Default <c>true</c>.
+  /// </summary>
+  public bool AutoCanaryOnNewGeneration { get; set; } = true;
+
+  /// <summary>
   /// Window the release of a cohort is staggered across, so the paced scans drain it
   /// instead of one giant due-set arriving at once. Default 30 minutes.
   /// </summary>

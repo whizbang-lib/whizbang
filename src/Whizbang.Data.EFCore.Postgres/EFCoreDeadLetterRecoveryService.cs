@@ -91,17 +91,18 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default) {
+  public async Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
     var conn = _dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("begin_canary_probes")}(@fp, @gen, @size)";
+    cmd.CommandText = $"SELECT {_fn("begin_canary_probes")}(@fp, @gen, @size, @budget)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("size", NpgsqlTypes.NpgsqlDbType.Integer) { Value = probeSize });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("budget", NpgsqlTypes.NpgsqlDbType.Integer) { Value = generationBudget });
     return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
   }
 
