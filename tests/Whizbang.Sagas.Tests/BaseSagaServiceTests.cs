@@ -2,8 +2,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Sagas.Models;
 using Whizbang.Core;
+using Whizbang.Sagas.Models;
 using Whizbang.Sagas.Services;
 
 namespace Whizbang.Sagas.Tests;
