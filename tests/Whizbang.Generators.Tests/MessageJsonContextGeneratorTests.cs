@@ -6177,4 +6177,41 @@ namespace TestApp {
   }
 
   #endregion
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_DictionaryWithAGenericKey_StillDiscoversTheValueTypeAsync() {
+    // The value type is found by splitting "TKey, TValue" at the top-level comma. When TKey is
+    // itself generic it carries commas of its own, so the split has to track angle-bracket depth.
+    // Splitting at the first comma instead would parse TValue out of the middle of the key --
+    // the payload type is never registered in the JSON context, and serializing this event fails
+    // at runtime with a type the generated context has never heard of.
+    const string source = """
+using Whizbang.Core;
+using System;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record CoordinatePayload {
+  public required string Label { get; init; }
+}
+
+public record GridEvent : IEvent {
+  public required Dictionary<Tuple<int, int>, CoordinatePayload> Cells { get; init; }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code).Contains("CoordinatePayload")
+      .Because("the value type sits after the key's own commas, so the split has to reach it");
+    await Assert.That(code).Contains("Create_TestApp_CoordinatePayload")
+      .Because("discovery without a factory leaves the type unserializable at runtime");
+  }
+
 }
