@@ -66,6 +66,45 @@ public class StackHistorySqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RecordStack_MaintainsRunningTotalOccurrencesAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var text = "System.Exception: y\n   at My.App.Only.RunAsync()";
+    var stack = StackNormalizer.Normalize(text)!;
+    var svc = _svc(ctx);
+    for (var i = 0; i < 4; i++) { await svc.RecordStackAsync(await _seedAsync(conn, text), stack); }
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT total_occurrences FROM wh_stacks WHERE stack_id=@sid";
+    q.Parameters.AddWithValue("sid", stack.SequenceHash);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(4L)
+      .Because("total_occurrences on wh_stacks answers how-many in one cheap row-read, next "
+             + "to first_seen/last_seen — no scan of the daily table");
+  }
+
+  [Test]
+  public async Task RecordStacksBatch_StampsEveryRow_InOneCallAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var entries = new List<(Guid, StackIdentity)>();
+    for (var i = 0; i < 5; i++) {
+      var text = $"System.Exception: z{i}\n   at My.App.Frame{i}.RunAsync()";
+      entries.Add((await _seedAsync(conn, text), StackNormalizer.Normalize(text)!));
+    }
+
+    await _svc(ctx).RecordStacksAsync(entries);
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT count(*) FROM wh_dead_letters WHERE stack_id IS NOT NULL AND dead_letter_id = ANY(@ids)";
+    q.Parameters.AddWithValue("ids", entries.Select(e => e.Item1).ToArray());
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(5L)
+      .Because("the batch collapses a storm-sized backfill from N round trips to one — every "
+             + "entry is still stamped and rolled");
+  }
+
+  [Test]
   public async Task Prune_RemovesDaysOlderThanRetention_KeepsRecentAsync() {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();

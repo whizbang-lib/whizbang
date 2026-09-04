@@ -158,6 +158,42 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<int> RecordStacksAsync(
+      IReadOnlyList<(Guid DeadLetterId, Whizbang.Core.DeadLetters.StackIdentity Stack)> entries,
+      CancellationToken ct = default) {
+    ArgumentNullException.ThrowIfNull(entries);
+    if (entries.Count == 0) {
+      return 0;
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    // Hand-built JSON: JsonNode.Add is not AOT/trim-safe (IL2026/IL3050), and every value
+    // here is a string/bool, so a StringBuilder is both correct and reflection-free.
+    var sb = new System.Text.StringBuilder("[");
+    for (var i = 0; i < entries.Count; i++) {
+      var (id, stack) = entries[i];
+      if (i > 0) { sb.Append(','); }
+      sb.Append("{\"dead_letter_id\":\"").Append(id.ToString())
+        .Append("\",\"stack_id\":\"").Append(System.Text.Json.JsonEncodedText.Encode(stack.SequenceHash)).Append('"')
+        .Append(",\"is_prose\":").Append(stack.IsProse ? "true" : "false")
+        .Append(",\"frames\":[");
+      for (var j = 0; j < stack.Frames.Count; j++) {
+        if (j > 0) { sb.Append(','); }
+        sb.Append('"').Append(System.Text.Json.JsonEncodedText.Encode(stack.Frames[j])).Append('"');
+      }
+      sb.Append("]}");
+    }
+    sb.Append(']');
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {_fn("record_dead_letter_stacks")}(@entries::jsonb)";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("entries", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = sb.ToString() });
+    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+  }
+
+  /// <inheritdoc />
   public async Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
     var conn = _dbContext.Database.GetDbConnection();

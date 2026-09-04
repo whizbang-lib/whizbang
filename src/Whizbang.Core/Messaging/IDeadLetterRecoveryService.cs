@@ -116,6 +116,12 @@ public interface IDeadLetterRecoveryService {
   Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default);
 
   /// <summary>
+  /// Records a whole batch of normalized stacks in one round trip — the stack backfill's
+  /// hot path, so a storm-sized batch is one call rather than one per row.
+  /// </summary>
+  Task<int> RecordStacksAsync(IReadOnlyList<(Guid DeadLetterId, Whizbang.Core.DeadLetters.StackIdentity Stack)> entries, CancellationToken ct = default);
+
+  /// <summary>
   /// Prunes rolling stack-history rows older than <paramref name="retentionDays"/> days.
   /// A non-positive retention disables the cleanup (the log is kept forever). Returns rows
   /// pruned.

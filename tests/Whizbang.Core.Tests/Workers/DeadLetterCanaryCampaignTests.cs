@@ -80,6 +80,12 @@ public sealed class DeadLetterCanaryCampaignTests {
       return Task.CompletedTask;
     }
     public List<int> PruneCalls { get; } = [];
+    public int RecordStacksBatchCount { get; private set; }
+    public Task<int> RecordStacksAsync(IReadOnlyList<(Guid, Whizbang.Core.DeadLetters.StackIdentity)> entries, CancellationToken ct = default) {
+      RecordStacksBatchCount++;
+      lock (RecordedStacks) { foreach (var e in entries) { RecordedStacks.Add((e.Item1, e.Item2.SequenceHash)); } }
+      return Task.FromResult(entries.Count);
+    }
     public Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) {
       lock (PruneCalls) { PruneCalls.Add(retentionDays); }
       return Task.FromResult(0);
@@ -264,6 +270,7 @@ public sealed class DeadLetterCanaryCampaignTests {
       Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
     public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
       Task.CompletedTask;
+    public Task<int> RecordStacksAsync(IReadOnlyList<(Guid, Whizbang.Core.DeadLetters.StackIdentity)> entries, CancellationToken ct = default) => Task.FromResult(entries.Count);
     public Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) => Task.FromResult(0);
     public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>
       Task.FromResult(0);
@@ -567,6 +574,8 @@ public sealed class DeadLetterCanaryCampaignTests {
     await Assert.That(recorded[0].Item2).IsEqualTo(expected)
       .Because("the backfill uses the SAME normalizer as the inline metric — one "
              + "implementation is the whole point; two would drift and split cohorts");
+    await Assert.That(svc.RecordStacksBatchCount).IsGreaterThanOrEqualTo(1)
+      .Because("the backfill records the whole batch in one round trip, not one per row");
   }
 
   [Test]

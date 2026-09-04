@@ -64,6 +64,7 @@ public sealed class DeadLetterMetrics {
   private readonly Counter<long> _arrivalsByStack;
   private readonly Counter<long> _cohortVerdicts;
   private readonly Counter<long> _releaseWaves;
+  private readonly Counter<long> _stackHistoryPruned;
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _seenStacks = new();
 
   /// <summary>Initializes a new instance of <see cref="DeadLetterMetrics"/>.</summary>
@@ -100,6 +101,17 @@ public sealed class DeadLetterMetrics {
     _releaseWaves = meter.CreateCounter<long>(
       "whizbang.dead_letters.release_waves",
       description: "Trickle release waves for Mixed cohorts, tagged by cohort + outcome (clean/halted)");
+    _stackHistoryPruned = meter.CreateCounter<long>(
+      "whizbang.dead_letters.stack_history_pruned",
+      description: "Rolling stack-history rows pruned by the recovery worker's idle-gated cleanup — the maintenance facet of the stack layer");
+  }
+
+  /// <summary>Counts rolling stack-history rows pruned in one cleanup pass.</summary>
+  /// <param name="pruned">Rows removed (only recorded when positive).</param>
+  public void RecordStackHistoryPruned(long pruned) {
+    if (pruned > 0) {
+      _stackHistoryPruned.Add(pruned);
+    }
   }
 
   /// <summary>Counts one trickle wave outcome for a Mixed cohort.</summary>

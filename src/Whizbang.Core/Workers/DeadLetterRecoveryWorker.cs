@@ -409,12 +409,18 @@ public partial class DeadLetterRecoveryWorker(
       // agree on every stack_id.
       if (_options.StackBackfillBatchSize > 0) {
         var unstacked = await svc.FetchUnstackedAsync(_options.StackBackfillBatchSize, ct).ConfigureAwait(false);
+        // Normalize in-process, then record the whole batch in ONE round trip — a
+        // storm-sized backfill was N per-row calls before.
+        var batch = new List<(Guid, Whizbang.Core.DeadLetters.StackIdentity)>(unstacked.Count);
         foreach (var row in unstacked) {
           ct.ThrowIfCancellationRequested();
           var stack = Whizbang.Core.DeadLetters.StackNormalizer.Normalize(row.ErrorText);
           if (stack is not null) {
-            await svc.RecordStackAsync(row.DeadLetterId, stack, ct).ConfigureAwait(false);
+            batch.Add((row.DeadLetterId, stack));
           }
+        }
+        if (batch.Count > 0) {
+          await svc.RecordStacksAsync(batch, ct).ConfigureAwait(false);
         }
 
         // Roll the stack-history window on the same idle-gated scan. Skipped entirely when
@@ -424,6 +430,10 @@ public partial class DeadLetterRecoveryWorker(
           var pruned = await svc.PruneStackHistoryAsync(_options.StackHistoryRetentionDays, ct).ConfigureAwait(false);
           if (pruned > 0) {
             LogStackHistoryPruned(_logger, pruned, _options.StackHistoryRetentionDays);
+            // The maintenance facet the operator watches: a dedicated counter, and the
+            // housekeeping volume rollup under the Maintenance activity (this IS cleanup).
+            _metrics?.RecordStackHistoryPruned(pruned);
+            _metricsRollup?.RecordItems(HousekeepingCoordinator.Activity.Maintenance, pruned);
           }
         }
       }
