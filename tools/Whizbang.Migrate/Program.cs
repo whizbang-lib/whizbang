@@ -17,6 +17,20 @@ public static class Program {
     // Show branded banner with tool info
     WhizbangBanner.PrintHeader("Whizbang Migrate");
 
+    return await BuildRootCommand().InvokeAsync(args);
+  }
+
+  /// <summary>
+  /// Builds the command tree.
+  /// </summary>
+  /// <remarks>
+  /// Separated from <see cref="Main"/> so the CLI surface can be asserted without invoking
+  /// anything: the command names and option aliases are a contract that scripts and the
+  /// documentation depend on, and a rename or a dropped registration breaks them silently
+  /// while the tool still runs.
+  /// </remarks>
+  /// <returns>The configured root command.</returns>
+  public static RootCommand BuildRootCommand() {
     var rootCommand = new RootCommand("Migration tool for converting Marten/Wolverine projects to Whizbang");
 
     // analyze command
@@ -290,7 +304,7 @@ public static class Program {
     rootCommand.AddCommand(rollbackCommand);
     rootCommand.AddCommand(statusCommand);
 
-    return await rootCommand.InvokeAsync(args);
+    return rootCommand;
   }
 
   private static void _printTableFormat(AnalysisResult result) {
