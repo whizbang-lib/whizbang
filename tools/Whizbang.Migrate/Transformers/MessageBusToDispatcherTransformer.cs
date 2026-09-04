@@ -80,12 +80,24 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
 
     // Remove Wolverine using and add Whizbang.Core
     var newUsings = new List<UsingDirectiveSyntax>();
-    var addedWhizbang = false;
+    var addedWhizbang = compilationUnit.Usings
+        .Any(u => u.Name?.ToString() == "Whizbang.Core");
 
     foreach (var usingDirective in compilationUnit.Usings) {
       var name = usingDirective.Name?.ToString();
 
-      if (name == "Wolverine") {
+      if (name == "Wolverine" && addedWhizbang) {
+        // Whizbang.Core is already imported -- another transformer in the pipeline
+        // rewrote its own Wolverine/Marten using first. Emitting a second one is
+        // legal C# but raises CS0105, which fails any migrated project building
+        // with warnings-as-errors. Drop this one instead.
+        changes.Add(new CodeChange(
+            usingDirective.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+            ChangeType.UsingRemoved,
+            "Removed 'using Wolverine' (Whizbang.Core already imported)",
+            "using Wolverine;",
+            ""));
+      } else if (name == "Wolverine") {
         // Replace with Whizbang.Core - preserve original formatting
         var whizbangUsing = usingDirective
             .WithName(SyntaxFactory.ParseName("Whizbang.Core")
