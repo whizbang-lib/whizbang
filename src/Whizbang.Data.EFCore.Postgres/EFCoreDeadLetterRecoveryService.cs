@@ -189,7 +189,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
     sb.Append(']');
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"SELECT {_fn("record_dead_letter_stacks")}(@entries::jsonb)";
-    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("entries", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = sb.ToString() });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(entries), NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = sb.ToString() });
     return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
   }
 

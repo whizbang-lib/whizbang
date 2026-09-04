@@ -424,8 +424,8 @@ public partial class DeadLetterRecoveryWorker(
         }
 
         // Roll the stack-history window on the same idle-gated scan. Skipped entirely when
-        // disabled (retention <= 0), so a "keep forever" configuration costs no round trip;
-        // the DELETE is cheap and day-granular, so running it each scan is a near-no-op.
+        // retention is non-positive, so a keep-forever configuration costs no round trip.
+        // The DELETE is cheap and day-granular, so running it each scan is a near no-op.
         if (_options.StackHistoryRetentionDays > 0) {
           var pruned = await svc.PruneStackHistoryAsync(_options.StackHistoryRetentionDays, ct).ConfigureAwait(false);
           if (pruned > 0) {

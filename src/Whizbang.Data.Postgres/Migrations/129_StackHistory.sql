@@ -32,26 +32,25 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.record_dead_letter_stack(
 RETURNS VOID
 LANGUAGE plpgsql
 AS $$
-DECLARE
-  v_pos INTEGER;
 BEGIN
   INSERT INTO __SCHEMA__.wh_stacks (stack_id, frame_count, is_prose, last_seen, total_occurrences)
   VALUES (p_stack_id, COALESCE(array_length(p_frames, 1), 0), p_is_prose, NOW(), 1)
   ON CONFLICT (stack_id) DO UPDATE
     SET last_seen = NOW(), total_occurrences = __SCHEMA__.wh_stacks.total_occurrences + 1;
 
-  IF p_frames IS NOT NULL THEN
-    FOR v_pos IN 1..COALESCE(array_length(p_frames, 1), 0) LOOP
-      INSERT INTO __SCHEMA__.wh_stack_frames (frame)
-      VALUES (p_frames[v_pos])
-      ON CONFLICT (frame) DO NOTHING;
+  IF p_frames IS NOT NULL AND array_length(p_frames, 1) IS NOT NULL THEN
+    -- Set-based, not a per-frame loop: dedupe the frames in one INSERT, then link them by
+    -- ordinal in one more. WITH ORDINALITY carries the 1-based position so throw-site order
+    -- is preserved exactly as the loop did.
+    INSERT INTO __SCHEMA__.wh_stack_frames (frame)
+    SELECT DISTINCT f FROM unnest(p_frames) AS f
+    ON CONFLICT (frame) DO NOTHING;
 
-      INSERT INTO __SCHEMA__.wh_stack_links (stack_id, position, frame_id)
-      SELECT p_stack_id, v_pos, f.frame_id
-      FROM __SCHEMA__.wh_stack_frames f
-      WHERE f.frame = p_frames[v_pos]
-      ON CONFLICT (stack_id, position) DO NOTHING;
-    END LOOP;
+    INSERT INTO __SCHEMA__.wh_stack_links (stack_id, position, frame_id)
+    SELECT p_stack_id, t.ord::INTEGER, sf.frame_id
+    FROM unnest(p_frames) WITH ORDINALITY AS t(frame, ord)
+    JOIN __SCHEMA__.wh_stack_frames sf ON sf.frame = t.frame
+    ON CONFLICT (stack_id, position) DO NOTHING;
   END IF;
 
   -- Rolling history: bump today's occurrence count. Deduped to one row per stack per day.

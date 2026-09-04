@@ -45,7 +45,7 @@ public class StackHistorySqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var text = "System.Exception: x\n   at My.App.Only.RunAsync()";
+    const string text = "System.Exception: x\n   at My.App.Only.RunAsync()";
     var stack = StackNormalizer.Normalize(text)!;
     var svc = _svc(ctx);
     await svc.RecordStackAsync(await _seedAsync(conn, text), stack);
@@ -70,7 +70,7 @@ public class StackHistorySqlTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
-    var text = "System.Exception: y\n   at My.App.Only.RunAsync()";
+    const string text = "System.Exception: y\n   at My.App.Only.RunAsync()";
     var stack = StackNormalizer.Normalize(text)!;
     var svc = _svc(ctx);
     for (var i = 0; i < 4; i++) { await svc.RecordStackAsync(await _seedAsync(conn, text), stack); }

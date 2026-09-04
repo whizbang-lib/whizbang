@@ -148,7 +148,7 @@ public sealed class DeadLetterStackMetricsTests {
         l.EnableMeasurementEvents(instrument);
       }
     };
-    listener.SetMeasurementEventCallback<long>((_, value, _, _) => { Interlocked.Add(ref recorded, value); });
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref recorded, value));
     listener.Start();
 
     metrics.RecordStackHistoryPruned(42);
