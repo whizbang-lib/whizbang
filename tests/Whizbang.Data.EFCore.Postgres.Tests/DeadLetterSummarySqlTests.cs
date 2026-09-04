@@ -62,6 +62,12 @@ public class DeadLetterSummarySqlTests : EFCoreTestBase {
   /// can pre-stage rows with chosen error_fingerprint_version values — required by
   /// the version-bump test which simulates rows landed by an older algorithm.
   /// </summary>
+  private static async Task<short> _currentFingerprintVersionAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT current_dead_letter_fingerprint_version()";
+    return (short)(await cmd.ExecuteScalarAsync() ?? (short)0);
+  }
+
   private static async Task _insertDlqRowAsync(
       NpgsqlConnection conn,
       string errorText,
@@ -182,12 +188,13 @@ public class DeadLetterSummarySqlTests : EFCoreTestBase {
 
     var versionAfter1 = await _fingerprintVersionForRowAsync(conn, _stackInvalidOp);
     var versionAfter2 = await _fingerprintVersionForRowAsync(conn, _stackNullRef);
-    await Assert.That(versionAfter1).IsEqualTo((short)1)
+    var current = await _currentFingerprintVersionAsync(conn);
+    await Assert.That(versionAfter1).IsEqualTo(current)
       .Because("Stale rows MUST be re-hashed to the current version — without this, summary clusters would be split between old/new algorithm fingerprints for the same root cause.");
-    await Assert.That(versionAfter2).IsEqualTo((short)1)
+    await Assert.That(versionAfter2).IsEqualTo(current)
       .Because("Same as above — every stale row gets re-hashed.");
 
-    // Now insert a row tagged with the current version (1). Run aggregate again.
+    // Now insert a row tagged with the CURRENT version. Run aggregate again.
     // Assert: the current-version row's fingerprint is NOT recomputed (no spurious
     // UPDATE — would burn IO on no-op work each maintenance tick).
     const string msgRow3Text = _stackInvalidOp;

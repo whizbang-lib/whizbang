@@ -113,7 +113,7 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
       .Because("Slice 3a invariant: move_to_dead_letters MUST populate error_fingerprint at INSERT time so the canonical GROUP BY triage query works without waiting for the aggregation cycle.");
     await Assert.That(fingerprint!.Length).IsEqualTo(16)
       .Because("Algorithm v1 produces a 16-char fingerprint; anything else means a different function ran or a different version landed silently.");
-    await Assert.That(version).IsEqualTo((short)1)
+    await Assert.That(version).IsEqualTo(await _currentFingerprintVersionAsync(conn))
       .Because("Slice 6's version-aware backfill keys off this — uninitialized rows would force a full re-hash pass on first aggregation.");
     await Assert.That(errorText).IsEqualTo(_stackForFingerprintA)
       .Because("Pre-existing contract: error_text is stored verbatim. The fingerprint addition must not mutate the stored text.");
@@ -167,4 +167,11 @@ public class MoveToDeadLettersFingerprintSqlTests : EFCoreTestBase {
     await Assert.That(fingerprintB).IsEqualTo(fingerprintA)
       .Because("Two rows with identical error_text MUST share a fingerprint — that's the entire point of fingerprinting as a clustering key for Slice 6's aggregation.");
   }
+
+  private static async Task<short> _currentFingerprintVersionAsync(NpgsqlConnection conn) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT current_dead_letter_fingerprint_version()";
+    return (short)(await cmd.ExecuteScalarAsync() ?? (short)0);
+  }
+
 }
