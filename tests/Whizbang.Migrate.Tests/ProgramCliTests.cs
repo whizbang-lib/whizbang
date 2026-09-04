@@ -369,4 +369,75 @@ public class ProgramCliTests {
     }
   }
 
+
+  private const string FULL_MARTEN_WOLVERINE_PROJECT = """
+    using Marten;
+    using Marten.Events.Aggregation;
+    using Wolverine;
+
+    public class OrderHandler : IHandle<PlaceOrder> {
+      public Task Handle(PlaceOrder command) => Task.CompletedTask;
+    }
+
+    public class OrderProjection : SingleStreamProjection<OrderModel> {
+      public void Apply(OrderPlaced @event, OrderModel state) { state.Status = "placed"; }
+    }
+
+    public class OrderRepository {
+      private readonly IDocumentSession _session;
+      private readonly IDocumentStore _store;
+      public OrderRepository(IDocumentSession session, IDocumentStore store) {
+        _session = session;
+        _store = store;
+      }
+    }
+
+    public static class Startup {
+      public static void Configure(IServiceCollection services) {
+        services.AddMarten(o => { });
+        services.UseWolverine();
+      }
+    }
+
+    public class OrderModel { public string Status { get; set; } = ""; }
+    public record PlaceOrder(string Id);
+    public record OrderPlaced(string Id);
+    """;
+
+  [Test]
+  public async Task Analyze_OnAProjectUsingEveryMigratablePattern_RendersAndSucceedsAsync() {
+    // The analyze report has a section per artefact kind, and each is skipped when its list is
+    // empty. A project exercising only handlers -- which is what the other tests use -- never
+    // reaches the projection, event-store or DI rendering at all. Those sections are the tool's
+    // primary output, and a formatting fault in one of them takes down the whole command for
+    // any consumer whose project happens to contain that artefact.
+    var dir = Path.Combine(Path.GetTempPath(), $"whizbang-cli-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(dir);
+    try {
+      await File.WriteAllTextAsync(Path.Combine(dir, "Everything.cs"), FULL_MARTEN_WOLVERINE_PROJECT);
+
+      var exitCode = await Program.Main(["analyze", "-p", dir]);
+
+      await Assert.That(exitCode).IsEqualTo(0)
+        .Because("a project using every migratable pattern is the ordinary input, not an edge case");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Analyze_WithJsonFormat_SucceedsAsync() {
+    // The json format is advertised by --format and currently reports that it is not
+    // implemented. It still has to exit cleanly rather than fault, since a pipeline may well
+    // ask for it.
+    var (dir, _) = await _seedProjectAsync();
+    try {
+      var exitCode = await Program.Main(["analyze", "-p", dir, "--format", "json"]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
 }
