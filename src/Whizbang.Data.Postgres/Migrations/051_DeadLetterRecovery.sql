@@ -231,7 +231,12 @@ BEGIN
       retried_on_generations = array_append(retried_on_generations, p_current_generation),
       recovery_status = 0  -- Pending
   WHERE recovered_at IS NULL
-    AND recovery_status NOT IN (4)  -- not PermanentlyFailed (operator can re-enable via API)
+    -- Jurisdiction split (P3 of plans/dlq-stack-intelligence.md): replay re-offers PENDING
+    -- rows on a new build; HELD rows (2) belong to the canary campaigns, which probe a
+    -- stratified sample and release on proof. A blind mass re-offer of held rows empties
+    -- the cohorts in the same startup that is about to probe them, and spent-budget rows
+    -- just churn back to Held through policy adjudication.
+    AND recovery_status NOT IN (2, 4)  -- not HoldForReview (campaigns), not PermanentlyFailed (operator)
     AND operator_disposition NOT IN (2)  -- not HoldIndefinitely
     AND NOT (p_current_generation = ANY(retried_on_generations));
   GET DIAGNOSTICS v_count = ROW_COUNT;
