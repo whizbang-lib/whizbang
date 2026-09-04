@@ -293,6 +293,34 @@ public class IntegrityCheckpointWorkerTests {
       .IsEqualTo(TimeSpan.FromSeconds(120));
   }
 
+  [Test]
+  public async Task WhenCheckpointsAreDisabled_TheWorkerParksInsteadOfExitingAsync() {
+    // Returning would let the host observe a BackgroundService completing on its own, which reads
+    // as a crashed worker. Parking keeps a deliberately-disabled checkpointer distinguishable from
+    // one that died — and checkpoints are what let a consumer prove it has seen everything an
+    // origin published, so the difference matters.
+    var worker = _buildWorker(
+      new _checkpointCoordinator(), new _captureDispatcher(), "svc",
+      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = false });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
+    // The worker parks on the schema gate before its first checkpoint. A pod stopped while waiting
+    // has no integrity tables to write to, so this must not report an error on every fast restart.
+    var worker = _buildWorker(
+      new _checkpointCoordinator(), new _captureDispatcher(), "svc",
+      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = true });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);   // the gate in _buildWorker is never marked ready
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   private static IntegrityCheckpointWorker _buildWorker(
       _checkpointCoordinator coordinator, _captureDispatcher dispatcher, string serviceName,
       _captureTransport? transport = null, IMessageTypeCatalog? catalog = null,
