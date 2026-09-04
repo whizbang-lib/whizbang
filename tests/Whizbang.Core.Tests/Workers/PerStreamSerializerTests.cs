@@ -18,6 +18,52 @@ public class PerStreamSerializerTests {
 
   private sealed record StreamItem(Guid? StreamId, Guid MessageId, string Tag = "");
 
+  // ===== Failure isolation and shutdown =====
+
+  [Test]
+  public async Task AProcessorThatThrows_DoesNotStopTheStreamsWorkerAsync() {
+    // One stream's worker drains that stream serially. If a throwing item killed the worker, every
+    // subsequent item for that stream would sit unprocessed for the life of the process while
+    // other streams carried on — a partial outage that looks like nothing at all.
+    var streamId = _idProvider.NewGuid();
+    var processed = new List<Guid>();
+    var lockObj = new object();
+
+    await using var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (item, ct) => {
+        lock (lockObj) { processed.Add(item.MessageId); }
+        if (processed.Count == 1) {
+          throw new InvalidOperationException("first item fails");
+        }
+        return Task.CompletedTask;
+      });
+
+    var failing = new StreamItem(streamId, _idProvider.NewGuid());
+    var following = new StreamItem(streamId, _idProvider.NewGuid());
+    await sut.EnqueueAsync(failing);
+    await sut.EnqueueAsync(following);
+    await sut.FlushAndStopAsync();
+
+    int processedCount;
+    lock (lockObj) { processedCount = processed.Count; }
+    await Assert.That(processedCount).IsEqualTo(2)
+      .Because("the item after a failure must still be processed — the caller's processor owns "
+             + "retry and failure routing, this worker only has to stay alive");
+  }
+
+  [Test]
+  public async Task StoppingWhileDraining_EndsWithoutSurfacingCancellationAsync() {
+    // Shutdown mid-drain is not a processing failure and must not be reported as one, or every
+    // deploy files an error per in-flight stream.
+    await using var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (item, ct) => Task.CompletedTask);
+
+    await sut.EnqueueAsync(new StreamItem(_idProvider.NewGuid(), _idProvider.NewGuid()));
+    await sut.FlushAndStopAsync();
+  }
+
   // ===== Same-stream serial ordering =====
 
   [Test]
