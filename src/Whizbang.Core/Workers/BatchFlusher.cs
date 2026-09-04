@@ -127,7 +127,12 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
     // messages, stalled cursors and messages stuck in-flight, once per graceful shutdown.
     _channel.Writer.TryComplete();
     try {
-      await _loop.WaitAsync(TimeSpan.FromMilliseconds(_options.DrainTimeoutMs)).ConfigureAwait(false);
+      // CancellationToken.None is deliberate and load-bearing: _stop is what this method cancels
+      // *after* the drain gives up, so flowing it in here would let an external cancel abort the
+      // drain early and discard the buffered work this whole path exists to flush.
+      await _loop
+        .WaitAsync(TimeSpan.FromMilliseconds(_options.DrainTimeoutMs), CancellationToken.None)
+        .ConfigureAwait(false);
     } catch (TimeoutException) {
       // A flush callback that will not return must not hold host shutdown open forever.
       LogDrainTimeout(_logger, _options.DrainTimeoutMs);
