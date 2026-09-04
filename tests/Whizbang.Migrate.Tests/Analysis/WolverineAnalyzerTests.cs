@@ -591,4 +591,69 @@ public class WolverineAnalyzerTests {
     await Assert.That(result.Warnings[0].WarningKind).IsEqualTo(MigrationWarningKind.NestedHandlerClass);
     await Assert.That(result.Warnings[0].ClassName).IsEqualTo("CreateOrderHandler");
   }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_ScansTheGivenDirectory_NotItsParentAsync() {
+    // The path handed in may be a directory or a .sln/.csproj file. Stripping it
+    // unconditionally with GetDirectoryName was correct only for the file form: given a
+    // directory it yields the PARENT, so analyzing a project silently analyzed its whole
+    // containing folder -- reporting handlers that belong to sibling projects, and throwing
+    // UnauthorizedAccessException outright if any sibling directory could not be read.
+    var parent = Path.Combine(Path.GetTempPath(), $"whizbang-scope-{Guid.NewGuid():N}");
+    var target = Path.Combine(parent, "target");
+    var sibling = Path.Combine(parent, "sibling");
+    Directory.CreateDirectory(target);
+    Directory.CreateDirectory(sibling);
+    try {
+      await File.WriteAllTextAsync(Path.Combine(target, "InScope.cs"), """
+        using Wolverine;
+        public class InScopeHandler : IHandle<InScopeCommand> {
+          public Task Handle(InScopeCommand command) => Task.CompletedTask;
+        }
+        public record InScopeCommand(string Id);
+        """);
+      await File.WriteAllTextAsync(Path.Combine(sibling, "OutOfScope.cs"), """
+        using Wolverine;
+        public class OutOfScopeHandler : IHandle<OutOfScopeCommand> {
+          public Task Handle(OutOfScopeCommand command) => Task.CompletedTask;
+        }
+        public record OutOfScopeCommand(string Id);
+        """);
+
+      var result = await new WolverineAnalyzer().AnalyzeProjectAsync(target);
+
+      var names = result.Handlers.Select(h => h.ClassName).ToList();
+      await Assert.That(names).Contains("InScopeHandler");
+      await Assert.That(names).DoesNotContain("OutOfScopeHandler")
+        .Because("a sibling project's handlers are not part of the project being analyzed");
+    } finally {
+      Directory.Delete(parent, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_GivenACsprojPath_ScansThatProjectsFolderAsync() {
+    // The other half of the same contract: for a file path, the folder containing it is the
+    // right scan root, and that behavior must survive the directory fix.
+    var dir = Path.Combine(Path.GetTempPath(), $"whizbang-scope-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(dir);
+    try {
+      var csproj = Path.Combine(dir, "App.csproj");
+      await File.WriteAllTextAsync(csproj, "<Project />");
+      await File.WriteAllTextAsync(Path.Combine(dir, "Handler.cs"), """
+        using Wolverine;
+        public class FileFormHandler : IHandle<FileFormCommand> {
+          public Task Handle(FileFormCommand command) => Task.CompletedTask;
+        }
+        public record FileFormCommand(string Id);
+        """);
+
+      var result = await new WolverineAnalyzer().AnalyzeProjectAsync(csproj);
+
+      await Assert.That(result.Handlers.Select(h => h.ClassName)).Contains("FileFormHandler");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
 }

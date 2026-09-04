@@ -151,4 +151,118 @@ public class ProgramCliTests {
     await Assert.That(exitCode).IsEqualTo(0);
   }
 
+
+  // ── End-to-end: option wiring observed through the filesystem ──────────────
+
+  private const string WOLVERINE_HANDLER = """
+    using Wolverine;
+
+    public class CreateOrderHandler : IHandle<CreateOrderCommand> {
+      public Task Handle(CreateOrderCommand command) => Task.CompletedTask;
+    }
+
+    public record CreateOrderCommand(string OrderId);
+    """;
+
+  private static async Task<(string Dir, string File)> _seedProjectAsync(string fileName = "Handler.cs") {
+    var dir = Path.Combine(Path.GetTempPath(), $"whizbang-cli-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(dir);
+    var path = Path.Combine(dir, fileName);
+    await File.WriteAllTextAsync(path, WOLVERINE_HANDLER);
+    return (dir, path);
+  }
+
+  [Test]
+  public async Task Apply_WithoutDryRun_RewritesTheSourceAsync() {
+    // The baseline the dry-run assertion is measured against: without the flag, apply really
+    // does edit the file in place. Asserting only "dry run changed nothing" would pass just as
+    // well if apply were silently doing nothing at all.
+    var (dir, file) = await _seedProjectAsync();
+    try {
+      var exitCode = await Program.Main(["apply", "-p", dir]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(await File.ReadAllTextAsync(file)).IsNotEqualTo(WOLVERINE_HANDLER);
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Apply_WithDryRun_LeavesTheSourceByteForByteAsync() {
+    // ApplyCommand already has a test that it honors dryRun. This is the other half: that the
+    // CLI actually routes --dry-run into it. A flag parsed and dropped on the floor looks
+    // identical from the command's side, and turns an expected preview into a real migration.
+    var (dir, file) = await _seedProjectAsync();
+    try {
+      var exitCode = await Program.Main(["apply", "-p", dir, "--dry-run"]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(await File.ReadAllTextAsync(file)).IsEqualTo(WOLVERINE_HANDLER)
+        .Because("--dry-run has to reach ApplyCommand, not merely be accepted by the parser");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Apply_WithAnExcludePattern_SkipsTheExcludedFileAsync() {
+    // Exclusions are how an operator protects generated or vendored code from being rewritten.
+    // If the option is parsed but not forwarded, those files get migrated anyway.
+    var (dir, file) = await _seedProjectAsync("Excluded.cs");
+    try {
+      var exitCode = await Program.Main(["apply", "-p", dir, "--exclude", "**/Excluded.cs"]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(await File.ReadAllTextAsync(file)).IsEqualTo(WOLVERINE_HANDLER)
+        .Because("an excluded file must survive the run untouched");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Analyze_OnARealProject_SucceedsAsync() {
+    // Exercises the analyze handler end to end: option binding, both analyzers, and the table
+    // rendering. A project containing Wolverine handlers is the ordinary input.
+    var (dir, _) = await _seedProjectAsync();
+    try {
+      var exitCode = await Program.Main(["analyze", "-p", dir]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Analyze_OnAProjectWithNothingToMigrate_StillSucceedsAsync() {
+    // Nothing to migrate is a legitimate answer, not a failure -- a pipeline running analyze
+    // across many projects must not treat a clean one as a broken step.
+    var dir = Path.Combine(Path.GetTempPath(), $"whizbang-cli-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(dir);
+    try {
+      await File.WriteAllTextAsync(Path.Combine(dir, "Plain.cs"), "public class Plain { }\n");
+
+      var exitCode = await Program.Main(["analyze", "-p", dir]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Status_OnAProjectWithNoMigration_SucceedsAsync() {
+    var dir = Path.Combine(Path.GetTempPath(), $"whizbang-cli-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(dir);
+    try {
+      var exitCode = await Program.Main(["status", "-p", dir]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
 }
