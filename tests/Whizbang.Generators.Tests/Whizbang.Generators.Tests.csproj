@@ -20,7 +20,9 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Reference to the generator projects we're testing -->
-    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj">
+      <Aliases>global,core_generators</Aliases>
+    </ProjectReference>
     <ProjectReference Include="../../src/Whizbang.Generators.CodeFixes/Whizbang.Generators.CodeFixes.csproj" />
     <!-- Shared library for testing shared utility types (use extern alias to avoid conflicts with ILRepack merged types) -->
     <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
@@ -29,8 +31,12 @@
     <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj">
       <Aliases>global,postgres_generators</Aliases>
     </ProjectReference>
-    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj" />
-    <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj">
+      <Aliases>global,hotchocolate_generators</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj">
+      <Aliases>global,fastendpoints_generators</Aliases>
+    </ProjectReference>
     <!-- Core for interfaces like ICommand, IEvent, etc. -->
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <!-- HotChocolate runtime for GraphQLLensAttribute -->
