@@ -244,4 +244,99 @@ public class PackageManagerTests {
     await Assert.That(_packageRefs(project)).Contains("Serilog")
       .Because("only Marten/Wolverine packages are this migration's concern");
   }
+
+  // ── Central Package Management: the props file half of the contract ────────
+
+  private static void _seedPackagesProps(TempSolution sln, params string[] packageVersions) {
+    var entries = string.Join("\n    ", packageVersions.Select(p =>
+      $"""<PackageVersion Include="{p}" Version="7.0.0" />"""));
+    File.WriteAllText(Path.Combine(sln.Root, "Directory.Packages.props"), $"""
+      <Project>
+        <PropertyGroup>
+          <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+        </PropertyGroup>
+        <ItemGroup>
+          {entries}
+        </ItemGroup>
+      </Project>
+      """);
+  }
+
+  private static List<(string Include, string? Version)> _packageVersions(string propsPath) {
+    var doc = XDocument.Load(propsPath);
+    return [.. doc.Root!.Elements("ItemGroup")
+      .SelectMany(g => g.Elements("PackageVersion"))
+      .Select(e => (e.Attribute("Include")!.Value, e.Attribute("Version")?.Value))];
+  }
+
+  [Test]
+  public async Task UpdatePackagesAsync_UnderCpm_AddsThePackageVersionEntryAsync() {
+    // Under central package management a PackageReference carries no version, so the matching
+    // PackageVersion in Directory.Packages.props is the only thing that gives it one. Without
+    // it restore fails with NU1010 -- the project references a package with no version at all.
+    using var sln = new TempSolution();
+    _seedPackagesProps(sln, "Marten");
+    var project = sln.AddProject("OrderService", "Marten");
+
+    await PackageManager.UpdatePackagesAsync(sln.Root, [project], new PackageSettings());
+
+    var versions = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"));
+    var added = versions.FirstOrDefault(v => v.Include == "SoftwareExtravaganza.Whizbang.Data.Postgres");
+    await Assert.That(added.Include).IsNotNull()
+      .Because("a CPM reference without its PackageVersion cannot restore");
+    await Assert.That(added.Version).IsNotNull();
+  }
+
+  [Test]
+  public async Task UpdatePackagesAsync_UnderCpm_RemovesTheOldPackageVersionAsync() {
+    // Leaving the old entry behind keeps a dependency on the package the migration exists to
+    // remove, and it will still restore -- so nothing surfaces the leftover.
+    using var sln = new TempSolution();
+    _seedPackagesProps(sln, "Marten");
+    var project = sln.AddProject("OrderService", "Marten");
+
+    await PackageManager.UpdatePackagesAsync(sln.Root, [project], new PackageSettings());
+
+    var includes = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"))
+      .Select(v => v.Include).ToList();
+    await Assert.That(includes).DoesNotContain("Marten");
+  }
+
+  [Test]
+  public async Task UpdatePackagesAsync_UnderCpm_PreservePackages_KeepsThePackageVersionAsync() {
+    // The half of preserve that was missing. CPM splits a reference across two files, so
+    // honoring the operator's choice in the project file while deleting the version entry
+    // leaves the preserved package with no version -- NU1010, a build failure, and a worse
+    // outcome than not preserving it at all.
+    using var sln = new TempSolution();
+    _seedPackagesProps(sln, "Marten");
+    var project = sln.AddProject("OrderService", "Marten");
+
+    await PackageManager.UpdatePackagesAsync(sln.Root, [project], new PackageSettings {
+      PreservePackages = ["Marten"],
+    });
+
+    var includes = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"))
+      .Select(v => v.Include).ToList();
+    await Assert.That(includes).Contains("Marten")
+      .Because("a preserved package must keep the version entry that makes it resolvable");
+    await Assert.That(_packageRefs(project)).Contains("Marten")
+      .Because("and the reference itself, so the two halves stay consistent");
+  }
+
+  [Test]
+  public async Task UpdatePackagesAsync_UnderCpm_RunTwice_DoesNotDuplicateThePackageVersionAsync() {
+    // Migrations get re-run; two PackageVersion entries for one package is a restore error.
+    using var sln = new TempSolution();
+    _seedPackagesProps(sln, "Marten");
+    var project = sln.AddProject("OrderService", "Marten");
+
+    await PackageManager.UpdatePackagesAsync(sln.Root, [project], new PackageSettings());
+    await PackageManager.UpdatePackagesAsync(sln.Root, [project], new PackageSettings());
+
+    var includes = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"))
+      .Select(v => v.Include).ToList();
+    await Assert.That(includes.Count(i => i == "SoftwareExtravaganza.Whizbang.Data.Postgres")).IsEqualTo(1);
+  }
+
 }
