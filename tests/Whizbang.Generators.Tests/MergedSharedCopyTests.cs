@@ -4,6 +4,7 @@ extern alias hotchocolate_generators;
 extern alias postgres_generators;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Diagnostics;
 
 namespace Whizbang.Generators.Tests;
 
@@ -503,6 +504,159 @@ public class MergedSharedCopyTests {
 
     await Assert.That(names).Contains("Configure");
     await Assert.That(names.Count(n => n == "Configure")).IsEqualTo(1);
+  }
+
+
+  /// <summary>The assembly that actually carries the embedded templates.</summary>
+  private static Assembly _templateAssembly
+    => typeof(core_generators::Whizbang.Generators.MessageJsonContextGenerator).Assembly;
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_LeavesATemplateAloneWhenTheRegionIsNotThereAsync(MergedHost host) {
+    // Migration scripts run to 50KB. Both guards return the template untouched rather than
+    // splicing at a boundary that was never found -- a copy that lost them would write a
+    // corrupted script that still looks like a script.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    const string template = "before\n#region KNOWN\nold\n#endregion\nafter";
+
+    var missingRegion = (string)_call(
+      host.Assembly, ns + "TemplateUtilities", "ReplaceRegion", template, "ABSENT", "new")!;
+    await Assert.That(missingRegion).IsEqualTo(template)
+      .Because("a region that is not present is not a licence to edit the template");
+
+    var unterminated = (string)_call(
+      host.Assembly, ns + "TemplateUtilities", "ReplaceRegion", "#region KNOWN\nold", "KNOWN", "new")!;
+    await Assert.That(unterminated).IsEqualTo("#region KNOWN\nold")
+      .Because("a region with no #endregion has no end to splice against");
+
+    var replaced = (string)_call(
+      host.Assembly, ns + "TemplateUtilities", "ReplaceRegion", template, "KNOWN", "new")!;
+    await Assert.That(replaced).Contains("new")
+      .Because("the baseline: a region that is present really is replaced");
+    await Assert.That(replaced).DoesNotContain("old");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ReadsEmbeddedSnippetsIdenticallyAsync(MergedHost host) {
+    // The snippets are the literal text these generators emit. A copy that read them
+    // differently would emit different source from the same template, in one package only.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    const string snippets = "MessageRegistrySnippets.cs";
+    const string snippetNs = "Whizbang.Generators.Templates.Snippets";
+
+    var entry = (string)_call(host.Assembly, ns + "TemplateUtilities", "ExtractSnippet",
+      _templateAssembly, snippets, "MESSAGE_ENTRY_HEADER", snippetNs)!;
+    await Assert.That(entry).IsNotNullOrEmpty();
+    await Assert.That(entry).DoesNotContain("#region")
+      .Because("the region markers delimit the snippet, they are not part of it");
+    await Assert.That(entry).DoesNotStartWith("// ERROR")
+      .Because("this region exists, so the not-found sentinel means the read itself broke");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ReportsAMissingTemplateRatherThanEmptyAsync(MergedHost host) {
+    // Returning "" for an absent resource would let a generator emit a file with the region
+    // silently blank. The sentinel is what makes the failure visible in the generated output.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    const string snippetNs = "Whizbang.Generators.Templates.Snippets";
+
+    var missingTemplate = (string)_call(host.Assembly, ns + "TemplateUtilities", "GetEmbeddedTemplate",
+      _templateAssembly, "NoSuchTemplate.cs", snippetNs)!;
+    await Assert.That(missingTemplate).Contains("ERROR")
+      .Because("an absent template has to announce itself in the generated file");
+    await Assert.That(missingTemplate).Contains("NoSuchTemplate.cs")
+      .Because("the sentinel names what was missing, or it cannot be acted on");
+
+    var missingRegion = (string)_call(host.Assembly, ns + "TemplateUtilities", "ExtractSnippet",
+      _templateAssembly, "MessageRegistrySnippets.cs", "NO_SUCH_REGION", snippetNs)!;
+    await Assert.That(missingRegion).Contains("ERROR");
+    await Assert.That(missingRegion).Contains("NO_SUCH_REGION");
+  }
+
+
+  private sealed class StubConfigOptions(Dictionary<string, string> options) : AnalyzerConfigOptions {
+    public override bool TryGetValue(
+        string key,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? value)
+      => options.TryGetValue(key, out value!);
+  }
+
+  private sealed class StubConfigOptionsProvider(Dictionary<string, string> options)
+      : AnalyzerConfigOptionsProvider {
+    public override AnalyzerConfigOptions GlobalOptions => new StubConfigOptions(options);
+    public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) => new StubConfigOptions([]);
+    public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) => new StubConfigOptions([]);
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ReadsTableNameBuildPropertiesIdenticallyAsync(MergedHost host) {
+    // These MSBuild properties decide the physical table names a project generates. Two packages
+    // reading them differently means one strips a suffix the other keeps, and the same model
+    // maps to two different tables depending on which generator emitted the mapping.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var options = new StubConfigOptions(new Dictionary<string, string> {
+      ["build_property.WhizbangStripTableNameSuffixes"] = "false",
+      ["build_property.WhizbangTableNameSuffixesToStrip"] = "Model, Dto"
+    });
+
+    var config = _call(host.Assembly, ns + "ConfigurationUtilities", "GetTableNameConfig", options)!;
+    var configType = config.GetType();
+
+    await Assert.That((bool)configType.GetProperty("StripSuffixes")!.GetValue(config)!).IsFalse()
+      .Because("the property says not to strip, so the default of true has to be overridden");
+    await Assert.That((string[])configType.GetProperty("SuffixesToStrip")!.GetValue(config)!)
+      .Contains("Dto")
+      .Because("the property is documented as comma-separated and the entries are "
+             + "trimmed; parsing it wrong silently loses a suffix");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_RejectsAnUnusableIdentifierLengthOverrideAsync(MergedHost host) {
+    // Returning 0 or a negative would let a generator truncate every identifier to nothing.
+    // null means "use the provider's own limit", which is the only safe reading of bad input.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    const string key = "build_property.WhizbangMaxIdentifierLength";
+
+    var valid = (int?)_call(host.Assembly, ns + "ConfigurationUtilities", "GetMaxIdentifierLengthOverride",
+      new StubConfigOptions(new Dictionary<string, string> { [key] = "42" }));
+    await Assert.That(valid).IsEqualTo(42);
+
+    foreach (var bad in new[] { "0", "-1", "not-a-number", "  " }) {
+      var rejected = (int?)_call(host.Assembly, ns + "ConfigurationUtilities", "GetMaxIdentifierLengthOverride",
+        new StubConfigOptions(new Dictionary<string, string> { [key] = bad }));
+      await Assert.That(rejected).IsNull()
+        .Because($"'{bad}' is not a usable identifier length, so the provider default stands");
+    }
+
+    var absent = (int?)_call(host.Assembly, ns + "ConfigurationUtilities", "GetMaxIdentifierLengthOverride",
+      new StubConfigOptions([]));
+    await Assert.That(absent).IsNull();
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_SelectorsReadThroughToTheGlobalOptionsAsync(MergedHost host) {
+    // The generators wire these into the incremental pipeline via Select, so this is the shape
+    // the build actually calls. A copy whose selector ignored GlobalOptions would silently use
+    // defaults for every project that configured them.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var provider = new StubConfigOptionsProvider(new Dictionary<string, string> {
+      ["build_property.WhizbangMaxIdentifierLength"] = "31",
+      ["build_property.WhizbangStripTableNameSuffixes"] = "false"
+    });
+
+    var length = (int?)_call(host.Assembly, ns + "ConfigurationUtilities",
+      "SelectMaxIdentifierLengthOverride", provider, CancellationToken.None);
+    await Assert.That(length).IsEqualTo(31);
+
+    var config = _call(host.Assembly, ns + "ConfigurationUtilities",
+      "SelectTableNameConfig", provider, CancellationToken.None)!;
+    await Assert.That((bool)config.GetType().GetProperty("StripSuffixes")!.GetValue(config)!).IsFalse();
   }
 
 }
