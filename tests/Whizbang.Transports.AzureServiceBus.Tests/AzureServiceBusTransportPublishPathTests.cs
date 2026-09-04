@@ -369,4 +369,56 @@ public class AzureServiceBusTransportPublishPathTests {
       .SelectMany(store => store)
       .Single(m => m.MessageId == expectedId);
   }
+
+  /// <summary>
+  /// The batch path builds its messages in _createServiceBusMessage, separately from the single
+  /// publish path. Correlation and causation have to survive both identically: if only one
+  /// projects them, a trace stays connected or breaks depending on whether the message happened
+  /// to be batched, which makes the gap intermittent and invisible in any single reproduction.
+  /// </summary>
+  [Test]
+  public async Task PublishBatchAsync_EnvelopeWithCorrelationAndCausation_ProjectsWirePropertiesAsync() {
+    var (transport, client) = _createTransport();
+    var correlationId = CorrelationId.New();
+    var causationId = MessageId.New();
+    var item = _item(AsbTransportTestData.CreateEnvelope(
+      correlationId: correlationId,
+      causationId: causationId));
+
+    var results = await transport.PublishBatchAsync([item], _destination());
+
+    await Assert.That(results.All(r => r.Success)).IsTrue();
+
+    var message = _findBatchedMessage(client.LastSender!, item.MessageId);
+    var expectedCorrelation = correlationId.Value.ToString();
+    var expectedCausation = causationId.Value.ToString();
+
+    await Assert.That(message.CorrelationId).IsEqualTo(expectedCorrelation)
+      .Because("the batch path projects correlation onto the wire exactly as the publish path does");
+    await Assert.That(message.ApplicationProperties["CausationId"]).IsEqualTo(expectedCausation)
+      .Because("causation travels as an application property, and losing it in the batch path "
+             + "breaks the chain only for messages that happened to be grouped");
+  }
+
+  /// <summary>
+  /// The negative half: an envelope carrying neither must not invent them. A blank correlation
+  /// id on the wire is worse than an absent one, because a consumer reading it joins the message
+  /// to a trace it was never part of.
+  /// </summary>
+  [Test]
+  public async Task PublishBatchAsync_EnvelopeWithoutCorrelation_LeavesTheWirePropertiesUnsetAsync() {
+    var (transport, client) = _createTransport();
+    var item = _item(AsbTransportTestData.CreateEnvelope());
+
+    var results = await transport.PublishBatchAsync([item], _destination());
+
+    await Assert.That(results.All(r => r.Success)).IsTrue();
+
+    var message = _findBatchedMessage(client.LastSender!, item.MessageId);
+    await Assert.That(string.IsNullOrEmpty(message.CorrelationId)).IsTrue()
+      .Because("an absent correlation id stays absent rather than becoming an empty string");
+    await Assert.That(message.ApplicationProperties.ContainsKey("CausationId")).IsFalse()
+      .Because("the property is only written when there is a causation id to write");
+  }
+
 }

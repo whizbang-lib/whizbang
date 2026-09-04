@@ -322,4 +322,34 @@ public class MessageBusToDispatcherTransformerTests {
     await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.UsingRemoved)).IsTrue();
     await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.InterfaceReplacement)).IsTrue();
   }
+
+  [Test]
+  public async Task TransformAsync_WhizbangCoreAlreadyImported_DropsTheWolverineUsingAsync() {
+    // Several transformers rewrite a Wolverine or Marten using into Whizbang.Core, and they run
+    // in sequence over the same file. Whichever runs second finds Whizbang.Core already present;
+    // emitting it again is CS0105, which fails any migrated project built warnings-as-errors.
+    var transformer = new MessageBusToDispatcherTransformer();
+    const string sourceCode = """
+      using Whizbang.Core;
+      using Wolverine;
+
+      public class OrderService {
+        private readonly IMessageBus _messageBus;
+
+        public OrderService(IMessageBus messageBus) {
+          _messageBus = messageBus;
+        }
+      }
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
+
+    var occurrences = result.TransformedCode.Split("using Whizbang.Core;").Length - 1;
+    await Assert.That(occurrences).IsEqualTo(1)
+      .Because("a second identical using is CS0105, not a harmless duplicate");
+    await Assert.That(result.TransformedCode).DoesNotContain("using Wolverine;");
+    await Assert.That(result.TransformedCode).Contains("IDispatcher")
+      .Because("deduping the using must not stop the transform itself");
+  }
+
 }

@@ -188,4 +188,27 @@ public class MarkerInterfaceTransformerTests {
 
     await Assert.That(result.TransformedCode).Contains("using Whizbang.Core;");
   }
+
+  [Test]
+  public async Task TransformAsync_WhizbangCoreAlreadyImported_DropsTheWolverineUsingAsync() {
+    // This transformer's whole job on such a file is the using swap, so the duplicate case is
+    // where it matters most: a second identical using is CS0105, and the migrated project fails
+    // to build under warnings-as-errors having been told the migration succeeded.
+    var transformer = new MarkerInterfaceTransformer();
+    const string source = """
+      using Whizbang.Core;
+      using Wolverine;
+
+      public record OrderPlaced(string Id) : IEvent;
+      """;
+
+    var result = await transformer.TransformAsync(source, "OrderPlaced.cs");
+
+    var occurrences = result.TransformedCode.Split("using Whizbang.Core;").Length - 1;
+    await Assert.That(occurrences).IsEqualTo(1)
+      .Because("a second identical using is CS0105, not a harmless duplicate");
+    await Assert.That(result.TransformedCode).DoesNotContain("using Wolverine;")
+      .Because("the Wolverine using is dropped rather than rewritten into a duplicate");
+  }
+
 }

@@ -534,4 +534,37 @@ public class HandlerToReceptorTransformerTests {
         w.Contains("Activity") || w.Contains("observability"))).IsTrue();
   }
 
+
+  [Test]
+  public async Task TransformAsync_WhizbangCoreAlreadyImported_DropsTheWolverineUsingAsync() {
+    // The transformers run in sequence over one file, and several of them rewrite a Wolverine or
+    // Marten using into Whizbang.Core. Whichever runs second finds Whizbang.Core already there.
+    // Emitting it twice is legal C# but raises CS0105, which fails any migrated project building
+    // with warnings-as-errors -- the tool handing back source that will not compile under the
+    // settings most projects ship with.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Whizbang.Core;
+      using Wolverine;
+
+      public class CreateOrderHandler : IHandle<CreateOrderCommand> {
+        public Task Handle(CreateOrderCommand command) {
+          return Task.CompletedTask;
+        }
+      }
+
+      public record CreateOrderCommand(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    var occurrences = result.TransformedCode.Split("using Whizbang.Core;").Length - 1;
+    await Assert.That(occurrences).IsEqualTo(1)
+      .Because("a second identical using is CS0105, not a harmless duplicate");
+    await Assert.That(result.TransformedCode).DoesNotContain("using Wolverine;")
+      .Because("the Wolverine using is still removed -- it is dropped rather than rewritten");
+    await Assert.That(result.TransformedCode).Contains("IReceptor<CreateOrderCommand>")
+      .Because("the transform itself still has to happen; deduping the using is not a bail-out");
+  }
+
 }
