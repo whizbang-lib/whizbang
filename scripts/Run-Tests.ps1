@@ -737,6 +737,17 @@ function Invoke-CoverageReport {
     $reportDir = Join-Path $RepoRoot "coverage-report"
     $reports = ($CoberturaFiles | ForEach-Object { $_.FullName }) -join ";"
 
+    # reportgenerator writes into the target directory without clearing it, so a per-class page
+    # for a class that no longer appears in the run survives from whichever run last emitted it.
+    # Those pages sit beside a freshly written Summary.txt looking equally current, and the ones
+    # that persist longest are the generated files the -filefilters below now exclude -- so the
+    # report kept months-old pages showing tens of thousands of uncovered generated lines that
+    # the summary itself no longer counted. Anything reading the per-class pages as a worklist
+    # is then ranking files that are not in the measurement at all.
+    if (Test-Path $reportDir) {
+        Remove-Item (Join-Path $reportDir "*") -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     # Generate HTML, TextSummary, and JsonSummary reports.
     # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell).
     #
