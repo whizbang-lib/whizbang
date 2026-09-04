@@ -656,4 +656,120 @@ public class WolverineAnalyzerTests {
     }
   }
 
+
+  // ── Convention-based discovery and custom base classes ────────────────────
+
+  private static async Task<AnalysisResult> _analyzeSourceAsync(string source) {
+    var dir = Path.Combine(Path.GetTempPath(), $"whizbang-wolverine-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(dir);
+    try {
+      await File.WriteAllTextAsync(Path.Combine(dir, "Source.cs"), source);
+      return await new WolverineAnalyzer().AnalyzeProjectAsync(dir);
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_FindsAHandlerDeclaredOnlyByConventionAsync() {
+    // Wolverine discovers handlers by convention as well as by interface: a public Handle method
+    // is enough, with no IHandle<T> anywhere. An analyzer that only matched the interface would
+    // report a project as having fewer handlers than it does, and the migration would leave
+    // every convention-based one behind -- untouched, still calling Wolverine, after the package
+    // was removed.
+    var result = await _analyzeSourceAsync("""
+      public class OrderHandler {
+        public Task Handle(PlaceOrder command) => Task.CompletedTask;
+      }
+      public record PlaceOrder(string Id);
+      """);
+
+    await Assert.That(result.Handlers.Select(h => h.ClassName)).Contains("OrderHandler");
+    await Assert.That(result.Handlers.Any(h => h.MessageType.Contains("PlaceOrder", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the first parameter is the message, and the migration needs its type to rewrite the receptor");
+  }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_FindsTheAsyncConventionAsync() {
+    // HandleAsync is the more common spelling in real code.
+    var result = await _analyzeSourceAsync("""
+      public class OrderHandler {
+        public Task HandleAsync(PlaceOrder command) => Task.CompletedTask;
+      }
+      public record PlaceOrder(string Id);
+      """);
+
+    await Assert.That(result.Handlers.Select(h => h.ClassName)).Contains("OrderHandler");
+  }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_IgnoresANonPublicHandleMethodAsync() {
+    // Wolverine only dispatches to public handlers, so a private Handle is ordinary application
+    // code that happens to share the name. Reporting it would send the migration to rewrite a
+    // method nothing ever called as a handler.
+    var result = await _analyzeSourceAsync("""
+      public class OrderService {
+        private Task Handle(PlaceOrder command) => Task.CompletedTask;
+      }
+      public record PlaceOrder(string Id);
+      """);
+
+    await Assert.That(result.Handlers.Any(h => h.ClassName == "OrderService")).IsFalse()
+      .Because("a private method is not a dispatch target, whatever it is called");
+  }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_IgnoresAParameterlessHandleAsync() {
+    // Without a first parameter there is no message type to migrate to, so there is nothing the
+    // transformer could produce.
+    var result = await _analyzeSourceAsync("""
+      public class OrderService {
+        public Task Handle() => Task.CompletedTask;
+      }
+      """);
+
+    await Assert.That(result.Handlers.Any(h => h.ClassName == "OrderService")).IsFalse();
+  }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_WarnsAboutACustomHandlerBaseClassAsync() {
+    // A handler inheriting from a project's own base class is the case the migration cannot see
+    // through: that base may itself hold Marten or Wolverine infrastructure, and rewriting the
+    // derived class alone would leave the real dependency in place. The warning is what sends a
+    // human to look.
+    var result = await _analyzeSourceAsync("""
+      using Wolverine;
+
+      public class OrderHandler : CompanyHandlerBase, IHandle<PlaceOrder> {
+        public Task Handle(PlaceOrder command) => Task.CompletedTask;
+      }
+      public class CompanyHandlerBase { }
+      public record PlaceOrder(string Id);
+      """);
+
+    await Assert.That(result.Warnings.Any(w =>
+        w.Message.Contains("CompanyHandlerBase", StringComparison.Ordinal))).IsTrue()
+      .Because("the base class may carry infrastructure the migration cannot see or rewrite");
+  }
+
+  [Test]
+  public async Task AnalyzeProjectAsync_DoesNotWarnAboutTheFrameworkInterfaceItselfAsync() {
+    // The counterpart: IHandle<T> is the interface being migrated away from, so treating it as
+    // an unknown base class would put a warning on every handler in the project and bury the
+    // ones that matter.
+    var result = await _analyzeSourceAsync("""
+      using Wolverine;
+
+      public class OrderHandler : IHandle<PlaceOrder> {
+        public Task Handle(PlaceOrder command) => Task.CompletedTask;
+      }
+      public record PlaceOrder(string Id);
+      """);
+
+    await Assert.That(result.Warnings.Any(w =>
+        w.WarningKind == MigrationWarningKind.CustomHandlerBaseClass)).IsFalse()
+      .Because("a warning on every handler is the same as no warning at all");
+  }
+
 }
