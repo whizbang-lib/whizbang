@@ -16,7 +16,9 @@ namespace Whizbang.LanguageServer;
 /// </remarks>
 public static class LanguageServerServices {
   /// <summary>Default documentation host used when the environment does not override it.</summary>
-  public const string DefaultDocsBaseUrl = "https://whizbang-lib.github.io";
+#pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
+  public const string DEFAULT_DOCS_BASE_URL = "https://whizbang-lib.github.io";
+#pragma warning restore CA1707
 
   /// <summary>
   /// Resolves the documentation base URL from the environment, falling back to the public site.
@@ -27,7 +29,7 @@ public static class LanguageServerServices {
   /// </remarks>
   public static string ResolveDocsBaseUrl() {
     var configured = Environment.GetEnvironmentVariable("WHIZBANG_DOCS_BASE_URL");
-    return string.IsNullOrWhiteSpace(configured) ? DefaultDocsBaseUrl : configured;
+    return string.IsNullOrWhiteSpace(configured) ? DEFAULT_DOCS_BASE_URL : configured;
   }
 
   /// <summary>

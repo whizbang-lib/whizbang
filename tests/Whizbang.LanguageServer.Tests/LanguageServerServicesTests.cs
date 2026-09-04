@@ -76,7 +76,7 @@ public class LanguageServerServicesTests {
       Environment.SetEnvironmentVariable("WHIZBANG_DOCS_BASE_URL", null);
 
       await Assert.That(LanguageServerServices.ResolveDocsBaseUrl())
-        .IsEqualTo(LanguageServerServices.DefaultDocsBaseUrl);
+        .IsEqualTo(LanguageServerServices.DEFAULT_DOCS_BASE_URL);
     } finally {
       Environment.SetEnvironmentVariable("WHIZBANG_DOCS_BASE_URL", original);
     }
@@ -107,7 +107,7 @@ public class LanguageServerServicesTests {
       Environment.SetEnvironmentVariable("WHIZBANG_DOCS_BASE_URL", blank);
 
       await Assert.That(LanguageServerServices.ResolveDocsBaseUrl())
-        .IsEqualTo(LanguageServerServices.DefaultDocsBaseUrl);
+        .IsEqualTo(LanguageServerServices.DEFAULT_DOCS_BASE_URL);
     } finally {
       Environment.SetEnvironmentVariable("WHIZBANG_DOCS_BASE_URL", original);
     }
