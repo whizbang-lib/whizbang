@@ -111,4 +111,51 @@ public class BatchFlusherTests {
 
     await Assert.That(flusher.StoppedSignal.IsCompletedSuccessfully).IsTrue();
   }
+
+  [Test]
+  public async Task DisposeAsync_FlushesItemsStillQueuedAsync() {
+    // Shutdown must not discard buffered work. Five workers share this flusher -- lease
+    // renewals, inbox handler commits, perspective completions, outbox completions and message
+    // failures -- so anything dropped here turns into expired leases, reprocessed messages,
+    // stalled cursors and messages stuck in-flight, once per deployment and with nothing logged.
+    var inFlush = new TaskCompletionSource();
+    var release = new TaskCompletionSource();
+    var flushed = new List<int>();
+    var gate = new Lock();
+
+    var flusher = new BatchFlusher<int>(
+      flush: async (items, _) => {
+        lock (gate) { flushed.AddRange(items); }
+        if (!inFlush.Task.IsCompleted) {
+          inFlush.SetResult();
+          await release.Task;
+        }
+      },
+      options: new BatchFlusherOptions {
+        ChannelCapacity = 100,
+        MaxBatchSize = 10,
+        CoalesceWindowMs = 1,
+        ImmediateFlushThreshold = 1,
+      },
+      logger: NullLogger.Instance);
+
+    // Item 1 gets picked up and parks the loop inside the flush callback.
+    await flusher.Writer.WriteAsync(1);
+    await inFlush.Task;
+
+    // These queue behind it, still in the channel when shutdown begins.
+    await flusher.Writer.WriteAsync(2);
+    await flusher.Writer.WriteAsync(3);
+
+    var dispose = flusher.DisposeAsync();
+    release.SetResult();
+    await dispose;
+
+    List<int> seen;
+    lock (gate) { seen = [.. flushed]; }
+    await Assert.That(seen).Contains(2)
+      .Because("an item accepted by the writer before shutdown has to reach the flush callback");
+    await Assert.That(seen).Contains(3);
+  }
+
 }
