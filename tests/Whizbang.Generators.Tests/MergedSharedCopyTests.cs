@@ -3,6 +3,7 @@ extern alias fastendpoints_generators;
 extern alias hotchocolate_generators;
 extern alias postgres_generators;
 using System.Reflection;
+using Microsoft.CodeAnalysis;
 
 namespace Whizbang.Generators.Tests;
 
@@ -226,6 +227,109 @@ public class MergedSharedCopyTests {
       await Assert.That(host.Assembly.GetType(models + name)).IsNotNull()
         .Because($"{name} crosses the boundary between the shared code and {host.Host}");
     }
+  }
+
+
+  // ── The symbol-dependent surface, per host ────────────────────────────────
+
+  private const string SYMBOL_SOURCE = """
+    namespace App {
+      [System.AttributeUsage(System.AttributeTargets.Class)]
+      public sealed class RouteAttribute : System.Attribute {
+        public RouteAttribute(string path) { Path = path; }
+        public string Path { get; }
+        public string? Name { get; set; }
+        public bool Cached { get; set; }
+        public int Limit { get; set; }
+      }
+
+      [Route("/api/orders", Name = "orders", Cached = true, Limit = 25)]
+      public class OrderReadModel {
+        public string Id { get; set; } = "";
+        public int Total { get; set; }
+      }
+    }
+    """;
+
+  /// <summary>Builds the symbol inputs the shared utilities take. Roslyn types are not merged,
+  /// so one compilation's symbols are accepted by every host's copy.</summary>
+  private static (INamedTypeSymbol Type, AttributeData Attribute) _symbols() {
+    var compilation = GeneratorTestHelper.CreateCompilation(SYMBOL_SOURCE);
+    var type = compilation.GetTypeByMetadataName("App.OrderReadModel")
+      ?? throw new InvalidOperationException("test compilation did not produce App.OrderReadModel");
+    var attribute = type.GetAttributes().First(a => a.AttributeClass?.Name == "RouteAttribute");
+    return (type, attribute);
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ReadsAttributeArgumentsIdenticallyAsync(MergedHost host) {
+    // Every generator decides what to emit by reading attribute arguments. A host whose merged
+    // copy read them differently would emit an endpoint on the wrong route, or silently fall
+    // back to a default the author never chose -- and it would do so only in that one package.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var (_, attribute) = _symbols();
+
+    await Assert.That((string?)_call(host.Assembly, ns + "AttributeUtilities", "GetStringValue", attribute, "Name"))
+      .IsEqualTo("orders");
+    await Assert.That((bool)_call(host.Assembly, ns + "AttributeUtilities", "GetBoolValue", attribute, "Cached", false)!)
+      .IsTrue();
+    await Assert.That((int)_call(host.Assembly, ns + "AttributeUtilities", "GetIntValue", attribute, "Limit", 10)!)
+      .IsEqualTo(25);
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_FallsBackWhenAnArgumentIsAbsentAsync(MergedHost host) {
+    // The defaults matter as much as the values: an attribute that omits a setting must yield
+    // the documented default rather than zero or null, which downstream code would treat as a
+    // real choice.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var (_, attribute) = _symbols();
+
+    await Assert.That((string?)_call(host.Assembly, ns + "AttributeUtilities", "GetStringValue", attribute, "Missing"))
+      .IsNull();
+    await Assert.That((bool)_call(host.Assembly, ns + "AttributeUtilities", "GetBoolValue", attribute, "Missing", true)!)
+      .IsTrue()
+      .Because("an absent flag takes the supplied default, not false");
+    await Assert.That((int)_call(host.Assembly, ns + "AttributeUtilities", "GetIntValue", attribute, "Missing", 7)!)
+      .IsEqualTo(7);
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ReadsTypeSymbolsIdenticallyAsync(MergedHost host) {
+    // Property discovery drives the columns a perspective table gets and the fields an endpoint
+    // exposes. A host that enumerated them differently would generate a table missing a column.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var (type, _) = _symbols();
+
+    var simple = (string)_call(host.Assembly, ns + "TypeNameUtilities", "GetSimpleName", type)!;
+    await Assert.That(simple).IsEqualTo("OrderReadModel");
+
+    var extensions = _type(host.Assembly, ns + "TypeSymbolExtensions");
+    var names = (string[])extensions
+      .GetMethod("GetAllPublicPropertyNames", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!
+      .Invoke(null, [type])!;
+
+    await Assert.That(names).Contains("Id");
+    await Assert.That(names).Contains("Total");
+  }
+
+  [Test]
+  public async Task EveryHostCopy_ReadsTheSameAttributeTheSameWayAsync() {
+    // The cross-host check for the symbol surface: four copies reading one attribute must agree,
+    // or the same annotated model yields different output depending on which generator saw it.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var (_, attribute) = _symbols();
+
+    var values = _hosts
+      .Select(h => (string?)_call(h.Assembly, ns + "AttributeUtilities", "GetStringValue", attribute, "Name"))
+      .Distinct()
+      .ToList();
+
+    await Assert.That(values.Count).IsEqualTo(1);
+    await Assert.That(values[0]).IsEqualTo("orders");
   }
 
 }
