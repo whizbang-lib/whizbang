@@ -244,6 +244,8 @@ public partial class DeadLetterRecoveryWorker(
   // each scan", rebuilt on restart by _startHeldCampaignAsync (BeginCanaryProbesAsync is
   // idempotent per (fingerprint, generation), so re-listing cohorts resumes campaigns).
   private readonly HashSet<string> _campaignsInFlight = [];
+  // Mixed cohorts in trickle release: fingerprint -> (wave number, last wave size).
+  private readonly Dictionary<string, (int Wave, int LastSize)> _tricklesInFlight = [];
   private string? _campaignGeneration;
 
   private async Task _startHeldCampaignAsync(RetryHeldOnStartupMode mode, CancellationToken ct) {
@@ -318,8 +320,44 @@ public partial class DeadLetterRecoveryWorker(
           LogCohortMixed(_logger, fingerprint, verdict.ProbesSucceeded, verdict.ProbesFailed);
           _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Mixed);
           _campaignsInFlight.Remove(fingerprint);
+          // A Mixed cohort earns trust in doublings, not in one blind release: enter the
+          // trickle with a probe-sized first wave, immediately.
+          var firstWave = await svc.BeginTrickleWaveAsync(
+            fingerprint, _campaignGeneration, _options.CanaryProbeSize, ct).ConfigureAwait(false);
+          if (firstWave > 0) {
+            _tricklesInFlight[fingerprint] = (1, _options.CanaryProbeSize);
+            LogTrickleWave(_logger, fingerprint, 1, firstWave);
+          }
           break;
       }
+    }
+  }
+
+  private async Task _evaluateTricklesAsync(IDeadLetterRecoveryService svc, CancellationToken ct) {
+    if (_tricklesInFlight.Count == 0 || _campaignGeneration is null) {
+      return;
+    }
+    foreach (var (fingerprint, state) in _tricklesInFlight.ToArray()) {
+      ct.ThrowIfCancellationRequested();
+      var washback = await svc.CountWaveRequarantinesAsync(fingerprint, _campaignGeneration, ct).ConfigureAwait(false);
+      if (washback > 0) {
+        // Dirty wave: halt. The remainder stays held rather than feeding a failure at
+        // doubling volume; the released waves already out stay out.
+        LogTrickleHalted(_logger, fingerprint, state.Wave, washback);
+        _metrics?.RecordReleaseWave(fingerprint, clean: false);
+        _tricklesInFlight.Remove(fingerprint);
+        continue;
+      }
+      _metrics?.RecordReleaseWave(fingerprint, clean: true);
+      var nextSize = state.LastSize * 2;
+      var released = await svc.BeginTrickleWaveAsync(fingerprint, _campaignGeneration, nextSize, ct).ConfigureAwait(false);
+      if (released == 0) {
+        LogTrickleDrained(_logger, fingerprint, state.Wave);
+        _tricklesInFlight.Remove(fingerprint);
+        continue;
+      }
+      _tricklesInFlight[fingerprint] = (state.Wave + 1, nextSize);
+      LogTrickleWave(_logger, fingerprint, state.Wave + 1, released);
     }
   }
 
@@ -364,6 +402,7 @@ public partial class DeadLetterRecoveryWorker(
       // and BEFORE the due-fetch early-return below, because a quiet queue is exactly when
       // verdicts land (probes recovered = nothing due = empty batch).
       await _evaluateCampaignsAsync(svc, ct).ConfigureAwait(false);
+      await _evaluateTricklesAsync(svc, ct).ConfigureAwait(false);
 
       // Stack backfill: the async half of the stack contract. Bounded per scan, and the
       // C# normalizer is the SAME implementation the inline metric uses, so both halves
@@ -496,6 +535,18 @@ public partial class DeadLetterRecoveryWorker(
       }
     }
   }
+
+  [LoggerMessage(EventId = 24, Level = LogLevel.Information,
+    Message = "Trickle wave {Wave} released {Released} row(s) of Mixed cohort {Fingerprint} — staggered, evaluated next scan")]
+  static partial void LogTrickleWave(ILogger logger, string fingerprint, int wave, int released);
+
+  [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
+    Message = "Trickle for Mixed cohort {Fingerprint} HALTED at wave {Wave}: {Washback} released row(s) re-dead-lettered. The remainder stays held — releasing further would feed a live failure at doubling volume; the cohort is pending an operator decision")]
+  static partial void LogTrickleHalted(ILogger logger, string fingerprint, int wave, int washback);
+
+  [LoggerMessage(EventId = 26, Level = LogLevel.Information,
+    Message = "Mixed cohort {Fingerprint} fully DRAINED through {Waves} clean trickle wave(s)")]
+  static partial void LogTrickleDrained(ILogger logger, string fingerprint, int waves);
 
   [LoggerMessage(EventId = 23, Level = LogLevel.Warning,
     Message = "Canary campaign for cohort {Fingerprint} ({Rows} row(s)) is NOT starting: its generation budget is exhausted — probes failed on the configured number of distinct build generations. The cohort is permanently pending an operator decision (release, purge, or hold).")]

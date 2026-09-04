@@ -267,6 +267,45 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
              + "the same bound");
   }
 
+  [Test]
+  public async Task TrickleWave_ReleasesBounded_StampsWaveState_AndCountsWashbackAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    for (var i = 0; i < 12; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"INSERT INTO wh_dlq_probe_campaigns (fingerprint, generation, probe_ids, verdict)
+        VALUES (@fp, 'gen/1', '{}', 3)"; // Mixed
+      ins.Parameters.AddWithValue("fp", fp);
+      await ins.ExecuteNonQueryAsync();
+    }
+    var svc = _svc(ctx);
+
+    var wave1 = await svc.BeginTrickleWaveAsync(fp, "gen/1", 5);
+    await Assert.That(wave1).IsEqualTo(5)
+      .Because("a wave releases exactly its bounded size — the doubling happens between "
+             + "waves, never inside one");
+
+    await Assert.That(await svc.CountWaveRequarantinesAsync(fp, "gen/1")).IsEqualTo(0)
+      .Because("nothing has washed back yet — a clean wave");
+
+    // One released row "comes back": a NEW unrecovered dead letter with the fingerprint.
+    await _seedHeldAsync(conn, fp, "T.A", status: 0, offset: "+2 seconds");
+    await Assert.That(await svc.CountWaveRequarantinesAsync(fp, "gen/1")).IsEqualTo(1)
+      .Because("a new dead letter with the cohort's fingerprint after the wave started IS "
+             + "the wave washing back — the halt signal");
+
+    var wave2 = await svc.BeginTrickleWaveAsync(fp, "gen/1", 100);
+    await Assert.That(wave2).IsEqualTo(7)
+      .Because("the second wave takes whatever remains held when fewer than the doubled "
+             + "size are left");
+    var wave3 = await svc.BeginTrickleWaveAsync(fp, "gen/1", 100);
+    await Assert.That(wave3).IsEqualTo(0)
+      .Because("zero is the drained signal: the washback row is Pending, not held, so it "
+             + "is the live queue's problem — the trickle only ever releases HELD rows");
+  }
+
   private static async Task<Guid?> _heldIdAsync(NpgsqlConnection conn, string fp) {
     await using var q = conn.CreateCommand();
     q.CommandText = "SELECT dead_letter_id FROM wh_dead_letters WHERE error_fingerprint=@fp LIMIT 1";

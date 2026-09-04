@@ -102,6 +102,10 @@ public class DeadLetterRecoveryWorkerTests {
       Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
     public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
       Task.CompletedTask;
+    public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(0);
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
     public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyList<HeldCohort>>([]);

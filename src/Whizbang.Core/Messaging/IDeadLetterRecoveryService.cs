@@ -87,6 +87,19 @@ public interface IDeadLetterRecoveryService {
   /// </summary>
   Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default);
 
+  /// <summary>
+  /// Releases up to <paramref name="waveSize"/> held rows of a Mixed cohort as one
+  /// trickle wave (staggered inside the wave window) and stamps the campaign's wave
+  /// state. Returns rows released — 0 means the cohort is fully drained.
+  /// </summary>
+  Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default);
+
+  /// <summary>
+  /// Evaluates the current trickle wave: how many NEW unrecovered dead letters with this
+  /// fingerprint arrived since the wave started (requarantines = the wave washing back).
+  /// </summary>
+  Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default);
+
   // -------------------- Stack backfill surface (P2) --------------------
   // The relational stack layer normalizes in C# (one implementation — see
   // Whizbang.Core.DeadLetters.StackNormalizer) and persists here.

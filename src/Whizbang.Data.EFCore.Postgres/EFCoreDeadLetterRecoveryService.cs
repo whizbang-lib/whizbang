@@ -175,6 +175,35 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {_fn("begin_trickle_wave")}(@fp, @gen, @size)";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("size", NpgsqlTypes.NpgsqlDbType.Integer) { Value = waveSize });
+    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+  }
+
+  /// <inheritdoc />
+  public async Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {_fn("count_wave_requarantines")}(@fp, @gen)";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
+    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+  }
+
+  /// <inheritdoc />
   public async Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
     var conn = _dbContext.Database.GetDbConnection();

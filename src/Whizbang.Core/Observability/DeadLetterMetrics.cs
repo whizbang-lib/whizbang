@@ -63,6 +63,7 @@ public sealed class DeadLetterMetrics {
 
   private readonly Counter<long> _arrivalsByStack;
   private readonly Counter<long> _cohortVerdicts;
+  private readonly Counter<long> _releaseWaves;
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _seenStacks = new();
 
   /// <summary>Initializes a new instance of <see cref="DeadLetterMetrics"/>.</summary>
@@ -96,6 +97,18 @@ public sealed class DeadLetterMetrics {
     _cohortVerdicts = meter.CreateCounter<long>(
       "whizbang.dead_letters.cohort_verdicts",
       description: "Canary campaign verdicts tagged by cohort + verdict (Pass/Fail/Mixed)");
+    _releaseWaves = meter.CreateCounter<long>(
+      "whizbang.dead_letters.release_waves",
+      description: "Trickle release waves for Mixed cohorts, tagged by cohort + outcome (clean/halted)");
+  }
+
+  /// <summary>Counts one trickle wave outcome for a Mixed cohort.</summary>
+  /// <param name="cohort">The cohort key (error fingerprint).</param>
+  /// <param name="clean">Whether the wave stayed out (true) or washed back (false).</param>
+  public void RecordReleaseWave(string cohort, bool clean) {
+    _releaseWaves.Add(1,
+      new KeyValuePair<string, object?>("cohort", cohort),
+      new KeyValuePair<string, object?>("outcome", clean ? "clean" : "halted"));
   }
 
   /// <summary>

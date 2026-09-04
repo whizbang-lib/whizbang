@@ -109,6 +109,20 @@ public sealed class DeadLetterCanaryCampaignTests {
       _fire(_releaseSignals, Interlocked.Increment(ref _releaseCount));
       return Task.FromResult(100);
     }
+    public Queue<int> TrickleWaveReturns { get; } = new();
+    public List<(string Fp, int Size)> TrickleWaves { get; } = [];
+    public Queue<int> WaveRequarantineReturns { get; } = new();
+    private int _waveCount;
+    private readonly ConcurrentDictionary<int, TaskCompletionSource> _waveSignals = new();
+    public Task WaveSignal(int ordinal) => _sig(_waveSignals, ordinal);
+    public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) {
+      lock (TrickleWaves) { TrickleWaves.Add((fingerprint, waveSize)); }
+      var result = TrickleWaveReturns.Count > 0 ? TrickleWaveReturns.Dequeue() : 0;
+      _fire(_waveSignals, Interlocked.Increment(ref _waveCount));
+      return Task.FromResult(result);
+    }
+    public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(WaveRequarantineReturns.Count > 0 ? WaveRequarantineReturns.Dequeue() : 0);
   }
 
   [Test]
@@ -245,6 +259,89 @@ public sealed class DeadLetterCanaryCampaignTests {
       Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
     public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
       Task.CompletedTask;
+    public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(0);
+  }
+
+  [Test]
+  public async Task MixedVerdict_EntersTrickle_WavesDoubleWhileCleanAsync() {
+    var svc = new CampaignFake { Cohorts = [new("fp-mix", 500, 3)] };
+    svc.Verdicts["fp-mix"] = new Queue<CanaryVerdict>([new(CanaryVerdictKind.Mixed, 4, 3, 0)]);
+    svc.TrickleWaveReturns.Enqueue(7);   // wave 1: size 7 released
+    svc.TrickleWaveReturns.Enqueue(14);  // wave 2: doubled
+    svc.WaveRequarantineReturns.Enqueue(0); // wave 1 clean
+    var (worker, _, _, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.WaveSignal(1).WaitAsync(_timeout);   // Mixed -> first wave same scan
+    bell.Ring();
+    await svc.WaveSignal(2).WaitAsync(_timeout);   // clean -> second wave next scan
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    List<(string, int)> waves;
+    lock (svc.TrickleWaves) { waves = [.. svc.TrickleWaves]; }
+    await Assert.That(waves.Count).IsEqualTo(2);
+    await Assert.That(waves[0].Item2).IsEqualTo(7)
+      .Because("the first wave is probe-sized — a Mixed cohort earns trust in doublings, "
+             + "not in one blind release");
+    await Assert.That(waves[1].Item2).IsEqualTo(14)
+      .Because("a clean wave doubles the next — AIMD-shaped progressive rollout");
+  }
+
+  [Test]
+  public async Task DirtyWave_HaltsTheTrickle_AndReportsAsync() {
+    var svc = new CampaignFake { Cohorts = [new("fp-mix", 500, 3)] };
+    svc.Verdicts["fp-mix"] = new Queue<CanaryVerdict>([new(CanaryVerdictKind.Mixed, 4, 3, 0)]);
+    svc.TrickleWaveReturns.Enqueue(7);
+    svc.WaveRequarantineReturns.Enqueue(3); // wave washes back
+    var (worker, _, logs, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.WaveSignal(1).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.FetchSignal(2).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.FetchSignal(3).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    List<(string, int)> waves;
+    lock (svc.TrickleWaves) { waves = [.. svc.TrickleWaves]; }
+    await Assert.That(waves.Count).IsEqualTo(1)
+      .Because("a dirty wave halts the trickle — the remainder stays held rather than "
+             + "feeding a failure at doubling volume");
+    var warned = logs.GetSnapshot().Any(r => r.Level == LogLevel.Warning
+      && r.Message.Contains("fp-mix", StringComparison.Ordinal)
+      && r.Message.Contains("halted", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(warned).IsTrue();
+  }
+
+  [Test]
+  public async Task DrainedTrickle_CompletesTheCohortAsync() {
+    var svc = new CampaignFake { Cohorts = [new("fp-mix", 10, 1)] };
+    svc.Verdicts["fp-mix"] = new Queue<CanaryVerdict>([new(CanaryVerdictKind.Mixed, 4, 3, 0)]);
+    svc.TrickleWaveReturns.Enqueue(7);
+    svc.TrickleWaveReturns.Enqueue(0);   // nothing left: drained
+    svc.WaveRequarantineReturns.Enqueue(0);
+    var (worker, _, logs, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.WaveSignal(1).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.WaveSignal(2).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.FetchSignal(3).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    var done = logs.GetSnapshot().Any(r => r.Message.Contains("fp-mix", StringComparison.Ordinal)
+      && r.Message.Contains("drained", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(done).IsTrue()
+      .Because("an empty wave means the Mixed cohort fully released through clean waves — "
+             + "the campaign closes with its outcome said");
   }
 
   private sealed class Bell : Whizbang.Core.Notifications.IWorkNotificationListener {
@@ -268,7 +365,10 @@ public sealed class DeadLetterCanaryCampaignTests {
     public string GetGeneration() => "build/9.9.9";
   }
 
-  private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(30);
+  // Generous: these are completion signals that resolve in milliseconds when healthy;
+  // the ceiling exists only so a genuine hang fails rather than deadlocks, and a saturated
+  // parallel suite host must not be able to starve past it.
+  private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(90);
 
   private static (DeadLetterRecoveryWorker Worker, CampaignFake Svc, FakeLogCollector Logs, Bell Bell) _build(
       DeadLetterRecoveryOptions options, CampaignFake? svc = null) {

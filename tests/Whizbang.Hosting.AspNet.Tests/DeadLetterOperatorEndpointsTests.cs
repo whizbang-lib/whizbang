@@ -31,15 +31,23 @@ public class DeadLetterOperatorEndpointsTests {
       Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
     public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
       Task.CompletedTask;
+    public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(0);
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
+    public List<HeldCohort> Cohorts { get; set; } = [];
+    public List<(string Fp, TimeSpan Stagger)> CohortReleases { get; } = [];
     public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>
-      Task.FromResult<IReadOnlyList<HeldCohort>>([]);
+      Task.FromResult<IReadOnlyList<HeldCohort>>([.. Cohorts]);
     public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default) =>
       Task.FromResult(0);
     public Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) =>
       Task.FromResult(new CanaryVerdict(CanaryVerdictKind.Pass, 0, 0, 0));
-    public Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) =>
-      Task.FromResult(0);
+    public Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) {
+      CohortReleases.Add((fingerprint, stagger));
+      return Task.FromResult(42);
+    }
 
     public int FetchDueCalls;
     public int? LastFetchDueMax;
@@ -279,4 +287,44 @@ public class DeadLetterOperatorEndpointsTests {
 
     await Assert.That(resp.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
   }
+
+  [Test]
+  public async Task GetCohorts_ListsHeldCohortsAsJsonAsync() {
+    var svc = new FakeRecoveryService {
+      Cohorts = [new("fp-abc123def45678", 5000, 34)],
+    };
+    using var host = _buildHost(svc);
+    await host.StartAsync();
+    var client = host.GetTestClient();
+
+    var resp = await client.GetAsync("/whizbang/dlq/cohorts");
+
+    await Assert.That(resp.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    var body = await resp.Content.ReadAsStringAsync();
+    await Assert.That(body).Contains("fp-abc123def45678")
+      .Because("the cohort list is the operator's campaign overview — fingerprint, size, "
+             + "and type spread per unit");
+    await Assert.That(body).Contains("5000");
+  }
+
+  [Test]
+  public async Task PostCohortRelease_ReleasesStaggered_AndReportsCountAsync() {
+    var svc = new FakeRecoveryService();
+    using var host = _buildHost(svc);
+    await host.StartAsync();
+    var client = host.GetTestClient();
+
+    var resp = await client.PostAsync("/whizbang/dlq/cohorts/fp-abc123def45678/release?staggerMinutes=45", content: null);
+
+    await Assert.That(resp.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    await Assert.That(svc.CohortReleases.Count).IsEqualTo(1);
+    await Assert.That(svc.CohortReleases[0].Fp).IsEqualTo("fp-abc123def45678");
+    await Assert.That(svc.CohortReleases[0].Stagger).IsEqualTo(TimeSpan.FromMinutes(45))
+      .Because("operator release goes through the SAME staggered-eligibility path as the "
+             + "campaigns — there is no firehose endpoint");
+    var body = await resp.Content.ReadAsStringAsync();
+    await Assert.That(body).Contains("42")
+      .Because("the released count is the operator's receipt");
+  }
+
 }

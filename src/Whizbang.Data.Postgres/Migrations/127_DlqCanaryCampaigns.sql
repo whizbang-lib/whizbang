@@ -6,7 +6,7 @@
 --   fingerprint x generation) a restarted pod resumes from. Probing and releasing only ever
 --   return rows to Pending — actual re-drives stay with the paced recovery scans.
 -- Dependencies: 050_WhDeadLetters (table), 053_DeadLetterFingerprint (cohort key)
--- Objects: wh_dlq_probe_campaigns, purge_undeliverable_held_dead_letters, list_held_dead_letter_cohorts, begin_canary_probes, evaluate_canary_campaign, release_held_dead_letter_cohort
+-- Objects: wh_dlq_probe_campaigns, purge_undeliverable_held_dead_letters, list_held_dead_letter_cohorts, begin_canary_probes, evaluate_canary_campaign, release_held_dead_letter_cohort, begin_trickle_wave, count_wave_requarantines
 
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_dlq_probe_campaigns (
   fingerprint        VARCHAR(16) NOT NULL,
@@ -17,8 +17,14 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_dlq_probe_campaigns (
   probes_succeeded   INTEGER     NOT NULL DEFAULT 0,
   probes_failed      INTEGER     NOT NULL DEFAULT 0,
   verdict_at         TIMESTAMPTZ,
+  wave               INTEGER     NOT NULL DEFAULT 0,
+  wave_started_at    TIMESTAMPTZ,
   PRIMARY KEY (fingerprint, generation)
 );
+
+-- Idempotent for databases that ran an earlier revision of this file.
+ALTER TABLE __SCHEMA__.wh_dlq_probe_campaigns ADD COLUMN IF NOT EXISTS wave INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE __SCHEMA__.wh_dlq_probe_campaigns ADD COLUMN IF NOT EXISTS wave_started_at TIMESTAMPTZ;
 
 COMMENT ON TABLE __SCHEMA__.wh_dlq_probe_campaigns IS
 'One canary campaign per (error_fingerprint, build generation): which rows probed, and how the verdict resolved. Durable so a pod restart mid-campaign resumes evaluation instead of minting a second probe set.';
@@ -248,3 +254,71 @@ $$;
 
 COMMENT ON FUNCTION __SCHEMA__.release_held_dead_letter_cohort IS
 'Releases a held cohort (127) as STAGGERED eligibility: rows return to Pending with next_recovery_at spread across the window, and the paced recovery scans drain them under arbitration. Release is never a re-drive.';
+
+-- ============================================================================
+-- begin_trickle_wave — one bounded, staggered wave of a Mixed cohort
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.begin_trickle_wave(
+  p_fingerprint VARCHAR(16), p_generation TEXT, p_wave_size INTEGER)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_count INTEGER;
+BEGIN
+  UPDATE __SCHEMA__.wh_dead_letters dl
+  SET recovery_status = 0,
+      next_recovery_at = NOW() + (random() * 300) * INTERVAL '1 second'
+  WHERE dl.dead_letter_id IN (
+    SELECT i.dead_letter_id FROM __SCHEMA__.wh_dead_letters i
+    WHERE i.error_fingerprint = p_fingerprint
+      AND i.recovery_status = 2
+      AND i.recovered_at IS NULL
+      AND i.operator_disposition NOT IN (2, 3)
+      AND jsonb_typeof(i.envelope) = 'object'
+    ORDER BY i.dead_lettered_at DESC
+    LIMIT p_wave_size);
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+
+  IF v_count > 0 THEN
+    UPDATE __SCHEMA__.wh_dlq_probe_campaigns c
+    SET wave = c.wave + 1, wave_started_at = NOW()
+    WHERE c.fingerprint = p_fingerprint AND c.generation = p_generation;
+  END IF;
+
+  RETURN v_count;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.begin_trickle_wave IS
+'One trickle wave for a Mixed cohort (127): releases up to p_wave_size HELD rows staggered across five minutes and stamps the campaign''s wave state. Zero released = the cohort is drained. Doubling happens between waves in the worker, never inside one.';
+
+-- ============================================================================
+-- count_wave_requarantines — has the wave washed back?
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.count_wave_requarantines(
+  p_fingerprint VARCHAR(16), p_generation TEXT)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_since TIMESTAMPTZ;
+  v_count INTEGER;
+BEGIN
+  SELECT c.wave_started_at INTO v_since
+  FROM __SCHEMA__.wh_dlq_probe_campaigns c
+  WHERE c.fingerprint = p_fingerprint AND c.generation = p_generation;
+  IF v_since IS NULL THEN
+    RETURN 0;
+  END IF;
+  SELECT count(*) INTO v_count
+  FROM __SCHEMA__.wh_dead_letters dl
+  WHERE dl.error_fingerprint = p_fingerprint
+    AND dl.recovered_at IS NULL
+    AND dl.dead_lettered_at > v_since;
+  RETURN v_count;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.count_wave_requarantines IS
+'New unrecovered dead letters carrying the cohort''s fingerprint since the current wave started (127) — the wave washing back. Any washback halts the trickle in the worker.';
