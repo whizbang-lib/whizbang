@@ -312,9 +312,16 @@ public static class PackageManager {
 
         existingPackages.Add(include);
 
+        // PreservePackages is the operator's explicit "keep this one". It is collected by the
+        // wizard, stored in the decision file and threaded through by ApplyCommand -- but was
+        // never consulted here, so a package somebody asked to keep was removed anyway, silently
+        // and against a setting the tool told them would work.
+        var preserved = settings.PreservePackages
+            .Contains(include, StringComparer.OrdinalIgnoreCase);
+
         // Check if this is a package to remove/replace
         if (_packageMappings.TryGetValue(include, out var replacement)) {
-          if (settings.RemoveOldPackages) {
+          if (settings.RemoveOldPackages && !preserved) {
             pr.Remove();
             changes.Add(new PackageChange(
                 projectPath,
@@ -327,7 +334,7 @@ public static class PackageManager {
           if (!string.IsNullOrEmpty(replacement)) {
             packagesToAdd.Add(replacement);
           }
-        } else if (_packagesToRemove.Contains(include) && settings.RemoveOldPackages) {
+        } else if (_packagesToRemove.Contains(include) && settings.RemoveOldPackages && !preserved) {
           pr.Remove();
           changes.Add(new PackageChange(
               projectPath,
