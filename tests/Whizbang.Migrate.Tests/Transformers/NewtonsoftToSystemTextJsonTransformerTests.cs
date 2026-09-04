@@ -316,4 +316,148 @@ public class NewtonsoftToSystemTextJsonTransformerTests {
     await Assert.That(count).IsEqualTo(1);
   }
 
+
+  // ── Per-namespace handling: what survives the migration and what does not ──
+
+  [Test]
+  public async Task TransformAsync_SchemaNamespace_IsKeptWithAWarningAsync() {
+    // Newtonsoft.Json.Schema has no System.Text.Json counterpart at all. Removing the import
+    // would break every JSchema reference in the file, so it is deliberately left in place and
+    // the operator is told to reach for another package. Keeping it is the correct outcome
+    // here, which is the opposite of what this transformer does with every other Newtonsoft
+    // namespace.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+      using Newtonsoft.Json.Schema;
+
+      public class Order {
+        [JsonProperty("order_id")]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.TransformedCode).Contains("using Newtonsoft.Json.Schema;")
+      .Because("there is no equivalent to migrate to, so removing it would only break the file");
+    await Assert.That(result.Warnings.Any(w => w.Contains("Schema", StringComparison.Ordinal))).IsTrue()
+      .Because("a namespace the tool cannot migrate has to be reported, not silently left behind");
+  }
+
+  [Test]
+  public async Task TransformAsync_ConvertersNamespace_IsRemovedWithAWarningAsync() {
+    // Converters are the opposite call: System.Text.Json has converters, but they are a
+    // different type entirely, so the import must go and the author must rewrite them. Leaving
+    // it would reference a package the migration is removing.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+      using Newtonsoft.Json.Converters;
+
+      public class Order {
+        [JsonProperty("order_id")]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.TransformedCode).DoesNotContain("Newtonsoft.Json.Converters");
+    await Assert.That(result.Warnings.Any(w => w.Contains("Converters", StringComparison.Ordinal))).IsTrue()
+      .Because("converter types differ between the libraries, so this is manual work the operator must be told about");
+  }
+
+  [Test]
+  public async Task TransformAsync_AnUnrecognisedNewtonsoftNamespace_IsRemovedAndNamedAsync() {
+    // The catch-all. A namespace this tool has never heard of still cannot stay once the package
+    // is gone, but removing it blindly could break code the tool does not understand -- so the
+    // warning names the namespace rather than reporting a generic count.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+      using Newtonsoft.Json.Bson;
+
+      public class Order {
+        [JsonProperty("order_id")]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.TransformedCode).DoesNotContain("Newtonsoft.Json.Bson");
+    await Assert.That(result.Warnings.Any(w => w.Contains("Newtonsoft.Json.Bson", StringComparison.Ordinal))).IsTrue()
+      .Because("the operator needs to know which namespace went, not merely that one did");
+  }
+
+  [Test]
+  public async Task TransformAsync_ComplexJsonProperty_IsLeftAloneAndFlaggedAsync() {
+    // A [JsonProperty] carrying several settings has no single-attribute equivalent. Rewriting
+    // it partially would silently drop the settings that did not survive, so it is left intact
+    // and reported.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+
+      public class Order {
+        [JsonProperty("order_id", NullValueHandling = NullValueHandling.Ignore, Order = 2)]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("Complex", StringComparison.Ordinal))).IsTrue()
+      .Because("a partially converted attribute would drop settings without saying so");
+    await Assert.That(result.TransformedCode).Contains("NullValueHandling")
+      .Because("the original has to survive intact for the operator to convert by hand");
+  }
+
+  [Test]
+  public async Task TransformAsync_ComplexJsonPropertyWithTodosDisabled_StaysSilentAsync() {
+    // The reporting is opt-out. With it disabled the attribute is still left alone -- the
+    // setting controls whether the tool comments, never whether it rewrites.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer(addTodoForUnsupported: false);
+    const string source = """
+      using Newtonsoft.Json;
+
+      public class Order {
+        [JsonProperty("order_id", NullValueHandling = NullValueHandling.Ignore, Order = 2)]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("Complex", StringComparison.Ordinal))).IsFalse();
+    await Assert.That(result.TransformedCode).Contains("NullValueHandling")
+      .Because("silencing the warning must not change what the transformer does to the code");
+  }
+
+  [Test]
+  public async Task TransformAsync_JsonConstructorAndExtensionData_SurviveUnchangedAsync() {
+    // Both attributes exist under the same names in System.Text.Json, so the correct action is
+    // to keep them and add the import. Rewriting them would churn a file for no gain.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+
+      public class Order {
+        [JsonExtensionData]
+        public Dictionary<string, object> Extra { get; set; } = new();
+
+        [JsonConstructor]
+        public Order() { }
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.TransformedCode).Contains("[JsonExtensionData]");
+    await Assert.That(result.TransformedCode).Contains("[JsonConstructor]");
+    await Assert.That(result.TransformedCode).Contains("using System.Text.Json.Serialization;")
+      .Because("the attributes keep their names but move namespace, so the import has to arrive");
+  }
+
 }
