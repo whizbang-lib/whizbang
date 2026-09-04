@@ -965,7 +965,9 @@ public class InboxDispatchWorkerGapTests {
     var added = new List<(long Value, string? SourceTable, string? Reason)>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (instrument.Name.Contains("dead_letter", StringComparison.Ordinal)) {
+        // Exactly the Added counter: the meter also carries arrivals_by_stack (same
+        // emission, richer tags), and this lock is about Added's arithmetic alone.
+        if (instrument.Name == "whizbang.dead_letters.added") {
           l.EnableMeasurementEvents(instrument);
         }
       },
