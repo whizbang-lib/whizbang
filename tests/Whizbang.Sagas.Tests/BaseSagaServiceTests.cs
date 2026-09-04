@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Sagas.Models;
 using Whizbang.Core;
 using Whizbang.Sagas.Services;
 
@@ -212,6 +213,102 @@ public class BaseSagaServiceTests {
     public SagaItemState Status { get; set; }
     public string? ErrorMessage { get; set; }
     public string? ErrorDetails { get; set; }
+  }
+
+  // ── Watchdog recovery guards ──────────────────────────────────────────
+
+  /// <summary>A service whose projection lookup returns whatever the test hands it.</summary>
+  private sealed class ProjectionSagaService(ISagaEventEmitter emitter, BaseSagaModel? projection)
+    : BaseSagaService<TestInitiatedEvent, TestItemsDispatchedEvent, TestItemStartedEvent, TestItemCompletedEvent,
+                      TestItemFailedEvent, TestCompletedEvent, TestResetEvent, TestHookStartedEvent, TestHookCompletedEvent>(
+        SAGA_NAME, emitter, NullLogger<ProjectionSagaService>.Instance) {
+
+    protected override Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken)
+      => Task.FromResult(projection);
+
+
+    protected override TestInitiatedEvent BuildInitiatedEvent(SagaContext ctx, IReadOnlyList<string> itemIdentifiers, IReadOnlyList<string>? hookNames, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, ItemIdentifiers = itemIdentifiers, TotalItems = itemIdentifiers.Count, HookNames = hookNames };
+
+    protected override TestItemsDispatchedEvent BuildItemsDispatchedEvent(SagaContext ctx, int totalItems, int successfullyDispatched, int failedToDispatch, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, TotalItems = totalItems, SuccessfullyDispatched = successfullyDispatched, FailedToDispatch = failedToDispatch };
+
+    protected override TestItemStartedEvent BuildItemStartedEvent(SagaContext ctx, string itemIdentifier, string? displayName, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, SagaId = ctx.SagaId, ItemIdentifier = itemIdentifier, DisplayName = displayName };
+
+    protected override TestItemCompletedEvent BuildItemCompletedEvent(SagaContext ctx, string itemIdentifier, string? displayName, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, SagaId = ctx.SagaId, ItemIdentifier = itemIdentifier, DisplayName = displayName };
+
+    protected override TestItemFailedEvent BuildItemFailedEvent(SagaContext ctx, string itemIdentifier, string errorMessage, string? errorDetails, string? displayName, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, SagaId = ctx.SagaId, ItemIdentifier = itemIdentifier, DisplayName = displayName, ErrorMessage = errorMessage, ErrorDetails = errorDetails };
+
+    protected override TestCompletedEvent BuildCompletedEvent(SagaContext ctx, SagaStatus finalStatus, string? completedByItemIdentifier, int completedItems, int failedItems, int totalItems, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, FinalStatus = finalStatus, CompletedByItemIdentifier = completedByItemIdentifier, CompletedItems = completedItems, FailedItems = failedItems, TotalItems = totalItems };
+
+    protected override TestResetEvent BuildResetEvent(SagaContext ctx, string itemIdentifier, SagaItemState previousStatus, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, ItemIdentifier = itemIdentifier, PreviousStatus = previousStatus };
+
+    protected override TestHookStartedEvent BuildHookStartedEvent(SagaContext ctx, string hookName, string? displayName, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, HookName = hookName, DisplayName = displayName };
+
+    protected override TestHookCompletedEvent BuildHookCompletedEvent(SagaContext ctx, string hookName, SagaItemState status, string? errorMessage, string? errorDetails, DateTimeOffset sentAt) =>
+      new() { EntityId = ctx.EntityId, HookName = hookName, Status = status, ErrorMessage = errorMessage, ErrorDetails = errorDetails };
+  }
+
+  [Test]
+  public async Task Watchdog_WhenCompletionAlreadyDispatched_DoesNotEmitAgainAsync() {
+    // The watchdog exists to rescue a saga whose completion never went out. Re-emitting one that
+    // DID go out is the opposite failure: every consumer of the completion event sees it twice,
+    // and for a saga that triggers downstream work that means the work runs twice.
+    var emitter = new RecordingEmitter();
+    var saga = new BaseSagaModel {
+      Id = Guid.CreateVersion7(),
+      SagaName = SAGA_NAME,
+      TotalItems = 3,
+      CompletedItems = 3,
+      CompletionEventDispatched = true,
+    };
+    var service = new ProjectionSagaService(emitter, saga);
+
+    var recovered = await service.TryRecoverViaWatchdogAsync(
+      new SagaContext { SagaId = saga.Id }, CancellationToken.None);
+
+    await Assert.That(recovered).IsFalse()
+      .Because("a completion that already went out must not be re-emitted — downstream consumers "
+             + "would run the work it triggers a second time");
+  }
+
+  [Test]
+  public async Task Watchdog_WithNoProjection_ReportsNothingToRecoverAsync() {
+    // No projection means the watchdog cannot tell whether the saga is done, and guessing would
+    // emit a completion for a saga still in progress.
+    var service = new ProjectionSagaService(new RecordingEmitter(), projection: null);
+
+    var recovered = await service.TryRecoverViaWatchdogAsync(
+      new SagaContext { SagaId = Guid.CreateVersion7() }, CancellationToken.None);
+
+    await Assert.That(recovered).IsFalse();
+  }
+
+  [Test]
+  public async Task Watchdog_WithItemsStillOutstanding_DoesNotCompleteEarlyAsync() {
+    // The backwards-compatible path trusts the projection's counts. Completing while items remain
+    // outstanding closes a saga whose work has not finished.
+    var saga = new BaseSagaModel {
+      Id = Guid.CreateVersion7(),
+      SagaName = SAGA_NAME,
+      TotalItems = 5,
+      CompletedItems = 2,
+      FailedItems = 1,
+    };
+    var service = new ProjectionSagaService(new RecordingEmitter(), saga);
+
+    var recovered = await service.TryRecoverViaWatchdogAsync(
+      new SagaContext { SagaId = saga.Id }, CancellationToken.None);
+
+    await Assert.That(recovered).IsFalse()
+      .Because("three of five items are terminal — completing here closes a saga whose work is "
+             + "still running");
   }
 
   // ── Test saga service (subclass of BaseSagaService) ──────────────────
