@@ -142,8 +142,13 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
 
         // Add Whizbang FastEndpoints using
         if (!addedWhizbangFastEndpoints) {
+          // The name needs its own leading space: SyntaxFactory builds `using` and the name as
+          // adjacent tokens, so without it the directive renders as `usingWhizbang.Transports...`
+          // and the migrated file does not compile. The FastEndpoints using above avoids this only
+          // because it inherits the original directive's name trivia.
           var whizbangUsing = SyntaxFactory.UsingDirective(
-              SyntaxFactory.ParseName("Whizbang.Transports.FastEndpoints"))
+              SyntaxFactory.ParseName("Whizbang.Transports.FastEndpoints")
+                  .WithLeadingTrivia(SyntaxFactory.Space))
               .WithLeadingTrivia(usingDirective.GetLeadingTrivia())
               .WithTrailingTrivia(SyntaxFactory.TriviaList(SyntaxFactory.EndOfLine("\n")));
           newUsings.Add(whizbangUsing);
