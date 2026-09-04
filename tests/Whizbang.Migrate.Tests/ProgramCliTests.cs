@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Whizbang.Migrate;
+using Whizbang.Migrate.Wizard;
 
 namespace Whizbang.Migrate.Tests;
 
@@ -258,6 +259,109 @@ public class ProgramCliTests {
     Directory.CreateDirectory(dir);
     try {
       var exitCode = await Program.Main(["status", "-p", dir]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+
+  // ── Decision file, end to end through the CLI ─────────────────────────────
+
+  [Test]
+  public async Task Apply_GenerateDecisionFile_WritesAFileThatLoadsBackAsync() {
+    // This is the user-facing path for the commented decision format: the tool writes it, the
+    // operator edits it by hand, and a later run has to read it back. A generated file that
+    // cannot be reloaded strands the migration before it starts.
+    var (dir, _) = await _seedProjectAsync();
+    var decisionPath = Path.Combine(dir, "decisions.jsonc");
+    try {
+      var exitCode = await Program.Main(["apply", "-p", dir, "--generate-decision-file", decisionPath]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(File.Exists(decisionPath)).IsTrue();
+
+      var loaded = await DecisionFile.LoadAsync(decisionPath);
+      await Assert.That(loaded.ProjectPath).IsEqualTo(dir);
+      await Assert.That(await File.ReadAllTextAsync(decisionPath)).Contains("//")
+        .Because("the generated file is meant to be hand-edited, which is what the comments are for");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Apply_GenerateDecisionFile_DoesNotTransformAnythingAsync() {
+    // Generating the file is a preparation step, not a migration. Rewriting source here would
+    // migrate a project before the operator had made a single decision.
+    var (dir, file) = await _seedProjectAsync();
+    var decisionPath = Path.Combine(dir, "decisions.jsonc");
+    try {
+      await Program.Main(["apply", "-p", dir, "--generate-decision-file", decisionPath]);
+
+      await Assert.That(await File.ReadAllTextAsync(file)).IsEqualTo(WOLVERINE_HANDLER)
+        .Because("generating decisions must not also apply them");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Apply_WithADecisionFileSayingSkip_LeavesTheHandlerAloneAsync() {
+    // The decision file exists so an operator can overrule the tool per category. If the CLI
+    // accepted -d and then ignored its contents, every recorded decision would be silently
+    // discarded -- and the run would look successful while doing the opposite of what was asked.
+    var (dir, file) = await _seedProjectAsync();
+    var decisionPath = Path.Combine(dir, "decisions.json");
+    try {
+      var decisions = DecisionFile.Create(dir);
+      decisions.Decisions.Handlers.Default = DecisionChoice.Skip;
+      decisions.Decisions.Projections.Default = DecisionChoice.Skip;
+      await decisions.SaveAsync(decisionPath);
+
+      var exitCode = await Program.Main(["apply", "-p", dir, "-d", decisionPath]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(await File.ReadAllTextAsync(file)).IsEqualTo(WOLVERINE_HANDLER)
+        .Because("a decision file that says Skip has to reach the transformer, not just be read");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Apply_WithADecisionFileSayingConvert_TransformsAsync() {
+    // The control for the Skip case above: with the same wiring and the opposite decision, the
+    // file really is rewritten. Without this, "Skip worked" would also be satisfied by apply
+    // doing nothing at all.
+    var (dir, file) = await _seedProjectAsync();
+    var decisionPath = Path.Combine(dir, "decisions.json");
+    try {
+      var decisions = DecisionFile.Create(dir);
+      decisions.Decisions.Handlers.Default = DecisionChoice.Convert;
+      await decisions.SaveAsync(decisionPath);
+
+      var exitCode = await Program.Main(["apply", "-p", dir, "-d", decisionPath]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(await File.ReadAllTextAsync(file)).IsNotEqualTo(WOLVERINE_HANDLER);
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Apply_GeneratedDecisionFile_IsImmediatelyUsableAsync() {
+    // The two halves joined: generate, then hand the generated file straight back to apply.
+    // This is exactly the sequence the tool prints as its own next-step instruction, so a
+    // generated file the tool cannot consume would break its documented workflow.
+    var (dir, _) = await _seedProjectAsync();
+    var decisionPath = Path.Combine(dir, "decisions.jsonc");
+    try {
+      await Program.Main(["apply", "-p", dir, "--generate-decision-file", decisionPath]);
+
+      var exitCode = await Program.Main(["apply", "-p", dir, "-d", decisionPath]);
 
       await Assert.That(exitCode).IsEqualTo(0);
     } finally {
