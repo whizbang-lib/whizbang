@@ -149,6 +149,57 @@ public class DeadLetterRecoveryWorkerTests {
       Generation: "test/0.0.1");
   }
 
+  [Test]
+  public async Task TheCounters_StartAtZeroAndAreReadableAsync() {
+    // These are the worker's only external account of what it has done — an operator reads them to
+    // tell "the sweep is running and finding nothing" apart from "the sweep is not running". They
+    // were never read in a test, so nothing held them to being observable at all.
+    var (worker, _) = _newWorker();
+
+    await Assert.That(worker.TotalScans).IsEqualTo(0L);
+    await Assert.That(worker.TotalRecovered).IsEqualTo(0L);
+    await Assert.That(worker.TotalHeld).IsEqualTo(0L);
+    await Assert.That(worker.TotalPermanentlyFailed).IsEqualTo(0L)
+      .Because("a counter that cannot be read is indistinguishable from a sweep that never ran");
+  }
+
+  [Test]
+  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
+    // The worker parks on the schema gate before its first sweep. A pod stopped while still
+    // waiting has no DLQ table to scan, so the exit must be silent rather than an error on every
+    // fast restart.
+    var svc = new FakeRecoveryService();
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeadLetterRecoveryService>(svc);
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
+    var sp = services.BuildServiceProvider();
+    var worker = new DeadLetterRecoveryWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new NeverReadySchemaGate(),
+      Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
+      new FixedGenerationProvider("test/0.0.1"),
+      NullLogger<DeadLetterRecoveryWorker>.Instance,
+      metrics: null,
+      notificationListener: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.TotalScans).IsEqualTo(0L)
+      .Because("nothing may be scanned before the schema exists — a sweep against a missing table "
+             + "is what the gate is there to prevent");
+  }
+
+  /// <summary>A schema gate that never opens, for the shutdown-while-waiting path.</summary>
+  private sealed class NeverReadySchemaGate : ISchemaReadyGate {
+    public bool IsReady => false;
+    public void MarkReady() { }
+    public Task WaitForReadyAsync(CancellationToken cancellationToken)
+      => Task.Delay(Timeout.Infinite, cancellationToken);
+  }
+
   private static (DeadLetterRecoveryWorker Worker, FakeRecoveryService Svc) _newWorker(
       DeadLetterRecoveryOptions? options = null,
       string generation = "test/0.0.1",
