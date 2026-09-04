@@ -615,15 +615,31 @@ function _selectFailureSignal {
     # failure is never reported with an empty body.
     if ($signal.Count -eq 0) { return @($Lines | Select-Object -Last 30) }
 
-    # Keep both ends. Under --fail-fast one real failure cancels everything still running, and
-    # each cancelled test prints its own three-line OperationCanceledException block. A tail-only
-    # window is then filled entirely by the consequences and the originating failure -- the only
-    # one that explains anything -- scrolls off the top.
     if ($signal.Count -le 100) { return $signal }
 
-    return @($signal | Select-Object -First 40) +
-           @("    ... $($signal.Count - 100) lines elided ...") +
-           @($signal | Select-Object -Last 60)
+    # Anchor the head on the FIRST reported failure, not on the first lines of output. Under
+    # --fail-fast one real failure cancels everything still running and each cancelled test
+    # prints its own OperationCanceledException block, so a tail window holds only consequences.
+    # A leading window is no better: the first lines are TUnit's startup banner, which is what a
+    # position-based head actually captured. The failure that explains the run is somewhere in
+    # the middle, and only its content locates it.
+    $firstFailure = -1
+    for ($i = 0; $i -lt $signal.Count; $i++) {
+        if ($signal[$i] -match '^\s*failed\s') { $firstFailure = $i; break }
+    }
+
+    $head = if ($firstFailure -ge 0) {
+        $signal[$firstFailure..([Math]::Min($firstFailure + 24, $signal.Count - 1))]
+    } else {
+        $signal | Select-Object -First 25
+    }
+
+    $tail = @($signal | Select-Object -Last 60)
+    $elided = $signal.Count - $head.Count - $tail.Count
+
+    if ($elided -le 0) { return $signal }
+
+    return @($head) + @("    ... $elided lines elided ...") + $tail
 }
 
 
@@ -1210,11 +1226,23 @@ try {
                     if ($failureSignal.Count -eq 0) {
                         $failureSignal = @($outText | Select-Object -Last 30)
                     } elseif ($failureSignal.Count -gt 100) {
-                        # Both ends: under --fail-fast the cancellation storm fills a tail-only
-                        # window and buries the one failure that caused it.
-                        $failureSignal = @($failureSignal | Select-Object -First 40) +
-                                         @("    ... $($failureSignal.Count - 100) lines elided ...") +
-                                         @($failureSignal | Select-Object -Last 60)
+                        # Anchor the head on the first reported failure. A position-based head
+                        # captures TUnit's startup banner; a tail-only window captures only the
+                        # cancellation storm that the real failure set off.
+                        $firstFailure = -1
+                        for ($i = 0; $i -lt $failureSignal.Count; $i++) {
+                            if ($failureSignal[$i] -match '^\s*failed\s') { $firstFailure = $i; break }
+                        }
+                        $head = if ($firstFailure -ge 0) {
+                            $failureSignal[$firstFailure..([Math]::Min($firstFailure + 24, $failureSignal.Count - 1))]
+                        } else {
+                            $failureSignal | Select-Object -First 25
+                        }
+                        $tail = @($failureSignal | Select-Object -Last 60)
+                        $elided = $failureSignal.Count - $head.Count - $tail.Count
+                        if ($elided -gt 0) {
+                            $failureSignal = @($head) + @("    ... $elided lines elided ...") + $tail
+                        }
                     }
 
                     $resultsBag.Add([PSCustomObject]@{
