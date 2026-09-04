@@ -35,6 +35,8 @@ public class MergedSharedCopyTests {
 
   private static readonly string[] _indexColumns = ["id"];
   private static readonly string[] _strippedSuffixes = ["Model", "Dto"];
+  private static readonly string[] _tableSuffixes = ["Projection", "Model"];
+  private static readonly string[] _noSuffixes = [];
 
   /// <summary>A generator assembly carrying its own merged copy of the shared code.</summary>
   public sealed record MergedHost(string Host, Assembly Assembly);
@@ -657,6 +659,102 @@ public class MergedSharedCopyTests {
     var config = _call(host.Assembly, ns + "ConfigurationUtilities",
       "SelectTableNameConfig", provider, CancellationToken.None)!;
     await Assert.That((bool)config.GetType().GetProperty("StripSuffixes")!.GetValue(config)!).IsFalse();
+  }
+
+
+  private const string ARRAY_ATTRIBUTE_SOURCE = """
+    namespace App {
+      [System.AttributeUsage(System.AttributeTargets.Class)]
+      public sealed class TaggedAttribute : System.Attribute {
+        public TaggedAttribute(string[] channels) { Channels = channels; }
+        public string[] Channels { get; }
+        public string[]? Tags { get; set; }
+      }
+
+      [Tagged(new[] { "orders", "billing" }, Tags = new[] { "public", "v2" })]
+      public class TaggedModel { }
+    }
+    """;
+
+  private static AttributeData _arrayAttribute() {
+    var compilation = GeneratorTestHelper.CreateCompilation(ARRAY_ATTRIBUTE_SOURCE);
+    var type = compilation.GetTypeByMetadataName("App.TaggedModel")
+      ?? throw new InvalidOperationException("test compilation did not produce App.TaggedModel");
+    return type.GetAttributes().First(a => a.AttributeClass?.Name == "TaggedAttribute");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ReadsStringArrayArgumentsFromEitherPositionAsync(MergedHost host) {
+    // An array argument can arrive named or positional, and the generators read both. A copy
+    // that handled only one would drop the list and fall back to null, which downstream reads
+    // as "no channels configured" rather than as a value it failed to parse.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var attribute = _arrayAttribute();
+
+    var named = (string[]?)_call(
+      host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "Tags");
+    await Assert.That(named).IsNotNull();
+    await Assert.That(named!).Contains("public");
+    await Assert.That(named!).Contains("v2");
+
+    var positional = (string[]?)_call(
+      host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "channels");
+    await Assert.That(positional).IsNotNull()
+      .Because("the constructor parameter is matched by name, case-insensitively");
+    await Assert.That(positional!).Contains("orders");
+
+    var absent = (string[]?)_call(
+      host.Assembly, ns + "AttributeUtilities", "GetStringArrayValue", attribute, "Missing");
+    await Assert.That(absent).IsNull()
+      .Because("an argument that is not there is null, not an empty array a caller would use");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_GeneratesPerspectiveTableNamesIdenticallyAsync(MergedHost host) {
+    // This is the physical table a perspective reads and writes. Two packages disagreeing here
+    // means one of them queries a table the other never created, and the mismatch only appears
+    // once both generators have run over the same model.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var configType = _type(host.Assembly, "Whizbang.Generators.Shared.Models.TableNameConfig");
+    var stripping = Activator.CreateInstance(configType, true, _tableSuffixes)!;
+    var keeping = Activator.CreateInstance(configType, false, _tableSuffixes)!;
+
+    var stripped = (string)_call(host.Assembly, ns + "NamingConventionUtilities",
+      "GenerateTableName", "OrderProjection", stripping)!;
+    await Assert.That(stripped).IsEqualTo("wh_per_order")
+      .Because("the suffix is stripped before the snake_case conversion, not after");
+
+    var kept = (string)_call(host.Assembly, ns + "NamingConventionUtilities",
+      "GenerateTableName", "OrderProjection", keeping)!;
+    await Assert.That(kept).IsEqualTo("wh_per_order_projection")
+      .Because("stripping disabled has to keep the suffix, or the table silently changes name");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_StripsTheFirstMatchingSuffixOnlyAsync(MergedHost host) {
+    // First match wins, and the guards return the name untouched. Stripping twice would turn
+    // OrderModelProjection into Order and collapse two distinct models onto one table.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var configType = _type(host.Assembly, "Whizbang.Generators.Shared.Models.TableNameConfig");
+    var config = Activator.CreateInstance(configType, true, _tableSuffixes)!;
+    var noSuffixes = Activator.CreateInstance(configType, true, _noSuffixes)!;
+
+    var once = (string)_call(host.Assembly, ns + "NamingConventionUtilities",
+      "StripConfigurableSuffixes", "OrderModelProjection", config)!;
+    await Assert.That(once).IsEqualTo("OrderModel")
+      .Because("only the first matching suffix comes off; the result is not re-examined");
+
+    var untouched = (string)_call(host.Assembly, ns + "NamingConventionUtilities",
+      "StripConfigurableSuffixes", "OrderProjection", noSuffixes)!;
+    await Assert.That(untouched).IsEqualTo("OrderProjection")
+      .Because("an empty suffix list strips nothing rather than everything");
+
+    var empty = (string)_call(host.Assembly, ns + "NamingConventionUtilities",
+      "StripConfigurableSuffixes", "", config)!;
+    await Assert.That(empty).IsEqualTo("");
   }
 
 }
