@@ -739,7 +739,8 @@ if ($CountTests) {
 function Invoke-CoverageReport {
     param(
         [string]$RepoRoot,
-        [array]$CoberturaFiles
+        [array]$CoberturaFiles,
+        [bool]$RunWasPartial = $false
     )
 
     $reportDir = Join-Path $RepoRoot "coverage-report"
@@ -785,6 +786,18 @@ function Invoke-CoverageReport {
     Write-Host ""
     Write-Host "=====================================" -ForegroundColor Cyan
     Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
+
+    # A project that failed contributes no cobertura file, so its lines leave the denominator
+    # entirely and the percentage is computed over whatever survived. Under --fail-fast a single
+    # failure also skips every project after it. The number that prints is then not comparable to
+    # the previous run's and must not be read as a trend -- it is a different measurement, and
+    # nothing about its format says so.
+    if ($RunWasPartial) {
+        Write-Host "  PARTIAL RUN — not comparable to a complete one." -ForegroundColor Red
+        Write-Host "  Projects failed or were skipped, so their lines are absent from both" -ForegroundColor Red
+        Write-Host "  the covered count and the total. Fix the failure and re-measure." -ForegroundColor Red
+    }
+
     Write-Host "=====================================" -ForegroundColor Cyan
 
     # Show classes below 100% coverage.
@@ -1354,7 +1367,7 @@ try {
                                $_.LastWriteTimeUtc -ge $script:runStartTime }
 
             if ($coberturaFiles.Count -gt 0) {
-                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($totalProjectsFailed -gt 0)
                 $coveragePct = $coverageResult.CoveragePct
                 $totalLines = $coverageResult.TotalLines
                 $totalCovered = $coverageResult.TotalCovered
@@ -2666,7 +2679,7 @@ try {
                            $_.LastWriteTimeUtc -ge $script:runStartTime }
 
         if ($coberturaFiles.Count -gt 0) {
-            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($hasTestFailures)
             $coveragePct = $coverageResult.CoveragePct
             $totalLines = $coverageResult.TotalLines
             $totalCovered = $coverageResult.TotalCovered
