@@ -416,6 +416,16 @@ public partial class DeadLetterRecoveryWorker(
             await svc.RecordStackAsync(row.DeadLetterId, stack, ct).ConfigureAwait(false);
           }
         }
+
+        // Roll the stack-history window on the same idle-gated scan. Skipped entirely when
+        // disabled (retention <= 0), so a "keep forever" configuration costs no round trip;
+        // the DELETE is cheap and day-granular, so running it each scan is a near-no-op.
+        if (_options.StackHistoryRetentionDays > 0) {
+          var pruned = await svc.PruneStackHistoryAsync(_options.StackHistoryRetentionDays, ct).ConfigureAwait(false);
+          if (pruned > 0) {
+            LogStackHistoryPruned(_logger, pruned, _options.StackHistoryRetentionDays);
+          }
+        }
       }
 
       var policy = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryPolicy>();
@@ -535,6 +545,10 @@ public partial class DeadLetterRecoveryWorker(
       }
     }
   }
+
+  [LoggerMessage(EventId = 27, Level = LogLevel.Information,
+    Message = "Pruned {Pruned} rolling stack-history row(s) older than {RetentionDays} day(s)")]
+  static partial void LogStackHistoryPruned(ILogger logger, int pruned, int retentionDays);
 
   [LoggerMessage(EventId = 24, Level = LogLevel.Information,
     Message = "Trickle wave {Wave} released {Released} row(s) of Mixed cohort {Fingerprint} — staggered, evaluated next scan")]

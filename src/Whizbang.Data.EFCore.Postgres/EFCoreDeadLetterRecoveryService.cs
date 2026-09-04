@@ -158,6 +158,19 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {_fn("prune_stack_history")}(@days)";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("days", NpgsqlTypes.NpgsqlDbType.Integer) { Value = retentionDays });
+    return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+  }
+
+  /// <inheritdoc />
   public async Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(stack);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);

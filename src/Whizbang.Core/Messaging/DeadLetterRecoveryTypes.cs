@@ -234,6 +234,14 @@ public sealed class DeadLetterRecoveryOptions {
   public int StackBackfillBatchSize { get; set; } = 500;
 
   /// <summary>
+  /// Rolling retention, in days, for the stack-history log (<c>wh_stack_daily</c>): the
+  /// recovery worker prunes daily rows older than this so the history survives dead-letter
+  /// purging without growing without bound. Default 90. A non-positive value disables the
+  /// rolling cleanup — the log is then kept forever.
+  /// </summary>
+  public int StackHistoryRetentionDays { get; set; } = 90;
+
+  /// <summary>
   /// Share of a scan batch that must postdate the previous scan before that cycle counts as
   /// self-inflicted. Default <c>0.5</c>.
   /// </summary>
