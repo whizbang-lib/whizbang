@@ -493,4 +493,94 @@ public class ProjectionToPerspectiveTransformerTests {
         w.Contains("cross-service") ||
         w.Contains("single source"))).IsTrue();
   }
+
+  [Test]
+  public async Task TransformAsync_ShouldDeleteWithConditionalLogic_LeavesAReviewMarkerAsync() {
+    // Marten's ShouldDelete returns a bool per event; Whizbang's Apply returns a ModelAction.
+    // A conditional body cannot be translated mechanically, so the transformer picks
+    // ModelAction.Delete and flags it. Dropping that marker is the dangerous outcome: a rule
+    // that deleted a row only under a condition becomes one that always deletes, the code
+    // compiles, and the loss shows up as missing rows in production.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderModel {
+        public Guid Id { get; set; }
+        public string Status { get; set; }
+      }
+
+      public class OrderProjection : SingleStreamProjection<OrderModel> {
+        public bool ShouldDelete(OrderPurged @event) => @event.Force;
+      }
+
+      public record OrderPurged(Guid StreamId, bool Force);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("ModelAction");
+    await Assert.That(result.TransformedCode).Contains("TODO")
+      .Because("a condition that could not be carried across has to be visible in the code, "
+             + "not only in a report the operator may never read");
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDeleteWithABlockBody_LeavesAReviewMarkerAsync() {
+    // Same contract through the statement-bodied form, which is how most non-trivial rules are
+    // written.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderModel {
+        public Guid Id { get; set; }
+        public string Status { get; set; }
+      }
+
+      public class OrderProjection : SingleStreamProjection<OrderModel> {
+        public bool ShouldDelete(OrderPurged @event) {
+          if (@event.Force) {
+            return true;
+          }
+          return false;
+        }
+      }
+
+      public record OrderPurged(Guid StreamId, bool Force);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("TODO");
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDeleteThatAlwaysDeletes_NeedsNoReviewMarkerAsync() {
+    // The control for the two above. An unconditional rule translates exactly, so marking it
+    // for review would train an operator to skim past the markers that do matter.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderModel {
+        public Guid Id { get; set; }
+      }
+
+      public class OrderProjection : SingleStreamProjection<OrderModel> {
+        public bool ShouldDelete(OrderPurged @event) {
+          return true;
+        }
+      }
+
+      public record OrderPurged(Guid StreamId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("ModelAction");
+    await Assert.That(result.TransformedCode).DoesNotContain("TODO: Review")
+      .Because("an exact translation must not carry a review marker, or the markers stop meaning anything");
+  }
+
 }
