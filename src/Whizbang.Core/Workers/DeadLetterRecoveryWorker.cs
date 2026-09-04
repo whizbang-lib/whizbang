@@ -420,7 +420,8 @@ public partial class DeadLetterRecoveryWorker(
           }
         }
         if (batch.Count > 0) {
-          await svc.RecordStacksAsync(batch, ct).ConfigureAwait(false);
+          var newStacks = await svc.RecordStacksAsync(batch, ct).ConfigureAwait(false);
+          _metrics?.RecordNewStacks(newStacks);
         }
 
         // Roll the stack-history window on the same idle-gated scan. Skipped entirely when

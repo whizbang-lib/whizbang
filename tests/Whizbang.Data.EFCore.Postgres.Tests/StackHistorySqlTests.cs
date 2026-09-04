@@ -105,6 +105,35 @@ public class StackHistorySqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task RecordStacksBatch_ReturnsCountOfNewlySeenStacksAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var svc = _svc(ctx);
+    // First: two distinct stacks — both new.
+    var t1 = "System.Exception: n1\n   at My.App.One.RunAsync()";
+    var t2 = "System.Exception: n2\n   at My.App.Two.RunAsync()";
+    var first = new List<(Guid, StackIdentity)> {
+      (await _seedAsync(conn, t1), StackNormalizer.Normalize(t1)!),
+      (await _seedAsync(conn, t2), StackNormalizer.Normalize(t2)!),
+    };
+    var newFirst = await svc.RecordStacksAsync(first);
+    await Assert.That(newFirst).IsEqualTo(2)
+      .Because("both failure shapes are seen for the first time — the new-failure-mode signal");
+
+    // Second: one repeat of t1, one brand-new t3 — only ONE new.
+    var t3 = "System.Exception: n3\n   at My.App.Three.RunAsync()";
+    var second = new List<(Guid, StackIdentity)> {
+      (await _seedAsync(conn, t1), StackNormalizer.Normalize(t1)!),
+      (await _seedAsync(conn, t3), StackNormalizer.Normalize(t3)!),
+    };
+    var newSecond = await svc.RecordStacksAsync(second);
+    await Assert.That(newSecond).IsEqualTo(1)
+      .Because("a stack already in wh_stacks is not new — only genuinely first-seen shapes "
+             + "count toward the alarm");
+  }
+
+  [Test]
   public async Task Prune_RemovesDaysOlderThanRetention_KeepsRecentAsync() {
     await using var ctx = CreateDbContext();
     var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
