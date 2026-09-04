@@ -595,6 +595,30 @@ trap {
 #
 # Source-generated files are excluded: TUnit emits a metadata class per test
 # under obj/, so counting those would roughly double every figure.
+function _selectFailureSignal {
+    <#
+    .SYNOPSIS
+        Keeps the diagnostic lines from a test run's output, discarding progress noise.
+    .DESCRIPTION
+        TUnit prints a per-test progress line ("[+10771/x1/?0] Suite.dll - TestName (2m 03s)")
+        every few seconds for the whole run. A test that fails early therefore has its failure
+        block -- name, exception, assertion message -- pushed far outside any tail window by the
+        thousands of progress lines that follow it, so the captured output ends up saying only
+        that something failed, never what. Dropping the progress lines first keeps the failure
+        block and the trailing summary, which together are what a reader actually needs.
+    #>
+    param([string[]]$Lines)
+
+    $signal = @($Lines | Where-Object { $_ -notmatch '\[\+\d+/x\d+/\?\d+\]' })
+
+    # Fall back to a plain tail if a runner ever emits nothing but progress lines, so a
+    # failure is never reported with an empty body.
+    if ($signal.Count -eq 0) { return @($Lines | Select-Object -Last 30) }
+
+    return @($signal | Select-Object -Last 60)
+}
+
+
 function Get-TestInventory {
     param([string]$RepoRoot, [string[]]$ProjectPaths)
 
@@ -1026,7 +1050,7 @@ try {
             return [PSCustomObject]@{
                 ProjectName = $projName
                 ExitCode = $proc.ExitCode
-                Output = ($output -split "`n" | Select-Object -Last 30) -join "`n"
+                Output = (_selectFailureSignal ($output -split "`n")) -join "`n"
                 TestsPassed = $counts.Passed
                 TestsFailed = $counts.Failed
                 TestsSkipped = $counts.Skipped
@@ -1145,10 +1169,22 @@ try {
                             $tSkipped = [int]$last.Groups[3].Value
                         }
                     }
+                    # Drop TUnit's per-test progress lines before storing the output: they are
+                    # emitted every few seconds for the whole run, so a tail window would evict
+                    # the failure block of a test that failed early and report only that
+                    # something failed, never what.
+                    $outText = @($output | ForEach-Object { $_.ToString() })
+                    $failureSignal = @($outText | Where-Object { $_ -notmatch '\[\+\d+/x\d+/\?\d+\]' })
+                    if ($failureSignal.Count -eq 0) {
+                        $failureSignal = @($outText | Select-Object -Last 30)
+                    } else {
+                        $failureSignal = @($failureSignal | Select-Object -Last 60)
+                    }
+
                     $resultsBag.Add([PSCustomObject]@{
                         ProjectName = $projectName
                         ExitCode = $LASTEXITCODE
-                        Output = ($output | Select-Object -Last 30) -join "`n"
+                        Output = $failureSignal -join "`n"
                         TestsPassed = $tPassed
                         TestsFailed = $tFailed
                         TestsSkipped = $tSkipped
