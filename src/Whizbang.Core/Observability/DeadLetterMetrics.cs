@@ -52,6 +52,19 @@ public sealed class DeadLetterMetrics {
   /// <summary>Rows scheduled by the generation-replay sweep. Tagged by generation.</summary>
   public Counter<long> GenerationReplayScheduled { get; }
 
+  /// <summary>
+  /// Per-process cap on distinct <c>stack_id</c> tag values. Stack dedup bounds any one
+  /// storm naturally, but a process lifetime is unbounded — past the cap, arrivals count
+  /// under the single "overflow" bucket instead of growing the series forever.
+  /// </summary>
+#pragma warning disable CA1707
+  public const int MAX_DISTINCT_STACK_TAGS = 500;
+#pragma warning restore CA1707
+
+  private readonly Counter<long> _arrivalsByStack;
+  private readonly Counter<long> _cohortVerdicts;
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _seenStacks = new();
+
   /// <summary>Initializes a new instance of <see cref="DeadLetterMetrics"/>.</summary>
   public DeadLetterMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
@@ -75,5 +88,49 @@ public sealed class DeadLetterMetrics {
     GenerationReplayScheduled = meter.CreateCounter<long>(
       "whizbang.dead_letters.generation_replay_scheduled",
       description: "Rows scheduled by the generation-replay sweep on worker startup");
+    _arrivalsByStack = meter.CreateCounter<long>(
+      "whizbang.dead_letters.arrivals_by_stack",
+      description: "Dead-letter arrivals tagged by normalized stack_id + reason — the real-time "
+                 + "half of the stack telemetry contract; a stack_id with no prior history right "
+                 + "after a deploy is the new-failure-mode alarm");
+    _cohortVerdicts = meter.CreateCounter<long>(
+      "whizbang.dead_letters.cohort_verdicts",
+      description: "Canary campaign verdicts tagged by cohort + verdict (Pass/Fail/Mixed)");
+  }
+
+  /// <summary>
+  /// Counts a dead-letter arrival under its normalized stack identity — computed inline
+  /// via the SAME <see cref="Whizbang.Core.DeadLetters.StackNormalizer"/> the async
+  /// backfill uses, so the dashboard's stack_id joins the relational layer verbatim.
+  /// No text tags "none"; past-the-cap identities tag "overflow" (counted, never dropped).
+  /// </summary>
+  /// <param name="sourceTable">Origin work table.</param>
+  /// <param name="failureReason">The MessageFailureReason numeric value.</param>
+  /// <param name="errorText">The failure text, when available.</param>
+  public void RecordArrival(string sourceTable, int failureReason, string? errorText) {
+    var stack = Whizbang.Core.DeadLetters.StackNormalizer.Normalize(errorText);
+    string stackId;
+    if (stack is null) {
+      stackId = "none";
+    } else if (_seenStacks.ContainsKey(stack.SequenceHash)
+               || (_seenStacks.Count < MAX_DISTINCT_STACK_TAGS
+                   && _seenStacks.TryAdd(stack.SequenceHash, 0))) {
+      stackId = stack.SequenceHash;
+    } else {
+      stackId = "overflow";
+    }
+    _arrivalsByStack.Add(1,
+      new KeyValuePair<string, object?>("source_table", sourceTable),
+      new KeyValuePair<string, object?>("reason", failureReason.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+      new KeyValuePair<string, object?>("stack_id", stackId));
+  }
+
+  /// <summary>Counts a canary campaign verdict for a cohort.</summary>
+  /// <param name="cohort">The cohort key (error fingerprint).</param>
+  /// <param name="verdict">How the probes resolved.</param>
+  public void RecordCohortVerdict(string cohort, Whizbang.Core.Messaging.CanaryVerdictKind verdict) {
+    _cohortVerdicts.Add(1,
+      new KeyValuePair<string, object?>("cohort", cohort),
+      new KeyValuePair<string, object?>("verdict", verdict.ToString()));
   }
 }

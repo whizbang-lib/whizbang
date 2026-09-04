@@ -275,15 +275,18 @@ public partial class DeadLetterRecoveryWorker(
         case CanaryVerdictKind.Pass:
           var released = await svc.ReleaseHeldCohortAsync(fingerprint, stagger, ct).ConfigureAwait(false);
           LogCohortReleased(_logger, fingerprint, released, "canary-pass");
+          _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Pass);
           _campaignsInFlight.Remove(fingerprint);
           break;
         case CanaryVerdictKind.Fail:
           LogCohortFailed(_logger, fingerprint, verdict.ProbesFailed);
+          _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Fail);
           _campaignsInFlight.Remove(fingerprint);
           break;
         case CanaryVerdictKind.Mixed:
         default:
           LogCohortMixed(_logger, fingerprint, verdict.ProbesSucceeded, verdict.ProbesFailed);
+          _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Mixed);
           _campaignsInFlight.Remove(fingerprint);
           break;
       }
