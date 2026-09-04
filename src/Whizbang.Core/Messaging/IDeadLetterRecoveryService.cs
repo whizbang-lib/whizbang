@@ -83,7 +83,24 @@ public interface IDeadLetterRecoveryService {
   /// eligibility, never a firehose. Returns rows released.
   /// </summary>
   Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default);
+
+  // -------------------- Stack backfill surface (P2) --------------------
+  // The relational stack layer normalizes in C# (one implementation — see
+  // Whizbang.Core.DeadLetters.StackNormalizer) and persists here.
+
+  /// <summary>Dead letters not yet stamped with a stack id, newest first.</summary>
+  Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default);
+
+  /// <summary>
+  /// Persists a normalized stack (frames, ordered links, stack row) idempotently and
+  /// stamps the dead letter with its stack id.
+  /// </summary>
+  Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default);
 }
+
+/// <summary>A dead letter awaiting stack normalization.</summary>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+public sealed record UnstackedDeadLetter(Guid DeadLetterId, string ErrorText);
 
 /// <summary>One campaign unit: held rows sharing an error fingerprint.</summary>
 /// <docs>operations/dead-letter-queue/canary-recovery</docs>

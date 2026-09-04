@@ -27,6 +27,10 @@ public class DeadLetterOperatorEndpointsTests {
 
   private sealed class FakeRecoveryService : IDeadLetterRecoveryService {
     // Campaign surface (P1) — inert; operator endpoints do not drive campaigns.
+    public Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
+    public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
+      Task.CompletedTask;
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
     public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyList<HeldCohort>>([]);

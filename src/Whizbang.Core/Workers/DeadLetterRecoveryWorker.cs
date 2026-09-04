@@ -332,6 +332,20 @@ public partial class DeadLetterRecoveryWorker(
       // verdicts land (probes recovered = nothing due = empty batch).
       await _evaluateCampaignsAsync(svc, ct).ConfigureAwait(false);
 
+      // Stack backfill: the async half of the stack contract. Bounded per scan, and the
+      // C# normalizer is the SAME implementation the inline metric uses, so both halves
+      // agree on every stack_id.
+      if (_options.StackBackfillBatchSize > 0) {
+        var unstacked = await svc.FetchUnstackedAsync(_options.StackBackfillBatchSize, ct).ConfigureAwait(false);
+        foreach (var row in unstacked) {
+          ct.ThrowIfCancellationRequested();
+          var stack = Whizbang.Core.DeadLetters.StackNormalizer.Normalize(row.ErrorText);
+          if (stack is not null) {
+            await svc.RecordStackAsync(row.DeadLetterId, stack, ct).ConfigureAwait(false);
+          }
+        }
+      }
+
       var policy = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryPolicy>();
 
       // Fetch in batches — bounded by ScanBatchSize so a single scan doesn't try to drain

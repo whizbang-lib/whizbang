@@ -139,6 +139,41 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   }
 
   /// <inheritdoc />
+  public async Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT dead_letter_id, error_text FROM {_fn("fetch_unstacked_dead_letters")}(@max)";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxCount });
+    var results = new List<UnstackedDeadLetter>();
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      results.Add(new UnstackedDeadLetter(reader.GetGuid(0), reader.GetString(1)));
+    }
+    return results;
+  }
+
+  /// <inheritdoc />
+  public async Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) {
+    ArgumentNullException.ThrowIfNull(stack);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {_fn("record_dead_letter_stack")}(@id, @sid, @prose, @frames)";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("sid", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = stack.SequenceHash });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("prose", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = stack.IsProse });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("frames", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text) { Value = stack.Frames.ToArray() });
+    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
     var conn = _dbContext.Database.GetDbConnection();

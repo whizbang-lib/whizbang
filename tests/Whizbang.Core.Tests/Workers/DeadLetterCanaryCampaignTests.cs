@@ -66,6 +66,18 @@ public sealed class DeadLetterCanaryCampaignTests {
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) => Task.CompletedTask;
     public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) => Task.FromResult(0);
 
+    public List<UnstackedDeadLetter> Unstacked { get; set; } = [];
+    public List<(Guid Id, string Hash)> RecordedStacks { get; } = [];
+    public Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) {
+      var batch = Unstacked.Take(maxCount).ToList();
+      Unstacked = [.. Unstacked.Skip(maxCount)];
+      return Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>(batch);
+    }
+    public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) {
+      lock (RecordedStacks) { RecordedStacks.Add((deadLetterId, stack.SequenceHash)); }
+      return Task.CompletedTask;
+    }
+
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) {
       Interlocked.Increment(ref PurgeCalls);
       lock (CallOrder) { CallOrder.Add("purge"); }
@@ -285,6 +297,44 @@ public sealed class DeadLetterCanaryCampaignTests {
       .Because("but never a pacing shortcut: Full keeps the staggered release");
     await Assert.That(svc.PurgeCalls).IsEqualTo(1)
       .Because("the grandfather gate applies to Full too");
+  }
+
+  [Test]
+  public async Task Scan_BackfillsUnstackedRows_WithTheNormalizerHashAsync() {
+    var id = Guid.NewGuid();
+    var text = "System.InvalidOperationException: x\n   at A.B.<M>d__1.MoveNext()";
+    var svc = new CampaignFake { Unstacked = [new(id, text)] };
+    var (worker, _, _, _) = _build(_opts(RetryHeldOnStartupMode.Off), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    var expected = Whizbang.Core.DeadLetters.StackNormalizer.Normalize(text)!.SequenceHash;
+    List<(Guid, string)> recorded;
+    lock (svc.RecordedStacks) { recorded = [.. svc.RecordedStacks]; }
+    await Assert.That(recorded.Count).IsEqualTo(1);
+    await Assert.That(recorded[0].Item2).IsEqualTo(expected)
+      .Because("the backfill uses the SAME normalizer as the inline metric — one "
+             + "implementation is the whole point; two would drift and split cohorts");
+  }
+
+  [Test]
+  public async Task Scan_BackfillDisabled_TouchesNothingAsync() {
+    var svc = new CampaignFake { Unstacked = [new(Guid.NewGuid(), "boom")] };
+    var opts = _opts(RetryHeldOnStartupMode.Off);
+    opts.StackBackfillBatchSize = 0;
+    var (worker, _, _, _) = _build(opts, svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.RecordedStacks.Count).IsEqualTo(0)
+      .Because("0 is the off switch, and an off switch that trickles is the config-scenery "
+             + "disease this arc exists to kill");
   }
 
   [Test]

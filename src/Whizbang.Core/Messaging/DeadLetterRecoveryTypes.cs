@@ -210,6 +210,14 @@ public sealed class DeadLetterRecoveryOptions {
   public int ReleaseStaggerMinutes { get; set; } = 30;
 
   /// <summary>
+  /// Dead letters normalized into the relational stack layer per scan (the async half of
+  /// the two-layer stack contract; the inline metric is the real-time half). Bounded so a
+  /// storm's backlog normalizes across ticks instead of one giant pass. Default 500;
+  /// 0 disables backfill.
+  /// </summary>
+  public int StackBackfillBatchSize { get; set; } = 500;
+
+  /// <summary>
   /// Share of a scan batch that must postdate the previous scan before that cycle counts as
   /// self-inflicted. Default <c>0.5</c>.
   /// </summary>
