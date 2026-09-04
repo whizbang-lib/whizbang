@@ -211,6 +211,50 @@ public class StartupReadyCompositeTests {
   }
 
   [Test]
+  public async Task ReadyService_IsInertOnEveryLifecyclePhaseButStartedAsync() {
+    // The service hooks IHostedLifecycleService but only acts on StartedAsync — readiness is a
+    // composite of the drained pipeline and the contributors, and neither is known before then.
+    // The other five phases are deliberately no-ops, and they must stay that way: doing work in
+    // StartingAsync would signal ready before the pipeline had run at all.
+    var service = new StartupReadyService(new StartupPipelineState(), new StartupReadySignal());
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+    await service.StartingAsync(cts.Token);
+    await service.StartAsync(cts.Token);
+    await service.StoppingAsync(cts.Token);
+    await service.StopAsync(cts.Token);
+    await service.StoppedAsync(cts.Token);
+
+    await Assert.That(new StartupReadySignal().IsReady).IsFalse()
+      .Because("none of these phases may mark readiness — signalling before the pipeline has run "
+             + "tells the host a service is serving when nothing has been migrated or subscribed");
+  }
+
+  [Test]
+  public async Task ReadyService_NarratesWhichBlockingStepIsHoldingItUpAsync() {
+    // While waiting, the service logs what it is waiting ON. A wait that says only "still waiting"
+    // leaves an operator to guess which step stalled a deploy, which is the question they have.
+    var state = new StartupPipelineState();
+    var signal = new StartupReadySignal();
+    var service = new StartupReadyService(state, signal);
+
+    // A plan whose blocking step never completes: the description must name it rather than
+    // reporting the generic "the startup pipeline".
+    await _driveAsync(state, new StartupRunPlan([_step("Migrate")]));
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+    try {
+      await service.StartedAsync(cts.Token);
+    } catch (OperationCanceledException) {
+      // Expected: the blocking step never completes, so readiness never arrives.
+    }
+
+    await Assert.That(signal.IsReady).IsFalse()
+      .Because("an incomplete blocking step must hold readiness — signalling anyway is how a host "
+             + "starts serving against a half-migrated schema");
+  }
+
+  [Test]
   public async Task ReadyService_WithNoContributors_SignalsOnBlockingDrainAloneAsync() {
     var state = new StartupPipelineState();
     var signal = new StartupReadySignal();
