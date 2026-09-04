@@ -34,8 +34,10 @@ public sealed class IntegrityGapTracker {
   }
 
   private const int MAX_PENDING = 1_000;
+  private const int MAX_CONFIRMED_KEYS = 10_000;
   private readonly Lock _lock = new();
   private readonly List<PendingGap> _pending = [];
+  private readonly HashSet<string> _confirmedWindows = [];
   private readonly ConcurrentDictionary<Guid, (string Name, DateTimeOffset LastSeen, string? RequestTopic)> _origins = new();
 
   /// <summary>Records a checkpoint arrival for liveness accounting. <paramref name="requestTopic"/>
@@ -61,6 +63,34 @@ public sealed class IntegrityGapTracker {
       _pending.Add(gap);
     }
   }
+
+  /// <summary>
+  /// Marks a window as confirmed and reports whether this is its FIRST confirmation — the
+  /// once-per-window warning gate (#667). Re-confirmations of the same window return false
+  /// so the operator log carries one line per condition, not one per checkpoint cycle.
+  /// Bounded: at the cap the set resets (worst case a long-lived gap re-warns once).
+  /// </summary>
+  public bool MarkConfirmed(PendingGap gap) {
+    ArgumentNullException.ThrowIfNull(gap);
+    lock (_lock) {
+      if (_confirmedWindows.Count >= MAX_CONFIRMED_KEYS) {
+        _confirmedWindows.Clear();
+      }
+      return _confirmedWindows.Add(_windowKey(gap));
+    }
+  }
+
+  /// <summary>Clears a window's confirmation memory when it heals, so a genuine regression
+  /// of the same window warns again.</summary>
+  public void ClearConfirmed(PendingGap gap) {
+    ArgumentNullException.ThrowIfNull(gap);
+    lock (_lock) {
+      _confirmedWindows.Remove(_windowKey(gap));
+    }
+  }
+
+  private static string _windowKey(PendingGap gap) =>
+    $"{gap.OriginServiceId:N}|{gap.TenantScope}|{gap.EventType}|{gap.FromCommitSequence}|{gap.ToCommitSequence}";
 
   /// <summary>Removes and returns every pending deficit against the given origin.</summary>
   public IReadOnlyList<PendingGap> TakePending(Guid originServiceId) {

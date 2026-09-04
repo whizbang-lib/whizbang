@@ -131,8 +131,25 @@ public sealed partial class IntegrityCheckpointReceptor(
       if (actual >= pending.ExpectedCount) {
         // Healed in flight — the straggler arrived between checkpoints. Releasing the window's
         // repair slot is what lets the global budget breathe: a slot held by a healed window would
-        // starve a genuinely stuck one.
+        // starve a genuinely stuck one. Confirmation memory clears too, so a genuine
+        // regression of the same window warns afresh.
         repairPolicy.RecordHealed(observation);
+        tracker.ClearConfirmed(pending);
+        continue;
+      }
+
+      // #667: a deficit measured while the service is VISIBLY behind is expected
+      // back-pressure, not loss — during a bulk ingest the producer runs ahead by design
+      // and every in-flight window would read "expected N, have 0". CONFIRMED must mean
+      // the pipeline is drained and the events are genuinely absent, so an unsettled
+      // service defers: no confirmation, no warning, the pending carries to a later
+      // cycle. UNMEASURED (backlog null) keeps the old behavior — same rationale as the
+      // repair gate above: a store that cannot report must not have detection silently
+      // switched off by an upgrade.
+      if (measurable && !settled) {
+        tracker.AddPending(pending);
+        LogGapDeferredConsumerBehind(logger, pending.EventType, pending.TenantScope,
+          pending.OriginServiceName, backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
         continue;
       }
 
@@ -178,12 +195,18 @@ public sealed partial class IntegrityCheckpointReceptor(
       // the condition keeps surfacing until it is genuinely repaired.
       confirmedGaps++;
 
-      // Log the confirmation for EVERY gap, before the publish gate. It used to sit after it, so a
-      // capped report also lost its log line — the operator-facing record thinned out precisely
-      // when there was most to say, and turning publishing off would have removed it altogether
-      // instead of only the durable writes.
-      LogGapConfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
-        pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual, autoRepair);
+      // Log the confirmation before the publish gate (a capped report must not lose its log
+      // line) — but WARN only on the window's FIRST confirmation (#667). An origin that
+      // keeps checkpointing the same watermark re-registers the same deficit every cycle;
+      // per-cycle repeats of an identical warning bury the log precisely when there is most
+      // to read. Re-confirmations stay visible at Debug and countable on the meter.
+      if (tracker.MarkConfirmed(pending)) {
+        LogGapConfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
+          pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual, autoRepair);
+      } else {
+        LogGapReconfirmed(logger, pending.EventType, pending.TenantScope, pending.OriginServiceName,
+          pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual);
+      }
 
       // An operator seeing a confirmed gap with autoRepair=false needs to know WHY: a service
       // deliberately withholding repair while it drains reads identically to one with repair
@@ -339,6 +362,18 @@ public sealed partial class IntegrityCheckpointReceptor(
             + "the backend could not report, which is treated as NOT settled.")]
   static partial void LogRepairWithheldConsumerBehind(ILogger logger, string originServiceName,
     string eventType, long unprocessedRows, long leasedRows);
+
+  [LoggerMessage(EventId = 62, Level = LogLevel.Debug,
+    Message = "Integrity deficit for {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' deferred: "
+            + "consumer visibly behind (unprocessed={UnprocessedRows}, leased={LeasedRows}) — in-flight lag, not loss; re-evaluated when settled")]
+  static partial void LogGapDeferredConsumerBehind(ILogger logger, string eventType, string? tenantScope,
+    string originServiceName, long unprocessedRows, long leasedRows);
+
+  [LoggerMessage(EventId = 63, Level = LogLevel.Debug,
+    Message = "Integrity gap re-confirmed (already warned): {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' "
+            + "window ({FromCommitSequence}, {ToCommitSequence}] — expected {ExpectedCount}, have {ActualCount}")]
+  static partial void LogGapReconfirmed(ILogger logger, string eventType, string? tenantScope,
+    string originServiceName, long fromCommitSequence, long toCommitSequence, int expectedCount, int actualCount);
 
   [LoggerMessage(EventId = 51, Level = LogLevel.Warning,
     Message = "Auto-repair request to '{OriginServiceName}' skipped — missing infrastructure " +

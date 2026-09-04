@@ -241,6 +241,89 @@ public class IntegrityCheckpointReceptorTests {
     await Assert.That(registry.Registered.All(r => r.Msg == typeof(IntegrityCheckpoint))).IsTrue();
   }
 
+  private sealed class _captureLogger : Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor> {
+    public List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (Entries) { Entries.Add((logLevel, eventId.Id, formatter(state, exception))); }
+    }
+  }
+
+  [Test]
+  public async Task DeficitWhileConsumerBehind_IsDeferredNotConfirmedAsync() {
+    // #667 half 1: during a bulk ingest the producer runs ahead by design — the deficit is
+    // in-flight lag, not loss. Confirming it (and warning, per type, per cycle) misreads
+    // ordinary back-pressure as data loss. While the service is measurably unsettled the
+    // pending DEFERS: no confirmation, no warning, carried to a later cycle. Once settled,
+    // a deficit that persists is real and confirms exactly as before.
+    var metrics = new Whizbang.Core.Observability.StreamIntegrityMetrics(new Whizbang.Core.Observability.WhizbangMetrics());
+    var meter = metrics.GapsDetected.Meter;
+    long gaps = 0;
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument.Meter, meter) && instrument.Name == "whizbang.stream_integrity.gaps_detected") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref gaps, value));
+    listener.Start();
+
+    var fx = _fixture(metrics: metrics);
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Backlog = new ServiceBacklog {
+      UnprocessedInboxRows = 500,
+      ActiveLeasedRows = 12,
+      OldestUnprocessedAge = TimeSpan.FromSeconds(30),
+    };
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));                     // deficit -> pending
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true)); // would confirm today
+
+    await Assert.That(Interlocked.Read(ref gaps)).IsEqualTo(0L)
+      .Because("a deficit measured while the consumer is visibly behind is expected back-"
+             + "pressure — CONFIRMED must mean the pipeline is drained and the events are "
+             + "genuinely absent");
+
+    fx.Coordinator.Backlog = new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true)); // settled -> confirms
+
+    await Assert.That(Interlocked.Read(ref gaps)).IsEqualTo(1L)
+      .Because("the deferral carries the pending forward — a deficit that survives the "
+             + "drain is a real gap and must still confirm");
+  }
+
+  [Test]
+  public async Task SameWindowReconfirmed_WarnsOnceThenLogsQuietlyAsync() {
+    // #667 half 2: an origin that keeps checkpointing the same watermark re-registers the
+    // same deficit every cycle, and each re-confirmation logged a fresh WARNING — hundreds
+    // of identical lines for one condition. The first confirmation of a window warns;
+    // re-confirmations of the SAME window log at Debug (the condition is already surfaced
+    // and stays countable on the meter).
+    var logger = new _captureLogger();
+    var policy = new IntegrityRepairPolicy(new IntegrityRepairPolicy.Settings {
+      RecountBackoffAfterUnchanged = 99,   // keep recounts flowing — the governor is not under test
+    });
+    var fx = _fixture(policy: policy, logger: logger);
+    fx.Coordinator.Counts = _ => [];
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));  // pending
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));  // confirms + re-registers
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));  // re-confirms same window
+
+    List<(Microsoft.Extensions.Logging.LogLevel Level, int EventId, string Message)> entries;
+    lock (logger.Entries) { entries = [.. logger.Entries]; }
+    var confirmedWarnings = entries.Count(e =>
+      e.Level == Microsoft.Extensions.Logging.LogLevel.Warning && e.Message.Contains("CONFIRMED integrity gap:"));
+    await Assert.That(confirmedWarnings).IsEqualTo(1)
+      .Because("one condition earns one warning — per-cycle repeats of the identical line "
+             + "bury the log precisely when there is most to read");
+    await Assert.That(entries.Any(e =>
+        e.Level == Microsoft.Extensions.Logging.LogLevel.Debug && e.Message.Contains("re-confirmed"))).IsTrue()
+      .Because("the re-confirmation is still visible at Debug for forensic timelines");
+  }
+
   // ── fixture ─────────────────────────────────────────────────────────────
 
   private sealed class _fixtureState {
@@ -254,7 +337,8 @@ public class IntegrityCheckpointReceptorTests {
   private static _fixtureState _fixture(
       StreamIntegrityOptions? options = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
-      IntegrityRepairPolicy? policy = null) {
+      IntegrityRepairPolicy? policy = null,
+      Microsoft.Extensions.Logging.ILogger<IntegrityCheckpointReceptor>? logger = null) {
     var coordinator = new _verifyCoordinator();
     var dispatcher = new _captureDispatcher();
     var transport = new _captureTransport();
@@ -283,7 +367,7 @@ public class IntegrityCheckpointReceptorTests {
       Dispatcher = dispatcher,
       Transport = transport,
       Receptor = new IntegrityCheckpointReceptor(
-        sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityCheckpointReceptor>.Instance),
+        sp.GetRequiredService<IServiceScopeFactory>(), logger ?? NullLogger<IntegrityCheckpointReceptor>.Instance),
     };
   }
 
