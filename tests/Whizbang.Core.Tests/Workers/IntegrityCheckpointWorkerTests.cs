@@ -526,4 +526,134 @@ public class IntegrityCheckpointWorkerTests {
 
     await worker.RunCheckpointOnceAsync(testToken);
   }
+
+  /// <summary>
+  /// Counts checkpoint cycles and can fail the first one. The completion sources are what the
+  /// loop tests wait on, so nothing waits on a duration.
+  /// </summary>
+  private sealed class _countingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    private int _calls;
+
+    public int Calls => Volatile.Read(ref _calls);
+    public bool ThrowOnFirstCall { get; init; }
+    public TaskCompletionSource FirstCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource SecondCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult(TrackedGuid.NewMedo().Value);
+
+    public Task<IReadOnlyList<string>> GetOwnAuditedEventTypesAsync(CancellationToken cancellationToken = default) =>
+      Task.FromResult<IReadOnlyList<string>>([]);
+
+    public Task<IntegrityCheckpointWindow?> AdvanceIntegrityCheckpointAsync(CancellationToken cancellationToken = default) {
+      var n = Interlocked.Increment(ref _calls);
+
+      if (n == 1) {
+        FirstCall.TrySetResult();
+        if (ThrowOnFirstCall) {
+          throw new InvalidOperationException("transient checkpoint failure");
+        }
+      } else if (n == 2) {
+        SecondCall.TrySetResult();
+      }
+
+      return Task.FromResult<IntegrityCheckpointWindow?>(null);
+    }
+  }
+
+  private static IntegrityCheckpointWorker _loopWorker(
+      _countingCoordinator coordinator, ISchemaReadyGate gate, StreamIntegrityOptions options) {
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddSingleton<IDispatcher>(new _captureDispatcher());
+    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("origin-svc"));
+    var sp = services.BuildServiceProvider();
+
+    return new IntegrityCheckpointWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      gate,
+      Options.Create(options),
+      NullLogger<IntegrityCheckpointWorker>.Instance);
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WhenACycleThrows_KeepsCheckpointingAsync(CancellationToken testToken) {
+    // A checkpoint cycle talks to the database, so a transient fault there is expected. If the
+    // loop let it escape, the worker would die silently for the remaining life of the process
+    // and stream-integrity watermarks would simply stop advancing -- the failure looks like a
+    // system with nothing to report rather than one that stopped reporting.
+    var coordinator = new _countingCoordinator { ThrowOnFirstCall = true };
+    var worker = _loopWorker(
+      coordinator,
+      SchemaReadyGate.AlreadyReady(),
+      new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
+
+    await worker.StartAsync(testToken);
+    try {
+      // Waits on the second cycle happening, not on any interval elapsing.
+      await coordinator.SecondCall.Task.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+    } finally {
+      await worker.StopAsync(CancellationToken.None);
+    }
+
+    await Assert.That(coordinator.Calls).IsGreaterThanOrEqualTo(2)
+      .Because("the cycle after a failed one still has to run; one bad checkpoint is not a "
+             + "reason to stop checkpointing");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WhenCheckpointsDisabled_RunsNoneAsync(CancellationToken testToken) {
+    // Both halves in one test so the negative cannot pass vacuously: the enabled worker proves
+    // this fixture really does drive cycles, and the disabled one then proves the flag is what
+    // stops them rather than the fixture never having worked.
+    var enabledCoordinator = new _countingCoordinator();
+    var enabled = _loopWorker(
+      enabledCoordinator,
+      SchemaReadyGate.AlreadyReady(),
+      new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
+
+    await enabled.StartAsync(testToken);
+    try {
+      await enabledCoordinator.FirstCall.Task.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+    } finally {
+      await enabled.StopAsync(CancellationToken.None);
+    }
+
+    await Assert.That(enabledCoordinator.Calls).IsGreaterThanOrEqualTo(1);
+
+    var disabledCoordinator = new _countingCoordinator();
+    var disabled = _loopWorker(
+      disabledCoordinator,
+      SchemaReadyGate.AlreadyReady(),
+      new StreamIntegrityOptions { CheckpointsEnabled = false, CheckpointIntervalSeconds = 1 });
+
+    await disabled.StartAsync(testToken);
+    await disabled.StopAsync(CancellationToken.None);
+
+    await Assert.That(disabledCoordinator.Calls).IsEqualTo(0)
+      .Because("checkpoints turned off means none are written, not merely fewer");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WhenTheSchemaGateNeverOpens_RunsNoCheckpointAsync(
+      CancellationToken testToken) {
+    // Checkpointing before the schema exists would query tables that are not there yet. The
+    // worker waits on the gate, and a shutdown while still waiting has to return rather than
+    // hang -- StopAsync completing is what proves it did.
+    var coordinator = new _countingCoordinator();
+    var worker = _loopWorker(
+      coordinator,
+      new SchemaReadyGate(),
+      new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
+
+    await worker.StartAsync(testToken);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Calls).IsEqualTo(0)
+      .Because("nothing may be checkpointed until the schema is ready");
+  }
+
 }
