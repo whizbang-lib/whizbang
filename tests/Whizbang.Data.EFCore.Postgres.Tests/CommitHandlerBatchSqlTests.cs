@@ -345,4 +345,106 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     await Assert.That(stillPending).IsEqualTo(3L)
       .Because("All three inbox rows remain unprocessed because the bulk transaction rolled back on the malformed-UUID handler. Tier 2 (savepoint loop) then handles per-handler isolation — proven separately by the OneHandlerFails_OthersSucceedSavepointIsolation test.");
   }
+
+  [Test]
+  public async Task CommitHandlerBatch_TierOneFallback_SurfacesTierAndReasonAsync() {
+    // #573: the Tier-1 exception handler was WHEN OTHERS THEN NULL — the orchestrator fell
+    // back silently, the reason was discarded, and a deployment running permanently on the
+    // slow per-handler path was indistinguishable from a healthy one. The result rows now
+    // carry the tier and the bulk failure reason, and the failure is written to wh_log.
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+    var instanceId = Guid.NewGuid();
+    var msgIds = new[] { Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid() };
+    foreach (var msgId in msgIds) {
+      await using var ins = connection.CreateCommand();
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+           instance_id, lease_expiry, stream_id, partition_number)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
+                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+      ins.Parameters.AddWithValue("msg", msgId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+    var resultsJson = $$"""
+      [
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[0]}}", "Status": 4}, "new_outbox_messages": []},
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[1]}}", "Status": 4},
+         "new_outbox_messages": [{"MessageId": "not-a-valid-uuid", "Destination": "x", "MessageType": "x",
+           "Envelope": {}, "Metadata": {}, "Scope": null, "StreamId": null, "IsEvent": false}]},
+        {"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+         "inbox_completion": {"MessageId": "{{msgIds[2]}}", "Status": 4}, "new_outbox_messages": []}
+      ]
+      """;
+
+    var rows = new List<(bool Success, int Tier, string? BulkError)>();
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText = "SELECT success, tier, bulk_error FROM commit_handler_batch(@req::jsonb)";
+      cmd.Parameters.AddWithValue("req", resultsJson);
+      await using var reader = await cmd.ExecuteReaderAsync();
+      while (await reader.ReadAsync()) {
+        rows.Add((reader.GetBoolean(0), reader.GetInt32(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+      }
+    }
+
+    await Assert.That(rows.Count).IsEqualTo(3);
+    await Assert.That(rows.All(r => r.Tier == 2)).IsTrue()
+      .Because("the bulk tier failed, so every row was committed by the per-handler fallback "
+             + "— and the caller can finally SEE that");
+    await Assert.That(rows.Any(r => r.BulkError != null && r.BulkError.Contains("22P02"))).IsTrue()
+      .Because("the Tier-1 SQLSTATE is the diagnosis (#573's third ask): a malformed UUID is "
+             + "22P02 invalid_text_representation, and discarding it made the slow path "
+             + "undiagnosable for the life of the deployment");
+
+    await using var logQ = connection.CreateCommand();
+    logQ.CommandText = "SELECT count(*) FROM wh_log WHERE source = 'commit_handler_batch'";
+    await Assert.That((long)(await logQ.ExecuteScalarAsync() ?? 0L)).IsGreaterThanOrEqualTo(1L)
+      .Because("the fallback reason is durable in wh_log, queryable after the fact");
+  }
+
+  [Test]
+  public async Task CommitHandlerBatch_BulkSuccess_ReportsTierOneAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync();
+    }
+    var instanceId = Guid.NewGuid();
+    var msgId = Guid.NewGuid();
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+           instance_id, lease_expiry, stream_id, partition_number)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
+                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+      ins.Parameters.AddWithValue("msg", msgId);
+      ins.Parameters.AddWithValue("inst", instanceId);
+      ins.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await ins.ExecuteNonQueryAsync();
+    }
+    var resultsJson = $$"""
+      [{"handler_id": "{{Guid.NewGuid()}}", "instance_id": "{{instanceId}}",
+        "inbox_completion": {"MessageId": "{{msgId}}", "Status": 4}, "new_outbox_messages": []}]
+      """;
+
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = "SELECT tier, bulk_error FROM commit_handler_batch(@req::jsonb)";
+    cmd.Parameters.AddWithValue("req", resultsJson);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    await Assert.That(await reader.ReadAsync()).IsTrue();
+    await Assert.That(reader.GetInt32(0)).IsEqualTo(1)
+      .Because("the healthy path is the bulk tier — tier 1 on every row is the fleet-wide "
+             + "normal an operator baselines against");
+    await Assert.That(reader.IsDBNull(1)).IsTrue();
+  }
+
 }

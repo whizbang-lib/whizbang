@@ -56,6 +56,13 @@ public sealed class WorkCoordinatorMetrics {
   /// <summary>SQL errors.</summary>
   public Counter<long> ProcessBatchErrors { get; }
 
+  /// <summary>
+  /// Handler-commit batches that fell back from the bulk tier to the per-handler savepoint
+  /// loop (#573). A fleet quietly living on the slow path is invisible without this —
+  /// sustained non-zero is the operator's cue to read the paired warning's SQLSTATE.
+  /// </summary>
+  public Counter<long> CommitHandlerFallbacks { get; }
+
   /// <summary>Total FlushAsync calls.</summary>
   public Counter<long> FlushCalls { get; }
 
@@ -109,6 +116,9 @@ public sealed class WorkCoordinatorMetrics {
 
     ProcessBatchCalls = meter.CreateCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Total process_work_batch calls");
     ProcessBatchErrors = meter.CreateCounter<long>("whizbang.work_coordinator.process_batch.errors", description: "SQL errors");
+    CommitHandlerFallbacks = meter.CreateCounter<long>(
+      "whizbang.work_coordinator.commit_handler.fallbacks",
+      description: "Handler-commit batches that fell back from the bulk tier to the per-handler savepoint loop");
     FlushCalls = meter.CreateCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
     EmptyFlushCalls = meter.CreateCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes with no queued work");
 

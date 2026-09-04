@@ -2126,16 +2126,31 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT handler_id, success, error_message FROM {functionName}(@p_results::jsonb)";
+    cmd.CommandText = $"SELECT handler_id, success, error_message, tier, bulk_error FROM {functionName}(@p_results::jsonb)";
     cmd.Parameters.Add(new NpgsqlParameter("p_results", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = batchJson });
 
     var results = new List<HandlerBatchResult>(requests.Count);
+    var fellBack = false;
+    string? bulkError = null;
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new HandlerBatchResult(
         HandlerId: reader.GetGuid(0),
         Success: reader.GetBoolean(1),
         ErrorMessage: reader.IsDBNull(2) ? null : reader.GetString(2)));
+      if (!fellBack && reader.GetInt32(3) == 2) {
+        fellBack = true;
+        bulkError = reader.IsDBNull(4) ? null : reader.GetString(4);
+      }
+    }
+    if (fellBack) {
+      // #573: the fallback is legitimate; the silence was not. One warning per batch with
+      // the Tier-1 SQLSTATE (the diagnosis), and a counter the operator can alert on when
+      // a fleet quietly lives on the slow per-handler path.
+      if (_logger is not null) {
+        EFCoreWorkCoordinatorLog.CommitBulkTierFellBack(_logger, results.Count, bulkError ?? "unknown");
+      }
+      _metrics?.CommitHandlerFallbacks.Add(1);
     }
     return results;
   }
@@ -5083,4 +5098,9 @@ internal static partial class EFCoreWorkCoordinatorLog {
     Level = LogLevel.Warning,
     Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without tenant/user scope.")]
   public static partial void ReconcileScopeParseFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 74, Level = LogLevel.Warning,
+    Message = "Handler-commit batch of {HandlerCount} fell back from the bulk tier to per-handler savepoints: {BulkError} — "
+            + "sustained fallbacks mean every commit pays the slow path; the SQLSTATE names why")]
+  public static partial void CommitBulkTierFellBack(ILogger logger, int handlerCount, string bulkError);
 }
