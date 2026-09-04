@@ -139,7 +139,10 @@ BEGIN
   END IF;
 
   UPDATE __SCHEMA__.wh_dead_letters
-  SET recovery_status = 0, next_recovery_at = NOW()
+  -- Fresh attempt (evidence-scoped, like the observation-window reset below): attempt count
+  -- is evidence about the OLD build. Without resetting it, a spent-budget probe is re-held by
+  -- the recovery worker's exhaustion check before it ever runs, and the verdict sticks Pending.
+  SET recovery_status = 0, next_recovery_at = NOW(), recovery_attempts = 0
   WHERE dead_letter_id = ANY(v_probe_ids);
 
   -- Observation windows scope to the generation, exactly like attempt budgets: a probed
@@ -241,6 +244,7 @@ DECLARE
 BEGIN
   UPDATE __SCHEMA__.wh_dead_letters
   SET recovery_status = 0,
+      recovery_attempts = 0,  -- fresh attempt, else the released cohort re-holds on exhaustion
       next_recovery_at = NOW() + (random() * GREATEST(p_stagger_seconds, 0)) * INTERVAL '1 second'
   WHERE error_fingerprint = p_fingerprint
     AND recovery_status = 2
@@ -268,6 +272,7 @@ DECLARE
 BEGIN
   UPDATE __SCHEMA__.wh_dead_letters dl
   SET recovery_status = 0,
+      recovery_attempts = 0,  -- fresh attempt, else the trickled rows re-hold on exhaustion
       next_recovery_at = NOW() + (random() * 300) * INTERVAL '1 second'
   WHERE dl.dead_letter_id IN (
     SELECT i.dead_letter_id FROM __SCHEMA__.wh_dead_letters i

@@ -159,4 +159,24 @@ public sealed class DeadLetterStackMetricsTests {
              + "dashboard; a zero pass is not noise worth a data point");
   }
 
+
+  [Test]
+  public async Task NewStacks_CountsTheFirstSeenFailureShapesAsync() {
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    long recorded = 0;
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Name == "whizbang.dead_letters.new_stacks") { l.EnableMeasurementEvents(instrument); }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref recorded, value));
+    listener.Start();
+
+    metrics.RecordNewStacks(3);
+    metrics.RecordNewStacks(0); // a batch with no new shapes is not a data point
+
+    await Assert.That(Interlocked.Read(ref recorded)).IsEqualTo(3L)
+      .Because("a never-before-seen stack_id is the new-failure-mode alarm — a first-class "
+             + "counter, not a query for 'stack with no history'");
+  }
+
 }

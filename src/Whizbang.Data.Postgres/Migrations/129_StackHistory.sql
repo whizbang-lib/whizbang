@@ -100,9 +100,15 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_entry  JSONB;
-  v_count  INTEGER := 0;
+  v_new    INTEGER := 0;
   v_frames TEXT[];
 BEGIN
+  -- New-failure-mode signal: distinct stack_ids in this batch not yet in wh_stacks. Computed
+  -- BEFORE the loop records them, so a genuinely first-seen shape counts exactly once.
+  SELECT count(*) INTO v_new
+  FROM (SELECT DISTINCT (e ->> 'stack_id') AS sid FROM jsonb_array_elements(p_entries) AS e) x
+  WHERE NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_stacks s WHERE s.stack_id = x.sid);
+
   -- One server-side loop, one network round trip: the backfill can carry a storm-sized
   -- batch instead of N per-row calls. Each entry delegates to the single-row function so
   -- the stack/frame/link/daily/stamp logic stays in exactly one place.
@@ -114,11 +120,10 @@ BEGIN
       (v_entry ->> 'stack_id')::VARCHAR(16),
       (v_entry ->> 'is_prose')::BOOLEAN,
       COALESCE(v_frames, ARRAY[]::TEXT[]));
-    v_count := v_count + 1;
   END LOOP;
-  RETURN v_count;
+  RETURN v_new;
 END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.record_dead_letter_stacks IS
-'Batch wrapper for record_dead_letter_stack (129): takes a JSON array of {dead_letter_id, stack_id, is_prose, frames} and records each in one round trip. The stack backfill uses this so a 500-row batch is one call, not 500.';
+'Batch wrapper for record_dead_letter_stack (129): takes a JSON array of {dead_letter_id, stack_id, is_prose, frames} and records each in one round trip (a 500-row batch is one call, not 500). Returns the number of NEW stack_ids in the batch — the new-failure-mode signal.';

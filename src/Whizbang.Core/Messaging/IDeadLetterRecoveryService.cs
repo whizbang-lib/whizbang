@@ -117,7 +117,8 @@ public interface IDeadLetterRecoveryService {
 
   /// <summary>
   /// Records a whole batch of normalized stacks in one round trip — the stack backfill's
-  /// hot path, so a storm-sized batch is one call rather than one per row.
+  /// hot path, so a storm-sized batch is one call rather than one per row. Returns the count
+  /// of NEVER-BEFORE-SEEN stack ids in the batch — the new-failure-mode signal.
   /// </summary>
   Task<int> RecordStacksAsync(IReadOnlyList<(Guid DeadLetterId, Whizbang.Core.DeadLetters.StackIdentity Stack)> entries, CancellationToken ct = default);
 

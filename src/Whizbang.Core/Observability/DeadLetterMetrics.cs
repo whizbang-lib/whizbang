@@ -65,6 +65,7 @@ public sealed class DeadLetterMetrics {
   private readonly Counter<long> _cohortVerdicts;
   private readonly Counter<long> _releaseWaves;
   private readonly Counter<long> _stackHistoryPruned;
+  private readonly Counter<long> _newStacks;
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _seenStacks = new();
 
   /// <summary>Initializes a new instance of <see cref="DeadLetterMetrics"/>.</summary>
@@ -104,6 +105,17 @@ public sealed class DeadLetterMetrics {
     _stackHistoryPruned = meter.CreateCounter<long>(
       "whizbang.dead_letters.stack_history_pruned",
       description: "Rolling stack-history rows pruned by the recovery worker's idle-gated cleanup — the maintenance facet of the stack layer");
+    _newStacks = meter.CreateCounter<long>(
+      "whizbang.dead_letters.new_stacks",
+      description: "Never-before-seen normalized stack ids first recorded — the new-failure-mode alarm; a spike right after a deploy is a new bug shipped");
+  }
+
+  /// <summary>Counts never-before-seen stack ids first recorded in a backfill batch.</summary>
+  /// <param name="count">Distinct new stacks (only recorded when positive).</param>
+  public void RecordNewStacks(long count) {
+    if (count > 0) {
+      _newStacks.Add(count);
+    }
   }
 
   /// <summary>Counts rolling stack-history rows pruned in one cleanup pass.</summary>
