@@ -62,6 +62,57 @@ public class TransportDeadLetterDrainWorkerTests {
   }
 
   [Test]
+  public async Task WhenDisabled_TheWorkerParksInsteadOfExitingAsync() {
+    // A BackgroundService that returns on its own reads to the host as a crashed worker. Parking
+    // keeps a deliberately-disabled drain distinguishable from one that fell over.
+    var worker = _buildWorker(new TransportDeadLetterDrainWorkerOptions { Enabled = false });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
+    // The worker parks on the schema gate at startup. A pod stopped while still waiting has no
+    // schema to drain against, so the exit must be silent rather than an error on every fast
+    // restart.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    var provider = services.BuildServiceProvider();
+    var worker = new TransportDeadLetterDrainWorker(
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true }),
+      whizbangMetrics: new WhizbangMetrics(),
+      logger: NullLogger<TransportDeadLetterDrainWorker>.Instance,
+      schemaReadyGate: new SchemaReadyGate());   // never marked ready
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ADrainerThatThrows_DoesNotStopTheCycleAsync() {
+    // Per-drainer failures are logged inside DrainOnceAsync; this catch is for the unexpected
+    // aggregate case. Either way the loop must survive — a transport whose DLQ drain dies stops
+    // recovering dead-lettered messages entirely, silently, for the life of the process.
+    var worker = _buildWorker(
+      new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 10, IntervalMinutes = 60 },
+      new _throwingDrainer());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  private sealed class _throwingDrainer : ITransportDeadLetterDrainer {
+    public string TransportName => "throwing";
+    public Task<int> DrainDeadLetterQueueAsync(int maxCount, CancellationToken ct = default)
+      => throw new InvalidOperationException("broker unreachable");
+  }
+
+  [Test]
   public async Task NoDrainersRegistered_NoOpAsync() {
     var worker = _buildWorker(new TransportDeadLetterDrainWorkerOptions {
       Enabled = true,
