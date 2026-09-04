@@ -537,4 +537,113 @@ public class ProgramCliTests {
     }
   }
 
+
+  [Test]
+  public async Task Analyze_OnAProjectWithWarnings_PrintsTheWarningsSectionAsync() {
+    // The analyze report is the whole product of the command: an operator decides what to
+    // migrate by hand from it. A warnings section that silently stops printing leaves them
+    // reading a clean report of a project that is not clean, and the exit code is 0 either way.
+    var (dir, _) = await _seedProjectAsync();
+    try {
+      // A handler on a custom base class is the case the analyzer cannot migrate on its own,
+      // so it warns and leaves the decision to the operator.
+      await File.WriteAllTextAsync(Path.Combine(dir, "Custom.cs"), """
+        using Wolverine.Attributes;
+
+        [WolverineHandler]
+        public class StepAssignedHandler : BaseConsumerMessageHandler<StepAssignedEvent> {
+          public override Task Process(StepAssignedEvent evt) {
+            return Task.CompletedTask;
+          }
+        }
+        """);
+
+      var exitCode = await Program.Main(["analyze", "-p", dir]);
+      await Assert.That(exitCode).IsEqualTo(0);
+
+      await Assert.That(_stdout()).Contains("=== Warnings ===")
+        .Because("a project using patterns the tool cannot migrate automatically has to say so, "
+               + "and the operator decides what to do by hand from exactly this section");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+
+  /// <summary>The console the command actually wrote to, which for a CLI is its whole product.</summary>
+  private static string _stdout()
+    => ((TUnit.Core.Interfaces.ITestOutput)TestContext.Current!).GetStandardOutput();
+
+  private static string _stderr()
+    => ((TUnit.Core.Interfaces.ITestOutput)TestContext.Current!).GetErrorOutput();
+
+  [Test]
+  public async Task Apply_EchoesTheFilePatternsItWasGivenAsync() {
+    // Include and exclude patterns decide which files are rewritten. Echoing them is how an
+    // operator confirms the run covered what they meant before it edits anything -- a silent
+    // run gives them no way to tell an over-broad pattern from a correct one until after.
+    var (dir, _) = await _seedProjectAsync();
+    try {
+      var exitCode = await Program.Main(
+        ["apply", "-p", dir, "--include", "**/*.cs", "--exclude", "**/obj/**"]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(_stdout()).Contains("Include patterns:");
+      await Assert.That(_stdout()).Contains("**/*.cs")
+        .Because("the pattern is echoed verbatim, not merely acknowledged");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task Apply_WithPackageManagementOff_SaysSoAsync() {
+    // Turning package management off changes what the migration leaves behind: the project keeps
+    // referencing packages the rewritten code no longer uses. That has to be visible in the run,
+    // because the resulting build error points at the package, not at this decision.
+    var (dir, _) = await _seedProjectAsync();
+    try {
+      var exitCode = await Program.Main(["apply", "-p", dir, "--no-manage-packages"]);
+
+      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(_stdout()).Contains("Package management: DISABLED");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
+  [Test]
+  [Arguments("apply")]
+  [Arguments("status")]
+  public async Task Commands_OnAMissingDirectory_ReportTheReasonOnStderrAsync(string command) {
+    // Exiting non-zero without saying why leaves the operator guessing between a typo, a
+    // permissions problem and a tool bug. The message names the directory it could not find.
+    var missing = Path.Combine(Path.GetTempPath(), $"whizbang-absent-{Guid.NewGuid():N}");
+
+    var exitCode = await Program.Main([command, "-p", missing]);
+
+    await Assert.That(exitCode).IsNotEqualTo(0);
+    await Assert.That(_stderr()).Contains("Directory not found")
+      .Because("the failure names what was missing rather than only failing");
+  }
+
+  [Test]
+  public async Task Status_GivenAProjectFile_ScansTheContainingDirectoryAsync() {
+    // status resolves a project or solution file to its directory the same way analyze and apply
+    // do. Without the strip it looks for a journal beside a path that is not a directory, finds
+    // none, and reports an unmigrated tree -- indistinguishable from one never migrated.
+    var (dir, _) = await _seedProjectAsync();
+    try {
+      var projectFile = Path.Combine(dir, "Sample.csproj");
+      await File.WriteAllTextAsync(projectFile, "<Project Sdk=\"Microsoft.NET.Sdk\" />");
+
+      var exitCode = await Program.Main(["status", "-p", projectFile]);
+
+      await Assert.That(exitCode).IsEqualTo(0)
+        .Because("pointing status at the project file is the documented way to invoke it");
+    } finally {
+      Directory.Delete(dir, recursive: true);
+    }
+  }
+
 }
