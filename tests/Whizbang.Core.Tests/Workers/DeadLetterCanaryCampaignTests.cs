@@ -79,6 +79,17 @@ public sealed class DeadLetterCanaryCampaignTests {
       lock (RecordedStacks) { RecordedStacks.Add((deadLetterId, stack.SequenceHash)); }
       return Task.CompletedTask;
     }
+    public List<int> PruneCalls { get; } = [];
+    public int RecordStacksBatchCount { get; private set; }
+    public Task<int> RecordStacksAsync(IReadOnlyList<(Guid, Whizbang.Core.DeadLetters.StackIdentity)> entries, CancellationToken ct = default) {
+      RecordStacksBatchCount++;
+      lock (RecordedStacks) { foreach (var e in entries) { RecordedStacks.Add((e.Item1, e.Item2.SequenceHash)); } }
+      return Task.FromResult(entries.Count);
+    }
+    public Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) {
+      lock (PruneCalls) { PruneCalls.Add(retentionDays); }
+      return Task.FromResult(0);
+    }
 
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) {
       Interlocked.Increment(ref PurgeCalls);
@@ -259,6 +270,8 @@ public sealed class DeadLetterCanaryCampaignTests {
       Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
     public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
       Task.CompletedTask;
+    public Task<int> RecordStacksAsync(IReadOnlyList<(Guid, Whizbang.Core.DeadLetters.StackIdentity)> entries, CancellationToken ct = default) => Task.FromResult(entries.Count);
+    public Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) => Task.FromResult(0);
     public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>
       Task.FromResult(0);
     public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
@@ -561,6 +574,47 @@ public sealed class DeadLetterCanaryCampaignTests {
     await Assert.That(recorded[0].Item2).IsEqualTo(expected)
       .Because("the backfill uses the SAME normalizer as the inline metric — one "
              + "implementation is the whole point; two would drift and split cohorts");
+    await Assert.That(svc.RecordStacksBatchCount).IsGreaterThanOrEqualTo(1)
+      .Because("the backfill records the whole batch in one round trip, not one per row");
+  }
+
+  [Test]
+  public async Task Scan_PrunesStackHistory_WithConfiguredRetentionAsync() {
+    var svc = new CampaignFake();
+    var opts = _opts(RetryHeldOnStartupMode.Off);
+    opts.StackHistoryRetentionDays = 90;
+    var (worker, _, _, _) = _build(opts, svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    List<int> prunes;
+    lock (svc.PruneCalls) { prunes = [.. svc.PruneCalls]; }
+    await Assert.That(prunes.Count).IsGreaterThanOrEqualTo(1);
+    await Assert.That(prunes[0]).IsEqualTo(90)
+      .Because("the rolling window is an operator knob, and the configured retention must "
+             + "reach the prune — a knob that binds to nothing is scenery");
+  }
+
+  [Test]
+  public async Task Scan_RetentionDisabled_NeverPrunesAsync() {
+    var svc = new CampaignFake();
+    var opts = _opts(RetryHeldOnStartupMode.Off);
+    opts.StackHistoryRetentionDays = 0;
+    var (worker, _, _, bell) = _build(opts, svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.FetchSignal(2).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.PruneCalls.Count).IsEqualTo(0)
+      .Because("retention <= 0 disables the rolling cleanup — not one round trip, the log "
+             + "is kept forever");
   }
 
   [Test]

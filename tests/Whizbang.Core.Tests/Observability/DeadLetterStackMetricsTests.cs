@@ -137,4 +137,26 @@ public sealed class DeadLetterStackMetricsTests {
       .Because("the campaign lifecycle is a graph: pass/fail/mixed per cohort is how an "
              + "operator sees a canary program working without reading a single log line");
   }
+
+  [Test]
+  public async Task StackHistoryPruned_CountsTheCleanupFacetAsync() {
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    long recorded = 0;
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Name == "whizbang.dead_letters.stack_history_pruned") {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref recorded, value));
+    listener.Start();
+
+    metrics.RecordStackHistoryPruned(42);
+    metrics.RecordStackHistoryPruned(0); // zero is not recorded
+
+    await Assert.That(Interlocked.Read(ref recorded)).IsEqualTo(42L)
+      .Because("the rolling-history cleanup is a maintenance facet an operator watches on a "
+             + "dashboard; a zero pass is not noise worth a data point");
+  }
+
 }

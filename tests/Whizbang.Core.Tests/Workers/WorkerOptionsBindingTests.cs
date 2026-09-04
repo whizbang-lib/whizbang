@@ -69,6 +69,17 @@ public sealed class WorkerOptionsBindingTests {
   }
 
   [Test]
+  public async Task StackHistoryRetention_BindsFromConfigurationAsync() {
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:DeadLetterRecovery:StackHistoryRetentionDays"] = "30",
+    });
+    var options = provider.GetRequiredService<IOptions<DeadLetterRecoveryOptions>>().Value;
+    await Assert.That(options.StackHistoryRetentionDays).IsEqualTo(30)
+      .Because("the rolling-history window is an operator knob under the turnkey-bound "
+             + "dead-letter section");
+  }
+
+  [Test]
   public async Task TransportDrain_ReadsItsConfigurationSectionAsync() {
     await using var provider = _hostWith(new Dictionary<string, string?> {
       ["Whizbang:Workers:TransportDeadLetterDrain:Enabled"] = "false",

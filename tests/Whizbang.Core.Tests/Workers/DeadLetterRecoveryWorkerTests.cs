@@ -100,6 +100,8 @@ public class DeadLetterRecoveryWorkerTests {
     // DeadLetterCanaryCampaignTests with its dedicated scripted fake.
     public Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
+    public Task<int> RecordStacksAsync(IReadOnlyList<(Guid, Whizbang.Core.DeadLetters.StackIdentity)> entries, CancellationToken ct = default) => Task.FromResult(entries.Count);
+    public Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) => Task.FromResult(0);
     public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
       Task.CompletedTask;
     public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>

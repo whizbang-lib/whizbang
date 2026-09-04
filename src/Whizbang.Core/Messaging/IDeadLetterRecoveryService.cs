@@ -8,6 +8,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>operations/dead-letter-queue/recovery</docs>
 /// <docs>operations/dead-letter-queue/canary-recovery</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DlqCanaryCampaignSqlTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/StackHistorySqlTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:PendingEntry_RetryableReason_GetsRecoveredAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:Startup_RunsGenerationReplayOnceAsync</tests>
 /// <tests>tests/Whizbang.Hosting.AspNet.Tests/DeadLetterOperatorEndpointsTests.cs:PostRetry_SchedulesIdForImmediateAttemptAsync</tests>
@@ -108,10 +109,24 @@ public interface IDeadLetterRecoveryService {
   Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default);
 
   /// <summary>
-  /// Persists a normalized stack (frames, ordered links, stack row) idempotently and
-  /// stamps the dead letter with its stack id.
+  /// Persists a normalized stack (frames, ordered links, stack row) idempotently, bumps the
+  /// stack's <c>last_seen</c>, increments today's rolling-history count, and stamps the dead
+  /// letter with its stack id.
   /// </summary>
   Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default);
+
+  /// <summary>
+  /// Records a whole batch of normalized stacks in one round trip — the stack backfill's
+  /// hot path, so a storm-sized batch is one call rather than one per row.
+  /// </summary>
+  Task<int> RecordStacksAsync(IReadOnlyList<(Guid DeadLetterId, Whizbang.Core.DeadLetters.StackIdentity Stack)> entries, CancellationToken ct = default);
+
+  /// <summary>
+  /// Prunes rolling stack-history rows older than <paramref name="retentionDays"/> days.
+  /// A non-positive retention disables the cleanup (the log is kept forever). Returns rows
+  /// pruned.
+  /// </summary>
+  Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default);
 }
 
 /// <summary>A dead letter awaiting stack normalization.</summary>
