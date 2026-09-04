@@ -1277,9 +1277,22 @@ try {
                 }
             }
 
-            # Find all cobertura XML files from test output
+            # Find cobertura XML files produced by THIS run.
+            #
+            # TestResults is append-only: every run drops a new GUID-named cobertura file and
+            # nothing ever prunes them. Globbing the directory therefore merges every run since
+            # the folder was last cleaned -- 1,173 files spanning six months, of which 26 belonged
+            # to the current run when this was found. reportgenerator dutifully merges all of it,
+            # so the reported percentage described a union of long-superseded code: classes that
+            # no longer exist in the tree still appeared in the breakdown at 0%, and the coverable
+            # line count ran roughly 2.5x the real figure. A run could be green and the number
+            # still meaningless, which makes the whole worklist untrustworthy.
+            #
+            # Filtering by write time against the run's own start keeps this non-destructive --
+            # nothing is deleted, they are simply not counted as if they were current.
             $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
+                               $_.LastWriteTimeUtc -ge $script:runStartTime }
 
             if ($coberturaFiles.Count -gt 0) {
                 $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
@@ -2587,8 +2600,11 @@ try {
         }
 
         # Find all cobertura XML files from test output
+        # Same staleness guard as the primary call site above: only count cobertura files this
+        # run produced, or the report merges every run still sitting in TestResults.
         $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
+                           $_.LastWriteTimeUtc -ge $script:runStartTime }
 
         if ($coberturaFiles.Count -gt 0) {
             $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
