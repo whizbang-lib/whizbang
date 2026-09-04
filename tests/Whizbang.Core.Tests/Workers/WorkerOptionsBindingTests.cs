@@ -69,6 +69,18 @@ public sealed class WorkerOptionsBindingTests {
   }
 
   [Test]
+  public async Task ClaimWorker_NotifyDrainLinger_BindsFromConfigurationAsync() {
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:Workers:Claim:NotifyDrainLingerSeconds"] = "12",
+    });
+    var options = provider.GetRequiredService<IOptions<ClaimWorkerOptions>>().Value;
+    await Assert.That(options.NotifyDrainLingerSeconds).IsEqualTo(12)
+      .Because("the C# half of the doorbell debounce is an operator knob under the "
+             + "turnkey-bound claim section, paired with the SQL notify_debounce_seconds "
+             + "setting — both sides must be tunable, and the C# side must stay larger");
+  }
+
+  [Test]
   public async Task StackHistoryRetention_BindsFromConfigurationAsync() {
     await using var provider = _hostWith(new Dictionary<string, string?> {
       ["Whizbang:DeadLetterRecovery:StackHistoryRetentionDays"] = "30",

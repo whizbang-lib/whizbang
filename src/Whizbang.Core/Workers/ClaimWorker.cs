@@ -62,6 +62,16 @@ public sealed partial class ClaimWorker : BackgroundService {
   private CancellationTokenSource? _napCts;
   private int _consecutiveEmptyPolls;
 
+  // #665 drain linger: TickCount64 of the last claim that found FRESH work. While within
+  // NotifyDrainLingerSeconds of it, empty polls run at LINGER_POLL_MS so a doorbell the SQL
+  // debounce suppressed is picked up inside the margin. Repeats do not stamp — re-offer
+  // damping must not hold the tight cadence open.
+  private long _lastFreshWorkTicks = long.MinValue / 2;
+
+  // Half the debounce margin (linger 8 s minus SQL window 7 s): the loop can serve a nap AND
+  // a wake wait between claims, so the per-wait value must be half the worst-case spacing.
+  private const int LINGER_POLL_MS = 500;
+
   /// <summary>
   /// Identity of the previous claim's work set. A claim that returns exactly what the last one
   /// did is a re-offer, not progress — see the cadence handling in the run loop.
@@ -427,7 +437,10 @@ public sealed partial class ClaimWorker : BackgroundService {
             && (_signalingGate?.IsAvailable ?? false)) {
           if (doorbellRang) {
             _busLiveness.RecordDoorbellWake();
-          } else {
+          } else if (!_withinDrainLinger()) {
+            // Inside the linger a poll-discovered edge is the SQL debounce working as
+            // designed (the doorbell was deliberately suppressed) — recording it would
+            // flag the debounce itself as a NOTIFY outage.
             _busLiveness.RecordMissedDoorbell();
           }
         }
@@ -438,6 +451,7 @@ public sealed partial class ClaimWorker : BackgroundService {
             Interlocked.Increment(ref _consecutiveEmptyPolls);
           } else {
             _consecutiveEmptyPolls = 0;
+            Volatile.Write(ref _lastFreshWorkTicks, Environment.TickCount64);
           }
           await _distributeAsync(batch, stoppingToken);
           OnBatchClaimed?.Invoke(batch);
@@ -817,6 +831,12 @@ public sealed partial class ClaimWorker : BackgroundService {
     return hash.ToHashCode();
   }
 
+  private bool _withinDrainLinger() {
+    var lingerMs = (long)_options.NotifyDrainLingerSeconds * 1000;
+    return lingerMs > 0
+      && Environment.TickCount64 - Volatile.Read(ref _lastFreshWorkTicks) < lingerMs;
+  }
+
   private int _computeAdaptivePollWaitMs() {
     var baseMs = _options.PollingIntervalMilliseconds;
     // Slice 33.6 — when the gate has flipped NOTIFY availability to false, the listener
@@ -825,6 +845,15 @@ public sealed partial class ClaimWorker : BackgroundService {
     // that would silently increase latency to up to 10 s while NOTIFY is broken).
     if (_signalingGate?.IsAvailable == false) {
       return baseMs;
+    }
+    // #665 drain linger: freshly-found work means producers may be suppressing doorbells
+    // toward this instance (its watermark is fresh) — poll tight until the SQL window has
+    // self-expired. Takes precedence over the notify-healthy elevation AND poll-off mode:
+    // during the linger, polling IS the delivery mechanism. A REPEAT claim opts out: the
+    // spacing nap exists to damp re-offer spin, and the linger must not revive it — a
+    // suppressed store during a repeat streak is floored by the backstop poll instead.
+    if (!_lastClaimWasRepeat && _withinDrainLinger()) {
+      return Math.Min(LINGER_POLL_MS, _options.PollingMaxIntervalMilliseconds);
     }
     if (!_options.EnableSafetyNetPoll && _signalingGate?.IsAvailable == true) {
       return int.MaxValue;
@@ -967,6 +996,17 @@ public sealed class ClaimWorkerOptions {
   /// Constrained at startup to <c>AbandonStaleInstanceThresholdSeconds × 1000 / 3</c>
   /// to preserve heartbeat-budget freshness.</summary>
   public int PollingMaxIntervalMilliseconds { get; set; } = 10_000;
+
+  /// <summary>
+  /// Drain linger (issue #665): after a claim finds fresh work, empty polls keep a tight
+  /// (~500 ms) cadence for this many seconds before the notify-healthy elevation and the
+  /// adaptive backoff resume. Pairs with the SQL-side <c>notify_debounce_seconds</c>
+  /// setting (default 7): producers suppress doorbells toward an instance whose watermark
+  /// is fresher than that window, and the linger polls are the guaranteed pickup. MUST stay
+  /// ABOVE the SQL window so the suppression self-expires while the drainer still polls.
+  /// Default 8; 0 disables the linger (and the SQL setting should then be 0 too).
+  /// </summary>
+  public int NotifyDrainLingerSeconds { get; set; } = 8;
 
   /// <summary>
   /// Relaxed baseline polling cadence when LISTEN/NOTIFY is verified healthy. Replaces

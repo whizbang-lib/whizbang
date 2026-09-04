@@ -384,6 +384,18 @@ BEGIN
     -- v0.661: see outbox block above.
     GET DIAGNOSTICS v_perspective_rows = ROW_COUNT;
 
+    -- 130 doorbell debounce: finding work stamps this instance's watermark — the signal
+    -- producers use to suppress redundant notifies while this drainer is awake. Rides
+    -- inside the claim (zero extra round trips) and skips the empty case so the
+    -- empty-call short-circuit's ~1 ms idle floor is untouched.
+    INSERT INTO __SCHEMA__.wh_notify_state (instance_id, payload_kind, last_work_at)
+    SELECT p_instance_id, k.kind, NOW()
+    FROM (VALUES ('outbox'), ('inbox'), ('perspective')) AS k(kind)
+    WHERE (k.kind = 'outbox' AND v_outbox_rows > 0)
+       OR (k.kind = 'inbox' AND (v_inbox_rows > 0 OR v_receptor_rows > 0))
+       OR (k.kind = 'perspective' AND v_perspective_rows > 0)
+    ON CONFLICT (instance_id, payload_kind) DO UPDATE SET last_work_at = NOW();
+
     -- Drain-mode hint: if any of the four return categories filled its LIMIT
     -- (rows == p_max_streams), there's likely more eligible work for this
     -- instance — RAISE NOTICE so the C# claim worker skips its wait and

@@ -139,6 +139,13 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    // Doorbell-wake semantics under test sit upstream of the 130 debounce (locked by
+    // NotifyDebounceSqlTests); with it on, a same-kind notify inside the window is
+    // suppressed by design and this test's isolated-doorbell setup would time out.
+    await using (var off = conn.CreateCommand()) {
+      off.CommandText = "UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'notify_debounce_seconds'";
+      await off.ExecuteNonQueryAsync();
+    }
     var notifyAt = DateTimeOffset.UtcNow;
     await using (var cmd = conn.CreateCommand()) {
       cmd.CommandText = $"SELECT pg_notify('wh_work_i_{listenerInstanceProvider.InstanceId}', 'outbox')";
@@ -192,6 +199,13 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var conn = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    // Doorbell-wake semantics under test sit upstream of the 130 debounce (locked by
+    // NotifyDebounceSqlTests); with it on, a same-kind notify inside the window is
+    // suppressed by design and this test's isolated-doorbell setup would time out.
+    await using (var off = conn.CreateCommand()) {
+      off.CommandText = "UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'notify_debounce_seconds'";
+      await off.ExecuteNonQueryAsync();
+    }
 
     await using (var reg = conn.CreateCommand()) {
       reg.CommandText = @"
