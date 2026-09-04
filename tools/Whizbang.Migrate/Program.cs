@@ -82,10 +82,16 @@ public static class Program {
       };
 
       if (format == "json") {
-        Console.WriteLine("JSON output not yet implemented (requires AOT-compatible serialization)");
-      } else {
-        _printTableFormat(combinedResult);
+        // Printing an English sentence on stdout and exiting 0 hands a caller that asked for
+        // JSON something that is not JSON, with a success code: `analyze --format json | jq`
+        // fails on the parse while any exit-code check upstream reports the analysis worked.
+        await Console.Error.WriteLineAsync(
+            "Error: JSON output is not yet implemented (requires AOT-compatible serialization).");
+        context.ExitCode = 1;
+        return;
       }
+
+      _printTableFormat(combinedResult);
     });
 
     // plan command
@@ -95,11 +101,14 @@ public static class Program {
         aliases: ["--output", "-o"],
         description: "Output file for the plan");
     planCommand.AddOption(outputOption);
-    planCommand.SetHandler(async (project, output) => {
-      Console.WriteLine($"Planning migration for: {project ?? "current directory"}");
-      Console.WriteLine("Plan command is not yet implemented. Use 'wizard' command for interactive migration.");
-      await Task.CompletedTask;
-    }, projectOption, outputOption);
+    planCommand.SetHandler(async context => {
+      // Exiting 0 tells a caller a plan was produced. Nothing was written to --output, so a
+      // pipeline that goes on to read that file finds the previous run's plan, or nothing.
+      await Console.Error.WriteLineAsync(
+          "Error: the plan command is not yet implemented. "
+        + "Use the wizard command for interactive migration.");
+      context.ExitCode = 1;
+    });
 
     // apply command
     var applyCommand = new Command("apply", "Apply migration transformations");

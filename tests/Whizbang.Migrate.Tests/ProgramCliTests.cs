@@ -426,15 +426,16 @@ public class ProgramCliTests {
   }
 
   [Test]
-  public async Task Analyze_WithJsonFormat_SucceedsAsync() {
-    // The json format is advertised by --format and currently reports that it is not
-    // implemented. It still has to exit cleanly rather than fault, since a pipeline may well
-    // ask for it.
+  public async Task Analyze_WithJsonFormat_ReportsUnimplementedWithoutFaultingAsync() {
+    // The json format is advertised by --format and is not implemented yet. Two separate
+    // requirements: it must not fault, and it must not claim success -- a caller that asked for
+    // JSON and got prose under exit 0 fails its parse with nothing explaining why.
     var (dir, _) = await _seedProjectAsync();
     try {
       var exitCode = await Program.Main(["analyze", "-p", dir, "--format", "json"]);
 
-      await Assert.That(exitCode).IsEqualTo(0);
+      await Assert.That(exitCode).IsNotEqualTo(0)
+        .Because("output that is not JSON must not be returned under a success code");
     } finally {
       Directory.Delete(dir, recursive: true);
     }
@@ -473,6 +474,34 @@ public class ProgramCliTests {
 
     await Assert.That(exitCode).IsNotEqualTo(0)
       .Because("invoking rollback with no target is a usage error, not a successful no-op");
+  }
+
+
+  [Test]
+  public async Task Plan_DoesNotReportSuccessWhileUnimplementedAsync() {
+    // The command accepts --output. Exiting 0 says a plan was written there; nothing was, so a
+    // pipeline that reads that path next picks up a stale plan or an absent file.
+    var exitCode = await Program.BuildRootCommand().InvokeAsync(["plan"]);
+
+    await Assert.That(exitCode).IsNotEqualTo(0)
+      .Because("a plan that was never produced must not be reported as produced");
+  }
+
+  [Test]
+  public async Task Analyze_TableFormat_StillSucceedsOnAnEmptyTreeAsync() {
+    // Guards the fix above: making the json branch fail must not make the default path fail.
+    var tempDir = Path.Combine(Path.GetTempPath(), $"whizbang-table-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempDir);
+
+    try {
+      var exitCode = await Program.BuildRootCommand()
+        .InvokeAsync(["analyze", "--project", tempDir]);
+
+      await Assert.That(exitCode).IsEqualTo(0)
+        .Because("a tree with nothing to migrate analyzes cleanly, it is not an error");
+    } finally {
+      Directory.Delete(tempDir, recursive: true);
+    }
   }
 
 }
