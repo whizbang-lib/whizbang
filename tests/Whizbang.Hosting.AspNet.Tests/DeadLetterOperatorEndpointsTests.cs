@@ -26,6 +26,17 @@ namespace Whizbang.Hosting.AspNet.Tests;
 public class DeadLetterOperatorEndpointsTests {
 
   private sealed class FakeRecoveryService : IDeadLetterRecoveryService {
+    // Campaign surface (P1) — inert; operator endpoints do not drive campaigns.
+    public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
+    public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<HeldCohort>>([]);
+    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(new CanaryVerdict(CanaryVerdictKind.Pass, 0, 0, 0));
+    public Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) =>
+      Task.FromResult(0);
+
     public int FetchDueCalls;
     public int? LastFetchDueMax;
     public IReadOnlyList<DeadLetterEntry> FetchDueResult { get; set; } = [];

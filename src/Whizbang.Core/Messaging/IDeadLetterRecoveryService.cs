@@ -6,6 +6,8 @@ namespace Whizbang.Core.Messaging;
 /// hold both: failure workers only need Move; the recovery worker holds this surface.
 /// </summary>
 /// <docs>operations/dead-letter-queue/recovery</docs>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DlqCanaryCampaignSqlTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:PendingEntry_RetryableReason_GetsRecoveredAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs:Startup_RunsGenerationReplayOnceAsync</tests>
 /// <tests>tests/Whizbang.Hosting.AspNet.Tests/DeadLetterOperatorEndpointsTests.cs:PostRetry_SchedulesIdForImmediateAttemptAsync</tests>
@@ -42,4 +44,66 @@ public interface IDeadLetterRecoveryService {
   /// generation). Returns the number of rows scheduled.
   /// </summary>
   Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default);
+
+  // -------------------- Held-cohort campaign surface (P1) --------------------
+  // Backing for DeadLetterRecoveryOptions.RetryHeldOnStartup. Campaigns operate on
+  // HELD rows grouped by error_fingerprint; the worker orchestrates, this surface
+  // persists. See plans/dlq-stack-intelligence.md.
+
+  /// <summary>
+  /// The data-driven grandfather gate: held rows that lack a re-drivable payload can
+  /// never be recovered by any campaign — marks them PermanentlyFailed so campaigns
+  /// operate only on rows the machinery can actually re-drive. Returns rows purged.
+  /// </summary>
+  Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default);
+
+  /// <summary>Held rows grouped by error fingerprint — the campaign units.</summary>
+  Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default);
+
+  /// <summary>
+  /// Starts a canary campaign for one cohort: selects up to <paramref name="probeSize"/>
+  /// probe rows stratified across the cohort's message types, returns them to Pending
+  /// due immediately (the normal paced scan re-drives them), and records the campaign.
+  /// Idempotent per (fingerprint, generation): an existing campaign is left untouched
+  /// and 0 is returned. Returns the number of probes actually started.
+  /// </summary>
+  Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default);
+
+  /// <summary>
+  /// Evaluates a campaign's probes: recovered probes count as successes; a probe whose
+  /// message dead-lettered again (a newer unrecovered row for the same source id) counts
+  /// as a failure; anything else is still outstanding. Persists and returns the verdict —
+  /// <see cref="CanaryVerdictKind.Pending"/> while probes remain outstanding.
+  /// </summary>
+  Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default);
+
+  /// <summary>
+  /// Releases a held cohort back to Pending with next_recovery_at staggered across
+  /// <paramref name="stagger"/> so the paced scan machinery drains it — release is
+  /// eligibility, never a firehose. Returns rows released.
+  /// </summary>
+  Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default);
 }
+
+/// <summary>One campaign unit: held rows sharing an error fingerprint.</summary>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+public sealed record HeldCohort(string Fingerprint, long RowCount, int MessageTypeCount);
+
+/// <summary>How a canary campaign's probes resolved.</summary>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+public enum CanaryVerdictKind {
+  /// <summary>Probes are still outstanding; evaluate again next scan.</summary>
+  Pending = 0,
+  /// <summary>Every probe recovered — the cohort is safe to release.</summary>
+  Pass = 1,
+  /// <summary>Every resolved probe failed — the cohort stays held.</summary>
+  Fail = 2,
+  /// <summary>Probes split — some message types recover, some do not. The cohort stays
+  /// held for operator review; the split is reported rather than auto-released.</summary>
+  Mixed = 3,
+}
+
+/// <summary>A campaign verdict with its probe arithmetic.</summary>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+public sealed record CanaryVerdict(
+  CanaryVerdictKind Kind, int ProbesSucceeded, int ProbesFailed, int ProbesOutstanding);

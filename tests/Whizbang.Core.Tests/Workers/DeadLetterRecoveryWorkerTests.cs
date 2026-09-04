@@ -96,6 +96,18 @@ public class DeadLetterRecoveryWorkerTests {
     public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
+    // Campaign surface (P1) — inert defaults; campaign behavior is locked by
+    // DeadLetterCanaryCampaignTests with its dedicated scripted fake.
+    public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
+    public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<HeldCohort>>([]);
+    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(new CanaryVerdict(CanaryVerdictKind.Pass, 0, 0, 0));
+    public Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) =>
+      Task.FromResult(0);
+
     public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) {
       ResetForGenerationCalls.Add(currentGeneration);
       return Task.FromResult(GenerationReplayReturn);

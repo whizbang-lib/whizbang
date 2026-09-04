@@ -120,6 +120,17 @@ public interface IDeadLetterRecoveryPolicy {
   bool ShouldRecover(DeadLetterEntry entry);
 }
 
+/// <summary>Startup posture toward HELD dead-letter rows.</summary>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+public enum RetryHeldOnStartupMode {
+  /// <summary>Held rows stay held (default).</summary>
+  Off = 0,
+  /// <summary>Probe each cohort; release only cohorts whose probes all recover.</summary>
+  Canary = 1,
+  /// <summary>Release every held cohort, staggered, without probing.</summary>
+  Full = 2,
+}
+
 /// <summary>
 /// Configuration for the DLQ recovery subsystem.
 /// </summary>
@@ -177,6 +188,26 @@ public sealed class DeadLetterRecoveryOptions {
   /// matters more than interactive throughput.
   /// </remarks>
   public bool WaitForIdle { get; set; } = true;
+
+  /// <summary>
+  /// Startup campaign over HELD rows. <see cref="RetryHeldOnStartupMode.Off"/> (default)
+  /// leaves held rows alone. <see cref="RetryHeldOnStartupMode.Canary"/> probes
+  /// <see cref="CanaryProbeSize"/> rows per fingerprint cohort and releases a cohort only
+  /// when every probe recovers. <see cref="RetryHeldOnStartupMode.Full"/> releases every
+  /// held cohort without probing — a trust shortcut, never a pacing shortcut: release is
+  /// always staggered eligibility drained by the normal paced scans. An operator sets
+  /// this and restarts; it binds turnkey from Whizbang:DeadLetterRecovery.
+  /// </summary>
+  public RetryHeldOnStartupMode RetryHeldOnStartup { get; set; } = RetryHeldOnStartupMode.Off;
+
+  /// <summary>Probe rows per cohort in Canary mode. Default 10.</summary>
+  public int CanaryProbeSize { get; set; } = 10;
+
+  /// <summary>
+  /// Window the release of a cohort is staggered across, so the paced scans drain it
+  /// instead of one giant due-set arriving at once. Default 30 minutes.
+  /// </summary>
+  public int ReleaseStaggerMinutes { get; set; } = 30;
 
   /// <summary>
   /// Share of a scan batch that must postdate the previous scan before that cycle counts as

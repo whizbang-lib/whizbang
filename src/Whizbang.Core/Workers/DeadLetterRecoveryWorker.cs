@@ -28,8 +28,10 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>operations/dead-letter-queue/recovery</docs>
 /// <docs>operations/workers/housekeeping-arbitration</docs>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterCanaryCampaignTests.cs</tests>
 public partial class DeadLetterRecoveryWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
@@ -160,6 +162,16 @@ public partial class DeadLetterRecoveryWorker(
       }
     }
 
+    if (_options.RetryHeldOnStartup != RetryHeldOnStartupMode.Off) {
+      try {
+        await _startHeldCampaignAsync(stoppingToken).ConfigureAwait(false);
+      } catch (OperationCanceledException) {
+        return;
+      } catch (Exception ex) {
+        LogError(_logger, ex);
+      }
+    }
+
     while (!stoppingToken.IsCancellationRequested) {
       try {
         await _scanOnceAsync(stoppingToken);
@@ -204,6 +216,80 @@ public partial class DeadLetterRecoveryWorker(
     return false;
   }
 
+  // Canary campaigns in flight for THIS process's generation. Fingerprints only — the
+  // persisted campaign row is the durable record; this set is merely "evaluate these on
+  // each scan", rebuilt on restart by _startHeldCampaignAsync (BeginCanaryProbesAsync is
+  // idempotent per (fingerprint, generation), so re-listing cohorts resumes campaigns).
+  private readonly HashSet<string> _campaignsInFlight = [];
+  private string? _campaignGeneration;
+
+  private async Task _startHeldCampaignAsync(CancellationToken ct) {
+    using var scope = _scopeFactory.CreateScope();
+    var svc = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
+    if (svc is null) {
+      _logNoRecoveryServiceOnce();
+      return;
+    }
+
+    // Grandfather gate first: campaigns operate only on rows the machinery can re-drive.
+    var purged = await svc.PurgeUndeliverableHeldAsync(ct).ConfigureAwait(false);
+    if (purged > 0) {
+      LogCampaignPurgedUndeliverable(_logger, purged);
+    }
+
+    var cohorts = await svc.ListHeldCohortsAsync(ct).ConfigureAwait(false);
+    if (cohorts.Count == 0) {
+      return;
+    }
+    _campaignGeneration = _generationProvider.GetGeneration();
+    LogCampaignStarted(_logger, _options.RetryHeldOnStartup, cohorts.Count, _campaignGeneration);
+
+    var stagger = TimeSpan.FromMinutes(_options.ReleaseStaggerMinutes);
+    foreach (var cohort in cohorts) {
+      ct.ThrowIfCancellationRequested();
+      if (_options.RetryHeldOnStartup == RetryHeldOnStartupMode.Full) {
+        var released = await svc.ReleaseHeldCohortAsync(cohort.Fingerprint, stagger, ct).ConfigureAwait(false);
+        LogCohortReleased(_logger, cohort.Fingerprint, released, "full");
+      } else {
+        var probes = await svc.BeginCanaryProbesAsync(
+          cohort.Fingerprint, _campaignGeneration, _options.CanaryProbeSize, ct).ConfigureAwait(false);
+        // probes == 0 means the campaign already exists (restart mid-campaign) — resume
+        // evaluating it rather than orphaning it.
+        LogProbesStarted(_logger, cohort.Fingerprint, probes, cohort.RowCount, cohort.MessageTypeCount);
+        _campaignsInFlight.Add(cohort.Fingerprint);
+      }
+    }
+  }
+
+  private async Task _evaluateCampaignsAsync(IDeadLetterRecoveryService svc, CancellationToken ct) {
+    if (_campaignsInFlight.Count == 0 || _campaignGeneration is null) {
+      return;
+    }
+    var stagger = TimeSpan.FromMinutes(_options.ReleaseStaggerMinutes);
+    foreach (var fingerprint in _campaignsInFlight.ToArray()) {
+      ct.ThrowIfCancellationRequested();
+      var verdict = await svc.EvaluateCampaignAsync(fingerprint, _campaignGeneration, ct).ConfigureAwait(false);
+      switch (verdict.Kind) {
+        case CanaryVerdictKind.Pending:
+          break;
+        case CanaryVerdictKind.Pass:
+          var released = await svc.ReleaseHeldCohortAsync(fingerprint, stagger, ct).ConfigureAwait(false);
+          LogCohortReleased(_logger, fingerprint, released, "canary-pass");
+          _campaignsInFlight.Remove(fingerprint);
+          break;
+        case CanaryVerdictKind.Fail:
+          LogCohortFailed(_logger, fingerprint, verdict.ProbesFailed);
+          _campaignsInFlight.Remove(fingerprint);
+          break;
+        case CanaryVerdictKind.Mixed:
+        default:
+          LogCohortMixed(_logger, fingerprint, verdict.ProbesSucceeded, verdict.ProbesFailed);
+          _campaignsInFlight.Remove(fingerprint);
+          break;
+      }
+    }
+  }
+
   private async Task _scanOnceAsync(CancellationToken ct) {
     var scanStartedAt = DateTimeOffset.UtcNow;
     using var scope = _scopeFactory.CreateScope();
@@ -240,6 +326,12 @@ public partial class DeadLetterRecoveryWorker(
         _logNoRecoveryServiceOnce();
         return;
       }
+
+      // Canary campaigns evaluate on the scan cadence, under the same arbitration grant —
+      // and BEFORE the due-fetch early-return below, because a quiet queue is exactly when
+      // verdicts land (probes recovered = nothing due = empty batch).
+      await _evaluateCampaignsAsync(svc, ct).ConfigureAwait(false);
+
       var policy = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryPolicy>();
 
       // Fetch in batches — bounded by ScanBatchSize so a single scan doesn't try to drain
@@ -357,6 +449,30 @@ public partial class DeadLetterRecoveryWorker(
       }
     }
   }
+
+  [LoggerMessage(EventId = 17, Level = LogLevel.Information,
+    Message = "Held-cohort campaign starting: mode={Mode}, cohorts={Cohorts}, generation={Generation}")]
+  static partial void LogCampaignStarted(ILogger logger, RetryHeldOnStartupMode mode, int cohorts, string generation);
+
+  [LoggerMessage(EventId = 18, Level = LogLevel.Warning,
+    Message = "Campaign purged {Purged} held row(s) with no re-drivable payload — no recovery can ever process them; they are marked PermanentlyFailed for the operator ledger")]
+  static partial void LogCampaignPurgedUndeliverable(ILogger logger, int purged);
+
+  [LoggerMessage(EventId = 19, Level = LogLevel.Information,
+    Message = "Canary probes started for cohort {Fingerprint}: probes={Probes} (0 = resuming an existing campaign), rows={Rows}, messageTypes={MessageTypes}")]
+  static partial void LogProbesStarted(ILogger logger, string fingerprint, int probes, long rows, int messageTypes);
+
+  [LoggerMessage(EventId = 20, Level = LogLevel.Information,
+    Message = "Held cohort {Fingerprint} released ({Released} row(s), {Mode}) — rows return to Pending staggered; the paced scans drain them")]
+  static partial void LogCohortReleased(ILogger logger, string fingerprint, int released, string mode);
+
+  [LoggerMessage(EventId = 21, Level = LogLevel.Information,
+    Message = "Canary campaign for cohort {Fingerprint} FAILED ({ProbesFailed} probe(s) re-dead-lettered) — the cohort stays held; the bug is still live")]
+  static partial void LogCohortFailed(ILogger logger, string fingerprint, int probesFailed);
+
+  [LoggerMessage(EventId = 22, Level = LogLevel.Warning,
+    Message = "Canary campaign for cohort {Fingerprint} returned MIXED: {ProbesSucceeded} probe(s) recovered, {ProbesFailed} re-dead-lettered. The cohort likely spans more than one real failure; it stays held for operator review — auto-releasing would re-drive the failing part at full volume")]
+  static partial void LogCohortMixed(ILogger logger, string fingerprint, int probesSucceeded, int probesFailed);
 
   [LoggerMessage(EventId = 16, Level = LogLevel.Warning,
     Message = "IDeadLetterRecoveryService is not registered: dead-letter recovery cannot scan and "
