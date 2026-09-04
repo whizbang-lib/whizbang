@@ -615,7 +615,15 @@ function _selectFailureSignal {
     # failure is never reported with an empty body.
     if ($signal.Count -eq 0) { return @($Lines | Select-Object -Last 30) }
 
-    return @($signal | Select-Object -Last 60)
+    # Keep both ends. Under --fail-fast one real failure cancels everything still running, and
+    # each cancelled test prints its own three-line OperationCanceledException block. A tail-only
+    # window is then filled entirely by the consequences and the originating failure -- the only
+    # one that explains anything -- scrolls off the top.
+    if ($signal.Count -le 100) { return $signal }
+
+    return @($signal | Select-Object -First 40) +
+           @("    ... $($signal.Count - 100) lines elided ...") +
+           @($signal | Select-Object -Last 60)
 }
 
 
@@ -1188,8 +1196,12 @@ try {
                     $failureSignal = @($outText | Where-Object { $_ -notmatch '\[\+\d+/x\d+/\?\d+\]' })
                     if ($failureSignal.Count -eq 0) {
                         $failureSignal = @($outText | Select-Object -Last 30)
-                    } else {
-                        $failureSignal = @($failureSignal | Select-Object -Last 60)
+                    } elseif ($failureSignal.Count -gt 100) {
+                        # Both ends: under --fail-fast the cancellation storm fills a tail-only
+                        # window and buries the one failure that caused it.
+                        $failureSignal = @($failureSignal | Select-Object -First 40) +
+                                         @("    ... $($failureSignal.Count - 100) lines elided ...") +
+                                         @($failureSignal | Select-Object -Last 60)
                     }
 
                     $resultsBag.Add([PSCustomObject]@{
