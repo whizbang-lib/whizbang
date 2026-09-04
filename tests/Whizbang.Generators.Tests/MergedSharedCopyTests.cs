@@ -332,4 +332,177 @@ public class MergedSharedCopyTests {
     await Assert.That(values[0]).IsEqualTo("orders");
   }
 
+
+  private const string NESTED_SYMBOL_SOURCE = """
+    namespace App {
+      public class ActiveAccount {
+        public class ActiveAccountModel { }
+        public class Snapshot { }
+      }
+      public class Order { }
+      public class Envelope<TPayload> { }
+    }
+    """;
+
+  private static INamedTypeSymbol _nested(string metadataName) {
+    var compilation = GeneratorTestHelper.CreateCompilation(NESTED_SYMBOL_SOURCE);
+    return compilation.GetTypeByMetadataName(metadataName)
+      ?? throw new InvalidOperationException($"test compilation did not produce {metadataName}");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_SimplifiesTypeNamesIdenticallyAsync(MergedHost host) {
+    // Every generator derives table, endpoint and property names from this. A copy that
+    // simplified differently would emit a different schema from the same source, and only in
+    // whichever package carried it.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetSimpleName", "App.Models.OrderReadModel")!)
+      .IsEqualTo("OrderReadModel");
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetSimpleName", "OrderReadModel")!)
+      .IsEqualTo("OrderReadModel")
+      .Because("a name with no namespace is already simple");
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetSimpleName", "App.Models.Order[]")!)
+      .IsEqualTo("Order[]")
+      .Because("the array suffix survives simplification of the element type");
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetSimpleName", "(App.Models.Order, App.Models.Line)")!)
+      .IsEqualTo("(Order, Line)")
+      .Because("tuple members are simplified individually and the shape is preserved");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_SplitsTupleMembersAtTheOuterLevelOnlyAsync(MergedHost host) {
+    // The depth counter is what stops a nested tuple being torn apart at its inner comma. A
+    // copy that lost it would split "(a, (b, c))" into three members and generate a signature
+    // that does not match the type it came from.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var parts = (string[])_call(host.Assembly, ns + "TypeNameUtilities", "SplitTupleParts", "int, (string, bool), long")!;
+
+    await Assert.That(parts.Length).IsEqualTo(3)
+      .Because("the comma inside the inner tuple is not a member separator");
+    await Assert.That(parts[1].Trim()).IsEqualTo("(string, bool)");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_NamesDbSetsAndTablesIdenticallyAsync(MergedHost host) {
+    // Table naming decides the physical schema. Two packages disagreeing here means one of them
+    // reads and writes a table the other never creates.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var topLevel = _nested("App.Order");
+    var nestedEchoing = _nested("App.ActiveAccount+ActiveAccountModel");
+    var nestedDistinct = _nested("App.ActiveAccount+Snapshot");
+
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetDbSetPropertyName", topLevel)!)
+      .IsEqualTo("Orders");
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetDbSetPropertyName", nestedDistinct)!)
+      .IsEqualTo("ActiveAccountModels")
+      .Because("a nested model takes its DbSet name from the containing type");
+
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetTableBaseName", topLevel)!)
+      .IsEqualTo("Order");
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetTableBaseName", nestedEchoing)!)
+      .IsEqualTo("ActiveAccount")
+      .Because("a nested name that repeats its container collapses, or the table would be "
+             + "wh_per_active_account_active_account");
+    await Assert.That((string)_call(host.Assembly, ns + "TypeNameUtilities", "GetTableBaseName", nestedDistinct)!)
+      .IsEqualTo("ActiveAccountSnapshot")
+      .Because("a nested name that differs is concatenated so the two tables stay distinct");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_BuildsClrTypeNamesIdenticallyAsync(MergedHost host) {
+    // Event types are stored in the database in CLR format and looked up by exact string. A
+    // copy that emitted '.' where the runtime writes '+' produces rows that never match on read.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+
+    var nestedClr = (string)_call(host.Assembly, ns + "TypeNameUtilities", "BuildClrTypeName",
+      _nested("App.ActiveAccount+Snapshot"))!;
+    await Assert.That(nestedClr).Contains("ActiveAccount+Snapshot")
+      .Because("nested types join with '+' to match Type.FullName, which is what the lookup uses");
+
+    var genericClr = (string)_call(host.Assembly, ns + "TypeNameUtilities", "BuildClrTypeName",
+      _nested("App.Envelope`1"))!;
+    await Assert.That(genericClr).Contains("Envelope`1")
+      .Because("generic arity is part of the CLR name");
+
+    var runtime = (string)_call(host.Assembly, ns + "TypeNameUtilities", "FormatTypeNameForRuntime",
+      _nested("App.Order"))!;
+    await Assert.That(runtime).Contains("App.Order");
+    await Assert.That(runtime).Contains(",")
+      .Because("the runtime form is assembly-qualified");
+  }
+
+
+  private const string INHERITANCE_SOURCE = """
+    namespace App {
+      [System.AttributeUsage(System.AttributeTargets.All)]
+      public sealed class MarkAttribute : System.Attribute { }
+
+      public class BaseEntity {
+        [Mark] public string InheritedKey { get; set; } = "";
+        [Mark] public virtual void Configure() { }
+        internal string Hidden { get; set; } = "";
+      }
+
+      public class OrderEntity : BaseEntity {
+        public int Total { get; set; }
+        public override void Configure() { }
+      }
+    }
+    """;
+
+  private static INamedTypeSymbol _orderEntity() {
+    var compilation = GeneratorTestHelper.CreateCompilation(INHERITANCE_SOURCE);
+    return compilation.GetTypeByMetadataName("App.OrderEntity")
+      ?? throw new InvalidOperationException("test compilation did not produce App.OrderEntity");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_FindsAttributedMembersOnBaseTypesAsync(MergedHost host) {
+    // Generators locate the key property and the configure hook by attribute, then walk up to
+    // the base type. A copy that stopped at the declaring type would silently emit a schema
+    // missing every inherited column -- the generator succeeds and the table is wrong.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    const string mark = "global::App.MarkAttribute";
+    var entity = _orderEntity();
+
+    var property = (IPropertySymbol?)_call(
+      host.Assembly, ns + "TypeSymbolExtensions", "FindPropertyWithAttribute", entity, mark, true);
+    await Assert.That(property?.Name).IsEqualTo("InheritedKey")
+      .Because("the attributed property is declared on the base type, not on OrderEntity");
+
+    var method = (IMethodSymbol?)_call(
+      host.Assembly, ns + "TypeSymbolExtensions", "FindMethodWithAttribute", entity, mark, true);
+    await Assert.That(method?.Name).IsEqualTo("Configure")
+      .Because("the override carries no attribute, so the walk has to reach the base declaration");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ReturnsAnOverriddenMethodOnceAsync(MergedHost host) {
+    // Configure is declared twice -- virtual on the base, override on the derived type. The
+    // signature dedupe is what stops a generator emitting the same registration twice, which
+    // for a receptor means the message is handled twice per delivery.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var entity = _orderEntity();
+
+    var byName = (IEnumerable<IMethodSymbol>)_call(
+      host.Assembly, ns + "TypeSymbolExtensions", "GetAllMethodsByName", entity, "Configure", false)!;
+
+    await Assert.That(byName.Count()).IsEqualTo(1)
+      .Because("an override and the method it overrides are one method, not two");
+
+    var all = (IEnumerable<IMethodSymbol>)_call(
+      host.Assembly, ns + "TypeSymbolExtensions", "GetAllMethods", entity, false, false)!;
+    var names = all.Select(m => m.Name).ToList();
+
+    await Assert.That(names).Contains("Configure");
+    await Assert.That(names.Count(n => n == "Configure")).IsEqualTo(1);
+  }
+
 }

@@ -772,4 +772,80 @@ public class WolverineAnalyzerTests {
       .Because("a warning on every handler is the same as no warning at all");
   }
 
+
+  [Test]
+  public async Task AnalyzeAsync_AttributeHandlerOnAGenericBase_InfersTheMessageFromItAsync() {
+    // A handler can carry [WolverineHandler] and take its message from a shared generic base
+    // rather than a Handle method the analyzer can read. Without the base-class fallback the
+    // message type records as "unknown", and the migration emits a receptor bound to no
+    // message at all -- it compiles, it registers, and it never receives anything.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine.Attributes;
+
+      [WolverineHandler]
+      public class StepAssignedHandler : BaseConsumerMessageHandler<WorkflowContracts.StepAssignedEvent> {
+        public override Task Process(WorkflowContracts.StepAssignedEvent evt) {
+          return Task.CompletedTask;
+        }
+      }
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/StepAssignedHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Handlers[0].MessageType)
+      .IsEqualTo("WorkflowContracts.StepAssignedEvent")
+      .Because("the generic argument on the base class is the message this handler receives");
+    await Assert.That(result.Handlers[0].HandlerKind).IsEqualTo(HandlerKind.WolverineAttribute);
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_AttributeHandlerOnANonGenericBase_ReportsAnUnknownMessageAsync() {
+    // Nothing here names a message: no readable Handle method and a base with no type argument.
+    // "unknown" is the honest answer, and it is what the report shows the operator so they can
+    // supply it by hand. Inventing one from the class name would migrate it to the wrong type.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine.Attributes;
+
+      [WolverineHandler]
+      public class LegacyHandler : LegacyHandlerBase {
+        public override Task Process(object payload) {
+          return Task.CompletedTask;
+        }
+      }
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/LegacyHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Handlers[0].MessageType).IsEqualTo("unknown")
+      .Because("a base class with no type argument names no message");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_AttributeHandlerWithNoBaseClass_ReportsAnUnknownMessageAsync() {
+    // The other exit from the fallback: no base list at all to inspect. Still a handler --
+    // the attribute says so -- so it must be reported rather than silently dropped from the
+    // migration, which is what skipping it would do.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine.Attributes;
+
+      [WolverineHandler]
+      public class StandaloneHandler {
+        public Task Run() {
+          return Task.CompletedTask;
+        }
+      }
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/StandaloneHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1)
+      .Because("the attribute marks it as a handler even with no discoverable message");
+    await Assert.That(result.Handlers[0].MessageType).IsEqualTo("unknown");
+  }
+
 }

@@ -76,4 +76,79 @@ public sealed class WorkerPipelineIdempotencyTests {
       .Because("AddHostedService<T> dedupes by implementation type; this pins that no hosted "
              + "registration in the pipeline bypasses it");
   }
+
+  /// <summary>The generic host supplies this; AddWhizbangWorkers does not and should not.</summary>
+  private sealed class StubHostLifetime : IHostApplicationLifetime {
+    public CancellationToken ApplicationStarted => CancellationToken.None;
+    public CancellationToken ApplicationStopping => CancellationToken.None;
+    public CancellationToken ApplicationStopped => CancellationToken.None;
+    public void StopApplication() { }
+  }
+
+  /// <summary>
+  /// Contracts a transport consumer or storage driver contributes. A worker that cannot be
+  /// built without one of these is waiting on configuration the application supplies, not on a
+  /// registration AddWhizbangWorkers forgot.
+  /// </summary>
+  private static readonly string[] _transportSuppliedContracts = [
+    "IWorkChannelWriter",
+    "IInboxChannelWriter",
+    "JsonSerializerOptions"
+  ];
+
+  [Test]
+  public async Task AddWhizbangWorkers_EveryHostedServiceItRegistersCanBeConstructedAsync() {
+    // The registrations are factories -- `sp => sp.GetRequiredService<HeartbeatWorker>()` -- so
+    // they run only when something actually constructs the hosted service. Counting descriptors,
+    // which is all the tests above do, never executes them. A worker whose constructor gains a
+    // dependency nobody registered therefore stays green here and throws during host startup
+    // instead, where it surfaces as a background-service failure with the real cause buried.
+    //
+    // Composed the way an application composes it: AddWhizbang for the core services, plus the
+    // logging and lifetime the generic host always provides. What remains unbuildable after that
+    // is the transport-dependent set, and the assertion pins exactly that boundary -- a worker
+    // that newly starts needing a transport fails here and has to be a deliberate decision.
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    services.AddLogging();
+    services.AddSingleton<IHostApplicationLifetime>(new StubHostLifetime());
+    services.AddWhizbang();
+    services.AddWhizbangWorkers();
+
+    await using var provider = services.BuildServiceProvider();
+
+    var hosted = services.Where(sd => sd.ServiceType == typeof(IHostedService)).ToList();
+    var unexpected = new List<string>();
+
+    foreach (var descriptor in hosted) {
+      var name = descriptor.ImplementationType?.Name
+        ?? descriptor.ImplementationInstance?.GetType().Name
+        ?? "factory";
+
+      try {
+        // AddHostedService<T>() registers T only under IHostedService, so T itself is not
+        // resolvable by name. ActivatorUtilities builds it from the same container, which is
+        // the property under test: are this worker's dependencies actually registered.
+        var instance = descriptor.ImplementationInstance
+          ?? (descriptor.ImplementationFactory is not null
+                ? descriptor.ImplementationFactory(provider)
+                : ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType!));
+
+        if (instance is null) {
+          unexpected.Add($"{name} resolved to null");
+        }
+      } catch (Exception ex) {
+        if (!_transportSuppliedContracts.Any(c => ex.Message.Contains(c, StringComparison.Ordinal))) {
+          unexpected.Add($"{name}: {ex.GetType().Name}: {ex.Message}");
+        }
+      }
+    }
+
+    await Assert.That(hosted).IsNotEmpty()
+      .Because("the assertion below is vacuous if nothing was registered to construct");
+    await Assert.That(unexpected).IsEmpty()
+      .Because("a worker that cannot be built from a configured container is missing a "
+             + "registration; it fails at host startup, not here");
+  }
+
 }
