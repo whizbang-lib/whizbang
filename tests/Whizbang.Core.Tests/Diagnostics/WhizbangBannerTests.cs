@@ -217,6 +217,171 @@ public class WhizbangBannerTests {
     await Assert.That(logger.Entries).IsEmpty();
   }
 
+  // --- PrintHeader -----------------------------------------------------------
+
+  [Test]
+  public async Task PrintHeader_WhenDisabled_WritesNothingAsync() {
+    // The header is config-driven; a service that turns it off must emit no stray
+    // box-drawing characters into a structured log sink.
+    using var sw = new StringWriter();
+
+    WhizbangBanner.PrintHeader("OrderService", enabled: false, writer: sw);
+
+    await Assert.That(sw.ToString()).IsEmpty();
+  }
+
+  [Test]
+  public async Task PrintHeader_DrawsAClosedBoxOfUniformWidthAsync() {
+    // A box whose rows disagree on width renders as a torn frame in a terminal. The
+    // padding arithmetic is the only thing holding the corners together, so pin it.
+    WhizbangBanner.OutputRedirectedOverride = true;   // plain banner keeps the parse simple
+    using var sw = new StringWriter();
+
+    WhizbangBanner.PrintHeader(
+      "OrderService", "1.2.3",
+      new Dictionary<string, string> { ["Mode"] = "Ai" },
+      whizbangVersion: "9.9.9", writer: sw);
+
+    var box = _boxLines(sw.ToString());
+    await Assert.That(box.Count).IsEqualTo(4)
+      .Because("top border, title, one config row, bottom border");
+    await Assert.That(box.Select(l => l.Length).Distinct().Count()).IsEqualTo(1)
+      .Because("every row of the frame has to be the same width or the corners do not meet");
+    await Assert.That(box[0]).StartsWith("  ╔");
+    await Assert.That(box[0]).EndsWith("╗");
+    await Assert.That(box[^1]).StartsWith("  ╚");
+    await Assert.That(box[^1]).EndsWith("╝");
+  }
+
+  [Test]
+  public async Task PrintHeader_TitleCarriesNameAndBothVersionsAsync() {
+    // The header is the one place an operator reads which build is running against which
+    // library version, so both numbers have to survive into the title row.
+    WhizbangBanner.OutputRedirectedOverride = true;
+    using var sw = new StringWriter();
+
+    WhizbangBanner.PrintHeader("OrderService", "1.2.3", whizbangVersion: "9.9.9", writer: sw);
+
+    var title = _boxLines(sw.ToString())[1];
+    await Assert.That(title).Contains("OrderService");
+    await Assert.That(title).Contains("v1.2.3");
+    await Assert.That(title).Contains("(Whizbang v9.9.9)");
+  }
+
+  [Test]
+  public async Task PrintHeader_WithoutAnExplicitVersion_FallsBackToAPlaceholderAsync() {
+    // A caller that cannot supply a version still gets a well-formed title rather than
+    // "v" followed by nothing.
+    WhizbangBanner.OutputRedirectedOverride = true;
+    using var sw = new StringWriter();
+
+    WhizbangBanner.PrintHeader("whizbang-migrate", version: null, whizbangVersion: "9.9.9", writer: sw);
+
+    await Assert.That(_boxLines(sw.ToString())[1]).Contains("v0.0.0");
+  }
+
+  [Test]
+  public async Task PrintHeader_RendersParametersOrderedByKeyAsync() {
+    // Parameters arrive in whatever order the caller's dictionary enumerates. The header
+    // sorts them so the same run configuration always reads identically -- otherwise two
+    // hosts with identical settings produce diffs that look like real changes.
+    WhizbangBanner.OutputRedirectedOverride = true;
+    using var sw = new StringWriter();
+
+    var unordered = new Dictionary<string, string> {
+      ["Zone"] = "west",
+      ["Action"] = "Prepare",
+      ["Mode"] = "Ai",
+    };
+
+    WhizbangBanner.PrintHeader("PR Runner", "1.0.0", unordered, whizbangVersion: "9.9.9", writer: sw);
+
+    var config = _boxLines(sw.ToString())[2];
+    await Assert.That(config).Contains("Action: Prepare | Mode: Ai | Zone: west")
+      .Because("the rendered order is alphabetical by key, not the dictionary's own order");
+  }
+
+  [Test]
+  public async Task PrintHeader_WithNoParameters_OmitsTheConfigRowAsync() {
+    // An empty configuration must collapse the row rather than draw an empty band.
+    WhizbangBanner.OutputRedirectedOverride = true;
+    using var sw = new StringWriter();
+    using var withParams = new StringWriter();
+
+    WhizbangBanner.PrintHeader("OrderService", "1.0.0", whizbangVersion: "9.9.9", writer: sw);
+    WhizbangBanner.PrintHeader(
+      "OrderService", "1.0.0",
+      new Dictionary<string, string> { ["Mode"] = "Ai" },
+      whizbangVersion: "9.9.9", writer: withParams);
+
+    await Assert.That(_boxLines(sw.ToString()).Count).IsEqualTo(3)
+      .Because("top border, title, bottom border -- and nothing between");
+    await Assert.That(_boxLines(withParams.ToString()).Count).IsEqualTo(4);
+  }
+
+  [Test]
+  public async Task PrintHeader_PrintsTheBannerAboveTheBoxAsync() {
+    // PrintHeader is banner + box; if it silently stopped calling Print the box would
+    // still look correct on its own, so assert the two are ordered and both present.
+    WhizbangBanner.OutputRedirectedOverride = true;
+    using var banner = new StringWriter();
+    using var header = new StringWriter();
+
+    WhizbangBanner.Print(banner);
+    WhizbangBanner.PrintHeader("OrderService", "1.0.0", whizbangVersion: "9.9.9", writer: header);
+
+    var firstBannerRow = banner.ToString()
+      .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)[0];
+    var text = header.ToString();
+
+    await Assert.That(text).Contains(firstBannerRow);
+    await Assert.That(text.IndexOf(firstBannerRow, StringComparison.Ordinal))
+      .IsLessThan(text.IndexOf('╔'))
+      .Because("the banner is printed before the configuration box, not after it");
+  }
+
+  // --- Logging sinks ---------------------------------------------------------
+
+  [Test]
+  public async Task LogBanner_LogsThePlainBannerOneRowPerEntryAsync() {
+    // Structured sinks strip ANSI and treat each entry as a record, so the plain banner
+    // has to arrive a row at a time rather than as one blob with embedded newlines.
+    WhizbangBanner.OutputRedirectedOverride = true;
+    var logger = new RecordingLogger();
+    using var sw = new StringWriter();
+    WhizbangBanner.Print(sw);
+    var expected = sw.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries)
+      .Select(l => l.TrimEnd('\r')).ToList();
+
+    WhizbangBanner.LogBanner(logger);
+
+    await Assert.That(logger.Entries.Count).IsEqualTo(expected.Count)
+      .Because("one log entry per banner row");
+    await Assert.That(logger.Entries).IsEquivalentTo(expected);
+    await Assert.That(logger.Entries.Any(e => e.Contains('\x1b'))).IsFalse()
+      .Because("this overload is the one for sinks that cannot render escape codes");
+  }
+
+  [Test]
+  public async Task LogBannerAnsi_LogsTheColoredBannerAsASingleEntryAsync() {
+    // The ANSI overload targets terminal-aware sinks, where splitting the gradient across
+    // entries would break the background run between rows.
+    WhizbangBanner.OutputRedirectedOverride = false;
+    Environment.SetEnvironmentVariable("COLORTERM", "truecolor");
+    var logger = new RecordingLogger();
+
+    WhizbangBanner.LogBannerAnsi(logger);
+
+    await Assert.That(logger.Entries.Count).IsEqualTo(1);
+    await Assert.That(logger.Entries[0]).Contains("\x1b[");
+  }
+
+  /// <summary>Returns only the configuration box rows, discarding the banner above it.</summary>
+  private static List<string> _boxLines(string output)
+    => [.. output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        .Select(l => l.TrimEnd('\r'))
+        .Where(l => l.Contains('╔') || l.Contains('║') || l.Contains('╚'))];
+
   private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger {
     public bool Enabled { get; init; } = true;
     public List<string> Entries { get; } = [];
