@@ -53,6 +53,22 @@ public sealed class WorkerOptionsBindingTests {
   }
 
   [Test]
+  public async Task CanaryCampaignKeys_BindIncludingTheEnumAsync() {
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:DeadLetterRecovery:RetryHeldOnStartup"] = "Canary",
+      ["Whizbang:DeadLetterRecovery:CanaryProbeSize"] = "25",
+      ["Whizbang:DeadLetterRecovery:ReleaseStaggerMinutes"] = "90",
+    });
+    var options = provider.GetRequiredService<IOptions<DeadLetterRecoveryOptions>>().Value;
+
+    await Assert.That(options.RetryHeldOnStartup).IsEqualTo(RetryHeldOnStartupMode.Canary)
+      .Because("the operator's set-and-restart lever is an enum, and enum binding must "
+             + "survive the source-generated binder");
+    await Assert.That(options.CanaryProbeSize).IsEqualTo(25);
+    await Assert.That(options.ReleaseStaggerMinutes).IsEqualTo(90);
+  }
+
+  [Test]
   public async Task TransportDrain_ReadsItsConfigurationSectionAsync() {
     await using var provider = _hostWith(new Dictionary<string, string?> {
       ["Whizbang:Workers:TransportDeadLetterDrain:Enabled"] = "false",

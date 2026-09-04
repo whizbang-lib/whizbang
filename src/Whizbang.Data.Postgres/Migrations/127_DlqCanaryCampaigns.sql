@@ -1,0 +1,226 @@
+-- Migration: 127_DlqCanaryCampaigns
+-- Date: 2026-09-03
+-- Description: Held-cohort canary campaign persistence (P1 of plans/dlq-stack-intelligence.md).
+--   A campaign probes a few rows of a held fingerprint cohort; the cohort releases only when
+--   the probes recover. wh_dlq_probe_campaigns is the durable record (one row per
+--   fingerprint x generation) a restarted pod resumes from. Probing and releasing only ever
+--   return rows to Pending — actual re-drives stay with the paced recovery scans.
+-- Dependencies: 050_WhDeadLetters (table), 053_DeadLetterFingerprint (cohort key)
+-- Objects: wh_dlq_probe_campaigns, purge_undeliverable_held_dead_letters, list_held_dead_letter_cohorts, begin_canary_probes, evaluate_canary_campaign, release_held_dead_letter_cohort
+
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_dlq_probe_campaigns (
+  fingerprint        VARCHAR(16) NOT NULL,
+  generation         TEXT        NOT NULL,
+  started_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  probe_ids          UUID[]      NOT NULL,
+  verdict            INTEGER     NOT NULL DEFAULT 0,   -- CanaryVerdictKind: 0 Pending, 1 Pass, 2 Fail, 3 Mixed
+  probes_succeeded   INTEGER     NOT NULL DEFAULT 0,
+  probes_failed      INTEGER     NOT NULL DEFAULT 0,
+  verdict_at         TIMESTAMPTZ,
+  PRIMARY KEY (fingerprint, generation)
+);
+
+COMMENT ON TABLE __SCHEMA__.wh_dlq_probe_campaigns IS
+'One canary campaign per (error_fingerprint, build generation): which rows probed, and how the verdict resolved. Durable so a pod restart mid-campaign resumes evaluation instead of minting a second probe set.';
+
+-- ============================================================================
+-- purge_undeliverable_held_dead_letters — the grandfather gate
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.purge_undeliverable_held_dead_letters()
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_count INTEGER;
+BEGIN
+  -- jsonb_typeof, never IS NULL: the column is NOT NULL, and the undeliverable shape is
+  -- the JSON null literal (or a scalar) — an envelope that is not an object cannot be
+  -- re-driven by any campaign, so campaigns must never count it as material.
+  UPDATE __SCHEMA__.wh_dead_letters
+  SET recovery_status = 4,  -- PermanentlyFailed: visible in the operator ledger, not deleted
+      operator_notes = COALESCE(operator_notes || E'\n', '')
+        || 'auto-purged by campaign grandfather gate: envelope is not a re-drivable object'
+  WHERE recovery_status = 2
+    AND recovered_at IS NULL
+    AND jsonb_typeof(envelope) IS DISTINCT FROM 'object';
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.purge_undeliverable_held_dead_letters IS
+'Campaign grandfather gate (127): held rows whose envelope is not a JSON object are marked PermanentlyFailed — no recovery can ever re-drive them, and leaving them held would let campaigns probe rows that cannot succeed.';
+
+-- ============================================================================
+-- list_held_dead_letter_cohorts — campaign units
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.list_held_dead_letter_cohorts()
+RETURNS TABLE(fingerprint VARCHAR(16), row_count BIGINT, message_type_count INTEGER)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT dl.error_fingerprint, count(*), count(DISTINCT dl.message_type)::INTEGER
+  FROM __SCHEMA__.wh_dead_letters dl
+  WHERE dl.recovery_status = 2
+    AND dl.recovered_at IS NULL
+    AND dl.error_fingerprint IS NOT NULL
+    AND dl.operator_disposition NOT IN (2, 3)  -- HoldIndefinitely, MarkPermanentlyFailed
+  GROUP BY dl.error_fingerprint;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.list_held_dead_letter_cohorts IS
+'Held rows grouped by error fingerprint (127) — the units a startup campaign probes or releases. Operator-held dispositions are never campaign material.';
+
+-- ============================================================================
+-- begin_canary_probes — idempotent per (fingerprint, generation)
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.begin_canary_probes(
+  p_fingerprint VARCHAR(16), p_generation TEXT, p_probe_size INTEGER)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_probe_ids UUID[];
+  v_inserted  INTEGER;
+BEGIN
+  -- Stratified pick: round-robin across message types (rn 1 of every type first), newest
+  -- rows preferred — a probe set all of one type would hide a cohort that splits by type.
+  SELECT array_agg(dead_letter_id) INTO v_probe_ids
+  FROM (
+    SELECT dl.dead_letter_id
+    FROM (
+      SELECT dead_letter_id, message_type,
+             ROW_NUMBER() OVER (PARTITION BY message_type ORDER BY dead_lettered_at DESC) AS rn
+      FROM __SCHEMA__.wh_dead_letters
+      WHERE error_fingerprint = p_fingerprint
+        AND recovery_status = 2
+        AND recovered_at IS NULL
+        AND operator_disposition NOT IN (2, 3)
+        AND jsonb_typeof(envelope) = 'object'
+    ) dl
+    ORDER BY dl.rn, dl.message_type
+    LIMIT p_probe_size
+  ) picked;
+
+  IF v_probe_ids IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  INSERT INTO __SCHEMA__.wh_dlq_probe_campaigns (fingerprint, generation, probe_ids)
+  VALUES (p_fingerprint, p_generation, v_probe_ids)
+  ON CONFLICT (fingerprint, generation) DO NOTHING;
+  GET DIAGNOSTICS v_inserted = ROW_COUNT;
+  IF v_inserted = 0 THEN
+    -- Campaign already exists (restart mid-campaign): resume it, do not mint a second
+    -- probe set — the caller treats 0 as "evaluate the existing campaign".
+    RETURN 0;
+  END IF;
+
+  UPDATE __SCHEMA__.wh_dead_letters
+  SET recovery_status = 0, next_recovery_at = NOW()
+  WHERE dead_letter_id = ANY(v_probe_ids);
+
+  RETURN COALESCE(array_length(v_probe_ids, 1), 0);
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.begin_canary_probes IS
+'Starts a canary campaign (127): stratified probe rows return to Pending due-now (the paced scans re-drive them) and the campaign row records them. Idempotent per (fingerprint, generation) — a conflict returns 0 and touches nothing.';
+
+-- ============================================================================
+-- evaluate_canary_campaign — probe arithmetic and durable verdict
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.evaluate_canary_campaign(
+  p_fingerprint VARCHAR(16), p_generation TEXT)
+RETURNS TABLE(verdict INTEGER, probes_succeeded INTEGER, probes_failed INTEGER, probes_outstanding INTEGER)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_campaign  __SCHEMA__.wh_dlq_probe_campaigns%ROWTYPE;
+  v_succeeded INTEGER := 0;
+  v_failed    INTEGER := 0;
+  v_outstanding INTEGER := 0;
+  v_verdict   INTEGER;
+BEGIN
+  SELECT * INTO v_campaign
+  FROM __SCHEMA__.wh_dlq_probe_campaigns c
+  WHERE c.fingerprint = p_fingerprint AND c.generation = p_generation;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT 0, 0, 0, 0;
+    RETURN;
+  END IF;
+
+  -- A probe that re-dead-lettered (a NEWER unrecovered row for the same source id) FAILED,
+  -- even if its original row shows recovered — the round trip is the evidence, and coming
+  -- back is the failure.
+  SELECT
+    count(*) FILTER (WHERE NOT redead AND dl.recovered_at IS NOT NULL),
+    count(*) FILTER (WHERE redead),
+    count(*) FILTER (WHERE NOT redead AND dl.recovered_at IS NULL)
+  INTO v_succeeded, v_failed, v_outstanding
+  FROM (
+    SELECT p.recovered_at, p.dead_letter_id,
+           EXISTS (
+             SELECT 1 FROM __SCHEMA__.wh_dead_letters n
+             WHERE n.source_id = p.source_id
+               AND n.dead_letter_id <> p.dead_letter_id
+               AND n.dead_lettered_at > v_campaign.started_at
+               AND n.recovered_at IS NULL
+           ) AS redead
+    FROM __SCHEMA__.wh_dead_letters p
+    WHERE p.dead_letter_id = ANY(v_campaign.probe_ids)
+  ) dl;
+
+  IF v_outstanding > 0 THEN
+    v_verdict := 0;  -- Pending
+  ELSIF v_failed = 0 THEN
+    v_verdict := 1;  -- Pass
+  ELSIF v_succeeded = 0 THEN
+    v_verdict := 2;  -- Fail
+  ELSE
+    v_verdict := 3;  -- Mixed
+  END IF;
+
+  IF v_verdict <> 0 THEN
+    -- Terminal verdicts persist once; an already-resolved campaign is never overwritten.
+    UPDATE __SCHEMA__.wh_dlq_probe_campaigns c
+    SET verdict = v_verdict, probes_succeeded = v_succeeded, probes_failed = v_failed,
+        verdict_at = NOW()
+    WHERE c.fingerprint = p_fingerprint AND c.generation = p_generation AND c.verdict = 0;
+  END IF;
+
+  RETURN QUERY SELECT v_verdict, v_succeeded, v_failed, v_outstanding;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.evaluate_canary_campaign IS
+'Campaign probe arithmetic (127): recovered-and-stayed-recovered probes succeed; a probe whose message dead-lettered again after the campaign started failed regardless of its own row; anything else is outstanding. Terminal verdicts persist exactly once.';
+
+-- ============================================================================
+-- release_held_dead_letter_cohort — staggered eligibility, never a firehose
+-- ============================================================================
+CREATE OR REPLACE FUNCTION __SCHEMA__.release_held_dead_letter_cohort(
+  p_fingerprint VARCHAR(16), p_stagger_seconds INTEGER)
+RETURNS INTEGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_count INTEGER;
+BEGIN
+  UPDATE __SCHEMA__.wh_dead_letters
+  SET recovery_status = 0,
+      next_recovery_at = NOW() + (random() * GREATEST(p_stagger_seconds, 0)) * INTERVAL '1 second'
+  WHERE error_fingerprint = p_fingerprint
+    AND recovery_status = 2
+    AND recovered_at IS NULL
+    AND operator_disposition NOT IN (2, 3)
+    AND jsonb_typeof(envelope) = 'object';
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+
+COMMENT ON FUNCTION __SCHEMA__.release_held_dead_letter_cohort IS
+'Releases a held cohort (127) as STAGGERED eligibility: rows return to Pending with next_recovery_at spread across the window, and the paced recovery scans drain them under arbitration. Release is never a re-drive.';
