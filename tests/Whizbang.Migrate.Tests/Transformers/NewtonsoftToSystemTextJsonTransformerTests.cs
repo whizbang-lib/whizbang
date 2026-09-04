@@ -246,4 +246,74 @@ public class NewtonsoftToSystemTextJsonTransformerTests {
     await Assert.That(result.TransformedCode).Contains("[JsonIgnore]");
     await Assert.That(result.TransformedCode).Contains("JsonPropertyName(\"id\")");
   }
+
+
+  [Test]
+  public async Task TransformAsync_AttributesWithoutTheNewtonsoftJsonImport_StillEmitAValidUsingAsync() {
+    // A file can carry Newtonsoft attributes while importing only a sub-namespace -- here
+    // Newtonsoft.Json.Linq. There is then no `using Newtonsoft.Json;` to rewrite in place, so
+    // the System.Text.Json.Serialization import is built from scratch. That path rendered as
+    // `usingSystem.Text.Json.Serialization;` with no space, and the migrated file did not
+    // compile: a migration that reports success and leaves a project unbuildable.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json.Linq;
+
+      public class Order {
+        [JsonProperty("order_id")]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.TransformedCode).Contains("using System.Text.Json.Serialization;")
+      .Because("the keyword and the namespace need a space between them or the file will not parse");
+    await Assert.That(result.TransformedCode).DoesNotContain("usingSystem");
+  }
+
+  [Test]
+  public async Task TransformAsync_AddsTheSerializationImportOnlyOnceAsync() {
+    // Two rewritten attributes must not each contribute an import. A duplicate using is a
+    // compile error, so "needed" has to be answered once for the file.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json.Linq;
+
+      public class Order {
+        [JsonProperty("order_id")]
+        public string Id { get; set; } = "";
+
+        [JsonProperty("customer_id")]
+        public string CustomerId { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    var count = result.TransformedCode.Split("using System.Text.Json.Serialization;").Length - 1;
+    await Assert.That(count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task TransformAsync_WhenTheImportAlreadyExists_DoesNotAddASecondAsync() {
+    // A partially migrated file is the normal case on a re-run, and re-adding the import would
+    // break a file that was already correct.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+      using System.Text.Json.Serialization;
+
+      public class Order {
+        [JsonProperty("order_id")]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    var count = result.TransformedCode.Split("using System.Text.Json.Serialization;").Length - 1;
+    await Assert.That(count).IsEqualTo(1);
+  }
+
 }

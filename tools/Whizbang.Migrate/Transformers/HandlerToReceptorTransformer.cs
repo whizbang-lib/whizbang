@@ -248,8 +248,14 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
 
     // If no Whizbang using was added, add it
     if (!addedWhizbang) {
+      // Unreachable today -- the guard above requires an exact `using Wolverine;`, which the
+      // loop always replaces -- but the name still needs its own leading space. SyntaxFactory
+      // emits `using` and the name as adjacent tokens, so a directive built from scratch
+      // without it renders as `usingWhizbang.Core;` and the migrated file does not compile. Kept
+      // correct so loosening that guard later cannot quietly start emitting broken source.
       var whizbangUsing = SyntaxFactory.UsingDirective(
-          SyntaxFactory.ParseName("Whizbang.Core"))
+          SyntaxFactory.ParseName("Whizbang.Core")
+              .WithLeadingTrivia(SyntaxFactory.Space))
           .WithTrailingTrivia(SyntaxFactory.CarriageReturnLineFeed);
       newUsings.Insert(0, whizbangUsing);
 

@@ -533,4 +533,5 @@ public class HandlerToReceptorTransformerTests {
     await Assert.That(result.Warnings.Any(w =>
         w.Contains("Activity") || w.Contains("observability"))).IsTrue();
   }
+
 }
