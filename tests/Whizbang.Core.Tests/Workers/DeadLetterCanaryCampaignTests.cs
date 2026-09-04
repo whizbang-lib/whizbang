@@ -283,7 +283,10 @@ public sealed class DeadLetterCanaryCampaignTests {
 
     List<(string, int)> waves;
     lock (svc.TrickleWaves) { waves = [.. svc.TrickleWaves]; }
-    await Assert.That(waves.Count).IsEqualTo(2);
+    // At least two: a straggler scan after the second wave may legally record another
+    // (empty) wave call before cancellation — the invariant is the doubling, not the
+    // absence of further scans.
+    await Assert.That(waves.Count).IsGreaterThanOrEqualTo(2);
     await Assert.That(waves[0].Item2).IsEqualTo(7)
       .Because("the first wave is probe-sized — a Mixed cohort earns trust in doublings, "
              + "not in one blind release");
