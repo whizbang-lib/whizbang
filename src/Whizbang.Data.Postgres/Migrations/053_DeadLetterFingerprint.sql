@@ -77,7 +77,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.current_dead_letter_fingerprint_version()
 RETURNS SMALLINT
 LANGUAGE SQL
 IMMUTABLE
-AS $$ SELECT 1::SMALLINT $$;
+AS $$ SELECT 2::SMALLINT $$;
 
 COMMENT ON FUNCTION __SCHEMA__.current_dead_letter_fingerprint_version IS
 'Returns the current dead-letter fingerprint algorithm version (Slice 2 of release/v0.645.0-alpha.1). Bumping = one-line edit here + algorithm body edit in compute_dead_letter_fingerprint + the version-aware backfill in aggregate_dead_letters re-hashes every stale row on the next maintenance tick.';
@@ -103,76 +103,96 @@ DECLARE
   v_type            TEXT;
   v_frame           TEXT;
   v_in_app_frames   TEXT[] := ARRAY[]::TEXT[];
+  v_fallback_frame  TEXT;
   v_combined        TEXT;
+  v_template        TEXT;
   v_line_idx        INTEGER := 0;
+  v_inner           TEXT[];
 BEGIN
-  -- Step 0: NULL passthrough. Keeps wh_dead_letters.error_fingerprint NULL
-  -- when the caller has no error text to fingerprint.
+  -- v2 (P2 of plans/dlq-stack-intelligence.md). Three changes over v1, each a measured
+  -- cohort-identity failure:
+  --   1. Async state machines normalize: <Method>d__N carries a compiler-assigned N that
+  --      changes on recompile - a cohort split by a rebuild breaks canary campaigns.
+  --   2. The INNERMOST exception type wins: the wrapper is plumbing, the inner type is
+  --      the failure.
+  --   3. Prose errors (no frames - 100% of the 2026-09-03 corpus) hash a SCRUBBED
+  --      first-line template: quoted strings, GUIDs, hex and digit runs become
+  --      placeholders with exact character placement, so volatile values can never split
+  --      a template cohort and different templates never collapse by first-word accident.
   IF p_error_text IS NULL THEN
     RETURN NULL;
   END IF;
 
   v_lines := string_to_array(p_error_text, E'\n');
-
-  -- Step 1: Exception type from first line. First dotted PascalCase identifier
-  -- — matches "System.InvalidOperationException", "InvalidOperationException",
-  -- "Whizbang.Core.Messaging.LifecycleException", etc. Falls back to empty
-  -- string when the first line has no recognizable type token (e.g. pure
-  -- prose error from a non-CLR producer).
   v_first_line := COALESCE(v_lines[1], '');
-  v_type := COALESCE(
-    (regexp_match(v_first_line, '([A-Z][A-Za-z0-9_]+(\.[A-Z][A-Za-z0-9_]+)*)'))[1],
-    ''
-  );
 
-  -- Step 2-4: Walk remaining lines, capture frame tokens with
-  -- '^\s+at\s+([^\s(]+)' (stops at first whitespace OR open-paren so
-  -- "OutboxClaim.LeaseAsync(Guid instanceId)" yields "OutboxClaim.LeaseAsync"
-  -- cleanly). Exclude framework + Whizbang catchers. Stop at 3 survivors.
+  -- Innermost exception type: walk every '---> Some.Type :' and keep the LAST (inner in
+  -- .NET's outer-first rendering). Else a first-line token only when it actually looks
+  -- like an exception type - a bare PascalCase prose word is NOT a type; that heuristic
+  -- is what made v1 mushy on prose.
+  FOR v_inner IN SELECT m FROM regexp_matches(p_error_text, '--->\s*([A-Za-z0-9_.]+)\s*:', 'g') AS m LOOP
+    v_type := v_inner[1];
+  END LOOP;
+  IF v_type IS NULL THEN
+    v_type := (regexp_match(v_first_line, '(^|[\s(])([A-Za-z0-9_.]*Exception)'))[2];
+  END IF;
+
+  -- Frames: normalize async state machinery, prefer consumer frames; the deepest
+  -- non-BCL frame is the fallback when nothing outside the framework survives -
+  -- discrimination lives in exclusions, not frame count.
   FOREACH v_line IN ARRAY v_lines LOOP
     v_line_idx := v_line_idx + 1;
     IF v_line_idx = 1 THEN
-      CONTINUE;  -- skip the type/message line
+      CONTINUE;
     END IF;
-
     v_frame := (regexp_match(v_line, '^\s+at\s+([^\s(]+)'))[1];
     IF v_frame IS NULL THEN
       CONTINUE;
     END IF;
-
-    -- Exclude framework frames: .NET patch versions, Npgsql client patches.
+    v_frame := regexp_replace(v_frame, '<([A-Za-z0-9_]+)>d__[0-9]+', '\1', 'g');
+    v_frame := regexp_replace(v_frame, '\.MoveNext$', '');
     IF v_frame ~ '^(Microsoft|System|Npgsql)\.' THEN
       CONTINUE;
     END IF;
-
-    -- Exclude Whizbang catch-and-forward sites: these never throw the original
-    -- fault, only re-raise from one stack frame down. Treating them as in-app
-    -- would mask the actual thrower.
-    IF v_frame LIKE 'Whizbang.Core.Workers.%'
-       OR v_frame LIKE 'Whizbang.Core.Messaging.Internal.%' THEN
+    IF v_frame ~ '^Whizbang\.' THEN
+      IF v_fallback_frame IS NULL THEN
+        v_fallback_frame := v_frame;
+      END IF;
       CONTINUE;
     END IF;
-
     v_in_app_frames := array_append(v_in_app_frames, v_frame);
     EXIT WHEN array_length(v_in_app_frames, 1) >= 3;
   END LOOP;
+  IF array_length(v_in_app_frames, 1) IS NULL AND v_fallback_frame IS NOT NULL THEN
+    v_in_app_frames := ARRAY[v_fallback_frame];
+  END IF;
 
-  -- Step 5: Concatenate. Omits trailing separators when fewer than 3 frames
-  -- survive (so a type-only stack hashes the type alone, not "type:::").
-  v_combined := v_type;
-  FOREACH v_frame IN ARRAY v_in_app_frames LOOP
-    v_combined := v_combined || ':' || v_frame;
-  END LOOP;
+  IF array_length(v_in_app_frames, 1) IS NOT NULL OR v_type IS NOT NULL THEN
+    v_combined := COALESCE(v_type, '');
+    FOREACH v_frame IN ARRAY v_in_app_frames LOOP
+      v_combined := v_combined || ':' || v_frame;
+    END LOOP;
+  ELSE
+    -- Prose template: quoted strings first (they may contain digits), then GUIDs (before
+    -- generic hex), then long hex runs, then digit runs; whitespace collapses; 160 chars
+    -- bounds the key.
+    v_template := v_first_line;
+    v_template := regexp_replace(v_template, $q$'[^']*'$q$, '<q>', 'g');
+    v_template := regexp_replace(v_template, '"[^"]*"', '<q>', 'g');
+    v_template := regexp_replace(v_template,
+      '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '<g>', 'g');
+    v_template := regexp_replace(v_template, '[0-9a-fA-F]{8,}', '<h>', 'g');
+    v_template := regexp_replace(v_template, '[0-9]+', '<n>', 'g');
+    v_template := regexp_replace(v_template, '\s+', ' ', 'g');
+    v_combined := 'prose:' || substring(v_template FROM 1 FOR 160);
+  END IF;
 
-  -- Step 6: SHA256 → first 16 hex chars. Postgres core sha256() (PG 11+);
-  -- no pgcrypto required. 2^64 fingerprint space is ample for realistic DLQ
-  -- volumes (birthday-bound ~4B rows before first expected collision).
   RETURN substring(encode(sha256(v_combined::bytea), 'hex') FROM 1 FOR 16);
 END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.compute_dead_letter_fingerprint IS
-'Algorithm v1 (Slice 2 of release/v0.645.0-alpha.1). Hashes "type:frame1:frame2:frame3" (excluding framework + Whizbang catch-site frames) and returns the first 16 hex chars of SHA256. Called by Slice 3''s move_to_dead_letters extension (live capture) and Slice 6''s aggregate_dead_letters (version-aware backfill). NULL input → NULL output. See operations/dead-letter-queue/error-fingerprinting docs page for the algorithm rationale, exclusions, and version bump procedure.';
+'Algorithm v2 (P2 of plans/dlq-stack-intelligence.md). Typed errors hash "innermostType:frame1..frame3" with async state machines normalized (<M>d__N.MoveNext -> M) and consumer frames preferred (deepest Whizbang frame as fallback); prose errors hash a scrubbed first-line template so volatile values never split a cohort. First 16 hex chars of SHA256. Called by Slice 3''s move_to_dead_letters extension (live capture) and Slice 6''s aggregate_dead_letters (version-aware backfill). NULL input → NULL output. See operations/dead-letter-queue/error-fingerprinting docs page for the algorithm rationale, exclusions, and version bump procedure.';
 
 -- ============================================================================
 -- 4. wh_dead_letter_summary table (Slice 6)

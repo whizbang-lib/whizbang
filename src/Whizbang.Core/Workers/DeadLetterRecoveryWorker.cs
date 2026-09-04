@@ -81,6 +81,20 @@ public partial class DeadLetterRecoveryWorker(
     }
   }
 
+  /// <summary>
+  /// Policy cooldown scaled 2^attempts, capped at 24 hours: a flat cooldown turns a
+  /// persistent failure into a metronome; uncapped growth schedules a row into next month.
+  /// A zero base stays zero (immediate-retry policies keep their semantics).
+  /// </summary>
+  private static TimeSpan _exponentialCooldown(TimeSpan baseCooldown, int attempts) {
+    if (baseCooldown <= TimeSpan.Zero) {
+      return TimeSpan.Zero;
+    }
+    var factor = Math.Pow(2, Math.Min(attempts, 10));
+    var scaled = TimeSpan.FromTicks((long)Math.Min(baseCooldown.Ticks * factor, TimeSpan.FromHours(24).Ticks));
+    return scaled;
+  }
+
   private long _totalScans;
   private long _totalRecovered;
   private long _totalHeld;
@@ -162,9 +176,18 @@ public partial class DeadLetterRecoveryWorker(
       }
     }
 
-    if (_options.RetryHeldOnStartup != RetryHeldOnStartupMode.Off) {
+    var campaignMode = _options.RetryHeldOnStartup;
+    if (campaignMode == RetryHeldOnStartupMode.Off
+        && _options.AutoCanaryOnNewGeneration
+        && Interlocked.Read(ref _totalGenerationReplays) > 0) {
+      // A new build generation re-offered rows from older builds: held cohorts are
+      // evidence about an OLD build, so re-test the hypothesis automatically — at probe
+      // cost, never storm cost. An explicit operator mode always wins over this default.
+      campaignMode = RetryHeldOnStartupMode.Canary;
+    }
+    if (campaignMode != RetryHeldOnStartupMode.Off) {
       try {
-        await _startHeldCampaignAsync(stoppingToken).ConfigureAwait(false);
+        await _startHeldCampaignAsync(campaignMode, stoppingToken).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         return;
       } catch (Exception ex) {
@@ -221,9 +244,11 @@ public partial class DeadLetterRecoveryWorker(
   // each scan", rebuilt on restart by _startHeldCampaignAsync (BeginCanaryProbesAsync is
   // idempotent per (fingerprint, generation), so re-listing cohorts resumes campaigns).
   private readonly HashSet<string> _campaignsInFlight = [];
+  // Mixed cohorts in trickle release: fingerprint -> (wave number, last wave size).
+  private readonly Dictionary<string, (int Wave, int LastSize)> _tricklesInFlight = [];
   private string? _campaignGeneration;
 
-  private async Task _startHeldCampaignAsync(CancellationToken ct) {
+  private async Task _startHeldCampaignAsync(RetryHeldOnStartupMode mode, CancellationToken ct) {
     using var scope = _scopeFactory.CreateScope();
     var svc = scope.ServiceProvider.GetService<IDeadLetterRecoveryService>();
     if (svc is null) {
@@ -242,17 +267,24 @@ public partial class DeadLetterRecoveryWorker(
       return;
     }
     _campaignGeneration = _generationProvider.GetGeneration();
-    LogCampaignStarted(_logger, _options.RetryHeldOnStartup, cohorts.Count, _campaignGeneration);
+    LogCampaignStarted(_logger, mode, cohorts.Count, _campaignGeneration);
 
     var stagger = TimeSpan.FromMinutes(_options.ReleaseStaggerMinutes);
     foreach (var cohort in cohorts) {
       ct.ThrowIfCancellationRequested();
-      if (_options.RetryHeldOnStartup == RetryHeldOnStartupMode.Full) {
+      if (mode == RetryHeldOnStartupMode.Full) {
         var released = await svc.ReleaseHeldCohortAsync(cohort.Fingerprint, stagger, ct).ConfigureAwait(false);
         LogCohortReleased(_logger, cohort.Fingerprint, released, "full");
       } else {
         var probes = await svc.BeginCanaryProbesAsync(
-          cohort.Fingerprint, _campaignGeneration, _options.CanaryProbeSize, ct).ConfigureAwait(false);
+          cohort.Fingerprint, _campaignGeneration, _options.CanaryProbeSize,
+          _options.GenerationBudget, ct).ConfigureAwait(false);
+        if (probes < 0) {
+          // The store says this cohort has failed campaigns on GenerationBudget distinct
+          // generations: permanently pending operator. Said loudly — this is a decision point.
+          LogCohortBudgetExhausted(_logger, cohort.Fingerprint, cohort.RowCount);
+          continue;
+        }
         // probes == 0 means the campaign already exists (restart mid-campaign) — resume
         // evaluating it rather than orphaning it.
         LogProbesStarted(_logger, cohort.Fingerprint, probes, cohort.RowCount, cohort.MessageTypeCount);
@@ -275,18 +307,57 @@ public partial class DeadLetterRecoveryWorker(
         case CanaryVerdictKind.Pass:
           var released = await svc.ReleaseHeldCohortAsync(fingerprint, stagger, ct).ConfigureAwait(false);
           LogCohortReleased(_logger, fingerprint, released, "canary-pass");
+          _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Pass);
           _campaignsInFlight.Remove(fingerprint);
           break;
         case CanaryVerdictKind.Fail:
           LogCohortFailed(_logger, fingerprint, verdict.ProbesFailed);
+          _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Fail);
           _campaignsInFlight.Remove(fingerprint);
           break;
         case CanaryVerdictKind.Mixed:
         default:
           LogCohortMixed(_logger, fingerprint, verdict.ProbesSucceeded, verdict.ProbesFailed);
+          _metrics?.RecordCohortVerdict(fingerprint, CanaryVerdictKind.Mixed);
           _campaignsInFlight.Remove(fingerprint);
+          // A Mixed cohort earns trust in doublings, not in one blind release: enter the
+          // trickle with a probe-sized first wave, immediately.
+          var firstWave = await svc.BeginTrickleWaveAsync(
+            fingerprint, _campaignGeneration, _options.CanaryProbeSize, ct).ConfigureAwait(false);
+          if (firstWave > 0) {
+            _tricklesInFlight[fingerprint] = (1, _options.CanaryProbeSize);
+            LogTrickleWave(_logger, fingerprint, 1, firstWave);
+          }
           break;
       }
+    }
+  }
+
+  private async Task _evaluateTricklesAsync(IDeadLetterRecoveryService svc, CancellationToken ct) {
+    if (_tricklesInFlight.Count == 0 || _campaignGeneration is null) {
+      return;
+    }
+    foreach (var (fingerprint, state) in _tricklesInFlight.ToArray()) {
+      ct.ThrowIfCancellationRequested();
+      var washback = await svc.CountWaveRequarantinesAsync(fingerprint, _campaignGeneration, ct).ConfigureAwait(false);
+      if (washback > 0) {
+        // Dirty wave: halt. The remainder stays held rather than feeding a failure at
+        // doubling volume; the released waves already out stay out.
+        LogTrickleHalted(_logger, fingerprint, state.Wave, washback);
+        _metrics?.RecordReleaseWave(fingerprint, clean: false);
+        _tricklesInFlight.Remove(fingerprint);
+        continue;
+      }
+      _metrics?.RecordReleaseWave(fingerprint, clean: true);
+      var nextSize = state.LastSize * 2;
+      var released = await svc.BeginTrickleWaveAsync(fingerprint, _campaignGeneration, nextSize, ct).ConfigureAwait(false);
+      if (released == 0) {
+        LogTrickleDrained(_logger, fingerprint, state.Wave);
+        _tricklesInFlight.Remove(fingerprint);
+        continue;
+      }
+      _tricklesInFlight[fingerprint] = (state.Wave + 1, nextSize);
+      LogTrickleWave(_logger, fingerprint, state.Wave + 1, released);
     }
   }
 
@@ -331,6 +402,21 @@ public partial class DeadLetterRecoveryWorker(
       // and BEFORE the due-fetch early-return below, because a quiet queue is exactly when
       // verdicts land (probes recovered = nothing due = empty batch).
       await _evaluateCampaignsAsync(svc, ct).ConfigureAwait(false);
+      await _evaluateTricklesAsync(svc, ct).ConfigureAwait(false);
+
+      // Stack backfill: the async half of the stack contract. Bounded per scan, and the
+      // C# normalizer is the SAME implementation the inline metric uses, so both halves
+      // agree on every stack_id.
+      if (_options.StackBackfillBatchSize > 0) {
+        var unstacked = await svc.FetchUnstackedAsync(_options.StackBackfillBatchSize, ct).ConfigureAwait(false);
+        foreach (var row in unstacked) {
+          ct.ThrowIfCancellationRequested();
+          var stack = Whizbang.Core.DeadLetters.StackNormalizer.Normalize(row.ErrorText);
+          if (stack is not null) {
+            await svc.RecordStackAsync(row.DeadLetterId, stack, ct).ConfigureAwait(false);
+          }
+        }
+      }
 
       var policy = scope.ServiceProvider.GetRequiredService<IDeadLetterRecoveryPolicy>();
 
@@ -432,7 +518,7 @@ public partial class DeadLetterRecoveryWorker(
           try {
             await svc.ScheduleNextAttemptAsync(
               entry.DeadLetterId,
-              DateTimeOffset.UtcNow.Add(rule.Cooldown),
+              DateTimeOffset.UtcNow.Add(_exponentialCooldown(rule.Cooldown, entry.RecoveryAttempts)),
               ct).ConfigureAwait(false);
           } catch (Exception scheduleEx) {
             LogScheduleFailed(_logger, entry.DeadLetterId, scheduleEx);
@@ -449,6 +535,22 @@ public partial class DeadLetterRecoveryWorker(
       }
     }
   }
+
+  [LoggerMessage(EventId = 24, Level = LogLevel.Information,
+    Message = "Trickle wave {Wave} released {Released} row(s) of Mixed cohort {Fingerprint} — staggered, evaluated next scan")]
+  static partial void LogTrickleWave(ILogger logger, string fingerprint, int wave, int released);
+
+  [LoggerMessage(EventId = 25, Level = LogLevel.Warning,
+    Message = "Trickle for Mixed cohort {Fingerprint} HALTED at wave {Wave}: {Washback} released row(s) re-dead-lettered. The remainder stays held — releasing further would feed a live failure at doubling volume; the cohort is pending an operator decision")]
+  static partial void LogTrickleHalted(ILogger logger, string fingerprint, int wave, int washback);
+
+  [LoggerMessage(EventId = 26, Level = LogLevel.Information,
+    Message = "Mixed cohort {Fingerprint} fully DRAINED through {Waves} clean trickle wave(s)")]
+  static partial void LogTrickleDrained(ILogger logger, string fingerprint, int waves);
+
+  [LoggerMessage(EventId = 23, Level = LogLevel.Warning,
+    Message = "Canary campaign for cohort {Fingerprint} ({Rows} row(s)) is NOT starting: its generation budget is exhausted — probes failed on the configured number of distinct build generations. The cohort is permanently pending an operator decision (release, purge, or hold).")]
+  static partial void LogCohortBudgetExhausted(ILogger logger, string fingerprint, long rows);
 
   [LoggerMessage(EventId = 17, Level = LogLevel.Information,
     Message = "Held-cohort campaign starting: mode={Mode}, cohorts={Cohorts}, generation={Generation}")]

@@ -318,6 +318,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         _dlqMetrics?.Added.Add(1,
           new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
           new KeyValuePair<string, object?>("reason", "ControlPlaneDropped"));
+        _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
+          (int)Whizbang.Core.Messaging.MessageFailureReason.PoisonRedeliveryLoop, null);
         var droppedRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
         await _handlerCommitChannel.EnqueueAsync(droppedRequest, stoppingToken);
         return;
@@ -338,6 +340,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           _dlqMetrics?.Added.Add(1,
             new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
             new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
+          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
+            (int)Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText);
           return;
         } catch (Exception ex) {
           // DLQ move is best-effort — if it fails, fall back to the legacy
@@ -576,6 +580,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         _dlqMetrics?.Added.Add(1,
           new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
           new KeyValuePair<string, object?>("reason", reason.ToString()));
+        _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, result.Detail);
         return;
       } catch (Exception ex) {
         // DLQ move is best-effort — fall back to the legacy terminal completion so the row never
@@ -634,6 +639,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         _dlqMetrics?.Added.Add(1,
           new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
           new KeyValuePair<string, object?>("reason", reason.ToString()));
+        _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, detail);
         return;
       } catch (Exception ex) {
         LogDeadLetterStoreFailed(_logger, work.MessageId, ex);

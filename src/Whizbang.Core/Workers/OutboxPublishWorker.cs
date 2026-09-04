@@ -419,6 +419,8 @@ public sealed partial class OutboxPublishWorker(
       _dlqMetrics?.Added.Add(1,
         new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.OUTBOX),
         new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
+      _dlqMetrics?.RecordArrival(DeadLetterSourceTable.OUTBOX,
+        (int)MessageFailureReason.MaxAttemptsExceeded, errorText);
       return true;
     } catch (Exception ex) {
       // Transient DB failure during MoveAsync — fall through to failure channel so

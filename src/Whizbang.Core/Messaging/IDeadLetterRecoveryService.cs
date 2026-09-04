@@ -63,11 +63,14 @@ public interface IDeadLetterRecoveryService {
   /// <summary>
   /// Starts a canary campaign for one cohort: selects up to <paramref name="probeSize"/>
   /// probe rows stratified across the cohort's message types, returns them to Pending
-  /// due immediately (the normal paced scan re-drives them), and records the campaign.
-  /// Idempotent per (fingerprint, generation): an existing campaign is left untouched
-  /// and 0 is returned. Returns the number of probes actually started.
+  /// due immediately (the normal paced scan re-drives them), resets the probed messages'
+  /// redelivery observation windows (a bound-hit row would otherwise auto-fail its own
+  /// probe), and records the campaign. Idempotent per (fingerprint, generation): an
+  /// existing campaign is left untouched and 0 is returned; a cohort whose campaigns have
+  /// FAILED on <paramref name="generationBudget"/> distinct generations returns -1 and
+  /// touches nothing — permanently pending operator.
   /// </summary>
-  Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default);
+  Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default);
 
   /// <summary>
   /// Evaluates a campaign's probes: recovered probes count as successes; a probe whose
@@ -83,7 +86,37 @@ public interface IDeadLetterRecoveryService {
   /// eligibility, never a firehose. Returns rows released.
   /// </summary>
   Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default);
+
+  /// <summary>
+  /// Releases up to <paramref name="waveSize"/> held rows of a Mixed cohort as one
+  /// trickle wave (staggered inside the wave window) and stamps the campaign's wave
+  /// state. Returns rows released — 0 means the cohort is fully drained.
+  /// </summary>
+  Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default);
+
+  /// <summary>
+  /// Evaluates the current trickle wave: how many NEW unrecovered dead letters with this
+  /// fingerprint arrived since the wave started (requarantines = the wave washing back).
+  /// </summary>
+  Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default);
+
+  // -------------------- Stack backfill surface (P2) --------------------
+  // The relational stack layer normalizes in C# (one implementation — see
+  // Whizbang.Core.DeadLetters.StackNormalizer) and persists here.
+
+  /// <summary>Dead letters not yet stamped with a stack id, newest first.</summary>
+  Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default);
+
+  /// <summary>
+  /// Persists a normalized stack (frames, ordered links, stack row) idempotently and
+  /// stamps the dead letter with its stack id.
+  /// </summary>
+  Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default);
 }
+
+/// <summary>A dead letter awaiting stack normalization.</summary>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+public sealed record UnstackedDeadLetter(Guid DeadLetterId, string ErrorText);
 
 /// <summary>One campaign unit: held rows sharing an error fingerprint.</summary>
 /// <docs>operations/dead-letter-queue/canary-recovery</docs>

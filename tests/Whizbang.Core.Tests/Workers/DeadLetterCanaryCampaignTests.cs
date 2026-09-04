@@ -64,7 +64,21 @@ public sealed class DeadLetterCanaryCampaignTests {
     public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
     public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) => Task.CompletedTask;
-    public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) => Task.FromResult(0);
+    public int GenerationReplayReturn { get; set; }
+    public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) =>
+      Task.FromResult(GenerationReplayReturn);
+
+    public List<UnstackedDeadLetter> Unstacked { get; set; } = [];
+    public List<(Guid Id, string Hash)> RecordedStacks { get; } = [];
+    public Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) {
+      var batch = Unstacked.Take(maxCount).ToList();
+      Unstacked = [.. Unstacked.Skip(maxCount)];
+      return Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>(batch);
+    }
+    public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) {
+      lock (RecordedStacks) { RecordedStacks.Add((deadLetterId, stack.SequenceHash)); }
+      return Task.CompletedTask;
+    }
 
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) {
       Interlocked.Increment(ref PurgeCalls);
@@ -75,9 +89,11 @@ public sealed class DeadLetterCanaryCampaignTests {
       lock (CallOrder) { CallOrder.Add("list"); }
       return Task.FromResult<IReadOnlyList<HeldCohort>>([.. Cohorts]);
     }
-    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default) {
+    public List<int> BudgetsSeen { get; } = [];
+    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default) {
       lock (CallOrder) { CallOrder.Add($"begin:{fingerprint}"); }
       lock (BeginCalls) { BeginCalls.Add((fingerprint, generation, probeSize)); }
+      lock (BudgetsSeen) { BudgetsSeen.Add(generationBudget); }
       return Task.FromResult(BeginReturns(fingerprint));
     }
     public Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) {
@@ -93,6 +109,239 @@ public sealed class DeadLetterCanaryCampaignTests {
       _fire(_releaseSignals, Interlocked.Increment(ref _releaseCount));
       return Task.FromResult(100);
     }
+    public Queue<int> TrickleWaveReturns { get; } = new();
+    public List<(string Fp, int Size)> TrickleWaves { get; } = [];
+    public Queue<int> WaveRequarantineReturns { get; } = new();
+    private int _waveCount;
+    private readonly ConcurrentDictionary<int, TaskCompletionSource> _waveSignals = new();
+    public Task WaveSignal(int ordinal) => _sig(_waveSignals, ordinal);
+    public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) {
+      lock (TrickleWaves) { TrickleWaves.Add((fingerprint, waveSize)); }
+      var result = TrickleWaveReturns.Count > 0 ? TrickleWaveReturns.Dequeue() : 0;
+      _fire(_waveSignals, Interlocked.Increment(ref _waveCount));
+      return Task.FromResult(result);
+    }
+    public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(WaveRequarantineReturns.Count > 0 ? WaveRequarantineReturns.Dequeue() : 0);
+  }
+
+  [Test]
+  public async Task NewGeneration_AutoCanaries_EvenWithTheFlagOffAsync() {
+    // The deploy-triggered path: generation replay found rows from an older build, and
+    // AutoCanaryOnNewGeneration (default true) runs the canary campaign without any
+    // operator flag — bugs fixed by deploys self-heal their cohorts.
+    var svc = new CampaignFake { Cohorts = [new("fp-auto", 100, 2)], GenerationReplayReturn = 5 };
+    var opts = _opts(RetryHeldOnStartupMode.Off);
+    opts.EnableGenerationReplay = true;
+    var (worker, _, _, _) = _build(opts, svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.BeginCalls.Count).IsEqualTo(1)
+      .Because("held rows are evidence about an OLD build; a new generation re-tests the "
+             + "hypothesis with probes, automatically, at probe cost not storm cost");
+  }
+
+  [Test]
+  public async Task NewGeneration_AutoCanaryOptOut_StaysInertAsync() {
+    var svc = new CampaignFake { Cohorts = [new("fp-auto", 100, 2)], GenerationReplayReturn = 5 };
+    var opts = _opts(RetryHeldOnStartupMode.Off);
+    opts.EnableGenerationReplay = true;
+    opts.AutoCanaryOnNewGeneration = false;
+    var (worker, _, _, _) = _build(opts, svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.BeginCalls.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task BudgetExhaustedCohort_IsLogged_NotProbedAgainAsync() {
+    // BeginCanaryProbesAsync returning -1 = the store says this cohort has failed its
+    // campaigns on GenerationBudget distinct generations — permanently pending operator.
+    var svc = new CampaignFake { Cohorts = [new("fp-spent", 100, 1)], BeginReturns = _ => -1 };
+    var (worker, _, logs, _) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.EvaluateCalls.Count).IsEqualTo(0)
+      .Because("a budget-exhausted cohort has no live campaign to evaluate");
+    var warned = logs.GetSnapshot().Any(r => r.Level == LogLevel.Warning
+      && r.Message.Contains("fp-spent", StringComparison.Ordinal)
+      && r.Message.Contains("generation budget", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(warned).IsTrue()
+      .Because("permanent-pending-operator is an operator decision point and must be SAID");
+  }
+
+  private static DeadLetterRecoveryWorker _buildWith(
+      DeadLetterRecoveryOptions options, IDeadLetterRecoveryService svc) {
+    var services = new ServiceCollection();
+    services.AddFakeLogging();
+    services.AddSingleton(svc);
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
+    var provider = services.BuildServiceProvider();
+    return new DeadLetterRecoveryWorker(
+      provider.GetRequiredService<IServiceScopeFactory>(),
+      new Gate(),
+      Options.Create(options),
+      new Gen(),
+      provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
+  }
+
+  [Test]
+  public async Task FailedRecovery_BacksOffExponentially_PerAttemptAsync() {
+    // Throttled policy: 30-minute cooldown, budget 3. At recovery_attempts=2 the backoff
+    // is 30 x 2^2 = 120 minutes — exponential, not metronomic — and capped at 24 hours.
+    var entry = new DeadLetterEntry(
+      DeadLetterId: Guid.NewGuid(), SourceTable: "wh_inbox", SourceId: Guid.NewGuid(),
+      StreamId: null, MessageType: "T.A", FailureReason: MessageFailureReason.Throttled,
+      AttemptsWhenDlq: 1, DeadLetteredAt: DateTimeOffset.UtcNow,
+      RecoveryStatus: DeadLetterRecoveryStatus.Pending, RecoveryAttempts: 2,
+      Generation: "g/1");
+    var svc = new FailingRecoveryFake(entry);
+    var worker = _buildWith(_opts(RetryHeldOnStartupMode.Off), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.Scheduled.Task.WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    var delay = svc.ScheduledAt!.Value - DateTimeOffset.UtcNow;
+    await Assert.That(delay > TimeSpan.FromMinutes(100)).IsTrue()
+      .Because("Throttled policy cooldown is 30 minutes; attempt 2 backs off 30 x 2^2 = 120 "
+             + "minutes (less test runtime) — exponential, not metronomic");
+    await Assert.That(delay < TimeSpan.FromHours(25)).IsTrue()
+      .Because("and the backoff is capped at 24 hours so a row can never schedule itself "
+             + "into next month");
+  }
+
+  private sealed class FailingRecoveryFake(DeadLetterEntry entry) : IDeadLetterRecoveryService {
+    private bool _served;
+    public TaskCompletionSource Scheduled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public DateTimeOffset? ScheduledAt { get; private set; }
+    public Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
+      if (_served) { return Task.FromResult<IReadOnlyList<DeadLetterEntry>>([]); }
+      _served = true;
+      return Task.FromResult<IReadOnlyList<DeadLetterEntry>>([entry]);
+    }
+    public Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) =>
+      throw new InvalidOperationException("recovery fails — the point of this fake");
+    public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
+      ScheduledAt = nextAt;
+      Scheduled.TrySetResult();
+      return Task.CompletedTask;
+    }
+    public int GenerationReplayReturn { get; set; }
+    public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) =>
+      Task.FromResult(GenerationReplayReturn);
+    public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
+    public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<HeldCohort>>([]);
+    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(new CanaryVerdict(CanaryVerdictKind.Pass, 0, 0, 0));
+    public Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
+    public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
+      Task.CompletedTask;
+    public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(0);
+  }
+
+  [Test]
+  public async Task MixedVerdict_EntersTrickle_WavesDoubleWhileCleanAsync() {
+    var svc = new CampaignFake { Cohorts = [new("fp-mix", 500, 3)] };
+    svc.Verdicts["fp-mix"] = new Queue<CanaryVerdict>([new(CanaryVerdictKind.Mixed, 4, 3, 0)]);
+    svc.TrickleWaveReturns.Enqueue(7);   // wave 1: size 7 released
+    svc.TrickleWaveReturns.Enqueue(14);  // wave 2: doubled
+    svc.WaveRequarantineReturns.Enqueue(0); // wave 1 clean
+    var (worker, _, _, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.WaveSignal(1).WaitAsync(_timeout);   // Mixed -> first wave same scan
+    bell.Ring();
+    await svc.WaveSignal(2).WaitAsync(_timeout);   // clean -> second wave next scan
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    List<(string, int)> waves;
+    lock (svc.TrickleWaves) { waves = [.. svc.TrickleWaves]; }
+    await Assert.That(waves.Count).IsEqualTo(2);
+    await Assert.That(waves[0].Item2).IsEqualTo(7)
+      .Because("the first wave is probe-sized — a Mixed cohort earns trust in doublings, "
+             + "not in one blind release");
+    await Assert.That(waves[1].Item2).IsEqualTo(14)
+      .Because("a clean wave doubles the next — AIMD-shaped progressive rollout");
+  }
+
+  [Test]
+  public async Task DirtyWave_HaltsTheTrickle_AndReportsAsync() {
+    var svc = new CampaignFake { Cohorts = [new("fp-mix", 500, 3)] };
+    svc.Verdicts["fp-mix"] = new Queue<CanaryVerdict>([new(CanaryVerdictKind.Mixed, 4, 3, 0)]);
+    svc.TrickleWaveReturns.Enqueue(7);
+    svc.WaveRequarantineReturns.Enqueue(3); // wave washes back
+    var (worker, _, logs, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.WaveSignal(1).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.FetchSignal(2).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.FetchSignal(3).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    List<(string, int)> waves;
+    lock (svc.TrickleWaves) { waves = [.. svc.TrickleWaves]; }
+    await Assert.That(waves.Count).IsEqualTo(1)
+      .Because("a dirty wave halts the trickle — the remainder stays held rather than "
+             + "feeding a failure at doubling volume");
+    var warned = logs.GetSnapshot().Any(r => r.Level == LogLevel.Warning
+      && r.Message.Contains("fp-mix", StringComparison.Ordinal)
+      && r.Message.Contains("halted", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(warned).IsTrue();
+  }
+
+  [Test]
+  public async Task DrainedTrickle_CompletesTheCohortAsync() {
+    var svc = new CampaignFake { Cohorts = [new("fp-mix", 10, 1)] };
+    svc.Verdicts["fp-mix"] = new Queue<CanaryVerdict>([new(CanaryVerdictKind.Mixed, 4, 3, 0)]);
+    svc.TrickleWaveReturns.Enqueue(7);
+    svc.TrickleWaveReturns.Enqueue(0);   // nothing left: drained
+    svc.WaveRequarantineReturns.Enqueue(0);
+    var (worker, _, logs, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.WaveSignal(1).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.WaveSignal(2).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.FetchSignal(3).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    var done = logs.GetSnapshot().Any(r => r.Message.Contains("fp-mix", StringComparison.Ordinal)
+      && r.Message.Contains("drained", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(done).IsTrue()
+      .Because("an empty wave means the Mixed cohort fully released through clean waves — "
+             + "the campaign closes with its outcome said");
   }
 
   private sealed class Bell : Whizbang.Core.Notifications.IWorkNotificationListener {
@@ -116,7 +365,10 @@ public sealed class DeadLetterCanaryCampaignTests {
     public string GetGeneration() => "build/9.9.9";
   }
 
-  private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(30);
+  // Generous: these are completion signals that resolve in milliseconds when healthy;
+  // the ceiling exists only so a genuine hang fails rather than deadlocks, and a saturated
+  // parallel suite host must not be able to starve past it.
+  private static readonly TimeSpan _timeout = TimeSpan.FromSeconds(90);
 
   private static (DeadLetterRecoveryWorker Worker, CampaignFake Svc, FakeLogCollector Logs, Bell Bell) _build(
       DeadLetterRecoveryOptions options, CampaignFake? svc = null) {
@@ -285,6 +537,44 @@ public sealed class DeadLetterCanaryCampaignTests {
       .Because("but never a pacing shortcut: Full keeps the staggered release");
     await Assert.That(svc.PurgeCalls).IsEqualTo(1)
       .Because("the grandfather gate applies to Full too");
+  }
+
+  [Test]
+  public async Task Scan_BackfillsUnstackedRows_WithTheNormalizerHashAsync() {
+    var id = Guid.NewGuid();
+    var text = "System.InvalidOperationException: x\n   at A.B.<M>d__1.MoveNext()";
+    var svc = new CampaignFake { Unstacked = [new(id, text)] };
+    var (worker, _, _, _) = _build(_opts(RetryHeldOnStartupMode.Off), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    var expected = Whizbang.Core.DeadLetters.StackNormalizer.Normalize(text)!.SequenceHash;
+    List<(Guid, string)> recorded;
+    lock (svc.RecordedStacks) { recorded = [.. svc.RecordedStacks]; }
+    await Assert.That(recorded.Count).IsEqualTo(1);
+    await Assert.That(recorded[0].Item2).IsEqualTo(expected)
+      .Because("the backfill uses the SAME normalizer as the inline metric — one "
+             + "implementation is the whole point; two would drift and split cohorts");
+  }
+
+  [Test]
+  public async Task Scan_BackfillDisabled_TouchesNothingAsync() {
+    var svc = new CampaignFake { Unstacked = [new(Guid.NewGuid(), "boom")] };
+    var opts = _opts(RetryHeldOnStartupMode.Off);
+    opts.StackBackfillBatchSize = 0;
+    var (worker, _, _, _) = _build(opts, svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.RecordedStacks.Count).IsEqualTo(0)
+      .Because("0 is the off switch, and an off switch that trickles is the config-scenery "
+             + "disease this arc exists to kill");
   }
 
   [Test]

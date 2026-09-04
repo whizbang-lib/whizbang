@@ -112,7 +112,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     for (var i = 0; i < 6; i++) { await _seedHeldAsync(conn, fp, "T.C"); }
 
     var svc = _svc(ctx);
-    var probes = await svc.BeginCanaryProbesAsync(fp, "gen/1", 6);
+    var probes = await svc.BeginCanaryProbesAsync(fp, "gen/1", 6, 3);
     await Assert.That(probes).IsEqualTo(6);
 
     await using (var q = conn.CreateCommand()) {
@@ -128,7 +128,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
       await Assert.That(perType.Values.All(v => v == 2)).IsTrue();
     }
 
-    var again = await svc.BeginCanaryProbesAsync(fp, "gen/1", 6);
+    var again = await svc.BeginCanaryProbesAsync(fp, "gen/1", 6, 3);
     await Assert.That(again).IsEqualTo(0)
       .Because("idempotent per (fingerprint, generation): a pod restart mid-campaign "
              + "resumes evaluation, it must not mint a second probe set");
@@ -142,7 +142,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     var fp = Guid.NewGuid().ToString("N")[..16];
     for (var i = 0; i < 4; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
     var svc = _svc(ctx);
-    await svc.BeginCanaryProbesAsync(fp, "gen/1", 2);
+    await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
 
     // Probes "recover": mark the two Pending rows recovered, as the paced scan would.
     await using (var up = conn.CreateCommand()) {
@@ -174,7 +174,7 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     await _seedHeldAsync(conn, fp, "T.A", sourceId: srcA);
     await _seedHeldAsync(conn, fp, "T.B", sourceId: srcB);
     var svc = _svc(ctx);
-    await svc.BeginCanaryProbesAsync(fp, "gen/1", 2);
+    await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
 
     // Probe A recovers; probe B's message dead-letters AGAIN (newer unrecovered row, same source).
     await using (var up = conn.CreateCommand()) {
@@ -201,13 +201,116 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
     await _seedHeldAsync(conn, fp, "T.A");
     await _seedHeldAsync(conn, fp, "T.A");
     var svc = _svc(ctx);
-    await svc.BeginCanaryProbesAsync(fp, "gen/1", 2);
+    await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
 
     var verdict = await svc.EvaluateCampaignAsync(fp, "gen/1");
     await Assert.That(verdict.Kind).IsEqualTo(CanaryVerdictKind.Pending)
       .Because("probes not yet re-driven are outstanding, and a verdict from silence "
              + "would be a verdict from no evidence");
     await Assert.That(verdict.ProbesOutstanding).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task BeginProbes_GenerationBudgetSpent_ReturnsMinusOne_TouchesNothingAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    await _seedHeldAsync(conn, fp, "T.A");
+    // Two FAILED campaigns on distinct generations already recorded.
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_dlq_probe_campaigns (fingerprint, generation, probe_ids, verdict)
+        VALUES (@fp, 'old/1', '{}', 2), (@fp, 'old/2', '{}', 2)";
+      ins.Parameters.AddWithValue("fp", fp);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var result = await _svc(ctx).BeginCanaryProbesAsync(fp, "new/3", 5, generationBudget: 2);
+
+    await Assert.That(result).IsEqualTo(-1)
+      .Because("two distinct generations already re-tested this cohort and failed — the "
+             + "budget says a third build does not get to try automatically");
+    var (status, _) = await _rowAsync(conn,
+      (await _heldIdAsync(conn, fp))!.Value);
+    await Assert.That(status).IsEqualTo(HELD)
+      .Because("budget refusal touches nothing: no probes, no state change");
+  }
+
+  [Test]
+  public async Task BeginProbes_ResetsTheProbedMessagesObservationWindowsAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    var src = (Guid)TrackedGuid.NewMedo();
+    await _seedHeldAsync(conn, fp, "T.A", sourceId: src);
+    // The message sits AT the observation bound — without a reset, its first probe
+    // redelivery would re-cross the bound and instantly requarantine: auto-failed probe.
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_message_deduplication (message_id, first_seen_at, observation_count)
+        VALUES (@id, NOW() - INTERVAL '1 day', 10)
+        ON CONFLICT (message_id) DO UPDATE SET observation_count = 10";
+      ins.Parameters.AddWithValue("id", src);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    await _svc(ctx).BeginCanaryProbesAsync(fp, "gen/1", 5, 3);
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT observation_count FROM wh_message_deduplication WHERE message_id = @id";
+    q.Parameters.AddWithValue("id", src);
+    await Assert.That((int)(await q.ExecuteScalarAsync() ?? -1)).IsEqualTo(0)
+      .Because("observation counts are evidence about a build generation, exactly like "
+             + "attempt budgets — a new generation's probe starts a fresh window under "
+             + "the same bound");
+  }
+
+  [Test]
+  public async Task TrickleWave_ReleasesBounded_StampsWaveState_AndCountsWashbackAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    for (var i = 0; i < 12; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"INSERT INTO wh_dlq_probe_campaigns (fingerprint, generation, probe_ids, verdict)
+        VALUES (@fp, 'gen/1', '{}', 3)"; // Mixed
+      ins.Parameters.AddWithValue("fp", fp);
+      await ins.ExecuteNonQueryAsync();
+    }
+    var svc = _svc(ctx);
+
+    var wave1 = await svc.BeginTrickleWaveAsync(fp, "gen/1", 5);
+    await Assert.That(wave1).IsEqualTo(5)
+      .Because("a wave releases exactly its bounded size — the doubling happens between "
+             + "waves, never inside one");
+
+    await Assert.That(await svc.CountWaveRequarantinesAsync(fp, "gen/1")).IsEqualTo(0)
+      .Because("nothing has washed back yet — a clean wave");
+
+    // One released row "comes back": a NEW unrecovered dead letter with the fingerprint.
+    await _seedHeldAsync(conn, fp, "T.A", status: 0, offset: "+2 seconds");
+    await Assert.That(await svc.CountWaveRequarantinesAsync(fp, "gen/1")).IsEqualTo(1)
+      .Because("a new dead letter with the cohort's fingerprint after the wave started IS "
+             + "the wave washing back — the halt signal");
+
+    var wave2 = await svc.BeginTrickleWaveAsync(fp, "gen/1", 100);
+    await Assert.That(wave2).IsEqualTo(7)
+      .Because("the second wave takes whatever remains held when fewer than the doubled "
+             + "size are left");
+    var wave3 = await svc.BeginTrickleWaveAsync(fp, "gen/1", 100);
+    await Assert.That(wave3).IsEqualTo(0)
+      .Because("zero is the drained signal: the washback row is Pending, not held, so it "
+             + "is the live queue's problem — the trickle only ever releases HELD rows");
+  }
+
+  private static async Task<Guid?> _heldIdAsync(NpgsqlConnection conn, string fp) {
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT dead_letter_id FROM wh_dead_letters WHERE error_fingerprint=@fp LIMIT 1";
+    q.Parameters.AddWithValue("fp", fp);
+    return (Guid?)await q.ExecuteScalarAsync();
   }
 
   [Test]

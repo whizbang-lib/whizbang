@@ -98,10 +98,18 @@ public class DeadLetterRecoveryWorkerTests {
 
     // Campaign surface (P1) — inert defaults; campaign behavior is locked by
     // DeadLetterCanaryCampaignTests with its dedicated scripted fake.
+    public Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);
+    public Task RecordStackAsync(Guid deadLetterId, Whizbang.Core.DeadLetters.StackIdentity stack, CancellationToken ct = default) =>
+      Task.CompletedTask;
+    public Task<int> BeginTrickleWaveAsync(string fingerprint, string generation, int waveSize, CancellationToken ct = default) =>
+      Task.FromResult(0);
+    public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
+      Task.FromResult(0);
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
     public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyList<HeldCohort>>([]);
-    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, CancellationToken ct = default) =>
+    public Task<int> BeginCanaryProbesAsync(string fingerprint, string generation, int probeSize, int generationBudget, CancellationToken ct = default) =>
       Task.FromResult(0);
     public Task<CanaryVerdict> EvaluateCampaignAsync(string fingerprint, string generation, CancellationToken ct = default) =>
       Task.FromResult(new CanaryVerdict(CanaryVerdictKind.Pass, 0, 0, 0));

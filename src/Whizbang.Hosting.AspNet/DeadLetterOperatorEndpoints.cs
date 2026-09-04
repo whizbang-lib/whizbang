@@ -19,6 +19,9 @@ namespace Whizbang.Hosting.AspNet;
 [JsonSerializable(typeof(List<DeadLetterEntry>))]
 [JsonSerializable(typeof(DeadLetterEntry))]
 [JsonSerializable(typeof(DeadLetterOperatorEndpoints.ScanNowResponse))]
+[JsonSerializable(typeof(IReadOnlyList<HeldCohort>))]
+[JsonSerializable(typeof(HeldCohort))]
+[JsonSerializable(typeof(DeadLetterOperatorEndpoints.CohortReleaseResult))]
 internal partial class DeadLetterOperatorJsonContext : JsonSerializerContext {
 }
 
@@ -66,8 +69,42 @@ public static class DeadLetterOperatorEndpoints {
     group.MapPost("/{id:guid}/hold", _handleHoldAsync);
     group.MapPost("/{id:guid}/give-up", _handleGiveUpAsync);
     group.MapPost("/scan-now", _handleScanNowAsync);
+    group.MapGet("/cohorts", _handleCohortsAsync);
+    group.MapPost("/cohorts/{fingerprint}/release", _handleCohortReleaseAsync);
 
     return group;
+  }
+
+  private static async Task _handleCohortsAsync(HttpContext http) {
+    var svc = http.RequestServices.GetRequiredService<IDeadLetterRecoveryService>();
+    var cohorts = await svc.ListHeldCohortsAsync(http.RequestAborted).ConfigureAwait(false);
+    http.Response.ContentType = "application/json";
+    await JsonSerializer.SerializeAsync(
+      http.Response.Body, cohorts,
+      DeadLetterOperatorJsonContext.Default.IReadOnlyListHeldCohort,
+      http.RequestAborted).ConfigureAwait(false);
+  }
+
+  private static async Task _handleCohortReleaseAsync(HttpContext http) {
+    var fingerprint = http.Request.RouteValues["fingerprint"]?.ToString();
+    if (string.IsNullOrWhiteSpace(fingerprint)) {
+      http.Response.StatusCode = StatusCodes.Status400BadRequest;
+      return;
+    }
+    var staggerMinutes = 30;
+    if (http.Request.Query.TryGetValue("staggerMinutes", out var s) && int.TryParse(s, out var parsed)) {
+      staggerMinutes = parsed;
+    }
+    var svc = http.RequestServices.GetRequiredService<IDeadLetterRecoveryService>();
+    // Operator release goes through the SAME staggered-eligibility path as the campaigns:
+    // there is no firehose endpoint, by design.
+    var released = await svc.ReleaseHeldCohortAsync(
+      fingerprint, TimeSpan.FromMinutes(staggerMinutes), http.RequestAborted).ConfigureAwait(false);
+    http.Response.ContentType = "application/json";
+    await JsonSerializer.SerializeAsync(
+      http.Response.Body, new CohortReleaseResult(fingerprint, released),
+      DeadLetterOperatorJsonContext.Default.CohortReleaseResult,
+      http.RequestAborted).ConfigureAwait(false);
   }
 
   private static async Task _handleDueAsync(HttpContext http) {
@@ -143,6 +180,11 @@ public static class DeadLetterOperatorEndpoints {
   }
 
   /// <summary>Response DTO for the scan-now endpoint.</summary>
+  /// <summary>An operator cohort release receipt.</summary>
+  /// <param name="Fingerprint">The released cohort.</param>
+  /// <param name="Released">Rows returned to Pending, staggered.</param>
+  public sealed record CohortReleaseResult(string Fingerprint, int Released);
+
   public sealed class ScanNowResponse {
     /// <summary>The generation tag that was passed (or auto-resolved).</summary>
     public string Generation { get; init; } = "";
