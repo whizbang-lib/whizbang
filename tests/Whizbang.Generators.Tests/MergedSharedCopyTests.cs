@@ -31,6 +31,9 @@ public class MergedSharedCopyTests {
 
   private const string NAMING_TYPE = "Whizbang.Generators.Shared.Utilities.NamingConventionUtilities";
 
+  private static readonly string[] _indexColumns = ["id"];
+  private static readonly string[] _strippedSuffixes = ["Model", "Dto"];
+
   /// <summary>A generator assembly carrying its own merged copy of the shared code.</summary>
   public sealed record MergedHost(string Host, Assembly Assembly);
 
@@ -102,4 +105,127 @@ public class MergedSharedCopyTests {
       .Because("all four merged copies come from one source and must behave identically");
     await Assert.That(routes[0]).IsEqualTo("/api/invoices");
   }
+
+  // ── The rest of the shared surface, per host ──────────────────────────────
+
+  private static Type _type(Assembly assembly, string fullName)
+    => assembly.GetType(fullName)
+      ?? throw new InvalidOperationException(
+        $"{fullName} is missing from {assembly.GetName().Name}: the ILRepack merge did not include it.");
+
+  private static object? _call(Assembly assembly, string typeName, string method, params object?[] args) {
+    var type = _type(assembly, typeName);
+    var candidates = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+      .Where(m => m.Name == method && m.GetParameters().Length == args.Length).ToList();
+    var chosen = candidates.FirstOrDefault(m =>
+        m.GetParameters().Zip(args).All(p => p.Second is null || p.First.ParameterType.IsInstanceOfType(p.Second)))
+      ?? candidates.FirstOrDefault()
+      ?? throw new InvalidOperationException($"{typeName}.{method} is missing from {assembly.GetName().Name}.");
+    return chosen.Invoke(null, args);
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_HashesSchemasIdenticallyAsync(MergedHost host) {
+    // The schema hash decides whether a perspective's table is considered changed. If a host's
+    // merged copy hashed differently, that generator would see drift where none exists and
+    // reissue migrations against an unchanged table.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var hash = (string)_call(host.Assembly, ns + "SchemaHashUtilities", "ComputeHash", "order_table")!;
+
+    await Assert.That(hash).IsNotEmpty();
+    await Assert.That((string)_call(host.Assembly, ns + "SchemaHashUtilities", "ComputeHash", "order_table")!)
+      .IsEqualTo(hash)
+      .Because("the hash has to be stable, or every build would look like a schema change");
+    await Assert.That((string)_call(host.Assembly, ns + "SchemaHashUtilities", "ComputeHash", "other_table")!)
+      .IsNotEqualTo(hash)
+      .Because("different schemas must not collide, or a real change would go unnoticed");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_CanonicalisesAndHashesATableSchemaAsync(MergedHost host) {
+    // Exercises the record types the hash is built from -- ColumnSchema, IndexSchema and
+    // PerspectiveTableSchema -- inside this host's merged copy.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var columnType = _type(host.Assembly, ns + "ColumnSchema");
+    var indexType = _type(host.Assembly, ns + "IndexSchema");
+    var schemaType = _type(host.Assembly, ns + "PerspectiveTableSchema");
+
+    var column = Activator.CreateInstance(columnType, "id", "uuid", false, true, false, (int?)null)!;
+    var index = Activator.CreateInstance(indexType, "idx_id", (IReadOnlyList<string>)_indexColumns, "btree", true)!;
+
+    var columns = Array.CreateInstance(columnType, 1);
+    columns.SetValue(column, 0);
+    var indexes = Array.CreateInstance(indexType, 1);
+    indexes.SetValue(index, 0);
+
+    var schema = Activator.CreateInstance(schemaType, columns, indexes)!;
+
+    var json = (string)_call(host.Assembly, ns + "SchemaHashUtilities", "ToCanonicalJson", schema)!;
+    var schemaHash = (string)_call(host.Assembly, ns + "SchemaHashUtilities", "ComputeSchemaHash", schema)!;
+
+    await Assert.That(json).Contains("id");
+    await Assert.That(schemaHash).IsNotEmpty();
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ParsesSuffixListsAndMeasuresIdentifiersAsync(MergedHost host) {
+    // Suffix lists come from .editorconfig and decide how a model name becomes a table name;
+    // the byte count is what identifier-length limits are checked against, and getting it wrong
+    // means either a rejected migration or a silently truncated name.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var suffixes = (string[])_call(host.Assembly, ns + "ConfigurationUtilities", "ParseSuffixList", "Model,Dto, View")!;
+
+    await Assert.That(suffixes).Contains("Model");
+    await Assert.That(suffixes).Contains("Dto");
+    await Assert.That(suffixes).Contains("View")
+      .Because("entries are trimmed, so a space after a comma must not produce \" View\"");
+
+    var bytes = (int)_call(host.Assembly, ns + "IdentifierValidation", "GetByteCount", "order_table")!;
+    await Assert.That(bytes).IsEqualTo(11);
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_ShapesGeneratedTextIdenticallyAsync(MergedHost host) {
+    // Template handling produces the source these generators emit. A divergence here shows up as
+    // malformed generated code in whichever package carried the bad copy.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var indented = (string)_call(host.Assembly, ns + "TemplateUtilities", "IndentCode", "a\nb", "  ")!;
+
+    await Assert.That(indented).Contains("  a");
+    await Assert.That(indented).Contains("  b");
+
+    var simple = (string)_call(host.Assembly, ns + "TypeNameUtilities", "GetSimpleName", "App.Models.OrderReadModel")!;
+    await Assert.That(simple).IsEqualTo("OrderReadModel")
+      .Because("the simple name is what table and endpoint names are derived from");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_CarriesTheSharedModelRecordsAsync(MergedHost host) {
+    // The model records travel between the shared utilities and each generator. A host missing
+    // one, or carrying a differently-shaped copy, fails at the boundary rather than at the call.
+    const string models = "Whizbang.Generators.Shared.Models.";
+    var configType = _type(host.Assembly, models + "TableNameConfig");
+
+    var config = Activator.CreateInstance(configType, true, _strippedSuffixes)!;
+    var stripSuffixes = (bool)configType.GetProperty("StripSuffixes")!.GetValue(config)!;
+    var suffixes = (string[])configType.GetProperty("SuffixesToStrip")!.GetValue(config)!;
+
+    await Assert.That(stripSuffixes).IsTrue();
+    await Assert.That(suffixes).Contains("Model");
+
+    var defaults = configType.GetProperty("Default", BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!;
+    await Assert.That((bool)configType.GetProperty("StripSuffixes")!.GetValue(defaults)!).IsTrue()
+      .Because("the default configuration strips suffixes; a host disagreeing would name tables differently");
+
+    foreach (var name in new[] { "DbContextInfo", "PerspectiveInfo", "PhysicalFieldInfo" }) {
+      await Assert.That(host.Assembly.GetType(models + name)).IsNotNull()
+        .Because($"{name} crosses the boundary between the shared code and {host.Host}");
+    }
+  }
+
 }
