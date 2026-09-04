@@ -744,30 +744,37 @@ function Invoke-CoverageReport {
     Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
     Write-Host "=====================================" -ForegroundColor Cyan
 
-    # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
-    $jsonSummaryFile = Join-Path $reportDir "Summary.json"
-    if (Test-Path $jsonSummaryFile) {
-        $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
-        $filesBelow100 = @()
-        foreach ($assembly in $jsonSummary.coverage.assemblies) {
-            foreach ($class in $assembly.classes) {
-                if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
-                    $filesBelow100 += @{
-                        Name     = $class.name
-                        Coverage = $class.coverage
-                        Covered  = $class.coveredLines
-                        Total    = $class.coverableLines
-                    }
+    # Show classes below 100% coverage.
+    #
+    # Read from Summary.txt, not Summary.json: this reportgenerator's JsonSummary
+    # reports "classes" as an integer count per assembly, not an array of class
+    # objects. The old traversal walked `$assembly.classes` as a collection and
+    # dereferenced `.coverage` on an int, which under `Set-StrictMode -Version Latest`
+    # throws PropertyNotFoundException -- caught by the script-level trap and surfaced
+    # as a bare "ScriptHalted" pointing at the trap instead of at this block. The
+    # effect was that the whole worklist silently never printed, even on a green run.
+    #
+    # Summary.txt lists each assembly at column 0 and its classes indented two spaces,
+    # each followed by a right-aligned percentage.
+    $textSummaryFile = Join-Path $reportDir "Summary.txt"
+    if (Test-Path $textSummaryFile) {
+        $classesBelow100 = @()
+        foreach ($line in (Get-Content $textSummaryFile)) {
+            # "  Some.Namespace.ClassName                    83.3%"
+            if ($line -match '^\s{2}(\S.*?)\s+([\d.]+)%\s*$') {
+                $className = $Matches[1].Trim()
+                $pct = [double]$Matches[2]
+                if ($pct -lt 100 -and $className -notmatch 'Tests?\.') {
+                    $classesBelow100 += [PSCustomObject]@{ Name = $className; Coverage = $pct }
                 }
             }
         }
 
-        if ($filesBelow100.Count -gt 0) {
+        if ($classesBelow100.Count -gt 0) {
             Write-Host ""
-            Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
-            foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
-                $uncovered = $file.Total - $file.Covered
-                Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
+            Write-Host "Classes below 100% coverage ($($classesBelow100.Count)), worst first:" -ForegroundColor Yellow
+            foreach ($cls in ($classesBelow100 | Sort-Object Coverage)) {
+                Write-Host ("  {0,6:N1}%  {1}" -f $cls.Coverage, $cls.Name) -ForegroundColor Yellow
             }
         }
     }
