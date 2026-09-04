@@ -283,6 +283,7 @@ param(
 
     [bool]$Cleanup = $true,  # Clean up ALL containers after tests (default: true). Use -Cleanup:$false to preserve shared containers
     [switch]$CleanupOnly,  # Only clean up containers, don't run tests
+    [switch]$CountTests,  # Count tests per project and summarize, then exit (no build, no run)
     [switch]$NoBuild,  # Skip building, use existing build artifacts (for CI when artifacts are pre-built)
     [bool]$Fast = $true,  # Disable analyzers, XML docs, and code style enforcement for faster builds. Use -Fast:$false for full analysis
 
@@ -577,6 +578,131 @@ trap {
 }
 
 # Generate coverage report from Cobertura XML files using reportgenerator
+# ==========================================================================
+# Test inventory — statically counts test CASES per project without building.
+# ==========================================================================
+# A declared [Test] method is not the same as a test case. TUnit expands one
+# method into several cases when it carries data:
+#
+#   [Test] alone                     -> 1 case
+#   [Test] + N x [Arguments(...)]    -> N cases  (the [Test] adds none of its own)
+#   [Test] + [MethodDataSource] etc. -> a row count only the run knows
+#
+# So the case count is (plain methods) + (total [Arguments] rows), and the
+# methods backed by a runtime data source are reported separately because no
+# static pass can resolve them. Reporting one blended number would be wrong in
+# whichever direction the reader assumed.
+#
+# Source-generated files are excluded: TUnit emits a metadata class per test
+# under obj/, so counting those would roughly double every figure.
+function Get-TestInventory {
+    param([string]$RepoRoot, [string[]]$ProjectPaths)
+
+    $rows = @()
+    foreach ($proj in $ProjectPaths) {
+        $dir = Split-Path -Parent $proj
+        $sources = Get-ChildItem -Path $dir -Recurse -Filter "*.cs" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch "[\\/](obj|bin)[\\/]" -and $_.FullName -notmatch "\.whizbang" }
+
+        $methods = 0      # declared [Test] methods
+        $cases = 0        # statically resolvable cases
+        $argRows = 0      # [Arguments] rows
+        $runtime = 0      # methods whose case count is only known at run time
+
+        foreach ($file in $sources) {
+            $lines = @(Get-Content $file.FullName -ErrorAction SilentlyContinue)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -notmatch '^\s*\[Test\]') { continue }
+                $methods++
+
+                # The attribute block for a method is contiguous and [Test] may sit
+                # anywhere within it, so scan both directions from it.
+                $rows_ = 0
+                $isRuntime = $false
+                for ($j = $i + 1; $j -lt $lines.Count -and $lines[$j] -match '^\s*\['; $j++) {
+                    if ($lines[$j] -match '^\s*\[Arguments') { $rows_++ }
+                    if ($lines[$j] -match '^\s*\[(MethodDataSource|ClassDataSource|MatrixDataSource|Matrix|Repeat)') { $isRuntime = $true }
+                }
+                for ($k = $i - 1; $k -ge 0 -and $lines[$k] -match '^\s*\['; $k--) {
+                    if ($lines[$k] -match '^\s*\[Arguments') { $rows_++ }
+                    if ($lines[$k] -match '^\s*\[(MethodDataSource|ClassDataSource|MatrixDataSource|Matrix|Repeat)') { $isRuntime = $true }
+                }
+
+                if ($isRuntime) { $runtime++ }
+                if ($rows_ -gt 0) { $argRows += $rows_; $cases += $rows_ } else { $cases++ }
+            }
+        }
+
+        if ($methods -gt 0) {
+            $rows += [PSCustomObject]@{
+                Project        = [System.IO.Path]::GetFileNameWithoutExtension($proj)
+                Cases          = $cases
+                Methods        = $methods
+                Arguments      = $argRows
+                RuntimeSources = $runtime
+                Files          = @($sources).Count
+            }
+        }
+    }
+    return $rows
+}
+
+function Write-TestInventory {
+    param([object[]]$Rows)
+
+    if (-not $Rows -or @($Rows).Count -eq 0) {
+        Write-Host "  No test projects matched." -ForegroundColor Yellow
+        return
+    }
+
+    $totalCases   = ($Rows | Measure-Object -Property Cases -Sum).Sum
+    $totalMethods = ($Rows | Measure-Object -Property Methods -Sum).Sum
+    $totalArgs    = ($Rows | Measure-Object -Property Arguments -Sum).Sum
+    $totalRuntime = ($Rows | Measure-Object -Property RuntimeSources -Sum).Sum
+    $totalFiles   = ($Rows | Measure-Object -Property Files -Sum).Sum
+
+    Write-Host ""
+    Write-Host "  Test cases by project ($(@($Rows).Count) projects)" -ForegroundColor Cyan
+    foreach ($row in ($Rows | Sort-Object Cases -Descending)) {
+        $expanded = if ($row.Cases -ne $row.Methods) { " ($($row.Methods) methods)" } else { "" }
+        $rt = if ($row.RuntimeSources -gt 0) { " +$($row.RuntimeSources) runtime" } else { "" }
+        Write-Host ("    {0,-50} {1,6}{2}{3}" -f $row.Project, $row.Cases, $expanded, $rt) -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host ("    {0,-50} {1,6}" -f "TEST CASES (static)", $totalCases) -ForegroundColor Green
+    Write-Host ("    {0,-50} {1,6}" -f "  from declared [Test] methods", $totalMethods) -ForegroundColor Gray
+    Write-Host ("    {0,-50} {1,6}" -f "  expanded from [Arguments] rows", $totalArgs) -ForegroundColor Gray
+    Write-Host ("    {0,-50} {1,6}" -f "Across source files", $totalFiles) -ForegroundColor Gray
+    if ($totalRuntime -gt 0) {
+        Write-Host ""
+        Write-Host "    $totalRuntime method(s) use a runtime data source ([MethodDataSource] /" -ForegroundColor Yellow
+        Write-Host "    [ClassDataSource] / [Matrix] / [Repeat]) and are counted as 1 case each here." -ForegroundColor Yellow
+        Write-Host "    Their real row count is only known once the suite runs, so TEST CASES is a" -ForegroundColor Yellow
+        Write-Host "    lower bound by however many rows those $totalRuntime yield." -ForegroundColor Yellow
+    }
+}
+
+# -CountTests: a static inventory only. No build, no restore, no test run — the
+# whole point is answering "how many test cases does this repo have" in seconds,
+# so it must exit before any of the machinery below it starts.
+if ($CountTests) {
+    Write-Host ""
+    Write-Host "Counting test cases (static source scan, no build)..." -ForegroundColor Cyan
+
+    $countScope = @()
+    $countScope += Get-ChildItem -Path "$repoRoot/tests" -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch "AppHost" } | ForEach-Object { $_.FullName }
+    $countScope += Get-ChildItem -Path "$repoRoot/samples" -Recurse -Filter "*.Tests.csproj" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch "AppHost" } | ForEach-Object { $_.FullName }
+    if ($ProjectFilter) {
+        $countScope = @($countScope | Where-Object { $_ -match $ProjectFilter })
+    }
+
+    Write-TestInventory -Rows (Get-TestInventory -RepoRoot $repoRoot -ProjectPaths $countScope)
+    Write-Host ""
+    exit 0
+}
+
 # Returns hashtable with CoveragePct, TotalLines, TotalCovered, HtmlReport
 function Invoke-CoverageReport {
     param(
@@ -2029,6 +2155,40 @@ try {
                 $totalPassed = $finalPassed
                 $totalFailed = $finalFailed
                 $totalSkipped = $finalSkipped
+
+                # Executed vs declared. The executed figure is the real one: [Arguments],
+                # [MethodDataSource] and [ClassDataSource] each expand one declared method into
+                # several cases, so a source count is always a lower bound. Showing both makes the
+                # expansion visible instead of leaving two different "test counts" in circulation.
+                #
+                # Wrapped in try/catch on purpose: this is a reporting nicety printed AFTER the run
+                # has already succeeded, so it must never be the reason a green run exits non-zero.
+                try {
+                    $executedTotal = $finalPassed + $finalFailed + $finalSkipped
+                    $inventoryScope = @()
+                    $inventoryScope += Get-ChildItem -Path "$repoRoot/tests" -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -notmatch "AppHost" } | ForEach-Object { $_.FullName }
+                    $inventoryScope += Get-ChildItem -Path "$repoRoot/samples" -Recurse -Filter "*.Tests.csproj" -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -notmatch "AppHost" } | ForEach-Object { $_.FullName }
+                    if ($ProjectFilter) {
+                        $inventoryScope = @($inventoryScope | Where-Object { $_ -match $ProjectFilter })
+                    }
+
+                    $declaredRows = Get-TestInventory -RepoRoot $repoRoot -ProjectPaths $inventoryScope
+                    if ($declaredRows) {
+                        $declaredTotal = ($declaredRows | Measure-Object -Property Methods -Sum).Sum
+                        $staticCases  = ($declaredRows | Measure-Object -Property Cases -Sum).Sum
+                        Write-Host ""
+                        Write-Host "Executed: $executedTotal case(s) -- repo declares $declaredTotal [Test] method(s) / $staticCases static case(s) across $(@($declaredRows).Count) project(s)" -ForegroundColor Cyan
+                        if ($executedTotal -lt $staticCases) {
+                            Write-Host "          ($($staticCases - $executedTotal) case(s) not run in this mode -- other modes/projects hold the rest)" -ForegroundColor Gray
+                        } elseif ($executedTotal -gt $staticCases) {
+                            Write-Host "          (+$($executedTotal - $staticCases) beyond the static count, from runtime data sources)" -ForegroundColor Gray
+                        }
+                    }
+                } catch {
+                    Write-Host "  (test inventory unavailable: $($_.Exception.Message))" -ForegroundColor DarkGray
+                }
             } else {
                 Write-Host "No test results parsed" -ForegroundColor Yellow
                 Write-Host ""
