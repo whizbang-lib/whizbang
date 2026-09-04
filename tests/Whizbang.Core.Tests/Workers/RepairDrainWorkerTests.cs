@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -26,6 +27,14 @@ namespace Whizbang.Core.Tests.Workers;
 /// no attempt budget burns on a request that could not leave the process.
 /// </summary>
 /// <docs>proposals/paced-repair-drain</docs>
+/// <remarks>
+/// Serialized alongside the other worker timing tests. The ExecuteAsync tests below start a real
+/// BackgroundService and drive its loop through many drain iterations in quick succession; run in
+/// parallel that saturates the host, and the doorbell liveness tests next door explicitly depend
+/// on an unsaturated host to distinguish a doorbell-driven claim from a poll-driven one. Leaving
+/// this class parallel made ClaimWorkerDoorbellLivenessTests fail reproducibly.
+/// </remarks>
+[NotInParallel(Order = 106)]
 public class RepairDrainWorkerTests {
 
   [Test]
@@ -186,6 +195,120 @@ public class RepairDrainWorkerTests {
     await Assert.That(request.ToCommitSequence).IsNull();
   }
 
+
+  // ── ExecuteAsync: the paced loop itself ───────────────────────────────────
+
+  private static (RepairDrainWorker Worker, _drainCoordinator Coordinator) _buildForLoop(
+      StreamIntegrityOptions options, TimeProvider clock, ISchemaReadyGate gate) {
+    var coordinator = new _drainCoordinator();
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    // The drain only claims for origins whose request topic it has learned; without one the
+    // tick is inert by design, and the loop would look broken when it is merely idle.
+    tracker.RecordCheckpoint(Guid.NewGuid(), "origin-svc", clock.GetUtcNow(), "origin.requests");
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton(tracker);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("drainer-svc"));
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var worker = new RepairDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      gate,
+      Options.Create(options),
+      NullLogger<RepairDrainWorker>.Instance,
+      clock);
+    return (worker, coordinator);
+  }
+
+  [Test]
+  public async Task ExecuteAsync_WhenDisabled_ParksInsteadOfExitingAsync() {
+    // A BackgroundService that returns from ExecuteAsync reads to the host as a crashed worker.
+    // Parking keeps a deliberately disabled drain distinguishable from one that fell over --
+    // which matters here because the drain being off is a supported configuration.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
+    var (worker, _) = _buildForLoop(
+      new StreamIntegrityOptions { RepairDrainEnabled = false },
+      clock,
+      SchemaReadyGate.AlreadyReady());
+
+    await worker.StartAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask is not null).IsTrue();
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("a disabled drain stays parked rather than completing, which would look like a crash");
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task ExecuteAsync_WithANonPositiveRate_ParksAsync(double rate) {
+    // A rate of zero or below cannot pace anything, so it is treated as disabled rather than
+    // spinning a loop that can never grant a token.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
+    var (worker, _) = _buildForLoop(
+      new StreamIntegrityOptions { RepairDrainEnabled = true, RepairDrainRatePerSecond = rate },
+      clock,
+      SchemaReadyGate.AlreadyReady());
+
+    await worker.StartAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse();
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ExecuteAsync_ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
+    // The worker parks on the schema gate at startup. A pod stopped while still waiting has no
+    // schema to drain against, so the exit must be silent rather than an error on every fast
+    // restart.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
+    var (worker, _) = _buildForLoop(
+      new StreamIntegrityOptions { RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
+      clock,
+      new SchemaReadyGate());   // never marked ready
+
+    await worker.StartAsync(CancellationToken.None);
+
+    await Assert.That(async () => await worker.StopAsync(CancellationToken.None)).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task ExecuteAsync_TicksOnceASecondOfVirtualTimeAsync() {
+    // The pace is the point of this worker: it exists to bleed repair requests out slowly rather
+    // than flood a recovering system. Driving it on a fake clock proves the cadence without a
+    // real delay, so the test cannot flake on a loaded machine.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
+    var (worker, coordinator) = _buildForLoop(
+      new StreamIntegrityOptions { RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
+      clock,
+      SchemaReadyGate.AlreadyReady());
+
+    await worker.StartAsync(CancellationToken.None);
+
+    // Advance virtual time until the loop's interval elapses, waiting on the claim itself
+    // rather than on wall-clock. The short pause between advances is pacing, not the
+    // assertion -- a tight spin here starves the thread pool and destabilises tests running
+    // alongside this one.
+    for (var attempt = 0; attempt < 50 && !coordinator.FirstClaim.Task.IsCompleted; attempt++) {
+      clock.Advance(TimeSpan.FromSeconds(1));
+      await Task.Delay(10);
+    }
+
+    await Assert.That(async () => await coordinator.FirstClaim.Task.WaitAsync(TimeSpan.FromSeconds(5)))
+      .ThrowsNothing()
+      .Because("the loop has to reach the drain tick once its interval elapses");
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static (RepairDrainWorker Worker, _drainCoordinator Coordinator, _captureTransport Transport, IntegrityGapTracker Tracker) _build(
@@ -226,11 +349,14 @@ public class RepairDrainWorkerTests {
   private sealed class _drainCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<IntegrityRepairDrainItem> Eligible { get; } = [];
     public List<(IReadOnlyList<Guid> Origins, int Limit)> ClaimCalls { get; } = [];
+    /// <summary>Completes on the first claim so a test can wait on the effect, not on a clock.</summary>
+    public TaskCompletionSource FirstClaim { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task<IReadOnlyList<IntegrityRepairDrainItem>> IntegrityClaimRepairDrainAsync(
         IReadOnlyList<Guid> originIds, DateTimeOffset now, TimeSpan baseBackoff, int maxAttempts,
         int limit, CancellationToken cancellationToken = default) {
       ClaimCalls.Add((originIds, limit));
+      FirstClaim.TrySetResult();
       var take = Eligible.Where(e => originIds.Contains(e.OriginServiceId)).Take(limit).ToList();
       foreach (var item in take) {
         Eligible.Remove(item);
