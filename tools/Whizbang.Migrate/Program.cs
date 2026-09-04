@@ -45,7 +45,9 @@ public static class Program {
 
     analyzeCommand.AddOption(projectOption);
     analyzeCommand.AddOption(formatOption);
-    analyzeCommand.SetHandler(async (project, format) => {
+    analyzeCommand.SetHandler(async context => {
+      var project = context.ParseResult.GetValueForOption(projectOption);
+      var format = context.ParseResult.GetValueForOption(formatOption);
       var path = project ?? Directory.GetCurrentDirectory();
       Console.WriteLine($"Analyzing: {path}");
       Console.WriteLine();
@@ -62,6 +64,7 @@ public static class Program {
 
       if (!Directory.Exists(sourceDir)) {
         await Console.Error.WriteLineAsync($"Directory not found: {sourceDir}");
+        context.ExitCode = 1;
         return;
       }
 
@@ -83,7 +86,7 @@ public static class Program {
       } else {
         _printTableFormat(combinedResult);
       }
-    }, projectOption, formatOption);
+    });
 
     // plan command
     var planCommand = new Command("plan", "Create a migration plan without applying changes");
@@ -178,6 +181,7 @@ public static class Program {
       if (!string.IsNullOrEmpty(decisionFilePath)) {
         if (!File.Exists(decisionFilePath)) {
           await Console.Error.WriteLineAsync($"Decision file not found: {decisionFilePath}");
+          context.ExitCode = 1;
           return;
         }
         loadedDecisionFile = await DecisionFile.LoadAsync(decisionFilePath);
@@ -206,6 +210,7 @@ public static class Program {
 
       if (!result.Success) {
         await Console.Error.WriteLineAsync($"Error: {result.ErrorMessage}");
+        context.ExitCode = 1;
         return;
       }
 
@@ -269,7 +274,8 @@ public static class Program {
     // status command
     var statusCommand = new Command("status", "Show migration status");
     statusCommand.AddOption(projectOption);
-    statusCommand.SetHandler(async project => {
+    statusCommand.SetHandler(async context => {
+      var project = context.ParseResult.GetValueForOption(projectOption);
       var path = project ?? Directory.GetCurrentDirectory();
 
       // Get source directory from solution or project path
@@ -284,6 +290,7 @@ public static class Program {
 
       if (!result.Success) {
         await Console.Error.WriteLineAsync($"Error: {result.ErrorMessage}");
+        context.ExitCode = 1;
         return;
       }
 
@@ -296,7 +303,7 @@ public static class Program {
       Console.WriteLine($"  Pending steps:       {result.PendingTransformerCount}");
       Console.WriteLine($"  Files transformed:   {result.TotalFilesTransformed}");
       Console.WriteLine();
-    }, projectOption);
+    });
 
     rootCommand.AddCommand(analyzeCommand);
     rootCommand.AddCommand(planCommand);

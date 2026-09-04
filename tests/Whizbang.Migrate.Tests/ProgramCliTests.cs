@@ -108,4 +108,47 @@ public class ProgramCliTests {
     await Assert.That(first.Subcommands.Count).IsEqualTo(second.Subcommands.Count);
     await Assert.That(first).IsNotSameReferenceAs(second);
   }
+
+  // ── Exit codes ────────────────────────────────────────────────────────────
+
+  [Test]
+  public async Task Analyze_OnAMissingDirectory_ExitsNonZeroAsync() {
+    // The tool runs from pipelines. Printing "Directory not found" to stderr and exiting 0 is
+    // indistinguishable from success to every script that calls it, so the next step runs
+    // against a project that was never analyzed -- let alone migrated.
+    var missing = Path.Combine(Path.GetTempPath(), "whizbang-absent", Guid.NewGuid().ToString("N"));
+
+    var exitCode = await Program.Main(["analyze", "-p", missing]);
+
+    await Assert.That(exitCode).IsNotEqualTo(0);
+  }
+
+  [Test]
+  public async Task Apply_WithAMissingDecisionFile_ExitsNonZeroAsync() {
+    // A decision file that cannot be found means the migration would run with defaults instead
+    // of the operator's recorded choices. That has to stop the pipeline, not proceed quietly.
+    var missing = Path.Combine(Path.GetTempPath(), "whizbang-absent", $"{Guid.NewGuid():N}.json");
+
+    var exitCode = await Program.Main(["apply", "-p", Path.GetTempPath(), "-d", missing]);
+
+    await Assert.That(exitCode).IsNotEqualTo(0);
+  }
+
+  [Test]
+  public async Task UnknownCommand_ExitsNonZeroAsync() {
+    // A typo in a pipeline step must fail that step rather than be recorded as completed work.
+    var exitCode = await Program.Main(["definitely-not-a-command"]);
+
+    await Assert.That(exitCode).IsNotEqualTo(0);
+  }
+
+  [Test]
+  public async Task Help_ExitsZeroAsync() {
+    // The counterpart: asking for help is not a failure, and a CLI that reported one would
+    // break pipelines that probe --help.
+    var exitCode = await Program.Main(["--help"]);
+
+    await Assert.That(exitCode).IsEqualTo(0);
+  }
+
 }
