@@ -69,6 +69,28 @@ public sealed class WorkerOptionsBindingTests {
   }
 
   [Test]
+  public async Task StreamIntegrity_DisableFlags_BindFromConfigurationAsync() {
+    // #666: the integrity workers and the checkpoint receptor all honor their disable
+    // flags — but the options class was never bound, so IOptions<StreamIntegrityOptions>
+    // resolved default-constructed (everything enabled) and the flags in configuration
+    // did nothing. Observed live: gap detection recounts at a double-digit share of DB
+    // CPU on a fleet configured with GapDetectionEnabled=false.
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:StreamIntegrity:GapDetectionEnabled"] = "false",
+      ["Whizbang:StreamIntegrity:AuditEnabled"] = "false",
+      ["Whizbang:StreamIntegrity:CheckpointsEnabled"] = "false",
+      ["Whizbang:StreamIntegrity:RepairMode"] = "ReportOnly",
+    });
+    var options = provider.GetRequiredService<IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>().Value;
+    await Assert.That(options.GapDetectionEnabled).IsFalse()
+      .Because("an off switch that configuration cannot reach is not an off switch — the "
+             + "flags must bind turnkey for the workers' checks to mean anything");
+    await Assert.That(options.AuditEnabled).IsFalse();
+    await Assert.That(options.CheckpointsEnabled).IsFalse();
+    await Assert.That(options.RepairMode).IsEqualTo(Whizbang.Core.Messaging.IntegrityRepairMode.ReportOnly);
+  }
+
+  [Test]
   public async Task ClaimWorker_NotifyDrainLinger_BindsFromConfigurationAsync() {
     await using var provider = _hostWith(new Dictionary<string, string?> {
       ["Whizbang:Workers:Claim:NotifyDrainLingerSeconds"] = "12",

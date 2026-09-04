@@ -573,6 +573,22 @@ public static class WorkerPipelineExtensions {
     // names below are the documented operational keys) and degrades to code defaults when the
     // host registers no IConfiguration at all. The configuration binder source generator
     // intercepts these Bind calls, so no reflection reaches the AOT path.
+    // #666: the integrity disable flags are only as real as this binding. The workers and
+    // the checkpoint receptor all check the options; without a turnkey bind the class
+    // resolved default-constructed (everything enabled) and configuration did nothing.
+    services.AddOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+
     services.AddOptions<DeadLetterRecoveryOptions>();
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<DeadLetterRecoveryOptions>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
