@@ -328,7 +328,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       if (_deadLetterStore is not null && _generationProvider is not null) {
         try {
           var promotionErrorText = _buildPromotionErrorText(work, maxAttempts.Value);
-          await _deadLetterStore.MoveAsync(
+          var movedId = await _deadLetterStore.MoveAsync(
             deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
             sourceTable: DeadLetterSourceTable.INBOX,
             sourceId: work.MessageId,
@@ -337,11 +337,23 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
             instanceId: _instanceProvider.InstanceId,
             generation: _generationProvider.GetGeneration(),
             ct: stoppingToken).ConfigureAwait(false);
-          _dlqMetrics?.Added.Add(1,
-            new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
-            new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
-          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
-            (int)Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText);
+          if (movedId is not null) {
+            _dlqMetrics?.Added.Add(1,
+              new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+              new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
+            _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX,
+              (int)Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded, promotionErrorText);
+          } else {
+            // #571: null is the documented already-gone no-op — the row was dead-lettered
+            // or deleted by someone else. Counting it would mint phantom DLQ arrivals; NOT
+            // terminating here re-fed the same work item forever.
+            LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
+          }
+          // #571: dead-lettering is TERMINAL and bypasses the handler-commit channel (the
+          // SQL move deleted the inbox row), so the in-flight guard must release here —
+          // the same symmetry OutboxPublishWorker keeps on every terminal path. Without
+          // it the id wedges in flight until age-out and the item re-feeds.
+          _inboxChannelWriter.RemoveInFlight(work.MessageId);
           return;
         } catch (Exception ex) {
           // DLQ move is best-effort — if it fails, fall back to the legacy
@@ -568,7 +580,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
     if (_deadLetterStore is not null && _generationProvider is not null) {
       try {
-        await _deadLetterStore.MoveAsync(
+        var movedId = await _deadLetterStore.MoveAsync(
           deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
           sourceTable: DeadLetterSourceTable.INBOX,
           sourceId: work.MessageId,
@@ -577,10 +589,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           instanceId: _instanceProvider.InstanceId,
           generation: _generationProvider.GetGeneration(),
           ct: ct).ConfigureAwait(false);
-        _dlqMetrics?.Added.Add(1,
-          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
-          new KeyValuePair<string, object?>("reason", reason.ToString()));
-        _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, result.Detail);
+        if (movedId is not null) {
+          _dlqMetrics?.Added.Add(1,
+            new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+            new KeyValuePair<string, object?>("reason", reason.ToString()));
+          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, result.Detail);
+        } else {
+          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
+        }
+        _inboxChannelWriter.RemoveInFlight(work.MessageId);   // #571: terminal path releases
         return;
       } catch (Exception ex) {
         // DLQ move is best-effort — fall back to the legacy terminal completion so the row never
@@ -627,7 +644,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       InboxWork work, Whizbang.Core.Messaging.MessageFailureReason reason, string detail, CancellationToken ct) {
     if (_deadLetterStore is not null && _generationProvider is not null) {
       try {
-        await _deadLetterStore.MoveAsync(
+        var movedId = await _deadLetterStore.MoveAsync(
           deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
           sourceTable: DeadLetterSourceTable.INBOX,
           sourceId: work.MessageId,
@@ -636,10 +653,15 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           instanceId: _instanceProvider.InstanceId,
           generation: _generationProvider.GetGeneration(),
           ct: ct).ConfigureAwait(false);
-        _dlqMetrics?.Added.Add(1,
-          new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
-          new KeyValuePair<string, object?>("reason", reason.ToString()));
-        _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, detail);
+        if (movedId is not null) {
+          _dlqMetrics?.Added.Add(1,
+            new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.INBOX),
+            new KeyValuePair<string, object?>("reason", reason.ToString()));
+          _dlqMetrics?.RecordArrival(DeadLetterSourceTable.INBOX, (int)reason, detail);
+        } else {
+          LogDeadLetterRowAlreadyGone(_logger, work.MessageId);
+        }
+        _inboxChannelWriter.RemoveInFlight(work.MessageId);   // #571: terminal path releases
         return;
       } catch (Exception ex) {
         LogDeadLetterStoreFailed(_logger, work.MessageId, ex);
@@ -930,6 +952,11 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "InboxDispatchWorker dead-lettered message {MessageId}: attempts={Attempts} > max={MaxAttempts}")]
   static partial void LogDeadLettered(ILogger logger, Guid messageId, int attempts, int maxAttempts);
+
+  [LoggerMessage(EventId = 28, Level = LogLevel.Information,
+    Message = "InboxDispatchWorker dead-letter move for {MessageId}: source row already gone (idempotent no-op) — "
+            + "treated as terminal; a burst of these is the signature of the same message being fed twice")]
+  static partial void LogDeadLetterRowAlreadyGone(ILogger logger, Guid messageId);
 
   [LoggerMessage(EventId = 10, Level = LogLevel.Warning, Message = "InboxDispatchWorker IDeadLetterStore.MoveAsync failed for {MessageId} — falling back to legacy mark-Published path")]
   static partial void LogDeadLetterStoreFailed(ILogger logger, Guid messageId, Exception ex);
