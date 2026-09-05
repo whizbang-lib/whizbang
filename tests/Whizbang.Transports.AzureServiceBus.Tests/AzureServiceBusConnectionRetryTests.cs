@@ -1,4 +1,5 @@
 using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -279,6 +280,97 @@ public class AzureServiceBusConnectionRetryTests {
     await Assert.That(delay4).IsEqualTo(TimeSpan.FromSeconds(8));
     await Assert.That(delay5).IsEqualTo(TimeSpan.FromSeconds(10));  // Capped
     await Assert.That(delay6).IsEqualTo(TimeSpan.FromSeconds(10));  // Stays capped
+  }
+
+  #endregion
+
+  #region Connection retry behaviour
+
+  /// <summary>
+  /// A well-formed connection string whose endpoint refuses immediately. The failure is what the
+  /// retry path is for, and pointing at a closed local port gets there without a broker, without
+  /// DNS, and without waiting on a network timeout.
+  /// </summary>
+  private const string UNREACHABLE_NAMESPACE =
+    "Endpoint=sb://localhost:1;SharedAccessKeyName=probe;SharedAccessKey=cHJvYmVrZXk=";
+
+  private static AzureServiceBusOptions _fastRetry(int attempts, bool indefinitely) => new() {
+    InitialRetryAttempts = attempts,
+    InitialRetryDelay = TimeSpan.FromMilliseconds(1),
+    MaxRetryDelay = TimeSpan.FromMilliseconds(2),
+    RetryIndefinitely = indefinitely,
+  };
+
+  [Test]
+  [Timeout(180000)]
+  public async Task WhenNotRetryingIndefinitely_ItGivesUpAndSurfacesTheFailureAsync(
+      CancellationToken cancellationToken) {
+    // Startup connection retry has to end somewhere when the operator asked it to. Swallowing the
+    // final failure would leave the transport reporting healthy with no connection behind it; the
+    // exception is what stops the host coming up pretending it can publish.
+    var log = new _attemptLog();
+    var retry = new AzureServiceBusConnectionRetry(_fastRetry(attempts: 1, indefinitely: false), log);
+
+    await Assert.That(async () =>
+        await retry.CreateClientWithRetryAsync(UNREACHABLE_NAMESPACE, cancellationToken))
+      .ThrowsException()
+      .Because("with RetryIndefinitely off the caller asked to be told, and a host that starts "
+             + "anyway will fail later at the first publish instead of here at startup");
+
+    await Assert.That(log.Attempts).IsGreaterThan(1)
+      .Because("the configured budget counts retries, so the attempt that gives up comes after "
+             + "them — stopping at one would be a retry short of what was asked for");
+  }
+
+  [Test]
+  [Timeout(180000)]
+  public async Task WhenRetryingIndefinitely_ItKeepsGoingPastTheConfiguredAttemptsAsync(
+      CancellationToken cancellationToken) {
+    // The default posture: a broker that is not up yet is not a reason to abort startup, so the
+    // attempt budget must stop meaning "give up" and start meaning "log less often". A worker
+    // that gave up here would need a restart to ever connect, which is the outage the setting
+    // exists to avoid.
+    var log = new _attemptLog();
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    log.OnAttempt = attempt => {
+      if (attempt >= 4) {
+        cts.Cancel();
+      }
+    };
+    var retry = new AzureServiceBusConnectionRetry(_fastRetry(attempts: 1, indefinitely: true), log);
+
+    await Assert.That(async () =>
+        await retry.CreateClientWithRetryAsync(UNREACHABLE_NAMESPACE, cts.Token))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown is the only thing that ends an indefinite retry, and it must end it "
+             + "promptly rather than after the current backoff");
+
+    await Assert.That(log.Attempts).IsGreaterThanOrEqualTo(4)
+      .Because("it went past the configured budget of one instead of throwing at it, which is "
+             + "the whole difference RetryIndefinitely makes");
+  }
+
+  /// <summary>Counts connection attempts and lets a test act on the count.</summary>
+  private sealed class _attemptLog : ILogger {
+    private int _attempts;
+
+    public int Attempts => Volatile.Read(ref _attempts);
+    public Action<int>? OnAttempt { get; set; }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      var message = formatter(state, exception);
+      if (message.Contains("Attempting", StringComparison.Ordinal)) {
+        // Increment OUTSIDE the null-conditional: `OnAttempt?.Invoke(Interlocked.Increment(...))`
+        // never evaluates its argument when no callback is set, so the count silently stays zero
+        // for any test that only reads it at the end.
+        var attempt = Interlocked.Increment(ref _attempts);
+        OnAttempt?.Invoke(attempt);
+      }
+    }
   }
 
   #endregion

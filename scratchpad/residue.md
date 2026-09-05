@@ -1159,3 +1159,27 @@ None of this affects CI, which runs each suite on a fresh runner. It affects eve
 measurement taken today, including the timing correlation recorded under AD, which should be read
 as an artifact rather than a finding.
 
+
+## AF. AzureServiceBusConnectionRetry: the success path needs an admin plane nothing local has
+
+`CreateClientWithRetryAsync` went from 17 uncovered lines to 7. The retry contract is now covered
+without a broker, by pointing at a refused local port: it gives up and surfaces the failure when
+`RetryIndefinitely` is off, and goes past the configured budget when it is on. Both matter --
+swallowing the final failure lets a host start reporting healthy with no connection behind it,
+and giving up under RetryIndefinitely needs a restart before the worker can ever connect.
+
+**76-78, 80, 87 -- the success return.** Connectivity is verified with
+`ServiceBusAdministrationClient.GetNamespacePropertiesAsync`, an ADMIN-plane call. The Azure
+Service Bus emulator does not implement the admin plane at all (the same reason emulator-backed
+tests must run with `AutoProvisionInfrastructure=false`), so no local or CI-hosted emulator can
+return success here. Covering these needs a real Azure namespace and credentials, which is a
+different category of test than this suite.
+
+**104-105 -- the every-tenth "still retrying" log.** Reachable only at attempt 10 under
+`RetryIndefinitely`. Each attempt costs several seconds of wall clock because
+`ServiceBusAdministrationClient` runs its OWN internal retry before surfacing a failure, and the
+production code constructs that client with no options seam to shorten it. Ten attempts is roughly
+fifty seconds of a unit suite that otherwise finishes in eighteen, for one log line that reports
+progress rather than changes behaviour. Not worth the run time; recorded instead.
+
+Both are Case 3 -- the members around them are covered -- so neither gets an attribute.
