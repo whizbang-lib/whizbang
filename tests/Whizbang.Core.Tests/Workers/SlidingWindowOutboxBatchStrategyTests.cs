@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -225,6 +226,77 @@ public class SlidingWindowOutboxBatchStrategyTests {
   }
 
   // ===== helpers =====
+
+  // ===== idle eviction: the only thing bounding the buffer map =====
+
+  /// <summary>Options whose batch window cannot elapse during these tests, so the only thing that
+  /// can flush is eviction completing a writer.</summary>
+  private static SlidingWindowOutboxOptions _evictionOptions() => new() {
+    SlidingWindow = TimeSpan.FromHours(1),
+    MaxWait = TimeSpan.FromHours(1),
+    MaxSize = 10_000,
+    IdleEvictionWindow = TimeSpan.FromSeconds(30),
+    IdleSweepInterval = TimeSpan.FromSeconds(5),
+  };
+
+  [Test]
+  [Timeout(30000)]
+  public async Task IdleStream_IsEvicted_SoTheBufferMapCannotGrowWithoutBoundAsync(
+      CancellationToken cancellationToken) {
+    // Every distinct stream id gets its own buffer, channel and drain task, and stream ids are
+    // unbounded -- one per aggregate instance the service ever touches. Eviction is the only
+    // thing that gives that map a ceiling, so without it a long-lived process accumulates a
+    // channel and a task per stream it has ever seen and never gives one back.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 2, 12, 0, 0, TimeSpan.Zero));
+    var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => { flushed.TrySetResult(); return Task.CompletedTask; },
+      options: _evictionOptions(),
+      timeProvider: clock);
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the append created the stream's buffer, which is what eviction later reclaims");
+
+    clock.Advance(TimeSpan.FromSeconds(60));
+
+    // The sweep takes the buffer out of the map BEFORE completing its writer, so the flush that
+    // completion drains can only run after the removal. Awaiting it is what makes the count below
+    // an observation instead of a race against a fire-and-forget sweep.
+    await flushed.Task.WaitAsync(cancellationToken);
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0)
+      .Because("a stream that has gone quiet must give its buffer back; with stream ids unbounded, "
+             + "a map that only ever grows is a leak with no ceiling");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ActiveStream_SurvivesTheSweep_AndKeepsItsBufferedWorkAsync(
+      CancellationToken cancellationToken) {
+    // The other half of the same contract. Evicting a stream that is still in use would complete
+    // its writer underneath it and flush a partial batch early -- turning the sweep meant to bound
+    // memory into a source of undersized writes on exactly the busiest streams.
+    var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 2, 12, 0, 0, TimeSpan.Zero));
+    var flushes = 0;
+    await using var sut = new SlidingWindowOutboxBatchStrategy(
+      flush: (_, _) => { Interlocked.Increment(ref flushes); return Task.CompletedTask; },
+      options: _evictionOptions(),
+      timeProvider: clock);
+
+    await sut.AppendAsync(_make(_idProvider.NewGuid()), cancellationToken);
+
+    // Two sweep intervals pass, both well inside the eviction window. A sweep that evicts nothing
+    // never awaits, so it has finished by the time Advance returns -- the assertions below are
+    // about a sweep that ran and declined, not one that had yet to start.
+    clock.Advance(TimeSpan.FromSeconds(10));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the stream was used inside the eviction window, so the sweep must leave it alone");
+    await Assert.That(Volatile.Read(ref flushes)).IsEqualTo(0)
+      .Because("nothing completed the writer, so the buffered message is still waiting for its "
+             + "window rather than having been flushed early as an undersized batch");
+  }
 
   private OutboxMessage _make(Guid? streamId) {
     var messageId = _idProvider.NewGuid();

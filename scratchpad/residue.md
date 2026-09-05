@@ -1001,3 +1001,31 @@ Tractable, not impossible -- but a test whose green depends on out-racing a netw
 worth less than the line it covers, and this session has spent more time on flaky waits than on
 the gaps they were meant to close. Recorded rather than built. If it is ever wanted, the honest
 route is a seam on each worker that reports when a pass starts, not a cleverer sleep.
+
+## AB. SlidingWindowOutboxBatchStrategy: six arms that only run while something is going wrong
+
+The idle-eviction sweep is now covered in both directions -- an idle stream loses its buffer, an
+active one keeps it -- which was the part that mattered: stream ids are unbounded, so that sweep
+is the only ceiling on the buffer map. What remains is six lines, each reachable only from a
+state the test would have to manufacture by breaking something:
+
+- **128** `continue` when the batcher yields an empty batch. `SlidingWindowBatcher` does not
+  publish empty batches; this is a guard against a future one that might.
+- **140** `return` when the flush is cancelled *and* the strategy is stopping. Needs a flush
+  suspended precisely across a `FlushAndStopAsync`.
+- **150** the shutdown `catch (OperationCanceledException)` closing the drain loop.
+- **155** `return` when the sweep timer fires after disposal. The timer is disposed during stop,
+  so hitting this means winning a race against the disposal that is meant to prevent it.
+- **163** `continue` when `TryRemove` loses to a concurrent removal of the same buffer.
+- **170** the empty `catch` around awaiting an evicted stream's worker. `_drainBufferAsync`
+  already catches cancellation and per-batch failures, so the worker faulting means an
+  unanticipated escape from code written specifically not to.
+
+All six sit inside members whose other lines are covered, so per ai-docs/coverage-exclusions.md
+this is Case 3 and none of them gets `[ExcludeFromCodeCoverage]` -- the attribute is member-level
+and would suppress the covered lines beside them.
+
+One line from this class did leave the denominator honestly: `StreamBuffer.Reader` was dead. The
+batcher is handed `channel.Reader` directly at construction, nothing ever read the property, and
+the inbox sibling of this class does not declare it. Deleted rather than left as an uncoverable
+line, which is the difference between removing code and hiding it.
