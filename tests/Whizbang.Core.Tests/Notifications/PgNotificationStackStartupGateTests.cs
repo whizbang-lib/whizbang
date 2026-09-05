@@ -179,7 +179,7 @@ public class PgNotificationStackStartupGateTests {
     // the logs after the first warning to say the monitor had stopped watching.
     var gate = new SchemaReadyGate();
     gate.MarkReady();
-    var log = new _recordingMonitorLogger();
+    var log = new _eventCountingLogger<PgInstanceLifecycleMonitor>(TICK_FAILED_EVENT_ID, target: 2);
     var worker = new PgInstanceLifecycleMonitor(
       Options.Create(new WhizbangNotificationOptions { DirectConnectionString = UNREACHABLE_DATABASE }),
       _plainConfig(),
@@ -191,7 +191,7 @@ public class PgNotificationStackStartupGateTests {
     await worker.StartAsync(cts.Token);
     // The SECOND failure is the assertion: it can only happen if the loop survived the first and
     // came back round after its interval. The first proves only that a tick ran.
-    await log.SecondTickFailure.WaitAsync(ct);
+    await log.Reached.WaitAsync(ct);
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
@@ -245,22 +245,85 @@ public class PgNotificationStackStartupGateTests {
     }
   }
 
-  /// <summary>Reports the monitor's second failed tick, which only a surviving loop reaches.</summary>
-  private sealed class _recordingMonitorLogger : ILogger<PgInstanceLifecycleMonitor> {
-    private const int TICK_FAILED_EVENT_ID = 1;
-    private readonly TaskCompletionSource _secondFailure =
-      new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private int _failures;
+  [Test]
+  [Timeout(60000)]
+  public async Task DurableSignalRetention_AnUnreachableDatabase_DoesNotStopTheSweepAsync(
+      CancellationToken ct) {
+    // The sweep is the only thing bounding wh_signals. Every durable signal ever published stays
+    // in that table until this loop deletes it, so a loop that ends on one failed sweep leaves the
+    // table growing without limit for the life of the process -- and the next sweep after a
+    // restart has that much more to delete.
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var log = new _eventCountingLogger<PgDurableSignalRetentionWorker>(SWEEP_FAILED_EVENT_ID, target: 2);
+    var worker = new PgDurableSignalRetentionWorker(
+      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = UNREACHABLE_DATABASE }),
+      _plainConfig(),
+      log,
+      schemaReadyGate: gate) {
+      SweepInterval = TimeSpan.FromMilliseconds(50),
+    };
 
-    public Task SecondTickFailure => _secondFailure.Task;
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await log.Reached.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the sweep retries through an outage and still stops cleanly when asked");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DurableSignalRetention_ShutdownBeforeTheGateOpens_ExitsCleanlyAsync(
+      CancellationToken ct) {
+    // The gate deliberately comes before the interval delay, so a host stopped during a slow
+    // migration is still waiting here rather than sweeping. That exit must be an ordinary stop.
+    var gate = new _blockingGate();
+    var worker = new PgDurableSignalRetentionWorker(
+      Options.Create(_optionsWithKey()),
+      _plainConfig(),
+      NullLogger<PgDurableSignalRetentionWorker>.Instance,
+      schemaReadyGate: gate) {
+      SweepInterval = TimeSpan.FromMilliseconds(50),
+    };
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await gate.WaitEntered.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("stopping while gated is a shutdown, not a retention failure");
+  }
+
+  private const int TICK_FAILED_EVENT_ID = 1;
+  private const int SWEEP_FAILED_EVENT_ID = 1;
+
+  /// <summary>
+  /// Completes a task once a given log event has been seen <c>target</c> times.
+  /// </summary>
+  /// <remarks>
+  /// The second occurrence is what these tests wait on. The first only proves a pass ran; the
+  /// second cannot happen unless the loop survived that pass and came back round after its
+  /// interval, which is the whole claim.
+  /// </remarks>
+  private sealed class _eventCountingLogger<T>(int eventId, int target) : ILogger<T> {
+    private readonly TaskCompletionSource _reached =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _seen;
+
+    public Task Reached => _reached.Task;
 
     IDisposable? ILogger.BeginScope<TState>(TState state) => null;
     public bool IsEnabled(LogLevel logLevel) => true;
 
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+    public void Log<TState>(LogLevel logLevel, EventId id, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      if (eventId.Id == TICK_FAILED_EVENT_ID && Interlocked.Increment(ref _failures) >= 2) {
-        _secondFailure.TrySetResult();
+      if (id.Id == eventId && Interlocked.Increment(ref _seen) >= target) {
+        _reached.TrySetResult();
       }
     }
   }

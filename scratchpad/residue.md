@@ -970,7 +970,7 @@ Worth keeping rather than deleting. `WaitForNextTickAsync` genuinely has a false
 loop that ignored it would spin once the timer was disposed. It is correct code guarding a state
 this construction cannot currently reach.
 
-## AA. PgInstanceLifecycleMonitor line 69 -- shutdown landing inside a scan
+## AA. Shutdown landing inside a database round-trip -- two workers, one line each
 
 ```csharp
 try {
@@ -993,7 +993,11 @@ then cancelling once the tick has demonstrably begun -- and with `DirectConnecti
 no configuration read to signal that beginning, so the test would be timing-dependent on how
 Npgsql surfaces a cancelled connect.
 
+`PgDurableSignalRetentionWorker` line 74 is the same line in the same shape -- `break` when the
+sweep is cancelled rather than failing -- and is uncovered for exactly the same reason. Its other
+21 lines are covered, including the gate-cancel exit and the sweep-failure arm.
+
 Tractable, not impossible -- but a test whose green depends on out-racing a network connect is
 worth less than the line it covers, and this session has spent more time on flaky waits than on
 the gaps they were meant to close. Recorded rather than built. If it is ever wanted, the honest
-route is a seam on the monitor that reports when a tick starts, not a cleverer sleep.
+route is a seam on each worker that reports when a pass starts, not a cleverer sleep.
