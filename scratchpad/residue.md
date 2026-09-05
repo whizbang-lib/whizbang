@@ -944,3 +944,28 @@ Next step: reproduce deliberately -- drive the transition against a worker held 
 permit consumption -- before changing anything. Do not "fix" this from the reasoning alone; the
 same reasoning looked airtight for three earlier hypotheses in this session that measurement
 disproved.
+
+## Z. BacklogAgeWorker line 103 -- the disposed-timer exit, unreachable by construction
+
+```csharp
+using var timer = new PeriodicTimer(_options.Interval);
+while (!stoppingToken.IsCancellationRequested) {
+  try {
+    if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) {
+      return;                                  // <- line 103
+    }
+```
+
+`WaitForNextTickAsync` returns `false` only when the `PeriodicTimer` has been disposed. This one
+is a `using var` local, so the only thing that disposes it is the method returning -- which cannot
+happen while the method is parked inside it. No caller holds a reference to dispose it early.
+
+The remaining 13 lines of `ExecuteAsync` are covered: the disabled/nothing-wired guard, the
+started log, the timer loop, the peek, and the cancellation exit. This is Case 3 from
+ai-docs/coverage-exclusions.md -- a defensive branch inside an otherwise-covered member -- so it
+gets no `[ExcludeFromCodeCoverage]`: the attribute is member-level and would suppress the 13
+covered lines beside it.
+
+Worth keeping rather than deleting. `WaitForNextTickAsync` genuinely has a false return, and a
+loop that ignored it would spin once the timer was disposed. It is correct code guarding a state
+this construction cannot currently reach.
