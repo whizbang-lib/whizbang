@@ -289,7 +289,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   }
 
   /// <inheritdoc />
-  public async Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) {
+  public async Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) {
     ArgumentException.ThrowIfNullOrEmpty(currentGeneration);
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
     var conn = _dbContext.Database.GetDbConnection();
@@ -297,8 +297,9 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT {_fn("reset_dead_letters_for_generation")}(@gen)";
+    cmd.CommandText = $"SELECT {_fn("reset_dead_letters_for_generation")}(@gen, @stagger)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = currentGeneration });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("stagger", NpgsqlTypes.NpgsqlDbType.Integer) { Value = staggerMinutes });
     var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
     return result is int n ? n : 0;
   }

@@ -69,6 +69,19 @@ public sealed class WorkerOptionsBindingTests {
   }
 
   [Test]
+  public async Task RecoveryPacing_Knobs_BindFromConfigurationAsync() {
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:DeadLetterRecovery:PressuredScanBatchSize"] = "5",
+      ["Whizbang:DeadLetterRecovery:GenerationReplayStaggerMinutes"] = "45",
+    });
+    var options = provider.GetRequiredService<IOptions<DeadLetterRecoveryOptions>>().Value;
+    await Assert.That(options.PressuredScanBatchSize).IsEqualTo(5)
+      .Because("the forced-pass trickle width is an operator knob (#669)");
+    await Assert.That(options.GenerationReplayStaggerMinutes).IsEqualTo(45)
+      .Because("the replay pacing window is an operator knob (#669)");
+  }
+
+  [Test]
   public async Task StreamIntegrity_DisableFlags_BindFromConfigurationAsync() {
     // #666: the integrity workers and the checkpoint receptor all honor their disable
     // flags — but the options class was never bound, so IOptions<StreamIntegrityOptions>

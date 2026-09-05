@@ -221,13 +221,17 @@ $$ LANGUAGE plpgsql;
 SELECT __SCHEMA__.drop_all_overloads('reset_dead_letters_for_generation');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.reset_dead_letters_for_generation(
-  p_current_generation TEXT
+  p_current_generation TEXT,
+  p_stagger_minutes INTEGER DEFAULT 0
 ) RETURNS INTEGER AS $$
 DECLARE
   v_count INTEGER;
 BEGIN
   UPDATE __SCHEMA__.wh_dead_letters
-  SET next_recovery_at = NOW(),
+  -- #669: a deploy's replay is a mass re-offer; falling due all at once made it compete
+  -- with live traffic as one flood. Staggered across the window it drains as a paced
+  -- stream through the same bounded scans. 0 keeps schedule-all-now.
+  SET next_recovery_at = NOW() + (random() * make_interval(mins => GREATEST(p_stagger_minutes, 0))),
       retried_on_generations = array_append(retried_on_generations, p_current_generation),
       recovery_status = 0  -- Pending
   WHERE recovered_at IS NULL

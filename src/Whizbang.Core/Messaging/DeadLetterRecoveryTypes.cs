@@ -156,6 +156,21 @@ public sealed class DeadLetterRecoveryOptions {
   public int ScanBatchSize { get; set; } = 200;
 
   /// <summary>
+  /// Scan batch when recovery was FORCED through the settledness gate by the bounded-deferral
+  /// escape (#669): the service is visibly busy, so the pass runs narrow — a trickle under
+  /// load, never a flood into the very queues that are draining. Default 20.
+  /// </summary>
+  public int PressuredScanBatchSize { get; set; } = 20;
+
+  /// <summary>
+  /// Window, in minutes, over which a new build's generation replay spreads its re-offers
+  /// (#669): next_recovery_at is staggered randomly across the window instead of falling due
+  /// all at once, so a deploy's replay drains as a paced stream alongside live traffic
+  /// instead of competing with it as one mass. Default 30; 0 restores schedule-all-now.
+  /// </summary>
+  public int GenerationReplayStaggerMinutes { get; set; } = 30;
+
+  /// <summary>
   /// When <c>true</c> (default), the worker runs one extra scan on startup that auto-
   /// resets <c>next_recovery_at = NOW()</c> for every DLQ row whose current generation
   /// is not in <c>retried_on_generations</c>. Implements the "we shipped a fix" auto-replay.

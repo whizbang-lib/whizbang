@@ -163,7 +163,7 @@ public partial class DeadLetterRecoveryWorker(
           // and in production 20,000 due rows sat behind that silence for a day.
           _logNoRecoveryServiceOnce();
         } else {
-          var scheduled = await svc.ResetForGenerationAsync(current, stoppingToken).ConfigureAwait(false);
+          var scheduled = await svc.ResetForGenerationAsync(current, _options.GenerationReplayStaggerMinutes, stoppingToken).ConfigureAwait(false);
           if (scheduled > 0) {
             Interlocked.Add(ref _totalGenerationReplays, scheduled);
             LogGenerationReplay(_logger, scheduled, current);
@@ -443,7 +443,13 @@ public partial class DeadLetterRecoveryWorker(
 
       // Fetch in batches — bounded by ScanBatchSize so a single scan doesn't try to drain
       // an enormous backlog in one breath. Subsequent scans pick up where this one stopped.
-      var entries = await svc.FetchDueAsync(_options.ScanBatchSize, ct).ConfigureAwait(false);
+      // #669: a pass FORCED through the settledness gate runs narrow. The bounded-deferral
+      // escape exists so a never-settled service still heals — but the service is visibly
+      // busy, so recovery trickles instead of flooding the queues it is yielding to.
+      var batchSize = housekeeping?.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit
+        ? Math.Min(Math.Max(1, _options.PressuredScanBatchSize), _options.ScanBatchSize)
+        : _options.ScanBatchSize;
+      var entries = await svc.FetchDueAsync(batchSize, ct).ConfigureAwait(false);
       if (entries.Count == 0) {
         // A quiet cycle is evidence the cycle is NOT feeding itself, so it clears the consecutive
         // run. Without this, a self-inflicted burst followed by genuine quiet would keep its count
