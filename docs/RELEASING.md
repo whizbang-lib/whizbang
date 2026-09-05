@@ -266,14 +266,15 @@ gate provable:
 
 - **queue-validated** (develop pushes only) looks for a successful `merge_group` CI run on the
   pushed SHA. Found ⇒ the six suites and quality skip in the push run.
-- **verify-rebuild** replaces them on the publish path: it requires the queue run's exact SDK,
-  rebuilds at the queue's placeholder version, and requires the sha256 of every packable
-  assembly to match the queue run's determinism manifest (`reusable-build.yml` uploads one on
-  every run) — byte-for-byte, except for a small allowlist of proven upstream nondeterminism
-  documented in the job (ILRepack re-merges with a fresh MVID; Microsoft's
-  LoggerMessageGenerator emits classes in per-process-random order with identical content).
-  The alpha that then publishes is a rebuild of proven-identical inputs on a proven-identical
-  toolchain, differing from the queue-tested bits only in the stamped version string.
+- **verify-rebuild** replaces them on the publish path: it requires the queue run's exact SDK
+  and rebuilds at the queue's placeholder version, then confirms the built **assembly set**
+  matches the queue run's determinism manifest (`reusable-build.yml` uploads one on every run).
+  Same commit SHA + same SDK + same assembly set is the safety argument — identical source on an
+  identical toolchain behaves like what the suites tested. Byte-for-byte hash identity is
+  reported for monitoring but is **not** a gate: source generators emit nondeterministically for
+  an unpredictable subset of assemblies (`[LoggerMessage]` partial-class ordering, ILRepack
+  MVIDs), so a hash comparison flakes and a name allowlist can never be complete. Tamper-evidence
+  for the published bits is the SLSA provenance attestation, not this rebuild.
 - **reupload-reports** republishes the full-matrix run's coverage and TRX artifacts into the push
   run, so the Codecov develop baseline, Test Analytics uploads, and the docs test-status
   publication keep flowing exactly as before. Its source is the queue run — **except** on a
@@ -378,11 +379,12 @@ and `start-release minor` after the stable computes `0.960.0`.
   (e.g. an accidental `v9.9.9`) will hijack every subsequent version. Delete mistaken tags promptly.
 - **The develop-push matrix skip is SHA-keyed and fails closed.** `queue-validated` skips the
   suites only when a successful `merge_group` CI run exists for the *exact* pushed SHA, and the
-  publish then additionally requires `verify-rebuild`'s same-SDK hash comparison. Anything
-  else — a direct push, an expired queue run, SDK drift, an unexplained hash mismatch,
+  publish then additionally requires `verify-rebuild`'s same-SDK + same-assembly-set check.
+  Anything else — a direct push, an expired queue run, SDK drift, a changed assembly set,
   `PUSH_RUN_FULL_MATRIX=true` — falls back to the full matrix or blocks the publish. Never widen
-  the match beyond the exact SHA, and never grow the nondeterminism allowlist without a proven
-  upstream root cause.
+  the match beyond the exact SHA. Do NOT reintroduce a byte-identity hash gate: generator
+  nondeterminism makes it flake (it blocked a publish once, #691); the SLSA provenance
+  attestation is the tamper-evidence on the published bits.
 - **The fast-forward queue skip is tree-keyed and fails safe.** `ff-validated` skips the queue
   suites only for a single-PR group whose merge tree is byte-identical to a fully-green (incl.
   Quality) PR run's tree. Every uncertain path emits `skip=false` (full queue matrix) and the job
