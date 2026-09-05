@@ -2,7 +2,8 @@
 -- 135_ReapOrphanedPerspectiveEvents.sql
 -- ============================================================================
 -- Re-creates perform_maintenance VERBATIM from 124 plus a new Task 12 that reaps orphaned
--- perspective-event rows — rows whose source event no longer exists in wh_event_store, which
+-- perspective-event rows in wh_perspective_events and a Task 13 that settles orphaned
+-- perspective-event rows already in wh_dead_letters — rows whose source event no longer exists in wh_event_store, which
 -- are unprojectable forever and livelock the perspective pipeline (issue #687; #679 root cause).
 --
 -- Also seeds the grace-window setting. The reactive side (drainer disposing an orphan on
@@ -409,6 +410,41 @@ BEGIN
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RETURN QUERY SELECT
     'reap_orphaned_perspective_events'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 13: Settle orphaned perspective-event DEAD LETTERS (issue #687)
+  -- ========================================
+  -- Task 12 reaps orphans still in wh_perspective_events. A row that was dead-lettered before
+  -- its event vanished sits in wh_dead_letters instead, held forever: recovery would re-drive
+  -- it into an empty join, and generation replay excludes held rows by design. When the row's
+  -- ENTIRE source stream is absent from wh_event_store, every event of it is gone, so the
+  -- perspective work is unrecoverable — settle it (Recovered + note, same disposition as the
+  -- disabled-subsystem discard) so the ledger records the disposal and retention ages it out.
+  -- The whole-stream predicate needs no per-event lookup and has no false positives: a stream
+  -- with any surviving event is left for review (a genuine apply failure, not an orphan). Age-
+  -- gated on dead_lettered_at by the same grace window so a stream still being written is safe.
+  -- Operator holds (operator_disposition 2/3) are respected.
+  v_start := clock_timestamp();
+  UPDATE __SCHEMA__.wh_dead_letters dl
+  SET recovery_status = 3,  -- Recovered: settled, eligible for the retention purge
+      recovered_at    = NOW(),
+      operator_notes  = COALESCE(operator_notes || E'\n', '')
+        || 'auto-settled by maintenance: orphaned perspective event, source stream absent from event store'
+  WHERE dl.source_table = 'wh_perspective_events'
+    AND dl.recovered_at IS NULL
+    AND dl.recovery_status NOT IN (3, 4)
+    AND dl.operator_disposition NOT IN (2, 3)
+    AND dl.stream_id IS NOT NULL
+    AND dl.dead_lettered_at < NOW() - (v_orphan_grace_hours * INTERVAL '1 hour')
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = dl.stream_id
+    );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'settle_orphaned_perspective_dead_letters'::TEXT,
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     'ok'::TEXT;
