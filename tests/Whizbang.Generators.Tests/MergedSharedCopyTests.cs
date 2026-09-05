@@ -199,6 +199,45 @@ public class MergedSharedCopyTests {
 
   [Test]
   [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_BuildStampNamesTheHostItWasMergedIntoAsync(MergedHost host) {
+    // The stamp goes into every generated file to say which build of the generator produced it,
+    // and the property reaches for it via typeof(TemplateUtilities).Assembly — which, after the
+    // merge, IS the host. If a host somehow resolved the shared assembly instead, every package
+    // would stamp the same version and the stamp would answer the one question it exists for
+    // with the wrong assembly's number, in files nobody re-reads.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var type = _type(host.Assembly, ns + "TemplateUtilities");
+    var property = type.GetProperty("DeterministicBuildStamp", BindingFlags.Public | BindingFlags.Static)
+      ?? throw new InvalidOperationException($"DeterministicBuildStamp is missing from {host.Host}.");
+
+    var stamp = (string)property.GetValue(null)!;
+    var forThisHost = (string)_call(
+      host.Assembly, ns + "TemplateUtilities", "GetDeterministicBuildStamp", host.Assembly)!;
+
+    await Assert.That(stamp).IsEqualTo(forThisHost)
+      .Because($"the property must report {host.Host}'s own version, which is the only thing that "
+             + "makes the stamp identify the generator that wrote the file");
+    await Assert.That(stamp).IsEqualTo((string)property.GetValue(null)!)
+      .Because("the stamp carries no clock or counter: CI verifies that a same-version rebuild is "
+             + "byte-identical, and anything varying between two reads breaks that outright");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_IndentingNothingAddsNothingAsync(MergedHost host) {
+    // Generators indent whatever a section produced, including sections that produced nothing.
+    // Indenting an empty string into whitespace would put a stray indented blank line into the
+    // emitted file — harmless to compile, and enough to make a rebuild differ byte for byte.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+
+    await Assert.That((string)_call(host.Assembly, ns + "TemplateUtilities", "IndentCode", "", "    ")!)
+      .IsEqualTo("")
+      .Because("an empty section indents to nothing; producing whitespace instead is invisible in "
+             + "review and visible to the deterministic-rebuild check");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
   public async Task MergedCopy_ShapesGeneratedTextIdenticallyAsync(MergedHost host) {
     // Template handling produces the source these generators emit. A divergence here shows up as
     // malformed generated code in whichever package carried the bad copy.
