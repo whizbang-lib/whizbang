@@ -288,7 +288,13 @@ jobs:
     name: Upload Test Results to Codecov
     # Failed-test reporting is the point, so this runs when suites FAIL too; only
     # cancellation or a skipped matrix (docs-only run) skips it. The suites all share
-    # one gate (build success), so a skipped result means none of them ran.
+    # one gate (build success), so unit-tests stands proxy for the whole matrix.
+    #
+    # The check is a DIRECT needs.<job>.result read, NOT contains(needs.*.result, ...):
+    # in a job-level `if`, the needs.* object filter proved to see the results of skipped
+    # TRANSITIVE ancestors (version is skipped on PR runs), so a 'skipped'-scan silently
+    # skipped this job even with all six direct needs green — the same transitive
+    # poisoning documented on the suites' `if`, which direct result reads dodge.
     #
     # Codecov accepts JUnit XML only, and the suites emit TRX (Microsoft.Testing.Platform
     # --report-trx), so the trx-* artifacts are converted here with trx2junit. Downloaded
@@ -299,9 +305,7 @@ jobs:
     # observability, and a Codecov outage must not block a merge. The upload step
     # defaults to fail_ci_if_error: false for the same reason.
     needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
-    if: >-
-      always() && !contains(needs.*.result, 'cancelled') &&
-      !contains(needs.*.result, 'skipped')
+    if: ${{ !cancelled() && needs.unit-tests.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
