@@ -230,6 +230,38 @@ sequenceDiagram
 
 ---
 
+## Develop pushes skip the redundant matrix (queue-validated)
+
+The merge queue fast-forwards develop to the **exact SHA** it just ran the full matrix on, so the
+post-merge push run used to re-test identical bytes for ~35-40 minutes before the alpha could
+publish. `ci.yml` short-circuits that redundancy while keeping the publish gate provable:
+
+- **queue-validated** (develop pushes only) looks for a successful `merge_group` CI run on the
+  pushed SHA. Found ⇒ the six suites and quality skip in the push run.
+- **verify-rebuild** replaces them on the publish path: it requires the queue run's exact SDK,
+  rebuilds at the queue's placeholder version, and requires the sha256 of every packable
+  assembly to match the queue run's determinism manifest (`reusable-build.yml` uploads one on
+  every run) — byte-for-byte, except for a small allowlist of proven upstream nondeterminism
+  documented in the job (ILRepack re-merges with a fresh MVID; Microsoft's
+  LoggerMessageGenerator emits classes in per-process-random order with identical content).
+  The alpha that then publishes is a rebuild of proven-identical inputs on a proven-identical
+  toolchain, differing from the queue-tested bits only in the stamped version string.
+- **reupload-reports** republishes the queue run's coverage and TRX artifacts into the push run,
+  so the Codecov develop baseline, Test Analytics uploads, and the docs test-status publication
+  keep flowing exactly as before.
+
+`prerelease-publish` accepts either gate: every suite green **in this run** (the old invariant,
+still the path whenever queue validation is absent — a standalone push, an expired queue run,
+the escape hatch), or **queue-validated + verify-rebuild green**.
+
+**Escape hatch:** set the repo variable `PUSH_RUN_FULL_MATRIX=true` and re-run **all jobs** on
+the push run to force the full matrix. That is the remedy when verify-rebuild refuses a
+toolchain drift (e.g. an SDK patch released in the minutes between the queue run and the push
+run) — the publish stays blocked until either the drifted rebuild is validated by real suites or
+the next merge lands.
+
+---
+
 ## `Directory.Build.props`
 
 - On `develop` it holds a **local placeholder** like `<Version>0.100.0-local.111</Version>`.
@@ -313,6 +345,13 @@ and `start-release minor` after the stable computes `0.960.0`.
   ruleset's required checks or every merge wedges on a phantom "expected" check.
 - **Tags are forever.** Because GitVersion keys on the highest repo-wide tag, a stray high tag
   (e.g. an accidental `v9.9.9`) will hijack every subsequent version. Delete mistaken tags promptly.
+- **The develop-push matrix skip is SHA-keyed and fails closed.** `queue-validated` skips the
+  suites only when a successful `merge_group` CI run exists for the *exact* pushed SHA, and the
+  publish then additionally requires `verify-rebuild`'s same-SDK hash comparison. Anything
+  else — a direct push, an expired queue run, SDK drift, an unexplained hash mismatch,
+  `PUSH_RUN_FULL_MATRIX=true` — falls back to the full matrix or blocks the publish. Never widen
+  the match beyond the exact SHA, and never grow the nondeterminism allowlist without a proven
+  upstream root cause.
 - **Two publish paths don't compete.** A push to a `release/v*` branch can publish via
   `ci.yml`'s `release-publish`, and the merge to main publishes via `release.yml` — both would target
   the same version+tag. The `release-guard` job skips `release-publish` whenever the branch has an

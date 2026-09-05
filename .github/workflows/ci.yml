@@ -84,6 +84,220 @@ jobs:
               - 'global.json'
               - 'nuget.config'
 
+  # ============================================================================
+  # Queue-validated push optimization
+  #
+  # The merge queue fast-forwards develop to the EXACT SHA it just ran the full
+  # matrix on, so the post-merge push run re-testing that SHA is pure redundancy
+  # (~35-40 min per merge). When a successful merge_group CI run exists for this
+  # SHA, the suites and quality skip; the publish gate then requires
+  # verify-rebuild instead — a same-SDK rebuild at the queue's version whose
+  # assembly hashes must match the queue's manifest, byte-for-byte outside a small
+  # documented allowlist of upstream nondeterminism (see the job), proving "same
+  # source, same toolchain; only the stamped version differs" for the packed bits.
+  # reupload-reports republishes the queue run's coverage + TRX into this run so
+  # the Codecov develop baseline and the docs test-status keep flowing unchanged.
+  #
+  # Escape hatch: set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs
+  # to force the full matrix (e.g. after an SDK patch lands between queue and push
+  # and verify-rebuild refuses the drifted rebuild).
+  # ============================================================================
+
+  queue-validated:
+    name: Queue Validation Check
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
+      vars.PUSH_RUN_FULL_MATRIX != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      validated: ${{ steps.check.outputs.validated }}
+      queue-run-id: ${{ steps.check.outputs.queue_run_id }}
+    steps:
+      - name: Look for a successful merge_group CI run on this exact SHA
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # A run's conclusion is success only when every job succeeded or was
+          # deliberately skipped — on queue refs that includes the full matrix AND the
+          # quality gate, which run unconditionally there. Same SHA = same tree = same
+          # workflow files, so that green fully validated these exact bytes.
+          RUN_ID=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&event=merge_group&status=success&per_page=10" \
+            --jq '[.workflow_runs[] | select(.name == "CI")][0].id // ""')
+          if [ -n "$RUN_ID" ]; then
+            echo "Queue run $RUN_ID validated $SHA — skipping the redundant push matrix."
+            echo "validated=true" >> "$GITHUB_OUTPUT"
+            echo "queue_run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "No successful merge_group CI run for $SHA — running the full matrix."
+            echo "validated=false" >> "$GITHUB_OUTPUT"
+            echo "queue_run_id=" >> "$GITHUB_OUTPUT"
+          fi
+
+  verify-rebuild:
+    name: Verify Deterministic Rebuild
+    # The hardened half of the skip: rebuild at the QUEUE's version on the QUEUE's
+    # exact SDK and require hash-identical outputs (modulo the documented upstream
+    # nondeterminism allowlist in the compare step) before anything publishes. SDK
+    # drift, an unexplained hash change, or a changed assembly set all keep the
+    # publish gate closed rather than shipping bits that differ from what was tested.
+    needs: [queue-validated]
+    if: ${{ !failure() && !cancelled() && needs.queue-validated.outputs.validated == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup .NET
+        uses: ./.github/actions/setup-dotnet-retry
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download queue run's determinism manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          QUEUE_RUN_ID: ${{ needs.queue-validated.outputs.queue-run-id }}
+        run: |
+          set -euo pipefail
+          ART_ID=$(gh api "repos/$REPO/actions/runs/$QUEUE_RUN_ID/artifacts?per_page=100" \
+            --jq '[.artifacts[] | select(.name | startswith("determinism-manifest-"))][0].id // ""')
+          if [ -z "$ART_ID" ]; then
+            echo "::error::Queue run $QUEUE_RUN_ID published no determinism manifest — cannot verify the rebuild."
+            exit 1
+          fi
+          gh api "repos/$REPO/actions/artifacts/$ART_ID/zip" > manifest.zip
+          mkdir -p queue-manifest && unzip -o -q manifest.zip -d queue-manifest
+          echo "queue built version '$(cat queue-manifest/version.txt)' on SDK $(cat queue-manifest/sdk.txt): $(wc -l < queue-manifest/assemblies.sha256) assemblies"
+
+      # The toolchain must be EXACTLY the queue's: with a different SDK even benign
+      # hash differences lose their explanation, so drift fails closed before building.
+      - name: Require the queue's exact SDK
+        run: |
+          set -euo pipefail
+          QUEUE_SDK=$(cat queue-manifest/sdk.txt)
+          LOCAL_SDK=$(dotnet --version)
+          if [ "$QUEUE_SDK" != "$LOCAL_SDK" ]; then
+            echo "::error::SDK drift between the queue run ($QUEUE_SDK) and this push run ($LOCAL_SDK) — the rebuild cannot be verified. Set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs to run the full matrix instead."
+            exit 1
+          fi
+          echo "SDK matches the queue run: $LOCAL_SDK"
+
+      - name: Rebuild at the queue's version and compare hashes
+        run: |
+          set -euo pipefail
+          QUEUE_VERSION=$(cat queue-manifest/version.txt)
+          dotnet restore
+          BUILD_ARGS=(--no-restore --configuration Release)
+          if [ -n "$QUEUE_VERSION" ]; then BUILD_ARGS+=("-p:Version=$QUEUE_VERSION"); fi
+          dotnet build "${BUILD_ARGS[@]}"
+          find src tools -path "*/bin/Release/*" \( -name "*.dll" -o -name "*.exe" \) -type f \
+            ! -path "*/ref/*" | sort | xargs sha256sum > rebuilt.sha256
+
+          # Same-SDK same-source rebuilds are byte-identical EXCEPT for two proven,
+          # upstream-caused nondeterminisms (verified empirically by repeated clean
+          # rebuilds; sorted generated content is identical in every case):
+          #   1. The four ILRepack-merged generator assemblies — ILRepack re-merges
+          #      with a fresh MVID every run and has no deterministic mode.
+          #   2. Assemblies using [LoggerMessage] — Microsoft's LoggerMessageGenerator
+          #      emits its partial classes in per-process-random order, which shifts
+          #      the compiler's deterministic output hash.
+          # Differences are tolerated ONLY for that enumerated set; anything else —
+          # an extra/missing assembly, or a hash change in the other ~85% of outputs —
+          # keeps the publish gate closed. Shrink this list as upstream fixes land;
+          # a NEW [LoggerMessage] adopter failing here gets added deliberately, with
+          # this comment's justification, never reflexively.
+          ALLOWED_NONDETERMINISTIC='Whizbang\.Generators\.dll|Whizbang\.Data\.EFCore\.Postgres\.Generators\.dll|Whizbang\.Transports\.FastEndpoints\.Generators\.dll|Whizbang\.Transports\.HotChocolate\.Generators\.dll|Whizbang\.Core\.dll|Whizbang\.Data\.Postgres\.dll|Whizbang\.Data\.Dapper\.Postgres\.dll|Whizbang\.Data\.EFCore\.Postgres\.dll|Whizbang\.Transports\.RabbitMQ\.dll'
+
+          awk '{print $2 " " $1}' queue-manifest/assemblies.sha256 | sort > queue.kv
+          awk '{print $2 " " $1}' rebuilt.sha256 | sort > local.kv
+          cut -d' ' -f1 queue.kv > queue.paths
+          cut -d' ' -f1 local.kv > local.paths
+          if ! diff -u queue.paths local.paths; then
+            echo "::error::The SET of built assemblies differs from the queue run — refusing to publish."
+            exit 1
+          fi
+          join queue.kv local.kv | awk '$2 != $3 {print $1}' > differing.paths
+          UNEXPLAINED=$(grep -Ev "/(${ALLOWED_NONDETERMINISTIC})$" differing.paths || true)
+          if [ -n "$UNEXPLAINED" ]; then
+            echo "::error::Rebuilt assemblies differ from the queue-tested outputs beyond the known-benign set. The publish gate stays closed. Set repo variable PUSH_RUN_FULL_MATRIX=true and re-run all jobs to run the full matrix instead."
+            echo "$UNEXPLAINED"
+            exit 1
+          fi
+          TOTAL=$(wc -l < local.paths)
+          DIFFERING=$(wc -l < differing.paths)
+          echo "Rebuild verified: $((TOTAL - DIFFERING)) of $TOTAL outputs byte-identical; $DIFFERING differ only within the documented ILRepack/LoggerMessage allowlist."
+
+  reupload-reports:
+    name: Republish Queue Run Reports
+    # With the suites skipped, this run would otherwise upload no coverage (the
+    # Codecov develop baseline PR comparisons rely on) and carry no TRX (the docs
+    # test-status and Codecov Test Analytics inputs). The queue run produced all of
+    # it for this same SHA — pull its artifacts and republish them in THIS run so
+    # every downstream consumer keeps working unchanged.
+    needs: [queue-validated]
+    if: ${{ !failure() && !cancelled() && needs.queue-validated.outputs.validated == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+    steps:
+      - name: Download queue run's coverage and TRX artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          QUEUE_RUN_ID: ${{ needs.queue-validated.outputs.queue-run-id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/actions/runs/$QUEUE_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[] | select((.name | startswith("coverage-")) or (.name | startswith("trx-"))) | "\(.id) \(.name)"' > artifacts.list
+          if ! grep -q " coverage-" artifacts.list; then
+            echo "::error::Queue run $QUEUE_RUN_ID has no coverage artifacts (expired?) — Codecov's develop baseline would go dark."
+            exit 1
+          fi
+          mkdir -p coverage trx
+          while read -r ID NAME; do
+            gh api "repos/$REPO/actions/artifacts/$ID/zip" > art.zip
+            case "$NAME" in
+              coverage-*) mkdir -p "coverage/$NAME" && unzip -o -q art.zip -d "coverage/$NAME" ;;
+              trx-*)      mkdir -p "trx/$NAME"      && unzip -o -q art.zip -d "trx/$NAME" ;;
+            esac
+            rm art.zip
+          done < artifacts.list
+          echo "republishing $(wc -l < artifacts.list) artifacts: $(find coverage -name '*.cobertura.xml' | wc -l) coverage files, $(find trx -name '*.trx' | wc -l) TRX files"
+
+      # Same upload shape as the quality job's step, so Codecov's develop baseline is
+      # indistinguishable from a full-matrix push run.
+      - name: Upload Merged Coverage to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directory: coverage
+          files: '**/*.cobertura.xml'
+          fail_ci_if_error: false
+          flags: alltests
+          name: codecov-merged
+
+      # trx-* pattern consumers (publish-test-status, test-results) pick this up like
+      # any suite's artifact; per-suite subdirectories prevent same-name collisions.
+      - name: Republish TRX for downstream jobs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: trx-queue
+          path: trx/
+          retention-days: 1
+          if-no-files-found: warn
+
   # On pushes (and dispatch) the real version must be stamped into assemblies before
   # anything ships, so build waits for GitVersion. On PRs nothing ships — build starts
   # immediately with a placeholder while pr-version computes the real number in
@@ -150,10 +364,14 @@ jobs:
   # NOTE on the suites' `if`: a SKIPPED ancestor anywhere in the needs chain (version is
   # skipped on PRs) poisons the default success() status check transitively — without an
   # explicit if, every suite is skipped even though build succeeded.
+  #
+  # queue-validated skip: on develop pushes whose exact SHA already passed the full
+  # merge-queue matrix, every suite (and quality) skips — see the queue-validated
+  # section below for the verification that replaces them on the publish path.
   unit-tests:
     name: Unit Tests
-    needs: build
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
+    needs: [build, queue-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
@@ -163,8 +381,8 @@ jobs:
 
   postgres-integration:
     name: PostgreSQL Integration
-    needs: build
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
+    needs: [build, queue-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
     permissions:
       contents: read
     # The three Postgres-tagged projects run sequentially inside one job (shared containers),
@@ -203,8 +421,8 @@ jobs:
 
   inmemory-integration:
     name: InMemory Integration
-    needs: build
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
+    needs: [build, queue-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-inmemory.yml
@@ -213,8 +431,8 @@ jobs:
 
   rabbitmq-integration:
     name: RabbitMQ Integration
-    needs: build
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
+    needs: [build, queue-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
@@ -226,8 +444,8 @@ jobs:
     # Integration (whizbang)") — matrix expressions in `name:` don't render on
     # reusable-workflow-call jobs.
     name: Service Bus Integration
-    needs: build
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
+    needs: [build, queue-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
     permissions:
       contents: read
     # The two AzureServiceBus-tagged projects run sequentially inside one job (shared
@@ -244,8 +462,8 @@ jobs:
 
   azureblob-integration:
     name: AzureBlob Integration
-    needs: build
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' }}
+    needs: [build, queue-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-azureblob.yml
@@ -264,9 +482,16 @@ jobs:
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
     # before anything lands on develop.
-    needs: [changes]
+    needs: [changes, queue-validated]
+    # !failure() && !cancelled() is REQUIRED here: queue-validated is skipped on every
+    # event but develop pushes, and a skipped need would otherwise poison the implicit
+    # success() check and silently skip quality on all PRs. The queue-validated clause
+    # skips quality when the merge queue already ran it on this exact SHA (its coverage
+    # reaches Codecov via reupload-reports instead).
     if: >-
+      !failure() && !cancelled() &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
+      needs.queue-validated.outputs.validated != 'true' &&
       (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
     permissions:
       contents: read
@@ -304,8 +529,11 @@ jobs:
     # Deliberately NOT in ci-result's needs: like publish-test-status this is
     # observability, and a Codecov outage must not block a merge. The upload step
     # defaults to fail_ci_if_error: false for the same reason.
-    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
-    if: ${{ !cancelled() && needs.unit-tests.result != 'skipped' }}
+    # On queue-validated develop pushes the suites skip, but reupload-reports republishes
+    # the queue run's TRX into this run (as trx-queue) — so the upload still happens,
+    # under the develop branch context Codecov's flake baseline needs.
+    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, reupload-reports]
+    if: ${{ !cancelled() && (needs.unit-tests.result != 'skipped' || needs.reupload-reports.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -374,7 +602,10 @@ jobs:
     # PRs/pushes skip the matrix by design, and version/pr-version are event-exclusive —
     # but any failure or cancellation fails the gate. Requiring only this context also
     # means test jobs can be renamed/sharded without touching the ruleset.
-    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack]
+    # queue-validated / verify-rebuild / reupload-reports are push-only (skipped
+    # elsewhere, which this gate tolerates); listing them means a failed rebuild
+    # verification or report republish turns the develop push run red here too.
+    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
@@ -532,14 +763,28 @@ jobs:
 
   # ============================================================================
   # Prerelease NuGet Publish - Auto-publish on develop push
-  # Gated on the full test matrix: a package can only ship from a commit whose
-  # packed bits passed every suite in this same run.
+  # Gated on validation of the exact bits: either every suite passed IN THIS RUN,
+  # or the merge queue already ran the full matrix on this exact SHA and
+  # verify-rebuild proved the freshly-versioned rebuild matches the queue-tested
+  # outputs (same SDK; hash-identical outside the documented upstream-
+  # nondeterminism allowlist). See the queue-validated section above and
+  # docs/RELEASING.md.
   # ============================================================================
 
   prerelease-publish:
     name: Publish Prerelease NuGet
-    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, queue-validated, verify-rebuild]
+    # The explicit per-suite results replace the old implicit success() (which a
+    # skipped suite would poison). Publish requires pack + format green AND either
+    # the full same-run matrix or the queue-validated + verified-rebuild pair.
+    if: >-
+      !failure() && !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
+      needs.pack.result == 'success' && needs.format.result == 'success' &&
+      ((needs.unit-tests.result == 'success' && needs.postgres-integration.result == 'success' &&
+        needs.inmemory-integration.result == 'success' && needs.rabbitmq-integration.result == 'success' &&
+        needs.servicebus-integration.result == 'success' && needs.azureblob-integration.result == 'success') ||
+       (needs.queue-validated.outputs.validated == 'true' && needs.verify-rebuild.result == 'success'))
     permissions:
       contents: read
       id-token: write       # NuGet OIDC trusted publishing
@@ -705,7 +950,9 @@ jobs:
     # live verification badges. Runs even when suites FAIL (failures are what
     # the badges must show) but not when cancelled. No-ops without the token
     # or when suites were skipped (docs-only pushes produce no TRX).
-    needs: [version, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration]
+    # reupload-reports is in needs purely for ordering: on queue-validated pushes it
+    # republishes the queue run's TRX as trx-queue before this job downloads trx-*.
+    needs: [version, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, reupload-reports]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/develop' &&
       !contains(needs.*.result, 'cancelled')
