@@ -4501,6 +4501,40 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Returns denormalized rows: one per (stream, event). C# groups by StreamId for processing.
   /// </summary>
   /// <docs>fundamentals/perspectives/drain-mode</docs>
+  /// <inheritdoc />
+  public async Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> streamIds,
+    int maxAttempts,
+    CancellationToken cancellationToken = default) {
+    if (streamIds.Count == 0) {
+      return 0;
+    }
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "reap_exhausted_orphaned_perspective_rows");
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var dbConnection = __scope.Connection;
+    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand();
+#pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
+    cmd.CommandText = $"SELECT {functionName}(@p_instance_id, @p_stream_ids, @p_max_attempts)";
+#pragma warning restore S2077
+    cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
+#pragma warning disable RCS1130 // NpgsqlDbType third-party enum; bitwise composition is its documented API.
+    cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) {
+      Value = streamIds is Guid[] arr ? arr : System.Linq.Enumerable.ToArray(streamIds)
+    });
+#pragma warning restore RCS1130
+    cmd.Parameters.Add(new NpgsqlParameter("p_max_attempts", maxAttempts));
+    var result = await cmd.ExecuteScalarAsync(cancellationToken);
+    return result is int i ? i : 0;
+  }
+
   public async Task<List<StreamEventData>> GetStreamEventsAsync(
     Guid instanceId,
     Guid[] streamIds,

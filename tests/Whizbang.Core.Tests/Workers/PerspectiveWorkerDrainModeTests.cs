@@ -112,6 +112,62 @@ public class PerspectiveWorkerDrainModeTests {
       .Because("Drain mode should use RunWithEventsAsync, not RunAsync");
   }
 
+  [Test]
+  public async Task DrainMode_EmptyJoin_ReapsExhaustedOrphansOnContactAsync() {
+    // #679 reactive: when the drainer fetches a leased stream and the inner join returns
+    // NOTHING, the stream's rows may be orphaned (source event absent). Rather than return
+    // and let them re-claim forever, the drainer disposes exhausted orphans ON CONTACT via
+    // ReapExhaustedOrphanedPerspectiveRowsAsync, keyed on MaxPerspectiveEventAttempts.
+    var coordinator = new DrainModeWorkCoordinator {
+      StreamEventsToReturn = [],   // empty join — the orphan signature
+      ReapReturns = 3,
+    };
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var harness = new PerspectiveWorkerTestHarness();
+    var streamId = Guid.NewGuid();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(new DrainModePerspectiveRunnerRegistry());
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(new DrainModeEventStore());
+    services.AddSingleton<IEventTypeProvider>(new FakeEventTypeProvider([typeof(DrainModeTestEvent)]));
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 50,
+        MaxPerspectiveEventAttempts = 10,
+      }),
+      tracingOptions: null,
+      completionStrategy: new InstantCompletionStrategy(),
+      eventTypeProvider: null,
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    using var cts = new CancellationTokenSource();
+    var workerTask = worker.StartAsync(cts.Token);
+    await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
+    await coordinator.WaitForReapAsync(TimeSpan.FromSeconds(5));
+    cts.Cancel();
+    try { await workerTask; } catch (OperationCanceledException) { }
+
+    (Guid InstanceId, List<Guid> StreamIds, int MaxAttempts)[] calls;
+    lock (coordinator.ReapCalls) { calls = [.. coordinator.ReapCalls]; }
+    await Assert.That(calls.Length).IsGreaterThanOrEqualTo(1)
+      .Because("an empty join for a leased stream must trigger reactive orphan disposal, not a "
+             + "silent return that leaves the rows to re-claim forever");
+    await Assert.That(calls[0].StreamIds).Contains(streamId);
+    await Assert.That(calls[0].MaxAttempts).IsEqualTo(10)
+      .Because("disposal is keyed on the same attempt cap the joined-row path uses");
+  }
+
   #region Test Event
 
   private sealed record DrainModeTestEvent(string Data) : IEvent;
@@ -151,6 +207,20 @@ public class PerspectiveWorkerDrainModeTests {
     public Task<List<StreamEventData>> GetStreamEventsAsync(Guid instanceId, Guid[] streamIds, CancellationToken cancellationToken = default) {
       GetStreamEventsCallCount++;
       return Task.FromResult(new List<StreamEventData>(StreamEventsToReturn));
+    }
+
+    private readonly TaskCompletionSource _reapCalled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public List<(Guid InstanceId, List<Guid> StreamIds, int MaxAttempts)> ReapCalls { get; } = [];
+    public int ReapReturns { get; set; }
+    public Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
+        Guid instanceId, IReadOnlyList<Guid> streamIds, int maxAttempts, CancellationToken cancellationToken = default) {
+      lock (ReapCalls) { ReapCalls.Add((instanceId, [.. streamIds], maxAttempts)); }
+      _reapCalled.TrySetResult();
+      return Task.FromResult(ReapReturns);
+    }
+    public async Task WaitForReapAsync(TimeSpan timeout) {
+      using var cts = new CancellationTokenSource(timeout);
+      try { await _reapCalled.Task.WaitAsync(cts.Token); } catch (OperationCanceledException) { throw new TimeoutException($"Reap was not called within {timeout}"); }
     }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) {

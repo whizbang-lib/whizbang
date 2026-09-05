@@ -1421,6 +1421,29 @@ public partial class PerspectiveWorker(
       _instanceProvider.InstanceId, [.. streamIds], cancellationToken);
 
     if (rawEvents.Count == 0) {
+      // #679 reactive orphan disposal: an empty join for leased streams means the rows'
+      // source events are absent from the event store. Rows attempted past
+      // MaxPerspectiveEventAttempts with no surviving event are unprojectable orphans that
+      // would otherwise re-claim forever (the hard wedge). Dispose them ON CONTACT here,
+      // keyed on attempts — the joined-row dead-letter cap (FilterDeadLetteredAsync) can
+      // never see them because the join is empty. The age-bounded maintenance sweep (#687)
+      // is the backstop; this closes the burst-livelock window between sweeps.
+      if (_options.MaxPerspectiveEventAttempts is int maxAttempts) {
+        try {
+          var reaped = await workCoordinator.ReapExhaustedOrphanedPerspectiveRowsAsync(
+            _instanceProvider.InstanceId, streamIds, maxAttempts, cancellationToken).ConfigureAwait(false);
+          if (reaped > 0) {
+            LogOrphanedPerspectiveRowsReaped(_logger, reaped);
+            _deadLetterMetrics?.Added.Add(reaped,
+              new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
+              new KeyValuePair<string, object?>("reason", "PerspectiveSourceEventMissing"));
+          }
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+#pragma warning disable CA1848
+          _logger.LogWarning(ex, "Reactive orphan disposal failed for {StreamCount} stream(s) — the #687 maintenance sweep remains the backstop", streamIds.Count);
+#pragma warning restore CA1848
+        }
+      }
       return null;
     }
 
@@ -4274,6 +4297,10 @@ public partial class PerspectiveWorker(
     Message = "Failed to acquire stream lock for rewind on {PerspectiveName} stream {StreamId}, deferring"
   )]
   static partial void LogFailedToAcquireRewindLock(ILogger logger, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(EventId = 63, Level = LogLevel.Warning,
+    Message = "Reactive orphan disposal reaped {Reaped} unprojectable perspective-event row(s) whose source event is absent from the event store (#679)")]
+  static partial void LogOrphanedPerspectiveRowsReaped(ILogger logger, int reaped);
 
   [LoggerMessage(
     EventId = 44,
