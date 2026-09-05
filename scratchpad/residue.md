@@ -1126,3 +1126,36 @@ It does not affect CI, where every run gets a fresh container. It affects local 
 the reason a local timing drift is worth a look rather than a shrug -- that is how the leak was
 found in the first place.
 
+## AE. The machine, not the code: memory pressure explains most of today's "flakiness"
+
+Measured on this workstation while the suites were running: **0 GB free, 35.3 of 36.8 GB swap in
+use**, a Roslyn compiler server holding 3.3 GB, and 59 dotnet processes totalling another 3.3 GB.
+A full-suite run was killed outright by the OS for low memory after 1,971 tests (zero failures),
+and an earlier one died at 2,079.
+
+This retroactively explains a set of things that were being attributed to the code:
+
+| symptom | earlier reading | what it is |
+|---|---|---|
+| suite 7m25s -> 16m37s -> 19m38s | leaked databases | swap thrash |
+| Postgres container recreated mid-run | churn/strain | container OOM-killed |
+| `EFCoreTestBase.SetupAsync` transient Npgsql failure | infrastructure noise | initializing against a server that just restarted |
+| **AD**: ~21 databases leak per full run | racing DROP, fixed with FORCE | **a process killed mid-run never reaches teardown** |
+| **W**: 1500 ms budget blown to 10.6 s | cross-assembly contention | a machine deep in swap |
+
+The AD reframing is the one that matters, because it fits evidence the DROP theory never did: a
+single class in isolation never leaks, the count stays roughly stable rather than scaling with
+concurrency, and neither `WITH (FORCE)` nor a bounded retry moved it -- because the drop code was
+never reached at all. The FORCE change is still correct and the pool-return still fixed a real
+race (the suite did come back from 16m37s to 7m25s once), but it was not the whole story and the
+remainder was never a Postgres problem.
+
+W is now much less interesting as a product question. A 1500 ms latency budget on a host 35 GB
+into swap says nothing about the fenced-retry path it was written to protect. Before spending any
+more on it, re-run it on a machine that is not swapping; the seven failed reproduction attempts
+recorded above were all made on this one.
+
+None of this affects CI, which runs each suite on a fresh runner. It affects every local
+measurement taken today, including the timing correlation recorded under AD, which should be read
+as an artifact rather than a finding.
+
