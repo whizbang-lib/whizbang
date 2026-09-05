@@ -750,7 +750,7 @@ Traced rather than assumed, because this file is 94% covered and the remainder i
 The lesson repeated from category O: "needs a broker" is worth checking per block. Two of these
 three are genuinely gated; the third is not, it is just inconvenient.
 
-## W. Wall-clock latency budgets cannot hold under the parallel coverage run
+## W. Timing and scheduling assertions cannot hold under the parallel coverage run
 
 Run 12 came back PARTIAL (41 of 46 projects) because
 `CommitToPerspectiveVisible_FencedByOpenSameDbTransaction_StillLandsUnder1500msAsync` took
@@ -780,7 +780,26 @@ Options, none of which is obviously right and all of which are a call for the ma
   point to measure between. That narrows what the budget covers, which may or may not still
   catch the quantization it is aimed at.
 
-Recorded rather than changed. It is a test-strategy decision about what the budget is for.
+**A second instance confirms this is a category, not a tuning problem.** Run 13 came back
+PARTIAL on a different test:
+
+    run 12   CommitToPerspectiveVisible_..._StillLandsUnder1500msAsync   latency budget
+    run 13   ThreadPoolFloor_AbsorbsAFanOutBurst_LivenessKeepsGettingAThreadAsync   thread availability
+
+Both assert a property of the machine as much as of the code -- one an end-to-end latency, the
+other that a thread-pool floor absorbs a burst and liveness still gets a thread. Neither can
+hold by construction when 46 test projects contend for the same cores and the same pool. One
+instance looked like a badly-tuned threshold; two make it a design constraint.
+
+The practical consequence for anyone running this loop: measurements come back PARTIAL at some
+rate unrelated to coverage work. Run 11 was whole; 12 and 13 were not, for two different timing
+tests. The banner makes that visible instead of silent, so the number is discarded rather than
+misread -- but expect roughly every other run to be unusable until these are separated from the
+parallel run.
+
+Recorded rather than changed. It is a test-strategy decision about what these assertions are
+for, and raising thresholds until they stop failing would remove the regressions they exist to
+catch.
 
 ## D. Excluded from the measurement by construction
 
