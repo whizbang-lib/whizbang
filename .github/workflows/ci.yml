@@ -298,6 +298,96 @@ jobs:
           retention-days: 1
           if-no-files-found: warn
 
+  # ============================================================================
+  # Fast-forward queue-skip optimization (companion to queue-validated above)
+  #
+  # queue-validated removes the redundant POST-merge develop push run. This removes
+  # the redundant IN-QUEUE run for the ~1/3 of merges that are FAST-FORWARDS — a
+  # single PR whose branch already contains the current develop tip, so the queue's
+  # prospective-merge commit has a tree byte-identical to what the PR run already
+  # tested fully. In that case the six suites and quality skip here; the queue's
+  # Build still runs (unconditionally) so the determinism manifest exists for the
+  # push run's verify-rebuild. On a real merge (develop moved) or a batched queue
+  # group, the guard falls through to the full queue matrix — the queue's whole
+  # purpose. Fails safe: any uncertainty runs the full matrix.
+  #
+  # Combined with queue-validated: a fast-forward merge runs ONE full matrix (the PR
+  # run); a real merge runs two (PR + queue). Escape hatch: repo variable
+  # QUEUE_RUN_FULL_MATRIX=true forces the full queue matrix.
+  # ============================================================================
+  ff-validated:
+    name: Fast-Forward Validation Check
+    if: github.event_name == 'merge_group' && vars.QUEUE_RUN_FULL_MATRIX != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Checkout the queue commit with its parents
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # depth 2 brings the merge commit plus both parents (and their trees), which is
+          # all the tree comparison needs — no full history fetch.
+          fetch-depth: 2
+
+      - name: Was this exact tree already validated by the PR run?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        run: |
+          # NOTE: no `set -e`. Every exit path emits skip and returns 0, so the guard can
+          # never fail the run — the worst case is skip=false (the full queue matrix).
+          set -uo pipefail
+          emit() { echo "skip=$1" >> "$GITHUB_OUTPUT"; echo "$2"; exit 0; }
+
+          read -r _COMMIT P1 P2 P3 < <(git rev-list --parents -n 1 HEAD) \
+            || emit false "cannot read the queue commit's parents — full matrix"
+          # A single-PR queue group is a 2-parent merge (base + one PR head). More parents
+          # means a batched group, which the PR runs did NOT test as-merged — full matrix.
+          if [ -z "${P2:-}" ] || [ -n "${P3:-}" ]; then
+            emit false "queue commit is not a single-PR merge (parents: ${P1:-} ${P2:-} ${P3:-}) — full matrix"
+          fi
+          # The PR head is whichever parent is not the queue base.
+          if [ "$P1" = "$BASE_SHA" ]; then PR_HEAD="$P2"
+          elif [ "$P2" = "$BASE_SHA" ]; then PR_HEAD="$P1"
+          else emit false "neither parent is the queue base ($BASE_SHA) — full matrix"; fi
+
+          # Fast-forward IFF the merge added nothing: the queue commit's tree equals the PR
+          # head's tree. develop is append-only (protected, no force-push), so an identical
+          # tree proves the base at PR-run time was also an ancestor of the PR head — i.e.
+          # the PR run's own test-merge was this exact tree.
+          MERGE_TREE=$(git rev-parse "HEAD^{tree}") || emit false "cannot read merge tree — full matrix"
+          PR_TREE=$(git rev-parse "${PR_HEAD}^{tree}" 2>/dev/null) \
+            || emit false "PR head tree not present — full matrix"
+          if [ "$MERGE_TREE" != "$PR_TREE" ]; then
+            emit false "develop moved since the PR was cut (real merge) — full matrix"
+          fi
+
+          # The PR run for this exact PR head must have gone fully green INCLUDING Quality,
+          # so a dependabot PR (whose Quality is skipped, see the quality job) still gets a
+          # real queue run rather than riding a half-validated PR run.
+          PR_RUN=$(gh api "repos/$REPO/actions/runs?head_sha=$PR_HEAD&event=pull_request&per_page=30" \
+            --jq '[.workflow_runs[] | select(.name == "CI" and .status == "completed")]
+                  | sort_by(.run_started_at) | last | .id // ""' 2>/dev/null) \
+            || emit false "could not query the PR run — full matrix"
+          if [ -z "$PR_RUN" ]; then emit false "no completed PR run for $PR_HEAD — full matrix"; fi
+          CONCL=$(gh api "repos/$REPO/actions/runs/$PR_RUN" --jq '.conclusion // ""' 2>/dev/null || echo "")
+          if [ "$CONCL" != "success" ]; then
+            emit false "PR run $PR_RUN for $PR_HEAD is '$CONCL', not success — full matrix"
+          fi
+          QUALITY_OK=$(gh api "repos/$REPO/actions/runs/$PR_RUN/jobs?per_page=100" \
+            --jq '[.jobs[] | select(.name | test("Quality")) | select(.conclusion == "success")] | length' \
+            2>/dev/null || echo 0)
+          if [ "${QUALITY_OK:-0}" -lt 1 ]; then
+            emit false "PR run $PR_RUN did not run Quality to green (dependabot? re-run?) — full matrix"
+          fi
+          emit true "PR run $PR_RUN validated this exact tree ($MERGE_TREE) — skipping the redundant queue matrix"
+
   # On pushes (and dispatch) the real version must be stamped into assemblies before
   # anything ships, so build waits for GitVersion. On PRs nothing ships — build starts
   # immediately with a placeholder while pr-version computes the real number in
@@ -370,8 +460,8 @@ jobs:
   # section below for the verification that replaces them on the publish path.
   unit-tests:
     name: Unit Tests
-    needs: [build, queue-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
+    needs: [build, queue-validated, ff-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-unit.yml
@@ -381,8 +471,8 @@ jobs:
 
   postgres-integration:
     name: PostgreSQL Integration
-    needs: [build, queue-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
+    needs: [build, queue-validated, ff-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
     permissions:
       contents: read
     # The three Postgres-tagged projects run sequentially inside one job (shared containers),
@@ -421,8 +511,8 @@ jobs:
 
   inmemory-integration:
     name: InMemory Integration
-    needs: [build, queue-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
+    needs: [build, queue-validated, ff-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-inmemory.yml
@@ -431,8 +521,8 @@ jobs:
 
   rabbitmq-integration:
     name: RabbitMQ Integration
-    needs: [build, queue-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
+    needs: [build, queue-validated, ff-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
@@ -444,8 +534,8 @@ jobs:
     # Integration (whizbang)") — matrix expressions in `name:` don't render on
     # reusable-workflow-call jobs.
     name: Service Bus Integration
-    needs: [build, queue-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
+    needs: [build, queue-validated, ff-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
     permissions:
       contents: read
     # The two AzureServiceBus-tagged projects run sequentially inside one job (shared
@@ -462,8 +552,8 @@ jobs:
 
   azureblob-integration:
     name: AzureBlob Integration
-    needs: [build, queue-validated]
-    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' }}
+    needs: [build, queue-validated, ff-validated]
+    if: ${{ !failure() && !cancelled() && needs.build.result == 'success' && needs.queue-validated.outputs.validated != 'true' && needs.ff-validated.outputs.skip != 'true' }}
     permissions:
       contents: read
     uses: ./.github/workflows/reusable-test-azureblob.yml
@@ -482,16 +572,19 @@ jobs:
     # restricted context, so it can never recover. Skipping is safe because ci-result
     # accepts skipped jobs, and the merge queue re-runs quality with full secrets
     # before anything lands on develop.
-    needs: [changes, queue-validated]
-    # !failure() && !cancelled() is REQUIRED here: queue-validated is skipped on every
-    # event but develop pushes, and a skipped need would otherwise poison the implicit
-    # success() check and silently skip quality on all PRs. The queue-validated clause
-    # skips quality when the merge queue already ran it on this exact SHA (its coverage
-    # reaches Codecov via reupload-reports instead).
+    needs: [changes, queue-validated, ff-validated]
+    # !failure() && !cancelled() is REQUIRED here: queue-validated and ff-validated are each
+    # skipped on every event but their own (push / merge_group), and a skipped need would
+    # otherwise poison the implicit success() check and silently skip quality everywhere. The
+    # queue-validated clause skips quality on a queue-validated develop push; the ff-validated
+    # clause skips it on a fast-forward queue run (the PR run's Sonar already covered this exact
+    # tree). Coverage still reaches Codecov — via reupload-reports on the push, or the PR run's
+    # own upload on a fast-forward.
     if: >-
       !failure() && !cancelled() &&
       (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]') &&
       needs.queue-validated.outputs.validated != 'true' &&
+      needs.ff-validated.outputs.skip != 'true' &&
       (needs.changes.outputs.code == 'true' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group')
     permissions:
       contents: read
@@ -605,7 +698,7 @@ jobs:
     # queue-validated / verify-rebuild / reupload-reports are push-only (skipped
     # elsewhere, which this gate tolerates); listing them means a failed rebuild
     # verification or report republish turns the develop push run red here too.
-    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports]
+    needs: [changes, version, pr-version, format, build, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality, pack, queue-validated, verify-rebuild, reupload-reports, ff-validated]
     if: always()
     runs-on: ubuntu-latest
     permissions: {}
