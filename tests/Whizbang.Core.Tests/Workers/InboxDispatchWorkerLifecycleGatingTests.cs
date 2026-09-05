@@ -207,6 +207,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: deserializer,
       receptorRegistry: registry,
       runtimeReceptorRegistry: runtimeRegistry);
@@ -389,6 +390,7 @@ public class InboxDispatchWorkerLifecycleGatingTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: deserializer,
       receptorRegistry: registry,
       deserializeCache: cache);

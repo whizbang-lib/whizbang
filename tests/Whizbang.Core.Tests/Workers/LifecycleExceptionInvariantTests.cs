@@ -193,7 +193,8 @@ public class LifecycleExceptionInvariantTests {
       gate,
       Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     var messageId = (Guid)TrackedGuid.NewMedo();
     var envelope = new MessageEnvelope<JsonElement> {
@@ -245,7 +246,8 @@ public class LifecycleExceptionInvariantTests {
       gate,
       Options.Create(new InboxDispatchWorkerOptions { Enabled = true }),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     var messageId = (Guid)TrackedGuid.NewMedo();
     var envelope = new MessageEnvelope<JsonElement> {

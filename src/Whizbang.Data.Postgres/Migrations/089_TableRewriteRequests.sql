@@ -98,19 +98,26 @@ BEGIN
     INTO v_requested;
 
   RETURN QUERY
-  SELECT st.relname::TEXT,
-         round((pg_relation_size(st.relid)::NUMERIC / st.n_live_tup) / GREATEST(w.expected, 1), 2),
-         (v_requested IS NOT NULL AND st.relname = ANY(v_requested))
-  FROM pg_stat_user_tables st
+  -- pg_class.reltuples, NOT pg_stat_user_tables.n_live_tup: the stats collector is
+  -- asynchronous, so n_live_tup can lag recent churn and both halves of the rewrite
+  -- decision (this candidate ratio, and the post-rewrite re-measure that must beat it)
+  -- then race the collector. reltuples is written by VACUUM/ANALYZE transactionally in
+  -- the catalog — both measures read the same synchronous source.
+  SELECT c.relname::TEXT,
+         round((pg_relation_size(c.oid)::NUMERIC / c.reltuples::NUMERIC) / GREATEST(w.expected, 1), 2),
+         (v_requested IS NOT NULL AND c.relname = ANY(v_requested))
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
   JOIN LATERAL (
     SELECT COALESCE(sum(s.avg_width), 0) + 28 AS expected
     FROM pg_stats s
-    WHERE s.schemaname = st.schemaname AND s.tablename = st.relname
+    WHERE s.schemaname = n.nspname AND s.tablename = c.relname
   ) w ON TRUE
-  WHERE st.schemaname = current_schema()
-    AND st.relname LIKE 'wh\_%'
-    AND st.n_live_tup >= v_min_rows
-    AND ((pg_relation_size(st.relid)::NUMERIC / st.n_live_tup) / GREATEST(w.expected, 1)) >= v_threshold
+  WHERE n.nspname = current_schema()
+    AND c.relkind = 'r'
+    AND c.relname LIKE 'wh\_%'
+    AND c.reltuples >= v_min_rows
+    AND ((pg_relation_size(c.oid)::NUMERIC / c.reltuples::NUMERIC) / GREATEST(w.expected, 1)) >= v_threshold
   ORDER BY 2 DESC;
 END;
 $$;

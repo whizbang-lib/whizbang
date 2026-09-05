@@ -270,6 +270,20 @@ public abstract partial class Dispatcher(
 
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private Whizbang.Core.Observability.ReEmissionDiagnostic? _reEmissionDiagnostic;
+  private bool _reEmissionResolved;
+
+  private Whizbang.Core.Observability.ReEmissionDiagnostic? _resolveReEmissionDiagnostic() {
+    if (!_reEmissionResolved) {
+      try {
+        _reEmissionDiagnostic = _internalServiceProvider.GetService<Whizbang.Core.Observability.ReEmissionDiagnostic>();
+      } catch (ObjectDisposedException) {
+        // Publish-after-dispose is tolerated elsewhere in this class; the diagnostic is
+        // observability, never worth failing a publish over.
+      }
+      _reEmissionResolved = true;
+    }
+    return _reEmissionDiagnostic;
+  }
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITraceStore? _traceStore = traceStore;
@@ -3165,8 +3179,7 @@ public abstract partial class Dispatcher(
     // #587: the publish seam is where a re-emission cascade becomes visible — a service
     // publishing a type it also consumes. Resolved lazily and nullable: hosts without the
     // registry (or diagnostic) pay nothing.
-    (_reEmissionDiagnostic ??= _internalServiceProvider.GetService<Whizbang.Core.Observability.ReEmissionDiagnostic>())
-      ?.RecordEmission(TypeNameFormatter.Format(eventType));
+    _resolveReEmissionDiagnostic()?.RecordEmission(TypeNameFormatter.Format(eventType));
     try {
 
       // Auto-generate StreamId for events with [GenerateStreamId] attribute
@@ -3282,8 +3295,7 @@ public abstract partial class Dispatcher(
     // #587: the publish seam is where a re-emission cascade becomes visible — a service
     // publishing a type it also consumes. Resolved lazily and nullable: hosts without the
     // registry (or diagnostic) pay nothing.
-    (_reEmissionDiagnostic ??= _internalServiceProvider.GetService<Whizbang.Core.Observability.ReEmissionDiagnostic>())
-      ?.RecordEmission(TypeNameFormatter.Format(eventType));
+    _resolveReEmissionDiagnostic()?.RecordEmission(TypeNameFormatter.Format(eventType));
     try {
 
       // Auto-generate StreamId for events with [GenerateStreamId] attribute

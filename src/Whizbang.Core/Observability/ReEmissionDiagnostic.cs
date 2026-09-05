@@ -19,7 +19,7 @@ namespace Whizbang.Core.Observability;
 /// <docs>fundamentals/messaging/publishing-events</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/ReEmissionDiagnosticTests.cs</tests>
 public sealed partial class ReEmissionDiagnostic {
-  private readonly ILogger<ReEmissionDiagnostic>? _logger;
+  private readonly ILogger<ReEmissionDiagnostic> _logger;
   private readonly DispatcherMetrics? _metrics;
   private readonly HashSet<string>? _consumedTypes;
   private readonly ConcurrentDictionary<string, bool> _warned = new(StringComparer.Ordinal);
@@ -27,9 +27,9 @@ public sealed partial class ReEmissionDiagnostic {
   /// <summary>Builds the diagnostic; a null registry (or one exposing no handled messages) leaves it inert.</summary>
   public ReEmissionDiagnostic(
       IReceptorRegistryQuery? registryQuery,
-      ILogger<ReEmissionDiagnostic>? logger = null,
-      DispatcherMetrics? metrics = null) {
-    _logger = logger;
+      ILogger<ReEmissionDiagnostic>? logger,
+      DispatcherMetrics? metrics) {
+    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ReEmissionDiagnostic>.Instance;
     _metrics = metrics;
     var handled = registryQuery?.GetHandledMessages();
     if (handled is { Count: > 0 }) {
@@ -55,7 +55,7 @@ public sealed partial class ReEmissionDiagnostic {
       return;
     }
     _metrics?.ReEmissions.Add(1, new KeyValuePair<string, object?>("type", normalized));
-    if (_logger is not null && _warned.TryAdd(normalized, true)) {
+    if (_warned.TryAdd(normalized, true)) {
       LogReEmission(_logger, normalized);
     }
   }

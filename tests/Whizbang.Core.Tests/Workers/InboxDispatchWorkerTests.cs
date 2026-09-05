@@ -149,6 +149,7 @@ public class InboxDispatchWorkerTests {
       Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 7 }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite));
 
     using var cts = new CancellationTokenSource();
@@ -212,6 +213,7 @@ public class InboxDispatchWorkerTests {
       Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
       deadLetterStore: dlq,
       generationProvider: new FakeGenerationProvider());
@@ -300,6 +302,7 @@ public class InboxDispatchWorkerTests {
       Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
       receptorRegistry: new PostInboxInlineRegistry());
     using var cts = new CancellationTokenSource();
@@ -369,6 +372,7 @@ public class InboxDispatchWorkerTests {
       Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1 }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
       receptorRegistry: new PostInboxInlineRegistry());
 
@@ -404,7 +408,8 @@ public class InboxDispatchWorkerTests {
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { PartitionCount = 1234 }),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -442,7 +447,8 @@ public class InboxDispatchWorkerTests {
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -480,7 +486,8 @@ public class InboxDispatchWorkerTests {
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -514,7 +521,8 @@ public class InboxDispatchWorkerTests {
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -546,7 +554,8 @@ public class InboxDispatchWorkerTests {
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions { Enabled = false }),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -576,7 +585,8 @@ public class InboxDispatchWorkerTests {
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -610,7 +620,8 @@ public class InboxDispatchWorkerTests {
       instance, inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -669,6 +680,7 @@ public class InboxDispatchWorkerTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: null,
       leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
       leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),
@@ -717,6 +729,7 @@ public class InboxDispatchWorkerTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: null,
       leaseHandleOptions: null,
       leaseRenewalOptions: null,

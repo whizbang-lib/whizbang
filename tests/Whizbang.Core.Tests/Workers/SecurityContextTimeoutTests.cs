@@ -224,6 +224,7 @@ public class SecurityContextTimeoutTests {
       }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new _PassthroughDeserializer(),
       receptorRegistry: new _AllStagesReceptorRegistry());
 

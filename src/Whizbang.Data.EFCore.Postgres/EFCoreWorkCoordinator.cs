@@ -1066,14 +1066,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     await using var measure = conn.CreateCommand();
+    // pg_class.reltuples, NOT pg_stat_user_tables.n_live_tup: the stats collector is
+    // asynchronous, so n_live_tup can lag the VACUUM FULL that just ran and the
+    // effectiveness comparison then races the collector — a real rewrite read as
+    // "ineffective" under load. reltuples is written by VACUUM/ANALYZE transactionally in
+    // the catalog, so the re-measure sees exactly the rewrite it performed.
     measure.CommandText = """
-      SELECT (pg_relation_size(st.relid)::NUMERIC / NULLIF(st.n_live_tup,0)) / GREATEST(w.expected, 1)
-      FROM pg_stat_user_tables st
+      SELECT (pg_relation_size(c.oid)::NUMERIC / NULLIF(c.reltuples::NUMERIC, 0)) / GREATEST(w.expected, 1)
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN LATERAL (
         SELECT COALESCE(sum(s.avg_width), 0) + 28 AS expected
-        FROM pg_stats s WHERE s.schemaname = st.schemaname AND s.tablename = st.relname
+        FROM pg_stats s WHERE s.schemaname = n.nspname AND s.tablename = c.relname
       ) w ON TRUE
-      WHERE st.schemaname = current_schema() AND st.relname = @t
+      WHERE n.nspname = current_schema() AND c.relname = @t
       """;
     measure.Parameters.AddWithValue("t", tableName);
     var scalar = await measure.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);

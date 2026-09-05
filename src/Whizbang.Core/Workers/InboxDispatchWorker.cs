@@ -53,7 +53,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IInboxChannelWriter _inboxChannelWriter;
-  private readonly Whizbang.Core.Messaging.StreamIntegrityOptions? _integrityOptions;
+  private readonly Whizbang.Core.Messaging.StreamIntegrityOptions _integrityOptions;
   private readonly WorkCompletionMeter? _completionMeter;
   private readonly IInboxHandlerCommitChannel _handlerCommitChannel;
   private readonly IFailureChannel _failureChannel;
@@ -97,6 +97,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     IOptions<InboxDispatchWorkerOptions> options,
     IOptions<WorkCoordinatorOptions> coordinatorOptions,
     ILogger<InboxDispatchWorker> logger,
+    IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions> integrityOptions,
     ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
     IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
     IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
@@ -111,9 +112,8 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
     Whizbang.Core.Observability.InboxMetrics? inboxMetrics = null,
     Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
-    WorkCompletionMeter? completionMeter = null,
-    IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>? integrityOptions = null) {
-    _integrityOptions = integrityOptions?.Value;
+    WorkCompletionMeter? completionMeter = null) {
+    _integrityOptions = (integrityOptions ?? throw new ArgumentNullException(nameof(integrityOptions))).Value;
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
@@ -302,8 +302,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // exist. Leftovers in flight at the flip, and old-build stragglers whose type the
     // current build cannot even resolve, both end here instead of livelocking on
     // lease-expiry re-claims.
-    if (_integrityOptions is not null
-        && DisabledSubsystemDiscardPolicy.ShouldDiscard(work.MessageType, _integrityOptions)) {
+    if (DisabledSubsystemDiscardPolicy.ShouldDiscard(work.MessageType, _integrityOptions)) {
       LogDisabledSubsystemDiscarded(_logger, work.MessageId, work.MessageType);
       var discardRequest = _buildCommitRequest(work, status: (int)(work.Status | MessageProcessingStatus.Published));
       await _handlerCommitChannel.EnqueueAsync(discardRequest, stoppingToken);

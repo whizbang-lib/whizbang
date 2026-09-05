@@ -139,6 +139,7 @@ public class InboxDispatchWorkerSchedulingTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new PassthroughDeserializer(),
       receptorRegistry: new AllStagesReceptorRegistry());
 

@@ -302,7 +302,8 @@ public class InboxDispatchWorkerGapTests {
       SchemaGate!,
       WorkerOptions!,
       CoordinatorOptions!,
-      Logger!);
+      Logger!,
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
   }
 
   private static async Task _assertCtorGuardAsync(CtorDeps deps, string expectedParamName) {
@@ -391,7 +392,8 @@ public class InboxDispatchWorkerGapTests {
       new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     await worker.StartAsync(CancellationToken.None);
     var executeTask = worker.ExecuteTask;
@@ -434,6 +436,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 8 }),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       gate: coordinatorGate);
 
     using var cts = new CancellationTokenSource();
@@ -478,6 +481,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       deadLetterStore: new ThrowingDeadLetterStore(),
       generationProvider: new FakeGenerationProvider());
 
@@ -537,6 +541,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       deadLetterStore: store,
       generationProvider: new FakeGenerationProvider(),
       dlqMetrics: metrics);
@@ -575,6 +580,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(options ?? new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
       deadLetterStore: deadLetterStore,
       generationProvider: generationProvider,
@@ -717,6 +723,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new ThrowingDeserializer());
 
     var work = _makeWork();
@@ -751,6 +758,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       discardPolicy: policy);
 
     var work = _makeWork();
@@ -794,7 +802,8 @@ public class InboxDispatchWorkerGapTests {
       new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     var work = _makeWork();
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
@@ -834,7 +843,8 @@ public class InboxDispatchWorkerGapTests {
       new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     var work = _makeWork();
     var inlineInvoker = new CapturingReceptorInvoker();
@@ -901,6 +911,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       inboxMetrics: metrics);
 
     using var cts = new CancellationTokenSource();
@@ -1184,6 +1195,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
       new RecordingLogger<InboxDispatchWorker>(),
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       deadLetterStore: new CapturingDeadLetterStore(),
       generationProvider: new FakeGenerationProvider());
 
@@ -1224,6 +1236,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       deadLetterStore: store,
       dlqMetrics: metrics,
       generationProvider: new FakeGenerationProvider());
