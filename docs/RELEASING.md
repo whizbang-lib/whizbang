@@ -274,9 +274,12 @@ gate provable:
   LoggerMessageGenerator emits classes in per-process-random order with identical content).
   The alpha that then publishes is a rebuild of proven-identical inputs on a proven-identical
   toolchain, differing from the queue-tested bits only in the stamped version string.
-- **reupload-reports** republishes the queue run's coverage and TRX artifacts into the push run,
-  so the Codecov develop baseline, Test Analytics uploads, and the docs test-status publication
-  keep flowing exactly as before.
+- **reupload-reports** republishes the full-matrix run's coverage and TRX artifacts into the push
+  run, so the Codecov develop baseline, Test Analytics uploads, and the docs test-status
+  publication keep flowing exactly as before. Its source is the queue run — **except** on a
+  fast-forward merge, where the queue run itself ff-skipped its suites and holds no reports; there
+  it falls back to the PR run (the push merge commit's second parent is the PR head) that actually
+  ran the full matrix.
 
 `prerelease-publish` accepts either gate: every suite green **in this run** (the old invariant,
 still the path whenever queue validation is absent — a standalone push, an expired queue run,
