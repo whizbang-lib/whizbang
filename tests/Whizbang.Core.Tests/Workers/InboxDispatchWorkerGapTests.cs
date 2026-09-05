@@ -59,8 +59,9 @@ public class InboxDispatchWorkerGapTests {
     public ChannelReader<InboxWork> Reader => _channel.Reader;
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) => _channel.Writer.WriteAsync(work, ct);
     public bool TryWrite(InboxWork work) => _channel.Writer.TryWrite(work);
+    public ConcurrentBag<Guid> RemovedInFlight { get; } = [];
     public bool IsInFlight(Guid messageId) => false;
-    public void RemoveInFlight(Guid messageId) { }
+    public void RemoveInFlight(Guid messageId) => RemovedInFlight.Add(messageId);
     public bool ShouldRenewLease(Guid messageId) => false;
     public void Complete() => _channel.Writer.Complete();
     public event Action? OnNewInboxWorkAvailable;
@@ -96,6 +97,17 @@ public class InboxDispatchWorkerGapTests {
     public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
         MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default)
       => Task.FromException<Guid?>(new InvalidOperationException("simulated wh_dead_letters outage"));
+  }
+
+  /// <summary>DLQ store whose MoveAsync reports the source row already gone (the documented
+  /// null no-op) — drives the #571 already-terminal branch.</summary>
+  private sealed class AlreadyGoneDeadLetterStore : IDeadLetterStore {
+    public int Calls;
+    public Task<Guid?> MoveAsync(Guid deadLetterId, string sourceTable, Guid sourceId,
+        MessageFailureReason failureReason, string? errorText, Guid instanceId, string generation, CancellationToken ct = default) {
+      Interlocked.Increment(ref Calls);
+      return Task.FromResult<Guid?>(null);
+    }
   }
 
   /// <summary>DLQ store that succeeds and records the call.</summary>
@@ -290,7 +302,8 @@ public class InboxDispatchWorkerGapTests {
       SchemaGate!,
       WorkerOptions!,
       CoordinatorOptions!,
-      Logger!);
+      Logger!,
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
   }
 
   private static async Task _assertCtorGuardAsync(CtorDeps deps, string expectedParamName) {
@@ -379,7 +392,8 @@ public class InboxDispatchWorkerGapTests {
       new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     await worker.StartAsync(CancellationToken.None);
     var executeTask = worker.ExecuteTask;
@@ -422,6 +436,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = 8 }),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       gate: coordinatorGate);
 
     using var cts = new CancellationTokenSource();
@@ -466,6 +481,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       deadLetterStore: new ThrowingDeadLetterStore(),
       generationProvider: new FakeGenerationProvider());
 
@@ -525,6 +541,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       deadLetterStore: store,
       generationProvider: new FakeGenerationProvider(),
       dlqMetrics: metrics);
@@ -563,6 +580,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(options ?? new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new FakeCompositeDeserializer(composite),
       deadLetterStore: deadLetterStore,
       generationProvider: generationProvider,
@@ -705,6 +723,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new ThrowingDeserializer());
 
     var work = _makeWork();
@@ -739,6 +758,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       discardPolicy: policy);
 
     var work = _makeWork();
@@ -782,7 +802,8 @@ public class InboxDispatchWorkerGapTests {
       new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     var work = _makeWork();
     await using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
@@ -822,7 +843,8 @@ public class InboxDispatchWorkerGapTests {
       new FakeInstanceProvider(), new FakeInboxChannelWriter(), handlerCommit, failure, gate,
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
-      NullLogger<InboxDispatchWorker>.Instance);
+      NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
 
     var work = _makeWork();
     var inlineInvoker = new CapturingReceptorInvoker();
@@ -889,6 +911,7 @@ public class InboxDispatchWorkerGapTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       inboxMetrics: metrics);
 
     using var cts = new CancellationTokenSource();
@@ -1153,4 +1176,120 @@ public class InboxDispatchWorkerGapTests {
       .Because("the budget is a ceiling, not an exclusive bound — exactly-at-budget must pass");
     await Assert.That(handlerCommit.All.Single().NewInboxMessages!.Count).IsEqualTo(8);
   }
+
+  [Test]
+  public async Task MaxAttemptsExceeded_StoreSucceeds_ReleasesInFlightAsync() {
+    // #571: the dead-letter path bypasses the handler-commit channel (the SQL move deleted
+    // the row), so nothing downstream releases the in-flight guard. Without an explicit
+    // release the message id stays "in flight" until the age-out, and the asymmetry with
+    // OutboxPublishWorker (which releases on every terminal path) is exactly where the
+    // endless re-dead-letter loop hid.
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var writer = new FakeInboxChannelWriter();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeInstanceProvider(), writer, handlerCommit, new FakeFailureChannel(), gate,
+      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      new RecordingLogger<InboxDispatchWorker>(),
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      deadLetterStore: new CapturingDeadLetterStore(),
+      generationProvider: new FakeGenerationProvider());
+
+    var work = _makeWork(attempts: 4);
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(writer.RemovedInFlight.Contains(work.MessageId)).IsTrue()
+      .Because("a dead-lettered message is TERMINAL — the in-flight guard must release on "
+             + "this path exactly as it does on completion, or the id wedges until age-out");
+  }
+
+  [Test]
+  public async Task MaxAttemptsExceeded_RowAlreadyGone_IsTerminal_NoCountNoRetryAsync() {
+    // #571: MoveAsync returns null when the inbox row is already gone (documented no-op).
+    // Discarding that result counted a dead-letter that never happened and left the
+    // in-memory work item un-terminal — re-fed and re-'moved' ~6.5x/sec indefinitely.
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var writer = new FakeInboxChannelWriter();
+    var store = new AlreadyGoneDeadLetterStore();
+    var metrics = new DeadLetterMetrics(new WhizbangMetrics());
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+
+    long added = 0;
+    using var listener = new MeterListener {
+      InstrumentPublished = (instrument, l) => {
+        if (ReferenceEquals(instrument, metrics.Added)) { l.EnableMeasurementEvents(instrument); }
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref added, value));
+    listener.Start();
+
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeInstanceProvider(), writer, handlerCommit, new FakeFailureChannel(), gate,
+      Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 3 }),
+      Options.Create(new WorkCoordinatorOptions()),
+      logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      deadLetterStore: store,
+      dlqMetrics: metrics,
+      generationProvider: new FakeGenerationProvider());
+
+    var work = _makeWork(attempts: 4);
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    await Assert.That(Interlocked.Read(ref added)).IsEqualTo(0L)
+      .Because("no dead letter was created — counting the no-op overstated every storm's "
+             + "DLQ arrivals with phantom rows");
+    await Assert.That(writer.RemovedInFlight.Contains(work.MessageId)).IsTrue()
+      .Because("already-gone IS terminal: the row was dead-lettered or deleted by someone "
+             + "else, and this work item must release, not re-feed forever");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("already gone", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("the no-op is worth a line — a burst of them is the signature of double-feed");
+  }
+
+
+  [Test]
+  public async Task DisabledSubsystemMessage_IsDiscardedByCompleting_NotDispatchedAsync() {
+    // #664 worker half: a leftover wrapped checkpoint arriving while checkpoints are
+    // disabled is discarded AS its processing — a terminal completion through the normal
+    // commit channel (lifecycle signaled by construction), an in-flight release, a log
+    // line, and no dispatch attempt. Before this, it dispatched into a nonexistent
+    // handler and livelocked on lease-expiry re-claims.
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var writer = new FakeInboxChannelWriter();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeInstanceProvider(), writer, handlerCommit, new FakeFailureChannel(), gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions { CheckpointsEnabled = false }));
+
+    var work = _makeWork();
+    work = work with {
+      MessageType = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.IntegrityCheckpoint, "
+                  + "Whizbang.Core, Version=0.900.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core",
+    };
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var routed = handlerCommit.All.Single();
+    var expectedStatus = (int)(work.Status | MessageProcessingStatus.Published);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo(expectedStatus)
+      .Because("the discard IS the processing — a terminal completion through the normal "
+             + "machinery, so the row deletes and can never re-claim");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("disabled", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("a discarded message logs WHAT was dropped and WHY — never a silent swallow");
+  }
+
 }

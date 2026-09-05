@@ -273,7 +273,14 @@ BEGIN
     ),
     ranked_inbox AS (
       SELECT ci.*,
-             ROW_NUMBER() OVER (PARTITION BY ci.is_fresh ORDER BY ci.received_at) AS class_rank
+             -- #568: breadth-first WITHIN a class. Strict received_at FIFO let one bulk
+             -- flood's thousands of FRESH rows starve a later interactive FRESH row — same
+             -- class, so the fresh/retry share could not help. Ranking stream_rank first
+             -- competes every stream's Nth row against other streams' Nth rows: an
+             -- interactive stream's head waits behind the OTHER HEADS, never behind a
+             -- single stream's 45,000-row body. Stream FIFO is untouched (stream_rank is
+             -- per-stream arrival order).
+             ROW_NUMBER() OVER (PARTITION BY ci.is_fresh ORDER BY ci.stream_rank, ci.received_at) AS class_rank
       FROM classified_inbox ci
     ),
     ordered_inbox AS (
@@ -383,6 +390,18 @@ BEGIN
 
     -- v0.661: see outbox block above.
     GET DIAGNOSTICS v_perspective_rows = ROW_COUNT;
+
+    -- 130 doorbell debounce: finding work stamps this instance's watermark — the signal
+    -- producers use to suppress redundant notifies while this drainer is awake. Rides
+    -- inside the claim (zero extra round trips) and skips the empty case so the
+    -- empty-call short-circuit's ~1 ms idle floor is untouched.
+    INSERT INTO __SCHEMA__.wh_notify_state (instance_id, payload_kind, last_work_at)
+    SELECT p_instance_id, k.kind, NOW()
+    FROM (VALUES ('outbox'), ('inbox'), ('perspective')) AS k(kind)
+    WHERE (k.kind = 'outbox' AND v_outbox_rows > 0)
+       OR (k.kind = 'inbox' AND (v_inbox_rows > 0 OR v_receptor_rows > 0))
+       OR (k.kind = 'perspective' AND v_perspective_rows > 0)
+    ON CONFLICT (instance_id, payload_kind) DO UPDATE SET last_work_at = NOW();
 
     -- Drain-mode hint: if any of the four return categories filled its LIMIT
     -- (rows == p_max_streams), there's likely more eligible work for this

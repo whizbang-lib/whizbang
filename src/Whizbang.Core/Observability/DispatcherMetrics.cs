@@ -56,6 +56,9 @@ public sealed class DispatcherMetrics {
 
   // Throughput counters
 
+  /// <summary>Re-emission cascade signature (#587): events published that this service also consumes, tagged by type.</summary>
+  public Counter<long> ReEmissions { get; }
+
   /// <summary>Total messages dispatched.</summary>
   public Counter<long> MessagesDispatched { get; }
 
@@ -124,6 +127,9 @@ public sealed class DispatcherMetrics {
     Errors = meter.CreateCounter<long>("whizbang.dispatcher.errors", description: "Dispatch-level errors");
     PublishOnceClaimsWon = meter.CreateCounter<long>("whizbang.dispatcher.publish_once.claims_won", description: "PublishOnceAsync calls that won the claim and emitted the event");
     PublishOnceClaimsLost = meter.CreateCounter<long>("whizbang.dispatcher.publish_once.claims_lost", description: "PublishOnceAsync calls that lost the claim and intentionally no-opped");
+    ReEmissions = meter.CreateCounter<long>(
+      "whizbang.dispatcher.re_emissions",
+      description: "Events published that this service also consumes — the re-emission cascade signature (#587)");
 
     CascadeEventCount = meter.CreateHistogram<int>("whizbang.dispatcher.cascade.event_count", description: "Events extracted per cascade");
     SendManyBatchSize = meter.CreateHistogram<int>("whizbang.dispatcher.send_many.batch_size", description: "Messages per SendMany call");

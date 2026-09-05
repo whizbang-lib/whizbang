@@ -696,6 +696,12 @@ BEGIN
           AND earlier.scheduled_for IS NOT NULL
           AND earlier.scheduled_for > p_now
           AND earlier.processed_at IS NULL
+          -- #668 H3: a coalesce-pending row parks with scheduled_for = created + MaxDelay,
+          -- which made it an 'earlier scheduled row' that blocked EVERY later row on the
+          -- same stream from claiming for the whole window — re-armed by each new coalesce
+          -- row, i.e. permanently under sustained ingest. Coalesce rows are not deferred
+          -- deliveries; they are parked for folding and must not gate their stream.
+          AND earlier.coalesce_group IS NULL
       )
     ORDER BY o.created_at
     LIMIT p_max_rows

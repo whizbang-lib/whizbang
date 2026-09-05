@@ -660,6 +660,15 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     if (conn.State != System.Data.ConnectionState.Open) {
       await conn.OpenAsync();
     }
+    // These tests lock the emptiness-probe edge semantics, which sit UPSTREAM of the 130
+    // doorbell debounce: same-kind repeat notifies within the debounce window are
+    // deliberately suppressed in production (the drain linger covers them), which would
+    // mask the probe behavior under test. Debounce off — its own contract is locked by
+    // NotifyDebounceSqlTests.
+    await using (var off = conn.CreateCommand()) {
+      off.CommandText = "UPDATE wh_settings SET setting_value = '0' WHERE setting_key = 'notify_debounce_seconds'";
+      await off.ExecuteNonQueryAsync();
+    }
     return conn;
   }
 

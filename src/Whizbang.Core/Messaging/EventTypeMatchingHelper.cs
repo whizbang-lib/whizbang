@@ -11,6 +11,55 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 public static class EventTypeMatchingHelper {
   /// <summary>
+  /// Returns the INNERMOST payload type name of a wrapped message type, unwrapping
+  /// <c>MessageEnvelope`1[[Inner, Assembly]]</c> layers (including nested wrapping); a name
+  /// with no envelope wrapper passes through unchanged. Pure string scanning — an
+  /// old-build assembly-qualified name that the current build cannot resolve still
+  /// unwraps, which is exactly the case where policy decisions must not throw.
+  /// Every policy keyed on "what IS this message" must use this: the wrapper is a known,
+  /// subscribed transport type, and judging it instead of the payload is the
+  /// wrapper-blindness behind #664's disabled-subsystem livelock.
+  /// </summary>
+  /// <docs>resilience/stream-integrity</docs>
+  public static string ExtractInnerPayloadTypeName(string messageTypeName) {
+    if (string.IsNullOrEmpty(messageTypeName)) {
+      return messageTypeName;
+    }
+    var current = messageTypeName;
+    // Bounded: real wrapping is one layer, doubly-wrapped storms were two. Eight is a
+    // runaway guard, not a design point.
+    for (var depth = 0; depth < 8; depth++) {
+      var marker = current.IndexOf("MessageEnvelope`1[[", StringComparison.Ordinal);
+      if (marker < 0) {
+        return current;
+      }
+      var start = marker + "MessageEnvelope`1[[".Length;
+      // The inner name runs to the matching "]]"; generic INNER payloads carry their own
+      // bracket nesting, so track depth instead of taking the first "]]".
+      var i = start;
+      var nest = 0;
+      while (i < current.Length - 1) {
+        if (current[i] == '[') {
+          nest++;
+        } else if (current[i] == ']') {
+          if (nest == 0 && current[i + 1] == ']') {
+            break;
+          }
+          nest--;
+        }
+        i++;
+      }
+      if (i >= current.Length - 1) {
+        // Malformed bracketing: fail safe by returning the input untouched — discard
+        // policies require a positive match.
+        return messageTypeName;
+      }
+      current = current[start..i];
+    }
+    return current;
+  }
+
+  /// <summary>
   /// Normalizes an assembly-qualified type name by removing version, culture, and public key token information.
   /// Handles both simple types and nested generic types (e.g., MessageEnvelope`1[[PayloadType, Assembly]]).
   /// This ensures consistent type name matching across different contexts (e.g., event matching, routing, serialization).

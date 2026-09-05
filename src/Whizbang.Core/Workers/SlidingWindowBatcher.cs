@@ -154,17 +154,17 @@ public sealed record SlidingWindowBatcherOptions {
   /// Maximum items in a single batch. The batch is flushed as soon as this is reached.
   /// Default: 100.
   /// </summary>
-  public int MaxSize { get; init; } = 100;
+  public int MaxSize { get; set; } = 100;
 
   /// <summary>
   /// Quiet period after the last arrival; resets on each new arrival. When this elapses
   /// with no new arrivals, the current batch flushes. Default: 50 ms.
   /// </summary>
-  public TimeSpan SlidingWindow { get; init; } = TimeSpan.FromMilliseconds(50);
+  public TimeSpan SlidingWindow { get; set; } = TimeSpan.FromMilliseconds(50);
 
   /// <summary>
   /// Hard cap on the wait time from the first arrival in a batch. Even a busy producer
   /// will not delay flushing past this. Default: 1 second.
   /// </summary>
-  public TimeSpan MaxWait { get; init; } = TimeSpan.FromSeconds(1);
+  public TimeSpan MaxWait { get; set; } = TimeSpan.FromSeconds(1);
 }

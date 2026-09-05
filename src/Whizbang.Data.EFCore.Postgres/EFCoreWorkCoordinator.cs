@@ -1066,14 +1066,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     await using var measure = conn.CreateCommand();
+    // pg_class.reltuples, NOT pg_stat_user_tables.n_live_tup: the stats collector is
+    // asynchronous, so n_live_tup can lag the VACUUM FULL that just ran and the
+    // effectiveness comparison then races the collector — a real rewrite read as
+    // "ineffective" under load. reltuples is written by VACUUM/ANALYZE transactionally in
+    // the catalog, so the re-measure sees exactly the rewrite it performed.
     measure.CommandText = """
-      SELECT (pg_relation_size(st.relid)::NUMERIC / NULLIF(st.n_live_tup,0)) / GREATEST(w.expected, 1)
-      FROM pg_stat_user_tables st
+      SELECT (pg_relation_size(c.oid)::NUMERIC / NULLIF(c.reltuples::NUMERIC, 0)) / GREATEST(w.expected, 1)
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
       JOIN LATERAL (
         SELECT COALESCE(sum(s.avg_width), 0) + 28 AS expected
-        FROM pg_stats s WHERE s.schemaname = st.schemaname AND s.tablename = st.relname
+        FROM pg_stats s WHERE s.schemaname = n.nspname AND s.tablename = c.relname
       ) w ON TRUE
-      WHERE st.schemaname = current_schema() AND st.relname = @t
+      WHERE n.nspname = current_schema() AND c.relname = @t
       """;
     measure.Parameters.AddWithValue("t", tableName);
     var scalar = await measure.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
@@ -2126,16 +2132,31 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT handler_id, success, error_message FROM {functionName}(@p_results::jsonb)";
+    cmd.CommandText = $"SELECT handler_id, success, error_message, tier, bulk_error FROM {functionName}(@p_results::jsonb)";
     cmd.Parameters.Add(new NpgsqlParameter("p_results", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = batchJson });
 
     var results = new List<HandlerBatchResult>(requests.Count);
+    var fellBack = false;
+    string? bulkError = null;
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new HandlerBatchResult(
         HandlerId: reader.GetGuid(0),
         Success: reader.GetBoolean(1),
         ErrorMessage: reader.IsDBNull(2) ? null : reader.GetString(2)));
+      if (!fellBack && reader.GetInt32(3) == 2) {
+        fellBack = true;
+        bulkError = reader.IsDBNull(4) ? null : reader.GetString(4);
+      }
+    }
+    if (fellBack) {
+      // #573: the fallback is legitimate; the silence was not. One warning per batch with
+      // the Tier-1 SQLSTATE (the diagnosis), and a counter the operator can alert on when
+      // a fleet quietly lives on the slow per-handler path.
+      if (_logger is not null) {
+        EFCoreWorkCoordinatorLog.CommitBulkTierFellBack(_logger, results.Count, bulkError ?? "unknown");
+      }
+      _metrics?.CommitHandlerFallbacks.Add(1);
     }
     return results;
   }
@@ -5083,4 +5104,9 @@ internal static partial class EFCoreWorkCoordinatorLog {
     Level = LogLevel.Warning,
     Message = "Failed to parse reconciliation scope JSON; the replayed lifecycle event will run without tenant/user scope.")]
   public static partial void ReconcileScopeParseFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 74, Level = LogLevel.Warning,
+    Message = "Handler-commit batch of {HandlerCount} fell back from the bulk tier to per-handler savepoints: {BulkError} — "
+            + "sustained fallbacks mean every commit pays the slow path; the SQLSTATE names why")]
+  public static partial void CommitBulkTierFellBack(ILogger logger, int handlerCount, string bulkError);
 }

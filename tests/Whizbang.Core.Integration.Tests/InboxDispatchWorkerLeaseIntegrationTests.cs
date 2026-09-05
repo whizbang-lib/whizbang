@@ -201,6 +201,7 @@ public class InboxDispatchWorkerLeaseIntegrationTests {
         Options.Create(new InboxDispatchWorkerOptions()),
         Options.Create(new WorkCoordinatorOptions()),
         NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
         lifecycleMessageDeserializer: deserializer,
         leaseHandleOptions: Options.Create(new LeaseHandleOptions { LeaseGraceSeconds = 30, MaxRenewalsPerWork = 6 }),
         leaseRenewalOptions: Options.Create(new LeaseRenewalWorkerOptions { LeaseSeconds = 60 }),

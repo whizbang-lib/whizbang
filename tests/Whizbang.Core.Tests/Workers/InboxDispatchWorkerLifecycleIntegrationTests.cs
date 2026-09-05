@@ -231,6 +231,7 @@ public class InboxDispatchWorkerLifecycleIntegrationTests {
       Options.Create(new InboxDispatchWorkerOptions()),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: new PassThroughLifecycleDeserializer());
 
     return (worker, inbox, handlerCommit, invoker);

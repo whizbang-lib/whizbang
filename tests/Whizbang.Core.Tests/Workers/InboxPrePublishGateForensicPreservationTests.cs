@@ -140,6 +140,7 @@ public class InboxPrePublishGateForensicPreservationTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxInboxAttempts = 10 }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       deadLetterStore: store,
       generationProvider: gen);
   }

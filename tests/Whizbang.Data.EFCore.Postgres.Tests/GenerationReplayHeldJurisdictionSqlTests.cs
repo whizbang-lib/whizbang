@@ -47,7 +47,7 @@ public class GenerationReplayHeldJurisdictionSqlTests : EFCoreTestBase {
     var svc = new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
       ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
         EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
-    await svc.ResetForGenerationAsync(gen);
+    await svc.ResetForGenerationAsync(gen, 0);
 
     await using var q = conn.CreateCommand();
     q.CommandText = "SELECT recovery_status FROM wh_dead_letters WHERE dead_letter_id = @id";
@@ -66,4 +66,38 @@ public class GenerationReplayHeldJurisdictionSqlTests : EFCoreTestBase {
     await Assert.That(r.GetBoolean(1)).IsTrue()
       .Because("pending rows keep the pre-canary contract: a new build re-offers them once");
   }
+
+  [Test]
+  public async Task Replay_Staggered_SpreadsReoffersAcrossTheWindowAsync() {
+    // #669: a deploy's generation replay re-offered every eligible row due-NOW — one flood
+    // competing with live traffic on the same queues and database. Staggered, the same
+    // replay drains as a paced stream through the bounded scans.
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var gen = "new/" + Guid.NewGuid().ToString("N")[..8];
+    for (var i = 0; i < 40; i++) { await _seedAsync(conn, status: 0); }
+
+    var svc = new EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>(
+      ctx, Microsoft.Extensions.Logging.Abstractions.NullLogger<
+        EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance, null);
+    var scheduled = await svc.ResetForGenerationAsync(gen, 30);
+
+    await Assert.That(scheduled).IsEqualTo(40);
+    await using var q = conn.CreateCommand();
+    q.CommandText = @"
+      SELECT count(DISTINCT next_recovery_at),
+             count(*) FILTER (WHERE next_recovery_at > NOW() + INTERVAL '31 minutes'),
+             count(*) FILTER (WHERE next_recovery_at < NOW() - INTERVAL '1 minute')
+      FROM wh_dead_letters WHERE generation = 'old/1' AND recovery_status = 0";
+    await using var r = await q.ExecuteReaderAsync();
+    await r.ReadAsync();
+    await Assert.That(r.GetInt64(0)).IsGreaterThan(10L)
+      .Because("random staggering across a 30-minute window must actually spread the "
+             + "due-times — 40 rows collapsing to one instant is the flood this removes");
+    await Assert.That(r.GetInt64(1)).IsEqualTo(0L)
+      .Because("nothing schedules past the window — the replay finishes, paced");
+    await Assert.That(r.GetInt64(2)).IsEqualTo(0L);
+  }
+
 }

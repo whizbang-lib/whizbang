@@ -36,21 +36,29 @@ public class SlidingWindowApplyFailurePathTests {
   [Test]
   public async Task AFailedFlush_IsLoggedAndDroppedRatherThanBlockingTheStreamAsync() {
     var attempts = new ConcurrentQueue<Guid>();
-    var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Signalling on the first attempt would prove nothing: `attempts` is appended to before the
+    // signal, so the count assertion below is already satisfied by that first flush and would
+    // hold even if the strategy died on the throw. Wait for a SECOND attempt instead -- only a
+    // loop that survived the first failure can produce one.
+    var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     await using var sut = new SlidingWindowApplyBatchStrategy(
       flush: (sid, count, ct) => {
         attempts.Enqueue(sid);
-        failed.TrySetResult();
+        if (attempts.Count >= 2) {
+          secondAttempt.TrySetResult();
+        }
         throw new InvalidOperationException("perspective store unavailable");
       },
       options: _fastWindow());
 
     await sut.AppendAsync(Guid.CreateVersion7());
-    await failed.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-    // The strategy must survive the throw — a subsequent stream still flushes.
     await sut.AppendAsync(Guid.CreateVersion7());
-    await Assert.That(attempts.Count).IsGreaterThanOrEqualTo(1)
+
+    // Waits on the strategy having flushed a second time after a throw, which is the property
+    // under test -- not on the first flush having been reached.
+    await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(attempts.Count).IsGreaterThanOrEqualTo(2)
       .Because("a flush that throws must not take the batching loop down with it; the reclaim path "
              + "re-issues the dropped batch, but only if the process is still running to do it");
   }

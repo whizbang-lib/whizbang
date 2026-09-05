@@ -44,7 +44,10 @@ public interface IDeadLetterRecoveryService {
   /// not yet seen the current build for immediate retry. Idempotent (exactly-once per
   /// generation). Returns the number of rows scheduled.
   /// </summary>
-  Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default);
+  /// <param name="currentGeneration">The build identity being replayed onto.</param>
+  /// <param name="staggerMinutes">Window to spread re-offers across (#669); 0 schedules all immediately.</param>
+  /// <param name="ct">Cancellation token.</param>
+  Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default);
 
   // -------------------- Held-cohort campaign surface (P1) --------------------
   // Backing for DeadLetterRecoveryOptions.RetryHeldOnStartup. Campaigns operate on

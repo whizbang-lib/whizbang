@@ -462,7 +462,11 @@ public class CoalesceShipWorkerTests {
       return Task.FromResult(Stats);
     }
 
+    public string? FoldThrowsForGroup { get; set; }
     public Task<IReadOnlyList<OutboxMessage>> FetchPendingCoalesceAsync(string group, int limit, CancellationToken cancellationToken = default) {
+      if (group == FoldThrowsForGroup) {
+        return Task.FromException<IReadOnlyList<OutboxMessage>>(new InvalidOperationException("simulated fold failure"));
+      }
       FetchedGroups.Add(group);
       CallOrder.Add($"fetch:{group}");
       if (!PendingSingles.TryGetValue(group, out var pending) || pending.Count == 0) {
@@ -688,4 +692,86 @@ public class CoalesceShipWorkerTests {
   }
 
   #endregion
+
+  [Test]
+  public async Task RunOnce_FullGroup_FoldsImmediately_NoDeadlineWaitAsync() {
+    // #668 H1: under sustained arrivals the slide never goes quiet, so the ONLY trigger
+    // was the MaxDelay deadline — steady-state pending grew to arrival_rate x MaxDelay
+    // (observed: 15.5k rows behind a bulk ingest). A group holding a full chunk is due
+    // NOW: the fold has nothing to gain by waiting and a window of backlog to lose.
+    var (worker, coordinator, _) = _build(configureBinding: c => {
+      c.SlideSeconds = 15;
+      c.MaxDelaySeconds = 120;
+      c.MaxBatchCount = 5;
+    });
+    coordinator.Stats = [_stats("record-digest", count: 5, oldestAge: 3, newestAge: 1)];
+    coordinator.PendingSingles["record-digest"] = _singles(5);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.CompletedFolds.Count).IsEqualTo(1)
+      .Because("a full chunk folds immediately — the deadline is a floor for SMALL groups, "
+             + "not a governor that lets a storm accumulate two minutes of backlog");
+  }
+
+  [Test]
+  public async Task RunOnce_OneGroupFoldThrows_OtherGroupsAndReleaseStillRunAsync() {
+    // #668 H2: the fold loop had no per-group isolation — one group's deterministic
+    // failure (a missing composite JsonTypeInfo, say) aborted the whole tick, skipping
+    // every other group's fold AND the release backstop, wedging ALL coalesce-pending
+    // rows forever (claims exclude them by design; the worker is their only exit).
+    var time = new FakeTimeProvider(_testNow);
+    var coordinator = new FakeCoalesceCoordinator();
+    var tagOptions = new TagOptions();
+    tagOptions.Coalesce("record-digest", c => { c.SlideSeconds = 15; c.MaxDelaySeconds = 120; });
+    tagOptions.Coalesce("poison-group", c => { c.SlideSeconds = 15; c.MaxDelaySeconds = 120; });
+    var resolver = new CoalesceGroupResolver(tagOptions, time,
+      () => [
+        CoalesceGroupResolverTests.TagRegistration(typeof(TestFoldedEvent), "record-digest"),
+        CoalesceGroupResolverTests.TagRegistration(typeof(TestFoldedEvent), "poison-group"),
+      ]);
+    var worker = _buildWorker(coordinator, resolver, time);
+    coordinator.Stats = [
+      _stats("poison-group", count: 3, oldestAge: 130, newestAge: 125),
+      _stats("record-digest", count: 3, oldestAge: 130, newestAge: 125),
+    ];
+    coordinator.FoldThrowsForGroup = "poison-group";
+    coordinator.PendingSingles["poison-group"] = _singles(3);
+    coordinator.PendingSingles["record-digest"] = _singles(3);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.CompletedFolds.Count).IsEqualTo(1)
+      .Because("the healthy group folds despite the poison one — per-group isolation");
+    await Assert.That(coordinator.ReleasedGroups.Count).IsEqualTo(2)
+      .Because("the release backstop runs for every group regardless — it is the LAST exit "
+             + "for rows claims cannot see, and a fold failure must never close it");
+  }
+
+
+  [Test]
+  public async Task RunOnce_Fold_RecordsEachSinglesOwnStreamOnTheCompositeAsync() {
+    // #596 producer half: the composite must CARRY the folded singles' stream identities so
+    // the receiver's expansion can restore them — without this, hundreds of source streams
+    // collapse onto the composite's one stream and serialize behind a single drain lane.
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    var singles = _singles(2);
+    // Capture BEFORE the run: the fake's fetch drains the shared list, and iterating it
+    // afterwards silently asserts nothing.
+    var expectedStreams = singles.Select(m => m.StreamId).ToList();
+    coordinator.PendingSingles["record-digest"] = singles;
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composite = coordinator.CompletedFolds.Single().Composites.Single();
+    var envelopeJson = composite.Envelope.Payload.GetRawText();
+    await Assert.That(expectedStreams.Count).IsEqualTo(2);
+    foreach (var expected in expectedStreams) {
+      await Assert.That(envelopeJson).Contains(expected.ToString()!)
+        .Because("each folded single's stream id rides the wire — the composite is transport "
+               + "packaging, not a stream-identity rewrite");
+    }
+  }
+
 }

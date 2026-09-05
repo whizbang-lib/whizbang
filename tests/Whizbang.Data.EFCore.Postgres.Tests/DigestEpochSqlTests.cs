@@ -371,4 +371,104 @@ public class DigestEpochSqlTests : EFCoreTestBase {
     await Assert.That(await _epochRowAsync(conn, ZERO, "", "Contracts.EpochProbe", 0)).IsNotNull()
       .Because("the live effect — a persisted epoch row — is the proof the call reached the database");
   }
+
+  [Test]
+  public async Task CloseDigestEpochs_StarvedLane_GoesFirstUnderTheBudgetAsync() {
+    // #515 sub-fix 1: the closure budget was global and the lane loop UNORDERED, so
+    // whichever lanes the hash-agg emitted first ate the whole budget every cycle and
+    // later lanes starved deterministically. Lanes now order least-recently-advanced
+    // first, so the budget round-robins across cycles by construction.
+    await using var conn = await _openAsync();
+    await _setWidthAsync(conn, 100);
+    var starved = Guid.NewGuid();
+    var greedy = Guid.NewGuid();
+    // Seed the GREEDY lane's events first — an unordered scan tends to emit it first.
+    await _seedReceivedAsync(conn, greedy, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 5, settled: true);
+    await _seedReceivedAsync(conn, greedy, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 150, settled: true);
+    await _seedReceivedAsync(conn, starved, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 5, settled: true);
+    await _seedReceivedAsync(conn, starved, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 150, settled: true);
+    // The starved lane's frontier has not advanced for hours; the greedy lane's just did.
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = @"
+        INSERT INTO wh_digest_epoch_frontiers (origin_service_id, closed_through_epoch, epoch_width, updated_at)
+        VALUES (@starved, -1, 100, NOW() - INTERVAL '6 hours'),
+               (@greedy, -1, 100, NOW() - INTERVAL '1 second')";
+      seed.Parameters.AddWithValue("starved", starved);
+      seed.Parameters.AddWithValue("greedy", greedy);
+      await seed.ExecuteNonQueryAsync();
+    }
+
+    var closed = await _closeAsync(conn, maxEpochs: 1);
+
+    await Assert.That(closed).IsEqualTo(1);
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT closed_through_epoch FROM wh_digest_epoch_frontiers WHERE origin_service_id = @lane";
+    q.Parameters.AddWithValue("lane", starved);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? -1L)).IsEqualTo(0L)
+      .Because("one budget slot exists and the lane that has waited LONGEST must take it — "
+             + "a frontier frozen for days while other lanes close every cycle was the "
+             + "observed starvation");
+  }
+
+  [Test]
+  public async Task CloseDigestEpochs_PermanentTrickle_StallEscapeClosesAnywayAsync() {
+    // #515 sub-fix 2: the fresh-arrival guard is re-armed by every new in-range arrival, so
+    // a lane receiving a permanent trickle of old-sequence rows (redelivery, repair) froze
+    // its frontier FOREVER. After the stall window (settings key
+    // integrity_epoch_max_stall_seconds, default 3600) the epoch closes anyway — the verify
+    // sweep recomputes closed epochs and refolds on drift, so a late straggler is corrected
+    // by the existing backstop instead of pinning the lane for days.
+    await using var conn = await _openAsync();
+    await _setWidthAsync(conn, 100);
+    var origin = Guid.NewGuid();
+    await _seedReceivedAsync(conn, origin, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 5, settled: true);
+    await _seedReceivedAsync(conn, origin, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 50, settled: false); // fresh, old seq
+    await _seedReceivedAsync(conn, origin, Guid.NewGuid(), Guid.NewGuid(), "Contracts.EpochProbe", 150, settled: true);
+    // The lane has been stalled for 2 hours (past the 1-hour default stall window).
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = @"
+        INSERT INTO wh_digest_epoch_frontiers (origin_service_id, closed_through_epoch, epoch_width, updated_at)
+        VALUES (@lane, -1, 100, NOW() - INTERVAL '2 hours')";
+      seed.Parameters.AddWithValue("lane", origin);
+      await seed.ExecuteNonQueryAsync();
+    }
+
+    var closed = await _closeAsync(conn);
+
+    await Assert.That(closed).IsGreaterThanOrEqualTo(1)
+      .Because("a lane stalled past the window closes its blocked epoch anyway — frozen-for-"
+             + "days frontiers were observed live while the store ran epochs ahead");
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT closed_through_epoch FROM wh_digest_epoch_frontiers WHERE origin_service_id = @lane";
+    q.Parameters.AddWithValue("lane", origin);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? -1L)).IsGreaterThanOrEqualTo(0L);
+  }
+
+  [Test]
+  public async Task CloseDigestEpochs_LedgerOnlyOrigin_GetsAFrontierRowAsync() {
+    // #515 sub-fix 3: an origin whose events never landed locally — the LOSS case — had
+    // ledger buckets but no frontier row, so verify skipped the lane and rebase no-opped:
+    // the one origin most worth flagging was structurally invisible. Lanes now source from
+    // the ledger too, so the frontier row exists and downstream machinery sees the lane.
+    await using var conn = await _openAsync();
+    var ghostOrigin = Guid.NewGuid();
+    await using (var seed = conn.CreateCommand()) {
+      seed.CommandText = @"
+        INSERT INTO wh_integrity_ledger (origin_service_id, tenant_scope, event_type, stream_id, origin_lo, origin_hi, local_lo, local_hi)
+        VALUES (@origin, '', 'Contracts.GhostEvent', @stream, 1, 2, 0, 0)";
+      seed.Parameters.AddWithValue("origin", ghostOrigin);
+      seed.Parameters.AddWithValue("stream", Guid.NewGuid());
+      await seed.ExecuteNonQueryAsync();
+    }
+
+    _ = await _closeAsync(conn);
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT count(*) FROM wh_digest_epoch_frontiers WHERE origin_service_id = @lane";
+    q.Parameters.AddWithValue("lane", ghostOrigin);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(1L)
+      .Because("an origin with ledger history but no local events is the loss signature — "
+             + "it must exist as a lane for verify to flag, not vanish from the audit");
+  }
+
 }

@@ -573,6 +573,330 @@ public static class WorkerPipelineExtensions {
     // names below are the documented operational keys) and degrades to code defaults when the
     // host registers no IConfiguration at all. The configuration binder source generator
     // intercepts these Bind calls, so no reflection reaches the AOT path.
+    // #666: the integrity disable flags are only as real as this binding. The workers and
+    // the checkpoint receptor all check the options; without a turnkey bind the class
+    // resolved default-constructed (everything enabled) and configuration did nothing.
+    services.AddOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.StreamIntegrityOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:StreamIntegrity"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+
+    // #646: every options class the turnkey pipeline registers is BOUND, concretely, so the
+    // binder source generator intercepts each call (a generic helper would fall back to
+    // reflection and break AOT). Sections follow the established Whizbang:Workers:<Name> /
+    // Whizbang:<Area> conventions and are documented in the configuration reference.
+    services.AddOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>();
+    services.TryAddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>().Value);
+    services.AddOptions<Whizbang.Core.Temporal.TemporalOptions>();
+    services.AddOptions<Whizbang.Core.Workers.PerspectiveWorkerOptions>();
+    services.AddOptions<Whizbang.Core.Messaging.OrderedStreamProcessorOptions>();
+    services.AddOptions<Whizbang.Core.Configuration.WhizbangOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Configuration.EphemeralOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Configuration.EphemeralOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Ephemeral"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:PerspectiveRowRetention"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.SchemaInitializationOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.SchemaInitializationOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:SchemaInitialization"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Observability.UnobservedExceptionDiagnosticsOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:UnobservedExceptionDiagnostics"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.BackupTickCoordinatorOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.BackupTickCoordinatorOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:BackupTick"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Observability.BacklogAgeOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Observability.BacklogAgeOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:BacklogAge"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.HeartbeatWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.HeartbeatWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Heartbeat"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OutboxCompletionFlushWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OutboxCompletionFlushWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:OutboxCompletionFlush"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.PerspectiveCompletionFlushWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.PerspectiveCompletionFlushWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:PerspectiveCompletionFlush"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.FailureFlushWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.FailureFlushWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:FailureFlush"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.LeaseRenewalWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.LeaseRenewalWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:LeaseRenewal"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.InboxHandlerWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.InboxHandlerWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxHandler"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OutboxPublishWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OutboxPublishWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:OutboxPublish"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.InboxDispatchWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.InboxDispatchWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxDispatch"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.MaintenanceWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.MaintenanceWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Maintenance"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.OutboxDrainWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.OutboxDrainWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:OutboxDrain"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.InboxDrainWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.InboxDrainWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxDrain"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.RecentlyProcessedEventCacheOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.RecentlyProcessedEventCacheOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:RecentlyProcessedEventCache"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.InboxDeserializeCacheOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.InboxDeserializeCacheOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxDeserializeCache"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.LeaseHandleOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.LeaseHandleOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:LeaseHandle"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.SlidingWindowOutboxOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.SlidingWindowOutboxOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:OutboxBatch"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.SlidingWindowInboxOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.SlidingWindowInboxOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:InboxBatch"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.WorkCoordinatorOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:WorkCoordinator"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Temporal.TemporalOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Temporal.TemporalOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Temporal"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Workers.PerspectiveWorkerOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Workers.PerspectiveWorkerOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:Workers:Perspective"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Messaging.OrderedStreamProcessorOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Messaging.OrderedStreamProcessorOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:OrderedStreamProcessor"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<Whizbang.Core.Configuration.WhizbangOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<Whizbang.Core.Configuration.WhizbangOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs); format's analyzer pass does not see the generator's suppressor
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+
     services.AddOptions<DeadLetterRecoveryOptions>();
     services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<DeadLetterRecoveryOptions>>(sp => {
       var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();

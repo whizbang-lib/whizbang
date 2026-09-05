@@ -81,7 +81,7 @@ public class DeadLetterOperatorEndpointsTests {
       ScheduledTimes.Add(nextAt);
       return Task.CompletedTask;
     }
-    public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) {
+    public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) {
       ResetGenerations.Add(currentGeneration);
       return Task.FromResult(ResetResult);
     }

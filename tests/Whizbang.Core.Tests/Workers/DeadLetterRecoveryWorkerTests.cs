@@ -48,7 +48,9 @@ public class DeadLetterRecoveryWorkerTests {
     public Task FetchSignal(int ordinal) =>
       _fetchSignals.GetOrAdd(ordinal, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
 
+    public System.Collections.Concurrent.ConcurrentQueue<int> FetchedBatchSizes { get; } = new();
     public Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
+      FetchedBatchSizes.Enqueue(maxCount);
       _fetchCount++;
       _fetchSignals.GetOrAdd(_fetchCount, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
       if (_fetchCount == 1) { FirstFetchSignal.TrySetResult(); } else if (_fetchCount == 2) { SecondFetchSignal.TrySetResult(); }
@@ -118,7 +120,7 @@ public class DeadLetterRecoveryWorkerTests {
     public Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) =>
       Task.FromResult(0);
 
-    public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) {
+    public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) {
       ResetForGenerationCalls.Add(currentGeneration);
       return Task.FromResult(GenerationReplayReturn);
     }
@@ -724,6 +726,45 @@ public class DeadLetterRecoveryWorkerTests {
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+  }
+
+
+  [Test]
+  public async Task ForcedThroughWhileBusy_ScansNarrowAsync() {
+    // #669: the bounded-deferral escape exists so a never-settled service still heals — but
+    // being forced through the gate means the service is VISIBLY busy, so the pass must
+    // trickle (PressuredScanBatchSize), never flood the queues recovery is yielding to.
+    // MaxConsecutiveDeferrals=0 forces the escape on the very first scan.
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      ScanBatchSize = 200,
+      PressuredScanBatchSize = 25,
+      EnableGenerationReplay = false,
+      WaitForIdle = true,
+    };
+    var svc = new FakeRecoveryService { Backlog = new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 3 } };
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeadLetterRecoveryService>(svc);
+    services.AddSingleton<IWorkCoordinator>(svc);
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(options)));
+    var sp = services.BuildServiceProvider();
+    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 0 });
+    var worker = new DeadLetterRecoveryWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
+      new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: null, housekeeping: housekeeping);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.FetchedBatchSizes.TryDequeue(out var first)).IsTrue();
+    await Assert.That(first).IsEqualTo(25)
+      .Because("a forced pass is recovery running AGAINST a busy service's interest — it "
+             + "earns a trickle, and the full batch waits for genuine settledness");
   }
 
 }

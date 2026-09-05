@@ -161,7 +161,9 @@ public static class DeadLetterOperatorEndpoints {
       var provider = http.RequestServices.GetRequiredService<IGenerationProvider>();
       gen = provider.GetGeneration();
     }
-    var scheduled = await svc.ResetForGenerationAsync(gen, http.RequestAborted).ConfigureAwait(false);
+    // Operator-initiated replay is deliberate and interactive: no stagger (0), the operator
+    // wants the re-offer now — the deploy-time replay is the one that paces itself (#669).
+    var scheduled = await svc.ResetForGenerationAsync(gen, 0, http.RequestAborted).ConfigureAwait(false);
     http.Response.ContentType = "application/json";
     var response = new ScanNowResponse { Generation = gen, Scheduled = scheduled };
     await JsonSerializer.SerializeAsync(

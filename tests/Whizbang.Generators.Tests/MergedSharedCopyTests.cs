@@ -757,4 +757,24 @@ public class MergedSharedCopyTests {
     await Assert.That(empty).IsEqualTo("");
   }
 
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_PassesTheSharedAssemblysOwnSelfTestAsync(MergedHost host) {
+    // IdentifierValidation's methods take an IDbProviderLimits, and each merged copy has its own
+    // type identity for that interface -- so no class declared in THIS assembly can satisfy all
+    // four copies, and the reflection tests above structurally cannot reach that surface.
+    //
+    // The self-test lives inside the shared assembly instead, carrying its own limits
+    // implementation. ILRepack merges both into every host, so each copy holds an implementation
+    // whose identity already matches its own interface. Calling it here is the only way this
+    // surface gets exercised in the three hosts where the types are internal.
+    var failures = (IReadOnlyList<string>)_call(
+      host.Assembly, "Whizbang.Generators.Shared.Diagnostics.SharedSelfTest", "Run")!;
+
+    await Assert.That(failures).IsEmpty()
+      .Because($"{host.Host} carries its own copy of the identifier validation, and a copy that "
+             + "diverged would truncate identifiers in the database while reporting success");
+  }
+
 }

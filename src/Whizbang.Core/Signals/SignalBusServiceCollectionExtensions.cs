@@ -33,6 +33,18 @@ public static class SignalBusServiceCollectionExtensions {
     // Self-contained: this worker requires the instance identity, so the extension that
     // registers it must guarantee the identity exists rather than assume a fuller composition.
     services.AddWhizbangInstanceIdentity();
+    services.AddOptions<SignalBusOptions>();
+    services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<SignalBusOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new Microsoft.Extensions.Options.ConfigureOptions<SignalBusOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs)
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:SignalBus"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
     services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, SignalBusHostedService>());
     // Shared state behind the signal-bus health component: probe verdicts, last wire arrival,
     // doorbell-liveness accounting. Written by the probe loop / transports / claim loop.

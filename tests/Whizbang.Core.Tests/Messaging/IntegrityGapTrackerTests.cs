@@ -80,4 +80,49 @@ public class IntegrityGapTrackerTests {
     await Assert.That(tracker.GetRequestTopic(Guid.NewGuid())).IsNull()
       .Because("an unknown origin has no address — callers fall back.");
   }
+
+  [Test]
+  public async Task MarkConfirmed_FirstTimeTrue_RepeatFalse_ClearRearmsAsync() {
+    var tracker = new IntegrityGapTracker();
+    var gap = new IntegrityGapTracker.PendingGap {
+      OriginServiceId = Guid.NewGuid(),
+      OriginServiceName = "origin",
+      TenantScope = "t",
+      EventType = "E",
+      FromCommitSequence = 10,
+      ToCommitSequence = 20,
+      ExpectedCount = 4,
+    };
+
+    await Assert.That(tracker.MarkConfirmed(gap)).IsTrue()
+      .Because("the first confirmation of a window earns the operator warning");
+    await Assert.That(tracker.MarkConfirmed(gap)).IsFalse()
+      .Because("re-confirmations of the SAME window must not re-warn — one condition, one line");
+
+    tracker.ClearConfirmed(gap);
+    await Assert.That(tracker.MarkConfirmed(gap)).IsTrue()
+      .Because("a window that healed and then genuinely regressed is a NEW condition — it warns again");
+  }
+
+  [Test]
+  public async Task MarkConfirmed_DistinguishesWindowsAndTypesAsync() {
+    var tracker = new IntegrityGapTracker();
+    var origin = Guid.NewGuid();
+    IntegrityGapTracker.PendingGap gap(string type, long to) => new() {
+      OriginServiceId = origin,
+      OriginServiceName = "origin",
+      TenantScope = "t",
+      EventType = type,
+      FromCommitSequence = 0,
+      ToCommitSequence = to,
+      ExpectedCount = 1,
+    };
+
+    await Assert.That(tracker.MarkConfirmed(gap("A", 5))).IsTrue();
+    await Assert.That(tracker.MarkConfirmed(gap("B", 5))).IsTrue()
+      .Because("a different event type in the same window is its own condition");
+    await Assert.That(tracker.MarkConfirmed(gap("A", 9))).IsTrue()
+      .Because("the same type in a different window is its own condition");
+  }
+
 }

@@ -150,7 +150,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var svc = _newService(ctx);
 
-    await Assert.That(async () => await svc.ResetForGenerationAsync(null!))
+    await Assert.That(async () => await svc.ResetForGenerationAsync(null!, 0))
       .Throws<ArgumentException>();
   }
 
@@ -159,7 +159,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     await using var ctx = CreateDbContext();
     var svc = _newService(ctx);
 
-    await Assert.That(async () => await svc.ResetForGenerationAsync(""))
+    await Assert.That(async () => await svc.ResetForGenerationAsync("", 0))
       .Throws<ArgumentException>();
   }
 
@@ -171,7 +171,7 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     // Seed a row dead-lettered under an OLDER generation so the new generation can schedule it.
     await _seedDlqAsync(conn, generation: "v0.500");
 
-    var count = await svc.ResetForGenerationAsync("v0.502-newgen");
+    var count = await svc.ResetForGenerationAsync("v0.502-newgen", 0);
 
     await Assert.That(count).IsGreaterThanOrEqualTo(1)
       .Because("at least our seeded row should be eligible for the new generation");

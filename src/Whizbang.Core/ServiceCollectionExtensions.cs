@@ -151,6 +151,13 @@ public static class ServiceCollectionExtensions {
     services.TryAddEnumerable(
       ServiceDescriptor.Singleton<IHostedService, Whizbang.Core.Diagnostics.InertConcurrencyStartupReporter>());
 
+    // #587: runtime re-emission cascade diagnostic — fires at the dispatcher's publish seam.
+    // Nullable dependencies throughout: a host without the registry or metrics stays inert.
+    services.TryAddSingleton(sp => new Whizbang.Core.Observability.ReEmissionDiagnostic(
+      sp.GetService<Whizbang.Core.Messaging.IReceptorRegistryQuery>(),
+      sp.GetService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Observability.ReEmissionDiagnostic>>(),
+      sp.GetService<Whizbang.Core.Observability.DispatcherMetrics>()));
+
     // Coalesce-group resolver: the AOT tag lookup the outbox mint seams consult to stamp
     // tag-bound coalesce groups + max-delay floors. Singleton — it caches per-type-name
     // resolution over the (post-startup immutable) tag registry and bindings. Resolution-time

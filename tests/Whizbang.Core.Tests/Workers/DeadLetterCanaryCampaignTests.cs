@@ -65,7 +65,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) => Task.CompletedTask;
     public int GenerationReplayReturn { get; set; }
-    public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) =>
+    public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) =>
       Task.FromResult(GenerationReplayReturn);
 
     public List<UnstackedDeadLetter> Unstacked { get; set; } = [];
@@ -255,7 +255,7 @@ public sealed class DeadLetterCanaryCampaignTests {
       return Task.CompletedTask;
     }
     public int GenerationReplayReturn { get; set; }
-    public Task<int> ResetForGenerationAsync(string currentGeneration, CancellationToken ct = default) =>
+    public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) =>
       Task.FromResult(GenerationReplayReturn);
     public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) => Task.FromResult(0);
     public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) =>

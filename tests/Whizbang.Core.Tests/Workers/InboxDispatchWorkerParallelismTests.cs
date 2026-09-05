@@ -178,6 +178,7 @@ public class InboxDispatchWorkerParallelismTests {
       Options.Create(new InboxDispatchWorkerOptions { MaxConcurrentDispatch = maxConcurrent }),
       Options.Create(new WorkCoordinatorOptions()),
       NullLogger<InboxDispatchWorker>.Instance,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       lifecycleMessageDeserializer: deserializer,
       receptorRegistry: new FakeReceptorRegistry());
 

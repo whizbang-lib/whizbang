@@ -293,6 +293,15 @@ public static partial class CompositeInboxFanout {
 
     var childHops = _buildLineageHops(composite, source);
     var streamId = _extractStreamId(source);
+    // #596: when the producer recorded each child's own stream, restore it — otherwise the
+    // legacy inherit. Machine-built parallel lists: a count desync is a producer bug.
+    var innerStreams = composite.InnerStreamIds;
+    if (innerStreams is { Count: > 0 } && innerStreams.Count != payloads.Count) {
+      return new FanoutResult(
+        FanoutOutcome.Failed, Array.Empty<InboxMessage>(),
+        $"Raw composite '{compositeTypeName}' carries {innerStreams.Count} inner stream ids for {payloads.Count} payloads — the pairing cannot be preserved.",
+        compositeTypeName);
+    }
     var children = new List<InboxMessage>(payloads.Count);
     for (var i = 0; i < payloads.Count; i++) {
       var wireTypeName = typeNames[i];
@@ -322,8 +331,11 @@ public static partial class CompositeInboxFanout {
       var isEvent = eventTypeProvider is not null
         ? EventTypeMatchingHelper.IsEventType(wireTypeName, eventTypeProvider.GetEventTypes())
         : true;   // raw children come from an origin's EVENT store — event is the safe default
+      var childStreamId = innerStreams is { Count: > 0 } && innerStreams[i] != Guid.Empty
+        ? innerStreams[i]
+        : streamId;
       if (isEvent) {
-        StreamIdGuard.ThrowIfEmpty(streamId, childEnvelope.MessageId.Value, "InboxDispatch.CompositeFanout", wireTypeName);
+        StreamIdGuard.ThrowIfEmpty(childStreamId, childEnvelope.MessageId.Value, "InboxDispatch.CompositeFanout", wireTypeName);
       }
 
       children.Add(new InboxMessage {
@@ -331,7 +343,7 @@ public static partial class CompositeInboxFanout {
         HandlerName = TypeNameFormatter.GetSimpleName(wireTypeName) + "Handler",
         Envelope = childEnvelope,
         EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{wireTypeName}]], Whizbang.Core",
-        StreamId = streamId,
+        StreamId = childStreamId,
         IsEvent = isEvent,
         // Name-first flag derivation — there is no typed payload to fall back to, which is exactly
         // why the catalog stamp (by wire name) is load-bearing here.
