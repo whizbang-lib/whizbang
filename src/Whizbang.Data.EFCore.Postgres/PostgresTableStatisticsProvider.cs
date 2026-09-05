@@ -92,11 +92,25 @@ public sealed class PostgresTableStatisticsProvider(
     // Schema-qualify table names for multi-schema deployments
     var inboxTable = $"{schema}.wh_inbox";
     var outboxTable = $"{schema}.wh_outbox";
+    var deadLettersTable = $"{schema}.wh_dead_letters";
 
+    // Dead letters are a queue like any other, sliced by status because the three
+    // populations mean three different things to an operator: held is quarantine awaiting
+    // a verdict, pending is the recovery backlog, failed is the operator-decision pile.
+    // Emitted even at zero — "no quarantine" must be a positively-reported value, not an
+    // absent series (#683: only hold TRANSITIONS were counted, so a standing five-figure
+    // held population was invisible while the services that happened to be transitioning
+    // were the only ones charted). Recovered rows are receipts, not depth.
     await using var cmd = new NpgsqlCommand($"""
       SELECT 'inbox' as queue_name, COUNT(*) as depth FROM {inboxTable} WHERE processed_at IS NULL
       UNION ALL
       SELECT 'outbox', COUNT(*) FROM {outboxTable} WHERE processed_at IS NULL
+      UNION ALL
+      SELECT 'dead_letters_held', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 2
+      UNION ALL
+      SELECT 'dead_letters_pending', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 0 AND recovered_at IS NULL
+      UNION ALL
+      SELECT 'dead_letters_failed', COUNT(*) FROM {deadLettersTable} WHERE recovery_status = 4
       """, connection);
 
     await using var reader = await cmd.ExecuteReaderAsync(ct);
