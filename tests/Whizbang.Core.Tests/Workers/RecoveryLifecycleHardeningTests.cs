@@ -125,6 +125,7 @@ public sealed class RecoveryLifecycleHardeningTests {
         WaitForIdle = false,
         EnableGenerationReplay = true
       }),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGeneration(),
       provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
 

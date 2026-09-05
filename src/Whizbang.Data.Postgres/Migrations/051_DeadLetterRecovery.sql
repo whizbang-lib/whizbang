@@ -32,14 +32,15 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_dead_letters_due(
   dead_lettered_at   TIMESTAMPTZ,
   recovery_status    INTEGER,
   recovery_attempts  INTEGER,
-  generation         TEXT
+  generation         TEXT,
+  error_fingerprint  VARCHAR(16)
 ) AS $$
 BEGIN
   RETURN QUERY
   SELECT
     dl.dead_letter_id, dl.source_table, dl.source_id, dl.stream_id, dl.message_type,
     dl.failure_reason, dl.attempts_when_dlq, dl.dead_lettered_at,
-    dl.recovery_status, dl.recovery_attempts, dl.generation
+    dl.recovery_status, dl.recovery_attempts, dl.generation, dl.error_fingerprint
   FROM __SCHEMA__.wh_dead_letters dl
   WHERE dl.recovered_at IS NULL
     AND dl.recovery_status NOT IN (2, 4)  -- HoldForReview, PermanentlyFailed
