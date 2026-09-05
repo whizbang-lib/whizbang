@@ -567,4 +567,107 @@ public class HandlerToReceptorTransformerTests {
       .Because("the transform itself still has to happen; deduping the using is not a bail-out");
   }
 
+
+  [Test]
+  public async Task TransformAsync_LocalMessageWithoutMessageBus_IsStillRecognisedAsync() {
+    // Detection checks IMessageBus first and returns early when it finds one, so every file that
+    // mentions both takes the first branch. A file that uses LocalMessage<T> and never names
+    // IMessageBus reaches the second, and that is the one nothing exercised. If detection missed
+    // it the file would be left alone entirely -- LocalMessage<T> does not exist in Whizbang, so
+    // the migrated project would not compile, and the report would say nothing was needed.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class OrderNotifier {
+        public Task Notify(LocalMessage<OrderPlaced> message) {
+          return Task.CompletedTask;
+        }
+      }
+
+      public record OrderPlaced(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderNotifier.cs");
+
+    await Assert.That(result.TransformedCode).Contains("LocalInvokeAsync<")
+      .Because("LocalMessage<T> has no Whizbang equivalent under that name; leaving it renames "
+             + "nothing and the migrated project fails to build");
+    await Assert.That(result.TransformedCode).DoesNotContain("LocalMessage<")
+      .Because("a half-renamed file is worse than an untouched one");
+  }
+
+  [Test]
+  public async Task TransformAsync_FileWithoutTheWolverineUsing_IsLeftUntouchedAsync() {
+    // The transformer walks every .cs file in the tree. Most have nothing to do with Wolverine,
+    // and rewriting usings on one that never imported it would edit code the migration has no
+    // business touching.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using System;
+
+      public class OrderService {
+        public string Describe() => "orders";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
+
+    await Assert.That(result.TransformedCode).IsEqualTo(sourceCode)
+      .Because("a file that never imported Wolverine is not this transformer's business");
+  }
+
+  [Test]
+  public async Task TransformAsync_AttributedClassWithNoHandleMethod_IsSkippedNotCrashedAsync() {
+    // [WolverineHandler] on a class whose handler is named something else, or not written yet.
+    // The transformer has nothing to convert and must move on: throwing here would abort the
+    // whole file, losing the conversions it had already made for the classes around it.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Wolverine;
+      using Wolverine.Attributes;
+
+      [WolverineHandler]
+      public class OrderHandler {
+        public Task Process(OrderPlaced message) {
+          return Task.CompletedTask;
+        }
+      }
+
+      public record OrderPlaced(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderHandler.cs");
+
+    await Assert.That(result.TransformedCode).Contains("OrderHandler")
+      .Because("the class survives; there was simply no Handle method to convert");
+    await Assert.That(async () => await transformer.TransformAsync(sourceCode, "OrderHandler.cs"))
+      .ThrowsNothing()
+      .Because("a class the transformer cannot convert must not abort the file");
+  }
+
+  [Test]
+  public async Task TransformAsync_ClassOnAnUnrelatedBase_IsNotTreatedAsAHandlerAsync() {
+    // Base-class detection looks for IHandle<T>. A class with some other base sits in the same
+    // file and must come through unchanged -- converting it would produce a receptor for a type
+    // that never handled anything.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class OrderReportBuilder : ReportBuilderBase {
+        public void Build() { }
+      }
+
+      public class ReportBuilderBase { }
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderReportBuilder.cs");
+
+    await Assert.That(result.TransformedCode).DoesNotContain("IReceptor<")
+      .Because("only an IHandle<T> base makes a class a handler");
+    await Assert.That(result.TransformedCode).Contains("ReportBuilderBase")
+      .Because("the unrelated base class survives untouched");
+  }
+
 }
