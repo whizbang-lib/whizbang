@@ -750,6 +750,38 @@ Traced rather than assumed, because this file is 94% covered and the remainder i
 The lesson repeated from category O: "needs a broker" is worth checking per block. Two of these
 three are genuinely gated; the third is not, it is just inconvenient.
 
+## W. Wall-clock latency budgets cannot hold under the parallel coverage run
+
+Run 12 came back PARTIAL (41 of 46 projects) because
+`CommitToPerspectiveVisible_FencedByOpenSameDbTransaction_StillLandsUnder1500msAsync` took
+10.5 s against a 1500 ms budget. Everything after it was the usual --fail-fast cancellation
+cascade.
+
+    isolation, 3 runs : 3 clean
+    46-project run    : 7x over budget
+
+The test measures a real end-to-end pipeline -- wh_committed wake, stamp, instance-routed
+doorbell, claim, drain window, apply -- and asserts it lands under 1500 ms. That is a production
+latency characteristic being measured on a machine running 46 test projects at once, where the
+workers in that pipeline are competing for the same cores.
+
+**Not a defect, and not something to quietly weaken.** The assertion guards something real: the
+comment says anything near 5 s means visibility has quantized to the backstop cadence, which is
+exactly the regression it exists to catch. Raising the budget until it stops failing would
+remove the signal.
+
+Options, none of which is obviously right and all of which are a call for the maintainer:
+
+- `[NotInParallel]` reduces in-assembly contention but not the other 45 projects, so it would
+  likely still fail.
+- Move latency assertions to a category excluded from the parallel coverage run and run them
+  on their own. Keeps the signal, costs a separate run.
+- Measure the fenced operation rather than total elapsed wall time, if the pipeline exposes a
+  point to measure between. That narrows what the budget covers, which may or may not still
+  catch the quantization it is aimed at.
+
+Recorded rather than changed. It is a test-strategy decision about what the budget is for.
+
 ## D. Excluded from the measurement by construction
 
 - `*.g.cs`, `obj/`, `.whizbang/` and `.whizbang-generated/` — source-generator output.

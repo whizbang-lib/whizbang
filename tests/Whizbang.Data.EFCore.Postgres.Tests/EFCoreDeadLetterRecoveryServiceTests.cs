@@ -226,4 +226,49 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     var result = await cmd.ExecuteScalarAsync();
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
   }
+
+  [Test]
+  public async Task EveryReadPath_OpensAClosedConnectionItselfAsync(CancellationToken cancellationToken) {
+    // Every method here begins with the same two lines: if the connection is not open, open it.
+    // Nothing exercised them, because the helper above pre-opens the connection before seeding,
+    // so by the time a service method runs the work is already done for it.
+    //
+    // That is the fixture's convenience, not production's guarantee. EF Core hands back whatever
+    // connection the context is holding, and after a scope ends or the pool recycles one, that
+    // connection is closed. A method that skipped the open would throw InvalidOperationException
+    // on the very first command -- and only in the states the tests never set up.
+    //
+    // Closing before each call is what makes the assertion about the service rather than about
+    // the fixture.
+    await using var ctx = CreateDbContext();
+    var svc = _newService(ctx);
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+
+    async Task<T> WithClosedConnectionAsync<T>(Func<Task<T>> call) {
+      if (conn.State != System.Data.ConnectionState.Closed) {
+        await conn.CloseAsync();
+      }
+      // Without this the test could pass having proved nothing: if the connection were still
+      // open here, the guard under test would be skipped and every call would succeed for the
+      // ordinary reason.
+      await Assert.That(conn.State).IsEqualTo(System.Data.ConnectionState.Closed)
+        .Because("the point of this test is the state the service is handed");
+      return await call();
+    }
+
+    // Each of these is a distinct copy of the open-if-closed guard, so each has to be driven.
+    var due = await WithClosedConnectionAsync(() => svc.FetchDueAsync(1, cancellationToken));
+    var purged = await WithClosedConnectionAsync(() => svc.PurgeUndeliverableHeldAsync(cancellationToken));
+    var cohorts = await WithClosedConnectionAsync(() => svc.ListHeldCohortsAsync(cancellationToken));
+    var unstacked = await WithClosedConnectionAsync(() => svc.FetchUnstackedAsync(1, cancellationToken));
+
+    // The values are whatever the empty fixture holds; that they were produced at all is the
+    // point -- a skipped open throws before returning anything.
+    await Assert.That(due).IsNotNull()
+      .Because("a closed connection must be opened by the method, not by its caller");
+    await Assert.That(purged).IsGreaterThanOrEqualTo(0);
+    await Assert.That(cohorts).IsNotNull();
+    await Assert.That(unstacked).IsNotNull();
+  }
+
 }
