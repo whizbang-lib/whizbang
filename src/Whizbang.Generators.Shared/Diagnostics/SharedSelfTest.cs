@@ -44,15 +44,12 @@ public static class SharedSelfTest {
     // Byte count, not character count: a name inside the character limit can still exceed the
     // byte limit, and PostgreSQL's NAMEDATALEN is counted in bytes. Getting this wrong truncates
     // identifiers in the database while the generator reports success.
-    if (IdentifierValidation.GetByteCount("abc") != 3) {
-      failures.Add("GetByteCount: ASCII is one byte per character");
-    }
-    if (IdentifierValidation.GetByteCount("é") != 2) {
-      failures.Add("GetByteCount: a two-byte character must count as two, not one");
-    }
-    if (IdentifierValidation.GetByteCount("") != 0) {
-      failures.Add("GetByteCount: an empty identifier is zero bytes");
-    }
+    _expect(failures, IdentifierValidation.GetByteCount("abc") == 3,
+      "GetByteCount: ASCII is one byte per character");
+    _expect(failures, IdentifierValidation.GetByteCount("\u00e9") == 2,
+      "GetByteCount: a two-byte character must count as two, not one");
+    _expect(failures, IdentifierValidation.GetByteCount("") == 0,
+      "GetByteCount: an empty identifier is zero bytes");
 
     // Each validator answers null when the name fits and a message naming the provider when it
     // does not. A copy that answered the other way round would either reject every valid name or
@@ -69,39 +66,46 @@ public static class SharedSelfTest {
       IdentifierValidation.ValidateIndexName("a_very_long_index_name", limits));
 
     // The boolean companions must agree with the validators they wrap.
-    if (!IdentifierValidation.IsTableNameValid("orders", limits)) {
-      failures.Add("IsTableNameValid disagreed with ValidateTableName on a valid name");
-    }
-    if (IdentifierValidation.IsTableNameValid("a_very_long_table_name", limits)) {
-      failures.Add("IsTableNameValid disagreed with ValidateTableName on an oversized name");
-    }
-    if (!IdentifierValidation.IsColumnNameValid("id", limits)) {
-      failures.Add("IsColumnNameValid disagreed with ValidateColumnName on a valid name");
-    }
-    if (IdentifierValidation.IsColumnNameValid("a_very_long_column_name", limits)) {
-      failures.Add("IsColumnNameValid disagreed with ValidateColumnName on an oversized name");
-    }
-    if (!IdentifierValidation.IsIndexNameValid("ix_id", limits)) {
-      failures.Add("IsIndexNameValid disagreed with ValidateIndexName on a valid name");
-    }
-    if (IdentifierValidation.IsIndexNameValid("a_very_long_index_name", limits)) {
-      failures.Add("IsIndexNameValid disagreed with ValidateIndexName on an oversized name");
-    }
+    _expect(failures, IdentifierValidation.IsTableNameValid("orders", limits),
+      "IsTableNameValid disagreed with ValidateTableName on a valid name");
+    _expect(failures, !IdentifierValidation.IsTableNameValid("a_very_long_table_name", limits),
+      "IsTableNameValid disagreed with ValidateTableName on an oversized name");
+    _expect(failures, IdentifierValidation.IsColumnNameValid("id", limits),
+      "IsColumnNameValid disagreed with ValidateColumnName on a valid name");
+    _expect(failures, !IdentifierValidation.IsColumnNameValid("a_very_long_column_name", limits),
+      "IsColumnNameValid disagreed with ValidateColumnName on an oversized name");
+    _expect(failures, IdentifierValidation.IsIndexNameValid("ix_id", limits),
+      "IsIndexNameValid disagreed with ValidateIndexName on a valid name");
+    _expect(failures, !IdentifierValidation.IsIndexNameValid("a_very_long_index_name", limits),
+      "IsIndexNameValid disagreed with ValidateIndexName on an oversized name");
 
     return failures;
   }
 
-  private static void _expectValid(List<string> failures, string kind, string? result) {
-    if (result != null) {
-      failures.Add($"{kind}: a name within the limit was rejected -- {result}");
+  /// <summary>
+  /// Records <paramref name="whatFailed"/> unless <paramref name="holds"/>.
+  /// </summary>
+  /// <remarks>
+  /// Every check reports through this one line so that the arm which only runs when a merged copy
+  /// has diverged exists once per host rather than once per check. That arm is unreachable in a
+  /// build whose copies agree -- which is the only build that ships -- so each duplicate of it was
+  /// a permanently uncovered line, multiplied by the five hosts this assembly is merged into.
+  /// </remarks>
+  private static void _expect(List<string> failures, bool holds, string whatFailed) {
+    if (!holds) {
+      failures.Add(whatFailed);
     }
   }
 
+  private static void _expectValid(List<string> failures, string kind, string? result) =>
+    _expect(failures, result == null, $"{kind}: a name within the limit was rejected -- {result}");
+
   private static void _expectRejected(List<string> failures, string kind, string? result) {
-    if (result == null) {
-      failures.Add($"{kind}: a name over the limit was accepted");
-    } else if (result.IndexOf("SelfTest", System.StringComparison.Ordinal) < 0) {
-      failures.Add($"{kind}: the message must name the provider so the author knows which limit -- got '{result}'");
-    }
+    _expect(failures, result != null, $"{kind}: a name over the limit was accepted");
+    // Skipped when the name was wrongly accepted at all -- the line above already reported that,
+    // and a second message about a missing provider name in a null result would only mislead.
+    _expect(failures,
+      result == null || result.IndexOf("SelfTest", System.StringComparison.Ordinal) >= 0,
+      $"{kind}: the message must name the provider so the author knows which limit -- got '{result}'");
   }
 }

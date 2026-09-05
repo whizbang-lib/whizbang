@@ -661,4 +661,61 @@ public class ProjectionToPerspectiveTransformerTests {
       .Because("the unrelated base class survives untouched");
   }
 
+
+  [Test]
+  public async Task TransformAsync_ApplyAlongsideCreate_SuggestsMustExistAsync() {
+    // With a Create method present, Apply handles updates only -- so it runs against a model that
+    // is assumed to exist. [MustExist] generates the null check that assumption needs. Migrating
+    // silently leaves an Apply that dereferences whatever Create did not make, and the failure
+    // surfaces as a null reference inside the perspective rather than as a migration gap.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public Order Create(OrderCreated @event) => new Order { Id = @event.OrderId };
+
+        public void Apply(OrderShipped @event, Order state) {
+          state.Shipped = true;
+        }
+      }
+
+      public class Order { public string Id { get; set; } public bool Shipped { get; set; } }
+      public record OrderCreated(string OrderId);
+      public record OrderShipped(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderProjection.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("MustExist", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("Apply beside Create assumes the model exists; without the attribute nothing "
+             + "generates that check and the assumption fails at runtime instead");
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDelete_WarnsItBecomesModelActionAsync() {
+    // Marten signals deletion with a bool from ShouldDelete. Whizbang returns a ModelAction, so
+    // the signature changes shape rather than name -- a rename alone would leave a method whose
+    // return value the framework ignores, and the row would silently never be deleted.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public bool ShouldDelete(OrderCancelled @event, Order state) => true;
+      }
+
+      public class Order { public string Id { get; set; } }
+      public record OrderCancelled(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderProjection.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("ModelAction", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the return type changes shape, not just the name; a silent rename leaves the "
+             + "framework ignoring the result and the row never being deleted");
+  }
+
 }

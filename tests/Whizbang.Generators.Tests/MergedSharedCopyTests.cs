@@ -2,6 +2,7 @@ extern alias core_generators;
 extern alias fastendpoints_generators;
 extern alias hotchocolate_generators;
 extern alias postgres_generators;
+extern alias shared;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
@@ -51,6 +52,11 @@ public class MergedSharedCopyTests {
       typeof(hotchocolate_generators::Whizbang.Transports.HotChocolate.Generators.GraphQLLensTypeGenerator).Assembly),
     new MergedHost("Whizbang.Transports.FastEndpoints.Generators",
       typeof(fastendpoints_generators::Whizbang.Transports.FastEndpoints.Generators.RestLensEndpointGenerator).Assembly),
+    // The source assembly itself. It is the reference the four copies are supposed to match, so
+    // running the same checks against it is what makes "identical" mean anything -- and without
+    // it the self-test below is dead code in the one assembly that actually ships it as source.
+    new MergedHost("Whizbang.Generators.Shared",
+      typeof(shared::Whizbang.Generators.Shared.Diagnostics.SharedSelfTest).Assembly),
   ];
 
   private static MethodInfo _method(Assembly assembly, string name) {

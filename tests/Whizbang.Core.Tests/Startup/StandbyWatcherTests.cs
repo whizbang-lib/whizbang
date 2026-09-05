@@ -81,10 +81,43 @@ public class StandbyWatcherTests {
 
   /// <summary>The posted request, which the migrator withdraws when the handshake ends.</summary>
   private sealed class StandbyCoordinator(StandbyRequest? request) : IWorkCoordinator {
+    private readonly TaskCompletionSource _secondRead =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _readEntered =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _reads;
+
     public StandbyRequest? Request { get; set; } = request;
 
-    public Task<StandbyRequest?> GetStandbyRequestAsync(CancellationToken cancellationToken = default)
-      => Task.FromResult(Request);
+    /// <summary>Set to make the next standby read throw, as a transient database error would.</summary>
+    public bool FailNextRead { get; set; }
+
+    /// <summary>Completes once the watcher has read the ledger a second time.</summary>
+    public Task SecondRead => _secondRead.Task;
+
+    /// <summary>Set to make a read hang until the watcher is cancelled.</summary>
+    public bool BlockNextRead { get; set; }
+
+    /// <summary>Completes once a blocking read has begun.</summary>
+    public Task ReadEntered => _readEntered.Task;
+
+    /// <summary>How many times the watcher has consulted the standby ledger.</summary>
+    public int Reads => Volatile.Read(ref _reads);
+
+    public async Task<StandbyRequest?> GetStandbyRequestAsync(CancellationToken cancellationToken = default) {
+      if (Interlocked.Increment(ref _reads) >= 2) {
+        _secondRead.TrySetResult();
+      }
+      if (FailNextRead) {
+        FailNextRead = false;
+        throw new InvalidOperationException("transient standby-ledger read failure");
+      }
+      if (BlockNextRead) {
+        _readEntered.TrySetResult();
+        await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+      }
+      return Request;
+    }
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
@@ -421,27 +454,157 @@ public class StandbyWatcherTests {
   public async Task ExecuteAsync_CanceledBeforeSchemaReady_ReturnsCleanlyAsync(
       CancellationToken testToken) {
     // A host that fails during migration stops everything it built. The watcher reads the
-    // standby table, which may not exist yet.
+    // standby table, which may not exist yet, so it waits on the schema gate first.
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => new StandbyCoordinator(null));
     await using var sp = services.BuildServiceProvider();
 
+    var gate = new BlockingSchemaGate();
     var watcher = new StandbyWatcher(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new RecordingLifecycle(),
       new RecordingHostLifetime(),
       new StubInstanceProvider(),
-      new SchemaReadyGate(),   // never marked ready
+      gate,
       versionProvider: new StubVersionProvider("1.0.0"));
 
     using var cts = new CancellationTokenSource();
     await watcher.StartAsync(cts.Token);
+    // StartAsync returning does not mean ExecuteAsync has run -- the host starts it on the thread
+    // pool. Cancelling before it reaches the gate would leave a task that was cancelled before it
+    // began, and "not faulted" is true of that too, so the assertions below would hold without the
+    // watcher ever having handled anything.
+    await gate.WaitEntered.WaitAsync(testToken);
     var executeTask = watcher.ExecuteTask;
     await cts.CancelAsync();
     await watcher.StopAsync(CancellationToken.None);
 
-    await Assert.That(executeTask!.IsCompleted).IsTrue();
-    await Assert.That(executeTask.IsFaulted).IsFalse()
-      .Because("a faulted watcher turns an ordinary shutdown into a reported crash");
+    await Assert.That(executeTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the watcher absorbs the cancellation and returns; a faulted or cancelled task "
+             + "turns an ordinary shutdown into a reported crash");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_ATickThatThrows_DoesNotKillTheWatcherAsync(
+      CancellationToken testToken) {
+    // The watcher is the only thing that answers a standby request. If one failed ledger read
+    // ended its loop, the instance would go on serving against a schema another node is about to
+    // migrate underneath it, and nothing would say so -- the host still sees a running service.
+    // A transient read failure must cost one tick, not the watcher.
+    var coordinator = new StandbyCoordinator(null) { FailNextRead = true };
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    await using var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var watcher = new StandbyWatcher(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new RecordingLifecycle(),
+      new RecordingHostLifetime(),
+      new StubInstanceProvider(),
+      gate,
+      versionProvider: new StubVersionProvider("1.0.0"),
+      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
+
+    using var cts = new CancellationTokenSource();
+    await watcher.StartAsync(cts.Token);
+
+    // The second read can only happen if the loop survived the first one throwing.
+    await coordinator.SecondRead.WaitAsync(testToken);
+
+    await cts.CancelAsync();
+    await watcher.StopAsync(CancellationToken.None);
+
+    await Assert.That(watcher.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the loop swallows a tick failure and keeps watching, so shutdown is still clean");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_WithNoInstanceIdentity_NeverConsultsTheLedgerAsync(
+      CancellationToken testToken) {
+    // Standing by is answering a request addressed to a specific instance. Without an identity
+    // this process cannot be the one being asked, so acting on a request it found would mean
+    // taking itself out of rotation on the strength of someone else's handshake.
+    var coordinator = new StandbyCoordinator(_request());
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    await using var sp = services.BuildServiceProvider();
+
+    var lifecycle = new RecordingLifecycle();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var watcher = new StandbyWatcher(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      lifecycle,
+      new RecordingHostLifetime(),
+      instanceProvider: null!,
+      gate,
+      versionProvider: new StubVersionProvider("1.0.0"));
+
+    using var cts = new CancellationTokenSource();
+    await watcher.StartAsync(cts.Token);
+    await watcher.ExecuteTask!.WaitAsync(testToken);
+    await watcher.StopAsync(CancellationToken.None);
+
+    await Assert.That(coordinator.Reads).IsEqualTo(0)
+      .Because("an instance with no identity has no handshake to participate in, and a live "
+             + "request sitting in the ledger is not its to answer");
+    await Assert.That(lifecycle.Advanced).IsEmpty()
+      .Because("standing down here would take a healthy instance out of rotation on a request "
+             + "that was never addressed to it");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CanceledMidTick_EndsTheLoopRatherThanRetryingAsync(
+      CancellationToken testToken) {
+    // Shutdown lands while a ledger read is in flight, which is the common case: the read is where
+    // the loop spends its time. The cancellation must end the loop, not fall into the guardian
+    // catch that treats a tick failure as transient -- that would log an error and retry on every
+    // ordinary shutdown, teaching operators that watcher errors are normal.
+    var coordinator = new StandbyCoordinator(null) { BlockNextRead = true };
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    await using var sp = services.BuildServiceProvider();
+
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var watcher = new StandbyWatcher(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new RecordingLifecycle(),
+      new RecordingHostLifetime(),
+      new StubInstanceProvider(),
+      gate,
+      versionProvider: new StubVersionProvider("1.0.0"),
+      options: new StandbyWatcherOptions { PollInterval = TimeSpan.FromMilliseconds(10) });
+
+    using var cts = new CancellationTokenSource();
+    await watcher.StartAsync(cts.Token);
+    await coordinator.ReadEntered.WaitAsync(testToken);
+    await cts.CancelAsync();
+    await watcher.StopAsync(CancellationToken.None);
+
+    await Assert.That(watcher.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("a cancellation arriving mid-tick is a shutdown, not a tick failure");
+  }
+
+  /// <summary>A schema gate that never opens, and says when the watcher started waiting on it.</summary>
+  private sealed class BlockingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _waitEntered =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the watcher has actually reached the gate.</summary>
+    public Task WaitEntered => _waitEntered.Task;
+
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _waitEntered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+    }
   }
 }

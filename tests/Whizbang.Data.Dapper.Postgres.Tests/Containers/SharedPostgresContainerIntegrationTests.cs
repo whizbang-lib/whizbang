@@ -221,7 +221,7 @@ public class SharedPostgresContainerIntegrationTests {
     // Cleanup - drop the test database
     await connection.CloseAsync();
     NpgsqlConnection.ClearAllPools();
-    await using var dropCmd = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{dbName}\"", adminConn);
+    await using var dropCmd = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{dbName}\" WITH (FORCE)", adminConn);
     await dropCmd.ExecuteNonQueryAsync(cancellationToken);
   }
 }

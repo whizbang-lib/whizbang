@@ -124,17 +124,36 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
         await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
         await adminConnection.OpenAsync();
 
-        // Terminate connections to the test database
-        await adminConnection.ExecuteAsync($@"
-          SELECT pg_terminate_backend(pg_stat_activity.pid)
-          FROM pg_stat_activity
-          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
-          AND pid <> pg_backend_pid()");
+        // Return this database's pooled sessions before asking PostgreSQL to drop it. Npgsql
+        // pools per connection string, and a pooled session that reconnects in the gap between
+        // terminating backends and issuing the DROP is enough to make the DROP fail -- the two
+        // statements race each other. Clearing the pool removes the reconnect.
+        NpgsqlConnection.ClearPool(new NpgsqlConnection(ConnectionString));
 
-        // Drop the database
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        // WITH (FORCE) terminates remaining sessions and drops in one step instead of two racing
+        // ones. Without it these drops fail often enough to matter: a shared container was found
+        // holding 71 leaked test databases after two hours, and the cost is not just disk. The
+        // same suite slowed from 6m52s to 16m37s as they accumulated, and every extra database
+        // brings backends whose open transactions hold the cluster's cleanup horizon back --
+        // which is what makes VACUUM FULL reclaim nothing and produced the flake in issue #671.
+        //
+        // Retried because FORCE is not quite atomic against an arriving connection: a background
+        // worker the test started can reconnect between the terminate and the drop, and the drop
+        // then fails with the database still in use. One pass left 21 databases behind across a
+        // 2,675-test run; the ones that survive are droppable moments later, so what is needed is
+        // another attempt rather than a different statement.
+        for (var attempt = 1; ; attempt++) {
+          try {
+            await adminConnection.ExecuteAsync(
+              $"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
+            break;
+          } catch when (attempt < 3) {
+            NpgsqlConnection.ClearPool(new NpgsqlConnection(ConnectionString));
+            await Task.Delay(TimeSpan.FromMilliseconds(150));
+          }
+        }
       } catch {
-        // Ignore cleanup errors - the database will be cleaned up when the container stops
+        // Still swallowed: a teardown failure must not mask the result of the test that just ran.
       }
 
       _testDatabaseName = null;

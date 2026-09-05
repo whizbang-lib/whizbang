@@ -221,4 +221,93 @@ public class BacklogAgeDutyTests {
     public Task<IReadOnlyList<BacklogSample>> PeekAsync(CancellationToken cancellationToken) =>
       Task.FromException<IReadOnlyList<BacklogSample>>(new InvalidOperationException("management plane down"));
   }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task WhenDisabled_TheDutyNeverTouchesTheManagementPlaneAsync(
+      CancellationToken testToken) {
+    // Disabled has to mean silent, not merely "reports nothing". Each peek is a management
+    // operation against the broker, and a duty that kept issuing them while switched off would
+    // spend a namespace's request budget on readings nobody can see.
+    var peek = new SignallingPeek([]);
+    var worker = new BacklogAgeWorker(
+      [peek], [],
+      Options.Create(new BacklogAgeOptions { Enabled = false }),
+      new BacklogAgeState(), _metrics(), NullLogger<BacklogAgeWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.ExecuteTask!.WaitAsync(testToken);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(peek.Peeks).IsEqualTo(0)
+      .Because("a disabled duty must issue no management operations at all, not just withhold "
+             + "the gauges it would have produced from them");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task WithNothingWired_TheDutyExitsInsteadOfTickingForeverAsync(
+      CancellationToken testToken) {
+    // No transports and no ops-rate sources means every tick would peek nothing and publish
+    // nothing. Parking a timer on that is a hosted service that looks alive and observes
+    // nothing -- indistinguishable, from the outside, from one that is working.
+    var worker = new BacklogAgeWorker(
+      [], [],
+      Options.Create(new BacklogAgeOptions()),
+      new BacklogAgeState(), _metrics(), NullLogger<BacklogAgeWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.ExecuteTask!.WaitAsync(testToken);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("with nothing to observe the duty returns rather than holding a timer open");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task TheDutyKeepsPeeking_NotOnlyOnceAsync(CancellationToken testToken) {
+    // A backlog-age detector that peeks once and stops is the exact failure this arc keeps
+    // re-learning: it reports healthy forever, because the reading that would have degraded
+    // health is never taken. Only a second peek proves the cadence, not just the first pass.
+    var peek = new SignallingPeek([]);
+    var worker = new BacklogAgeWorker(
+      [peek], [],
+      Options.Create(new BacklogAgeOptions { Interval = TimeSpan.FromMilliseconds(20) }),
+      new BacklogAgeState(), _metrics(), NullLogger<BacklogAgeWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await peek.SecondPeek.WaitAsync(testToken);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("shutdown arrives while the loop is parked on its timer, and a duty that faulted "
+             + "there would turn every ordinary deploy into a reported crash");
+  }
+
+  /// <summary>A peek that counts passes and reports when the duty has run more than one.</summary>
+  private sealed class SignallingPeek(IReadOnlyList<BacklogSample> samples) : IBacklogPeek {
+    private readonly TaskCompletionSource _secondPeek =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _peeks;
+
+    public string TransportName => "test";
+
+    /// <summary>Management operations issued so far.</summary>
+    public int Peeks => Volatile.Read(ref _peeks);
+
+    /// <summary>Completes once the duty has peeked a second time, proving the loop repeats.</summary>
+    public Task SecondPeek => _secondPeek.Task;
+
+    public Task<IReadOnlyList<BacklogSample>> PeekAsync(CancellationToken cancellationToken) {
+      if (Interlocked.Increment(ref _peeks) >= 2) {
+        _secondPeek.TrySetResult();
+      }
+      return Task.FromResult(samples);
+    }
+  }
 }
