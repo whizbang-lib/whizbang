@@ -1887,6 +1887,22 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
 
   /// <summary>
+  /// Reactive orphan disposal (#679). When <see cref="GetStreamEventsAsync"/> returns nothing
+  /// for a leased stream, its rows may be orphaned — their source event is absent from the
+  /// event store, so they can never project and would re-claim forever. This disposes such
+  /// rows ON CONTACT for the given streams, scoped to this instance's leases and keyed on
+  /// <paramref name="maxAttempts"/>: a row attempted that many times with no surviving event is
+  /// unambiguously an orphan, so attempts (not age) are the safety. Returns the count reaped.
+  /// Default is a no-op for coordinators that do not back a relational event store.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> streamIds,
+    int maxAttempts,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
   /// Slice 26.6b — returns the local service's stable identity from
   /// <c>wh_service_config</c>. Cached by callers (publish path) at startup; queried
   /// once per process. Default implementation returns <see cref="Guid.Empty"/> for

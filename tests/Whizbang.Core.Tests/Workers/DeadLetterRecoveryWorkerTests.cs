@@ -928,6 +928,77 @@ public class DeadLetterRecoveryWorkerTests {
              + "earns a trickle, and the full batch waits for genuine settledness");
   }
 
+  [Test]
+  public async Task AdaptiveBatch_SettledScans_RampFromFloorTowardCeilingAsync() {
+    // The settled-path scan batch is sized by the AIMD controller (AdaptiveStreamBatch): it
+    // starts at MinScanBatchSize and grows by ScanBatchIncreaseStep on each clean, saturated
+    // scan up to ScanBatchSize. A high ceiling is safe precisely because the batch ramps into
+    // it instead of bursting cold.
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      WaitForIdle = false,
+      EnableGenerationReplay = false,
+      AdaptiveScanBatchEnabled = true,
+      MinScanBatchSize = 2,          // floor / starting width
+      ScanBatchIncreaseStep = 3,     // additive growth per clean saturated scan
+      ScanBatchSize = 100,           // ceiling
+    };
+    var listener = new FakeNotificationListener();
+    var (worker, svc) = _newWorker(options, listener: listener);
+
+    // Scan 1 requests the floor (2). Saturate it so the controller grows: return 2 recoverable rows.
+    svc.FetchBatches.Enqueue([_entry(), _entry()]);
+    // Scan 2 should request floor+step (5). Saturate again (return 5).
+    svc.FetchBatches.Enqueue([_entry(), _entry(), _entry(), _entry(), _entry()]);
+    // Scan 3 just needs to happen so we can read the post-growth requested width.
+    svc.FetchBatches.Enqueue([_entry()]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Wake the worker between scans instead of waiting on the minute backstop — a DeadLetterReady
+    // signal completes the wake race so the next scan runs immediately.
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(30));
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(2).WaitAsync(TimeSpan.FromSeconds(30));
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(3).WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    var sizes = svc.FetchedBatchSizes.ToArray();
+    await Assert.That(sizes[0]).IsEqualTo(2)
+      .Because("a freshly started worker has no drain feedback yet, so it begins at the floor");
+    await Assert.That(sizes[1]).IsEqualTo(5)
+      .Because("scan 1 returned a full, clean batch (saturated, zero churn) — the controller "
+             + "grows by exactly one additive step");
+    await Assert.That(sizes[2]).IsEqualTo(8)
+      .Because("a second clean saturated scan grows by another step — the batch ramps toward "
+             + "the ceiling rather than bursting to it");
+  }
+
+  [Test]
+  public async Task AdaptiveBatch_Disabled_UsesFixedScanBatchSizeAsync() {
+    // Legacy escape hatch: with adaptivity off, every settled scan requests the fixed ScanBatchSize.
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      WaitForIdle = false,
+      EnableGenerationReplay = false,
+      AdaptiveScanBatchEnabled = false,
+      ScanBatchSize = 137,
+    };
+    var (worker, svc) = _newWorker(options);
+    svc.FetchBatches.Enqueue([_entry()]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(30));
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.FetchedBatchSizes.TryDequeue(out var first)).IsTrue();
+    await Assert.That(first).IsEqualTo(137)
+      .Because("with the controller off, the fixed ScanBatchSize is used every settled scan");
+  }
 
   [Test]
   [Timeout(30000)]
