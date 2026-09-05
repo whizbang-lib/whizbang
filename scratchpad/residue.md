@@ -1110,3 +1110,19 @@ slowly rather than quickly.
 Next step if picked up: instrument the swallowed catch to record which database failed to drop and
 from which class, then read it off one unattended full run. Bisecting by running classes in
 isolation does not reproduce it and has already been tried.
+
+### AD update: the 21 correlate with suite time, but this is not a controlled measurement
+
+Two observations, one each: the EFCore suite ran **7m25s** starting from a cleared server, and
+**16m14s** starting with the 21 already present on a container that had been up three hours. The
+21 did not grow during the second run -- it ended where it started -- so whatever costs the time
+is the standing population plus whatever else three hours of create/drop churn leaves behind
+(catalog bloat, WAL, autovacuum work spread across more databases).
+
+Recorded as a correlation, not a cause. Confirming it means clearing the server and re-running,
+which is 8-16 minutes for a data point, and nothing downstream currently depends on knowing.
+
+It does not affect CI, where every run gets a fresh container. It affects local runs, and it is
+the reason a local timing drift is worth a look rather than a shrug -- that is how the leak was
+found in the first place.
+
