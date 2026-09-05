@@ -33,7 +33,7 @@ public class ScheduleWorkerTests {
 
   private static (ScheduleWorker Worker, IScheduleClaimer? Claimer) _create(
       TemporalOptions? options = null, ISignalBus? bus = null, IScheduleClaimer? claimer = null, TimeProvider? clock = null,
-      ISchemaReadyGate? gate = null) {
+      ISchemaReadyGate? gate = null, Microsoft.Extensions.Logging.ILogger<ScheduleWorker>? logger = null) {
     var services = new ServiceCollection();
     if (claimer is not null) {
       services.AddSingleton(claimer);
@@ -42,7 +42,7 @@ public class ScheduleWorkerTests {
     var worker = new ScheduleWorker(
       provider.GetRequiredService<IServiceScopeFactory>(),
       Options.Create(options ?? new TemporalOptions()),
-      NullLogger<ScheduleWorker>.Instance,
+      logger ?? NullLogger<ScheduleWorker>.Instance,
       schemaReadyGate: gate ?? Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       signalBus: bus,
       timeProvider: clock);
@@ -60,20 +60,30 @@ public class ScheduleWorkerTests {
 
     /// <summary>When set, the claim throws — exercising the loop's error-swallow branch.</summary>
     public bool Throw { get; set; }
+
+    /// <summary>When set, the claim hangs until the worker is cancelled.</summary>
+    public bool BlockUntilCancelled { get; set; }
     public int Calls => Volatile.Read(ref _calls);
     public Task FirstClaim => _firstClaim.Task;
     public Task SecondClaim => _secondClaim.Task;
 
-    public Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
+    public async Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
       var n = Interlocked.Increment(ref _calls);
       if (n == 1) {
         _firstClaim.TrySetResult();
       } else if (n == 2) {
         _secondClaim.TrySetResult();
       }
-      return Throw
-        ? Task.FromException<int>(new InvalidOperationException("claim blew up"))
-        : Task.FromResult(0);
+      if (BlockUntilCancelled) {
+        // Must propagate the cancellation rather than absorb it: the loop distinguishes a
+        // cancelled claim from a failed one, and a claim that returned normally on shutdown
+        // would exercise neither branch.
+        await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+      }
+      if (Throw) {
+        throw new InvalidOperationException("claim blew up");
+      }
+      return 0;
     }
 
     public Task<DateTimeOffset?> GetNextFireTimeAsync(CancellationToken cancellationToken = default) =>
@@ -83,24 +93,44 @@ public class ScheduleWorkerTests {
   /// <summary>Schema gate that stays closed until <see cref="Open"/> — models a host still migrating.</summary>
   private sealed class ManualSchemaGate : ISchemaReadyGate {
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _waitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes once the worker has actually reached the gate and started waiting.</summary>
+    public Task WaitEntered => _waitEntered.Task;
+
     public bool IsReady => _ready.Task.IsCompleted;
     public void Open() => _ready.TrySetResult();
     public void MarkReady() => Open();
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) => _ready.Task.WaitAsync(cancellationToken);
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _waitEntered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
+    }
   }
 
   // ==================== ExecuteAsync — the BackgroundService drain loop ====================
 
   [Test]
-  public async Task Execute_Disabled_NeverClaimsAndShutsDownCleanlyAsync() {
+  [Timeout(30000)]
+  public async Task Execute_Disabled_ParksWithoutEverClaimingAsync(CancellationToken ct) {
     var claimer = new SignallingClaimer();
-    var (worker, _) = _create(new TemporalOptions { Enabled = false }, claimer: claimer);
+    var log = new _recordingLogger();
+    var (worker, _) = _create(new TemporalOptions { Enabled = false }, claimer: claimer, logger: log);
 
     await worker.StartAsync(CancellationToken.None);
-    await worker.StopAsync(CancellationToken.None);
+    // The host starts ExecuteAsync on the thread pool, so without waiting for the worker to reach
+    // its disabled branch the claim count below is zero for the wrong reason -- a loop that has
+    // not begun has also never claimed.
+    await log.Disabled.WaitAsync(ct);
 
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("a disabled worker parks on its stopping token; returning immediately reads to the "
+             + "host as a BackgroundService that crashed");
     await Assert.That(claimer.Calls).IsEqualTo(0)
       .Because("Enabled=false must park the loop entirely — a non-temporal host must never claim schedules");
+
+    await worker.StopAsync(CancellationToken.None);
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the parked delay absorbs the shutdown rather than surfacing it as a fault");
   }
 
   [Test]
@@ -110,6 +140,7 @@ public class ScheduleWorkerTests {
     var (worker, _) = _create(claimer: claimer, gate: gate);
 
     await worker.StartAsync(CancellationToken.None);
+    await gate.WaitEntered.WaitAsync(TimeSpan.FromSeconds(10));
     await Assert.That(claimer.Calls).IsEqualTo(0)
       .Because("claiming before the schema exists would hit missing tables — the gate must hold the loop");
 
@@ -121,15 +152,43 @@ public class ScheduleWorkerTests {
   }
 
   [Test]
-  public async Task Execute_SchemaGateNeverOpens_CancellationExitsWithoutClaimingAsync() {
+  [Timeout(30000)]
+  public async Task Execute_SchemaGateNeverOpens_CancellationExitsWithoutClaimingAsync(
+      CancellationToken ct) {
     var claimer = new SignallingClaimer();
-    var (worker, _) = _create(claimer: claimer, gate: new ManualSchemaGate());
+    var gate = new ManualSchemaGate();
+    var (worker, _) = _create(claimer: claimer, gate: gate);
 
     await worker.StartAsync(CancellationToken.None);
+    // Observed at the gate first: otherwise "never claimed" is satisfied by a worker that never ran.
+    await gate.WaitEntered.WaitAsync(ct);
     await worker.StopAsync(CancellationToken.None);   // cancels while still waiting on the gate
 
     await Assert.That(claimer.Calls).IsEqualTo(0)
       .Because("shutdown while gated must return cleanly, not claim and not hang");
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("a host stopped mid-migration is an ordinary shutdown, not a worker crash");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task Execute_CancellationDuringAClaim_EndsTheLoopAsync(CancellationToken ct) {
+    // Shutdown lands while a claim is in flight, which is where the drain spends its time. The
+    // loop must treat that as a stop, not as a failed pass -- otherwise every deploy logs a drain
+    // failure and re-arms, and the log stops distinguishing a real claim fault from a rollout.
+    var claimer = new SignallingClaimer { BlockUntilCancelled = true };
+    var log = new _recordingLogger();
+    var (worker, _) = _create(claimer: claimer, logger: log);
+
+    await worker.StartAsync(CancellationToken.None);
+    await claimer.FirstClaim.WaitAsync(ct);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("cancellation mid-claim breaks the loop and the worker stops cleanly");
+    await Assert.That(log.Events).DoesNotContain(TICK_FAILED_EVENT_ID)
+      .Because("a shutdown is not a failed drain pass, and logging it as one on every deploy "
+             + "teaches operators that drain warnings are routine");
   }
 
   [Test]
@@ -289,5 +348,32 @@ public class ScheduleWorkerTests {
     clock.Advance(TimeSpan.FromSeconds(1));                          // now at the fire time
     await Assert.That(worker.TryConsumeWakeForTests()).IsTrue();     // timer rang the doorbell
     await Assert.That(worker.TimerForTests.WakeCount).IsEqualTo(1L);
+  }
+
+  private const int DISABLED_EVENT_ID = 2;
+  private const int TICK_FAILED_EVENT_ID = 3;
+
+  /// <summary>Records the worker's log events, and reports when it announced it was disabled.</summary>
+  private sealed class _recordingLogger : Microsoft.Extensions.Logging.ILogger<ScheduleWorker> {
+    private readonly List<int> _events = [];
+    private readonly TaskCompletionSource _disabled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Event ids seen so far, which is how a test tells one loop exit from another.</summary>
+    public IReadOnlyList<int> Events { get { lock (_events) { return [.. _events]; } } }
+
+    /// <summary>Completes once the worker has announced it is disabled and is parking.</summary>
+    public Task Disabled => _disabled.Task;
+
+    IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
+    public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+    public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_events) { _events.Add(eventId.Id); }
+      if (eventId.Id == DISABLED_EVENT_ID) {
+        _disabled.TrySetResult();
+      }
+    }
   }
 }
