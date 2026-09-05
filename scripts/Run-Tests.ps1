@@ -283,6 +283,7 @@ param(
 
     [bool]$Cleanup = $true,  # Clean up ALL containers after tests (default: true). Use -Cleanup:$false to preserve shared containers
     [switch]$CleanupOnly,  # Only clean up containers, don't run tests
+    [switch]$CountTests,  # Count tests per project and summarize, then exit (no build, no run)
     [switch]$NoBuild,  # Skip building, use existing build artifacts (for CI when artifacts are pre-built)
     [bool]$Fast = $true,  # Disable analyzers, XML docs, and code style enforcement for faster builds. Use -Fast:$false for full analysis
 
@@ -577,15 +578,200 @@ trap {
 }
 
 # Generate coverage report from Cobertura XML files using reportgenerator
+# ==========================================================================
+# Test inventory — statically counts test CASES per project without building.
+# ==========================================================================
+# A declared [Test] method is not the same as a test case. TUnit expands one
+# method into several cases when it carries data:
+#
+#   [Test] alone                     -> 1 case
+#   [Test] + N x [Arguments(...)]    -> N cases  (the [Test] adds none of its own)
+#   [Test] + [MethodDataSource] etc. -> a row count only the run knows
+#
+# So the case count is (plain methods) + (total [Arguments] rows), and the
+# methods backed by a runtime data source are reported separately because no
+# static pass can resolve them. Reporting one blended number would be wrong in
+# whichever direction the reader assumed.
+#
+# Source-generated files are excluded: TUnit emits a metadata class per test
+# under obj/, so counting those would roughly double every figure.
+function _selectFailureSignal {
+    <#
+    .SYNOPSIS
+        Keeps the diagnostic lines from a test run's output, discarding progress noise.
+    .DESCRIPTION
+        TUnit prints a per-test progress line ("[+10771/x1/?0] Suite.dll - TestName (2m 03s)")
+        every few seconds for the whole run. A test that fails early therefore has its failure
+        block -- name, exception, assertion message -- pushed far outside any tail window by the
+        thousands of progress lines that follow it, so the captured output ends up saying only
+        that something failed, never what. Dropping the progress lines first keeps the failure
+        block and the trailing summary, which together are what a reader actually needs.
+    #>
+    param([string[]]$Lines)
+
+    $signal = @($Lines | Where-Object { $_ -notmatch '\[\+\d+/x\d+/\?\d+\]' })
+
+    # Fall back to a plain tail if a runner ever emits nothing but progress lines, so a
+    # failure is never reported with an empty body.
+    if ($signal.Count -eq 0) { return @($Lines | Select-Object -Last 30) }
+
+    if ($signal.Count -le 100) { return $signal }
+
+    # Anchor the head on the FIRST reported failure, not on the first lines of output. Under
+    # --fail-fast one real failure cancels everything still running and each cancelled test
+    # prints its own OperationCanceledException block, so a tail window holds only consequences.
+    # A leading window is no better: the first lines are TUnit's startup banner, which is what a
+    # position-based head actually captured. The failure that explains the run is somewhere in
+    # the middle, and only its content locates it.
+    $firstFailure = -1
+    for ($i = 0; $i -lt $signal.Count; $i++) {
+        if ($signal[$i] -match '^\s*failed\s') { $firstFailure = $i; break }
+    }
+
+    $head = if ($firstFailure -ge 0) {
+        $signal[$firstFailure..([Math]::Min($firstFailure + 24, $signal.Count - 1))]
+    } else {
+        $signal | Select-Object -First 25
+    }
+
+    $tail = @($signal | Select-Object -Last 60)
+    $elided = $signal.Count - $head.Count - $tail.Count
+
+    if ($elided -le 0) { return $signal }
+
+    return @($head) + @("    ... $elided lines elided ...") + $tail
+}
+
+
+function Get-TestInventory {
+    param([string]$RepoRoot, [string[]]$ProjectPaths)
+
+    $rows = @()
+    foreach ($proj in $ProjectPaths) {
+        $dir = Split-Path -Parent $proj
+        $sources = Get-ChildItem -Path $dir -Recurse -Filter "*.cs" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch "[\\/](obj|bin)[\\/]" -and $_.FullName -notmatch "\.whizbang" }
+
+        $methods = 0      # declared [Test] methods
+        $cases = 0        # statically resolvable cases
+        $argRows = 0      # [Arguments] rows
+        $runtime = 0      # methods whose case count is only known at run time
+
+        foreach ($file in $sources) {
+            $lines = @(Get-Content $file.FullName -ErrorAction SilentlyContinue)
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -notmatch '^\s*\[Test\]') { continue }
+                $methods++
+
+                # The attribute block for a method is contiguous and [Test] may sit
+                # anywhere within it, so scan both directions from it.
+                $rows_ = 0
+                $isRuntime = $false
+                for ($j = $i + 1; $j -lt $lines.Count -and $lines[$j] -match '^\s*\['; $j++) {
+                    if ($lines[$j] -match '^\s*\[Arguments') { $rows_++ }
+                    if ($lines[$j] -match '^\s*\[(MethodDataSource|ClassDataSource|MatrixDataSource|Matrix|Repeat)') { $isRuntime = $true }
+                }
+                for ($k = $i - 1; $k -ge 0 -and $lines[$k] -match '^\s*\['; $k--) {
+                    if ($lines[$k] -match '^\s*\[Arguments') { $rows_++ }
+                    if ($lines[$k] -match '^\s*\[(MethodDataSource|ClassDataSource|MatrixDataSource|Matrix|Repeat)') { $isRuntime = $true }
+                }
+
+                if ($isRuntime) { $runtime++ }
+                if ($rows_ -gt 0) { $argRows += $rows_; $cases += $rows_ } else { $cases++ }
+            }
+        }
+
+        if ($methods -gt 0) {
+            $rows += [PSCustomObject]@{
+                Project        = [System.IO.Path]::GetFileNameWithoutExtension($proj)
+                Cases          = $cases
+                Methods        = $methods
+                Arguments      = $argRows
+                RuntimeSources = $runtime
+                Files          = @($sources).Count
+            }
+        }
+    }
+    return $rows
+}
+
+function Write-TestInventory {
+    param([object[]]$Rows)
+
+    if (-not $Rows -or @($Rows).Count -eq 0) {
+        Write-Host "  No test projects matched." -ForegroundColor Yellow
+        return
+    }
+
+    $totalCases   = ($Rows | Measure-Object -Property Cases -Sum).Sum
+    $totalMethods = ($Rows | Measure-Object -Property Methods -Sum).Sum
+    $totalArgs    = ($Rows | Measure-Object -Property Arguments -Sum).Sum
+    $totalRuntime = ($Rows | Measure-Object -Property RuntimeSources -Sum).Sum
+    $totalFiles   = ($Rows | Measure-Object -Property Files -Sum).Sum
+
+    Write-Host ""
+    Write-Host "  Test cases by project ($(@($Rows).Count) projects)" -ForegroundColor Cyan
+    foreach ($row in ($Rows | Sort-Object Cases -Descending)) {
+        $expanded = if ($row.Cases -ne $row.Methods) { " ($($row.Methods) methods)" } else { "" }
+        $rt = if ($row.RuntimeSources -gt 0) { " +$($row.RuntimeSources) runtime" } else { "" }
+        Write-Host ("    {0,-50} {1,6}{2}{3}" -f $row.Project, $row.Cases, $expanded, $rt) -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host ("    {0,-50} {1,6}" -f "TEST CASES (static)", $totalCases) -ForegroundColor Green
+    Write-Host ("    {0,-50} {1,6}" -f "  from declared [Test] methods", $totalMethods) -ForegroundColor Gray
+    Write-Host ("    {0,-50} {1,6}" -f "  expanded from [Arguments] rows", $totalArgs) -ForegroundColor Gray
+    Write-Host ("    {0,-50} {1,6}" -f "Across source files", $totalFiles) -ForegroundColor Gray
+    if ($totalRuntime -gt 0) {
+        Write-Host ""
+        Write-Host "    $totalRuntime method(s) use a runtime data source ([MethodDataSource] /" -ForegroundColor Yellow
+        Write-Host "    [ClassDataSource] / [Matrix] / [Repeat]) and are counted as 1 case each here." -ForegroundColor Yellow
+        Write-Host "    Their real row count is only known once the suite runs, so TEST CASES is a" -ForegroundColor Yellow
+        Write-Host "    lower bound by however many rows those $totalRuntime yield." -ForegroundColor Yellow
+    }
+}
+
+# -CountTests: a static inventory only. No build, no restore, no test run — the
+# whole point is answering "how many test cases does this repo have" in seconds,
+# so it must exit before any of the machinery below it starts.
+if ($CountTests) {
+    Write-Host ""
+    Write-Host "Counting test cases (static source scan, no build)..." -ForegroundColor Cyan
+
+    $countScope = @()
+    $countScope += Get-ChildItem -Path "$repoRoot/tests" -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch "AppHost" } | ForEach-Object { $_.FullName }
+    $countScope += Get-ChildItem -Path "$repoRoot/samples" -Recurse -Filter "*.Tests.csproj" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch "AppHost" } | ForEach-Object { $_.FullName }
+    if ($ProjectFilter) {
+        $countScope = @($countScope | Where-Object { $_ -match $ProjectFilter })
+    }
+
+    Write-TestInventory -Rows (Get-TestInventory -RepoRoot $repoRoot -ProjectPaths $countScope)
+    Write-Host ""
+    exit 0
+}
+
 # Returns hashtable with CoveragePct, TotalLines, TotalCovered, HtmlReport
 function Invoke-CoverageReport {
     param(
         [string]$RepoRoot,
-        [array]$CoberturaFiles
+        [array]$CoberturaFiles,
+        [bool]$RunWasPartial = $false
     )
 
     $reportDir = Join-Path $RepoRoot "coverage-report"
     $reports = ($CoberturaFiles | ForEach-Object { $_.FullName }) -join ";"
+
+    # reportgenerator writes into the target directory without clearing it, so a per-class page
+    # for a class that no longer appears in the run survives from whichever run last emitted it.
+    # Those pages sit beside a freshly written Summary.txt looking equally current, and the ones
+    # that persist longest are the generated files the -filefilters below now exclude -- so the
+    # report kept months-old pages showing tens of thousands of uncovered generated lines that
+    # the summary itself no longer counted. Anything reading the per-class pages as a worklist
+    # is then ranking files that are not in the measurement at all.
+    if (Test-Path $reportDir) {
+        Remove-Item (Join-Path $reportDir "*") -Recurse -Force -ErrorAction SilentlyContinue
+    }
 
     # Generate HTML, TextSummary, and JsonSummary reports.
     # reportgenerator handles all heavy Cobertura XML parsing natively (much faster than PowerShell).
@@ -616,32 +802,51 @@ function Invoke-CoverageReport {
     Write-Host ""
     Write-Host "=====================================" -ForegroundColor Cyan
     Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
+
+    # A project that failed contributes no cobertura file, so its lines leave the denominator
+    # entirely and the percentage is computed over whatever survived. Under --fail-fast a single
+    # failure also skips every project after it. The number that prints is then not comparable to
+    # the previous run's and must not be read as a trend -- it is a different measurement, and
+    # nothing about its format says so.
+    if ($RunWasPartial) {
+        Write-Host "  PARTIAL RUN — not comparable to a complete one." -ForegroundColor Red
+        Write-Host "  Projects failed or were skipped, so their lines are absent from both" -ForegroundColor Red
+        Write-Host "  the covered count and the total. Fix the failure and re-measure." -ForegroundColor Red
+    }
+
     Write-Host "=====================================" -ForegroundColor Cyan
 
-    # Show classes below 100% coverage from JsonSummary (fast — already computed by reportgenerator)
-    $jsonSummaryFile = Join-Path $reportDir "Summary.json"
-    if (Test-Path $jsonSummaryFile) {
-        $jsonSummary = Get-Content $jsonSummaryFile -Raw | ConvertFrom-Json
-        $filesBelow100 = @()
-        foreach ($assembly in $jsonSummary.coverage.assemblies) {
-            foreach ($class in $assembly.classes) {
-                if ($class.coverage -lt 100 -and $class.name -notmatch "Tests?\.") {
-                    $filesBelow100 += @{
-                        Name     = $class.name
-                        Coverage = $class.coverage
-                        Covered  = $class.coveredLines
-                        Total    = $class.coverableLines
-                    }
+    # Show classes below 100% coverage.
+    #
+    # Read from Summary.txt, not Summary.json: this reportgenerator's JsonSummary
+    # reports "classes" as an integer count per assembly, not an array of class
+    # objects. The old traversal walked `$assembly.classes` as a collection and
+    # dereferenced `.coverage` on an int, which under `Set-StrictMode -Version Latest`
+    # throws PropertyNotFoundException -- caught by the script-level trap and surfaced
+    # as a bare "ScriptHalted" pointing at the trap instead of at this block. The
+    # effect was that the whole worklist silently never printed, even on a green run.
+    #
+    # Summary.txt lists each assembly at column 0 and its classes indented two spaces,
+    # each followed by a right-aligned percentage.
+    $textSummaryFile = Join-Path $reportDir "Summary.txt"
+    if (Test-Path $textSummaryFile) {
+        $classesBelow100 = @()
+        foreach ($line in (Get-Content $textSummaryFile)) {
+            # "  Some.Namespace.ClassName                    83.3%"
+            if ($line -match '^\s{2}(\S.*?)\s+([\d.]+)%\s*$') {
+                $className = $Matches[1].Trim()
+                $pct = [double]$Matches[2]
+                if ($pct -lt 100 -and $className -notmatch 'Tests?\.') {
+                    $classesBelow100 += [PSCustomObject]@{ Name = $className; Coverage = $pct }
                 }
             }
         }
 
-        if ($filesBelow100.Count -gt 0) {
+        if ($classesBelow100.Count -gt 0) {
             Write-Host ""
-            Write-Host "Classes below 100% coverage ($($filesBelow100.Count)):" -ForegroundColor Yellow
-            foreach ($file in ($filesBelow100 | Sort-Object { $_.Coverage })) {
-                $uncovered = $file.Total - $file.Covered
-                Write-Host "  $($file.Name) - $($file.Coverage)% ($uncovered uncovered lines)" -ForegroundColor Yellow
+            Write-Host "Classes below 100% coverage ($($classesBelow100.Count)), worst first:" -ForegroundColor Yellow
+            foreach ($cls in ($classesBelow100 | Sort-Object Coverage)) {
+                Write-Host ("  {0,6:N1}%  {1}" -f $cls.Coverage, $cls.Name) -ForegroundColor Yellow
             }
         }
     }
@@ -893,7 +1098,7 @@ try {
             return [PSCustomObject]@{
                 ProjectName = $projName
                 ExitCode = $proc.ExitCode
-                Output = ($output -split "`n" | Select-Object -Last 30) -join "`n"
+                Output = (_selectFailureSignal ($output -split "`n")) -join "`n"
                 TestsPassed = $counts.Passed
                 TestsFailed = $counts.Failed
                 TestsSkipped = $counts.Skipped
@@ -1012,10 +1217,38 @@ try {
                             $tSkipped = [int]$last.Groups[3].Value
                         }
                     }
+                    # Drop TUnit's per-test progress lines before storing the output: they are
+                    # emitted every few seconds for the whole run, so a tail window would evict
+                    # the failure block of a test that failed early and report only that
+                    # something failed, never what.
+                    $outText = @($output | ForEach-Object { $_.ToString() })
+                    $failureSignal = @($outText | Where-Object { $_ -notmatch '\[\+\d+/x\d+/\?\d+\]' })
+                    if ($failureSignal.Count -eq 0) {
+                        $failureSignal = @($outText | Select-Object -Last 30)
+                    } elseif ($failureSignal.Count -gt 100) {
+                        # Anchor the head on the first reported failure. A position-based head
+                        # captures TUnit's startup banner; a tail-only window captures only the
+                        # cancellation storm that the real failure set off.
+                        $firstFailure = -1
+                        for ($i = 0; $i -lt $failureSignal.Count; $i++) {
+                            if ($failureSignal[$i] -match '^\s*failed\s') { $firstFailure = $i; break }
+                        }
+                        $head = if ($firstFailure -ge 0) {
+                            $failureSignal[$firstFailure..([Math]::Min($firstFailure + 24, $failureSignal.Count - 1))]
+                        } else {
+                            $failureSignal | Select-Object -First 25
+                        }
+                        $tail = @($failureSignal | Select-Object -Last 60)
+                        $elided = $failureSignal.Count - $head.Count - $tail.Count
+                        if ($elided -gt 0) {
+                            $failureSignal = @($head) + @("    ... $elided lines elided ...") + $tail
+                        }
+                    }
+
                     $resultsBag.Add([PSCustomObject]@{
                         ProjectName = $projectName
                         ExitCode = $LASTEXITCODE
-                        Output = ($output | Select-Object -Last 30) -join "`n"
+                        Output = $failureSignal -join "`n"
                         TestsPassed = $tPassed
                         TestsFailed = $tFailed
                         TestsSkipped = $tSkipped
@@ -1144,12 +1377,25 @@ try {
                 }
             }
 
-            # Find all cobertura XML files from test output
+            # Find cobertura XML files produced by THIS run.
+            #
+            # TestResults is append-only: every run drops a new GUID-named cobertura file and
+            # nothing ever prunes them. Globbing the directory therefore merges every run since
+            # the folder was last cleaned -- 1,173 files spanning six months, of which 26 belonged
+            # to the current run when this was found. reportgenerator dutifully merges all of it,
+            # so the reported percentage described a union of long-superseded code: classes that
+            # no longer exist in the tree still appeared in the breakdown at 0%, and the coverable
+            # line count ran roughly 2.5x the real figure. A run could be green and the number
+            # still meaningless, which makes the whole worklist untrustworthy.
+            #
+            # Filtering by write time against the run's own start keeps this non-destructive --
+            # nothing is deleted, they are simply not counted as if they were current.
             $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+                Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
+                               $_.LastWriteTimeUtc -ge $script:runStartTime }
 
             if ($coberturaFiles.Count -gt 0) {
-                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($totalProjectsFailed -gt 0)
                 $coveragePct = $coverageResult.CoveragePct
                 $totalLines = $coverageResult.TotalLines
                 $totalCovered = $coverageResult.TotalCovered
@@ -2029,6 +2275,40 @@ try {
                 $totalPassed = $finalPassed
                 $totalFailed = $finalFailed
                 $totalSkipped = $finalSkipped
+
+                # Executed vs declared. The executed figure is the real one: [Arguments],
+                # [MethodDataSource] and [ClassDataSource] each expand one declared method into
+                # several cases, so a source count is always a lower bound. Showing both makes the
+                # expansion visible instead of leaving two different "test counts" in circulation.
+                #
+                # Wrapped in try/catch on purpose: this is a reporting nicety printed AFTER the run
+                # has already succeeded, so it must never be the reason a green run exits non-zero.
+                try {
+                    $executedTotal = $finalPassed + $finalFailed + $finalSkipped
+                    $inventoryScope = @()
+                    $inventoryScope += Get-ChildItem -Path "$repoRoot/tests" -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -notmatch "AppHost" } | ForEach-Object { $_.FullName }
+                    $inventoryScope += Get-ChildItem -Path "$repoRoot/samples" -Recurse -Filter "*.Tests.csproj" -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -notmatch "AppHost" } | ForEach-Object { $_.FullName }
+                    if ($ProjectFilter) {
+                        $inventoryScope = @($inventoryScope | Where-Object { $_ -match $ProjectFilter })
+                    }
+
+                    $declaredRows = Get-TestInventory -RepoRoot $repoRoot -ProjectPaths $inventoryScope
+                    if ($declaredRows) {
+                        $declaredTotal = ($declaredRows | Measure-Object -Property Methods -Sum).Sum
+                        $staticCases  = ($declaredRows | Measure-Object -Property Cases -Sum).Sum
+                        Write-Host ""
+                        Write-Host "Executed: $executedTotal case(s) -- repo declares $declaredTotal [Test] method(s) / $staticCases static case(s) across $(@($declaredRows).Count) project(s)" -ForegroundColor Cyan
+                        if ($executedTotal -lt $staticCases) {
+                            Write-Host "          ($($staticCases - $executedTotal) case(s) not run in this mode -- other modes/projects hold the rest)" -ForegroundColor Gray
+                        } elseif ($executedTotal -gt $staticCases) {
+                            Write-Host "          (+$($executedTotal - $staticCases) beyond the static count, from runtime data sources)" -ForegroundColor Gray
+                        }
+                    }
+                } catch {
+                    Write-Host "  (test inventory unavailable: $($_.Exception.Message))" -ForegroundColor DarkGray
+                }
             } else {
                 Write-Host "No test results parsed" -ForegroundColor Yellow
                 Write-Host ""
@@ -2420,11 +2700,14 @@ try {
         }
 
         # Find all cobertura XML files from test output
+        # Same staleness guard as the primary call site above: only count cobertura files this
+        # run produced, or the report merges every run still sitting in TestResults.
         $coberturaFiles = Get-ChildItem -Path (Join-Path $repoRoot "tests") -Filter "*.cobertura.xml" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" }
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
+                           $_.LastWriteTimeUtc -ge $script:runStartTime }
 
         if ($coberturaFiles.Count -gt 0) {
-            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles
+            $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($hasTestFailures)
             $coveragePct = $coverageResult.CoveragePct
             $totalLines = $coverageResult.TotalLines
             $totalCovered = $coverageResult.TotalCovered

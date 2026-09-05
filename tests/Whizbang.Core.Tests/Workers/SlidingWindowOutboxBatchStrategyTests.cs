@@ -287,11 +287,19 @@ public class SlidingWindowOutboxBatchStrategyTests {
   public async Task FlushThrows_IsSwallowedSoTheStrategyKeepsRunningAsync() {
     // A failed bulk flush must not tear down the batcher: the dispatcher re-emits, and
     // killing the strategy would take every other stream's buffer down with it.
-    var attempted = new TaskCompletionSource();
+    // Signalling before the throw would release the test while the failure had not happened yet,
+    // let alone been handled -- so the assertions below would run against a strategy that had not
+    // been asked to survive anything, and would pass just as well if it tore down. Count the
+    // attempts instead and wait for a SECOND one: only a strategy that survived the first failure
+    // and kept flushing can produce it.
+    var attempts = 0;
+    var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await using var sut = new SlidingWindowOutboxBatchStrategy(
       flush: (_, _) => {
-        attempted.TrySetResult();
+        if (Interlocked.Increment(ref attempts) >= 2) {
+          secondAttempt.TrySetResult();
+        }
         throw new InvalidOperationException("bulk flush failed");
       },
       options: new SlidingWindowOutboxOptions {
@@ -301,11 +309,15 @@ public class SlidingWindowOutboxBatchStrategyTests {
       });
 
     await sut.AppendAsync(_make(_idProvider.NewGuid()));
-    await attempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-    // Still accepting work after the failure.
     await sut.AppendAsync(_make(_idProvider.NewGuid()));
-    await Assert.That(sut.ActiveStreamCount).IsGreaterThanOrEqualTo(1);
+
+    // Waits on the strategy having flushed again after a failed flush, which is the property
+    // under test -- not merely on the first failure having been reached.
+    await secondAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(sut.ActiveStreamCount).IsGreaterThanOrEqualTo(1)
+      .Because("a failed bulk flush must not tear the batcher down: the dispatcher re-emits, and "
+             + "killing the strategy would take every other stream's buffer with it");
   }
 
   [Test]

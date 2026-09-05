@@ -215,6 +215,129 @@ public class SearchServiceTests : IDisposable {
     await Assert.That(dispatcherResults.Count).IsEqualTo(1);
   }
 
+
+  // ── Robustness: queries that arrive before, around and after a usable index ──
+
+  [Test]
+  public async Task Search_BeforeTheIndexIsBuilt_ReturnsEmptyAsync() {
+    // The editor sends queries as soon as it connects, which can beat index construction. This
+    // has to answer "nothing yet" rather than throw -- an exception here surfaces as the whole
+    // language server falling over mid-keystroke.
+    using var unbuilt = new SearchService();
+
+    var results = unbuilt.Search("dispatcher");
+
+    await Assert.That(results).IsEmpty();
+  }
+
+  [Test]
+  [Arguments("title:[")]
+  [Arguments("AND")]
+  [Arguments("content:(unclosed")]
+  [Arguments("*")]
+  public async Task Search_WithLuceneSyntaxTheUserDidNotIntend_DoesNotThrowAsync(string query) {
+    // The search box takes free text, but the query is handed to a Lucene parser, so ordinary
+    // characters are operators. Someone typing a bracket must get results or nothing -- never a
+    // ParseException escaping into the editor.
+    _buildDefaultIndex();
+
+    await Assert.That(() => _sut.Search(query)).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task Search_AfterDispose_ReturnsEmptyRatherThanFailingAsync() {
+    // Dispose clears the searcher, and a query can still arrive from an editor that has not
+    // noticed the shutdown. The null-searcher guard is what keeps that quiet.
+    var service = new SearchService();
+    service.BuildIndex(_sampleDocs);
+    service.Dispose();
+
+    await Assert.That(service.Search("dispatcher")).IsEmpty();
+  }
+
+  [Test]
+  public async Task Dispose_IsSafeToCallTwiceAsync() {
+    // Held by DI and disposed by the test fixture too, so a double dispose is routine rather
+    // than exotic.
+    var service = new SearchService();
+    service.BuildIndex(_sampleDocs);
+
+    service.Dispose();
+
+    await Assert.That(() => service.Dispose()).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task Dispose_WithoutAnIndex_IsSafeAsync() {
+    // A server that fails before indexing still gets disposed on shutdown.
+    var service = new SearchService();
+
+    await Assert.That(() => service.Dispose()).ThrowsNothing();
+  }
+
+  [Test]
+  public async Task BuildIndex_Twice_ReplacesTheIndexRatherThanAccumulatingAsync() {
+    // The registry is rebuilt when documents change. A rebuild that appended would return two
+    // hits for one document and grow the index for the life of the session.
+    _sut.BuildIndex(_sampleDocs);
+    _sut.BuildIndex(_sampleDocs);
+
+    var results = _sut.Search("dispatcher");
+
+    await Assert.That(results.Count(r => r.Slug == "core-concepts/dispatcher")).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task BuildIndex_WithNoDocuments_LeavesSearchAnsweringEmptyAsync() {
+    // An empty documentation set is a valid state, not an error.
+    _sut.BuildIndex([]);
+
+    await Assert.That(_sut.Search("dispatcher")).IsEmpty();
+  }
+
+  // ── Synonym expansion in the reverse direction ────────────────────────────
+
+  [Test]
+  public async Task Search_ForASynonymValue_FindsTheCanonicalTermAsync() {
+    // Expansion has to work both ways. Somebody searching the word they know -- "router" --
+    // should reach the page titled with the word the library uses, "Dispatcher"; matching only
+    // in the canonical-to-synonym direction leaves half the vocabulary unreachable.
+    _sut.SetSynonyms(new Dictionary<string, IReadOnlyList<string>> {
+      ["dispatcher"] = ["router", "message bus"],
+    });
+    _buildDefaultIndex();
+
+    var results = _sut.Search("router");
+
+    await Assert.That(results.Any(r => r.Slug == "core-concepts/dispatcher")).IsTrue();
+  }
+
+  [Test]
+  public async Task Search_ForAMultiWordSynonym_IsTreatedAsAPhraseAsync() {
+    // A multi-word synonym has to be quoted before it reaches the parser, or its words become
+    // separate OR terms and the expansion pulls in unrelated documents.
+    _sut.SetSynonyms(new Dictionary<string, IReadOnlyList<string>> {
+      ["dispatcher"] = ["message bus"],
+    });
+    _buildDefaultIndex();
+
+    await Assert.That(() => _sut.Search("message bus")).ThrowsNothing();
+    await Assert.That(_sut.Search("dispatcher").Any(r => r.Slug == "core-concepts/dispatcher")).IsTrue();
+  }
+
+  [Test]
+  public async Task SetSynonyms_ReplacesThePreviousMapAsync() {
+    // Synonyms are reloaded with the documentation. A stale entry would keep expanding a term
+    // the current vocabulary no longer uses.
+    _sut.SetSynonyms(new Dictionary<string, IReadOnlyList<string>> { ["dispatcher"] = ["router"] });
+    _sut.SetSynonyms(new Dictionary<string, IReadOnlyList<string>> { ["perspective"] = ["projection"] });
+    _buildDefaultIndex();
+
+    var results = _sut.Search("projection");
+
+    await Assert.That(results.Any(r => r.Slug == "core-concepts/perspective")).IsTrue();
+  }
+
   public void Dispose() {
     _sut.Dispose();
     GC.SuppressFinalize(this);

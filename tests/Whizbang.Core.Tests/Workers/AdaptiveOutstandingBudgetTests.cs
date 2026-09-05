@@ -162,4 +162,33 @@ public class AdaptiveOutstandingBudgetTests {
 
     await Assert.That(budget.Current).IsLessThanOrEqualTo(50);
   }
+
+  [Test]
+  public async Task DrainRate_IsSmoothedRatherThanTakenFromTheLastIntervalAsync() {
+    // The drain rate is what decides whether the budget engages at all: Headroom returns zero the
+    // moment a measured rate reads zero with work outstanding, on the grounds that claiming more
+    // cannot help a stuck handler. That makes the smoothing load-bearing rather than cosmetic --
+    // taken raw, a single quiet interval would read as a stall, headroom would close, and the
+    // worker would stop the polling that is the only thing able to observe its own recovery.
+    var budget = _budget();
+
+    budget.Observe(completed: 10, elapsed: TimeSpan.FromSeconds(1));
+    var afterOne = budget.DrainRatePerSecond;
+
+    await Assert.That(afterOne).IsGreaterThan(0.0)
+      .Because("one measured interval is evidence of drain, not of a stall");
+    await Assert.That(afterOne).IsLessThan(10.0)
+      .Because("a single fast interval must not become the standing estimate");
+
+    for (var i = 0; i < 40; i++) {
+      budget.Observe(completed: 10, elapsed: TimeSpan.FromSeconds(1));
+    }
+
+    await Assert.That(budget.DrainRatePerSecond).IsGreaterThan(afterOne)
+      .Because("sustained observation converges on the rate actually being achieved");
+    await Assert.That(budget.DrainRatePerSecond).IsLessThanOrEqualTo(10.0)
+      .Because("smoothing approaches the observed rate from below and never overshoots it, or "
+             + "the budget would size itself for throughput the system has never demonstrated");
+  }
+
 }

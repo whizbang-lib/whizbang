@@ -334,4 +334,86 @@ public class DispatcherForeignLookupTests {
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType)
       => null;
   }
+
+  private sealed record RpcCommand(Guid Id);
+  private sealed record RpcResponse(string Code);
+  private sealed record CascadedNote([property: StreamId] Guid Id) : IEvent;
+
+  /// <summary>
+  /// A foreign assembly whose receptor returns a composite: the RPC response plus an event to
+  /// cascade. Only the "any" invoker answers, which is the shape the dispatcher falls back to
+  /// after both the async and sync tables miss.
+  /// </summary>
+  private sealed class _rpcExtractionLookup : IReceptorLookup {
+    private int _anyLookups;
+    private int _routingLookups;
+
+    public int AnyLookups => Volatile.Read(ref _anyLookups);
+    public int RoutingLookups => Volatile.Read(ref _routingLookups);
+
+    public ReceptorInvoker<TResult>? LookupReceptorInvoker<TResult>(object message, Type messageType) => null;
+    public VoidReceptorInvoker? LookupVoidReceptorInvoker(object message, Type messageType) => null;
+    public Func<object, IMessageEnvelope?, CancellationToken, Task>? LookupUntypedReceptorPublisher(Type eventType) => null;
+    public SyncReceptorInvoker<TResult>? LookupSyncReceptorInvoker<TResult>(object message, Type messageType) => null;
+    public VoidSyncReceptorInvoker? LookupVoidSyncReceptorInvoker(object message, Type messageType) => null;
+
+    public Func<object, ValueTask<object?>>? LookupReceptorInvokerAny(object message, Type messageType) {
+      if (messageType != typeof(RpcCommand)) {
+        return null;
+      }
+      Interlocked.Increment(ref _anyLookups);
+      return msg => {
+        var command = (RpcCommand)msg;
+        return ValueTask.FromResult<object?>(
+          (new RpcResponse("confirmed"), new CascadedNote(command.Id)));
+      };
+    }
+
+    public DispatchModes? LookupReceptorDefaultRouting(Type messageType) {
+      Interlocked.Increment(ref _routingLookups);
+      return DispatchModes.Local;
+    }
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task LocalInvoke_ResolvesAForeignReceptorThatReturnsACompositeAsync(
+      CancellationToken cancellationToken) {
+    // The RPC-extraction fallback is the dispatcher's last resort: a receptor whose result
+    // carries the response alongside events to cascade. Five of the seven lookup shapes already
+    // consult foreign assemblies; this one did not, so a receptor in another assembly using the
+    // composite return shape was unreachable -- the caller got ReceptorNotFoundException for a
+    // receptor that plainly exists, which is issue #491 in the one form still uncovered.
+    var foreign = new _rpcExtractionLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new _blindDispatcher(sp);
+
+    var response = await dispatcher.LocalInvokeAsync<RpcResponse>(new RpcCommand(Guid.NewGuid()));
+
+    await Assert.That(response.Code).IsEqualTo("confirmed")
+      .Because("the response is extracted out of the composite and handed back to the caller");
+    await Assert.That(foreign.AnyLookups).IsGreaterThanOrEqualTo(1)
+      .Because("the own table answered null for every shape, so the foreign any-invoker is the "
+             + "only thing that can serve this receptor");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task Cascade_AsksTheForeignAssemblyForItsReceptorsDefaultRoutingAsync(
+      CancellationToken cancellationToken) {
+    // Messages cascaded out of a receptor's result inherit that receptor's declared routing.
+    // For a foreign receptor the declaration lives in the other assembly's table, so skipping
+    // the foreign consultation silently routes its cascade by the ambient default instead --
+    // a receptor that declared Outbox would have its events handled locally and lose durability.
+    var foreign = new _rpcExtractionLookup();
+    await using var sp = _buildHost(foreign);
+    var dispatcher = new _blindDispatcher(sp);
+
+    _ = await dispatcher.LocalInvokeAsync<RpcResponse>(new RpcCommand(Guid.NewGuid()));
+
+    await Assert.That(foreign.RoutingLookups).IsGreaterThanOrEqualTo(1)
+      .Because("the cascade has to ask the declaring assembly how its receptor routes, rather "
+             + "than assuming the host's default");
+  }
+
 }

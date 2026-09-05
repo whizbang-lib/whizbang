@@ -204,6 +204,28 @@ public class ClaimWorkerAttemptAccountingTests {
 
   // ==================== helpers ====================
 
+  private static WorkBatch _batchOfStreams(int rows, int streams, int attempts) {
+    var inbox = new List<InboxWork>(rows);
+    for (var i = 0; i < rows; i++) {
+      inbox.Add(new InboxWork {
+        MessageId = TrackedGuid.NewMedo().Value,
+        MessageType = "TestEvent",
+        Envelope = null!,
+        Attempts = attempts,
+      });
+    }
+    var streamIds = new List<Guid>(streams);
+    for (var i = 0; i < streams; i++) {
+      streamIds.Add(TrackedGuid.NewMedo().Value);
+    }
+    return new WorkBatch {
+      OutboxWork = [],
+      InboxWork = inbox,
+      PerspectiveWork = [],
+      InboxStreamIds = streamIds
+    };
+  }
+
   private static WorkBatch _batchOf(int rows, int attempts) {
     var inbox = new List<InboxWork>(rows);
     for (var i = 0; i < rows; i++) {
@@ -521,12 +543,20 @@ public class ClaimWorkerAttemptAccountingTests {
     public bool ThrowOnRelease { get; set; }
     public WorkBatch BatchToReturn { get; set; } = new() { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
 
+    /// <summary>
+    /// When set, every claim also reports the batch as completed. A store that never completes
+    /// anything drives the outstanding budget to its floor, where every workload claims the
+    /// single floor stream and the row-budget arithmetic is never exercised.
+    /// </summary>
+    public WorkCompletionMeter? CompletionMeter { get; set; }
+
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
       lock (_lock) {
         CallCount++;
         LastMaxStreams = req.MaxStreams;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
+      CompletionMeter?.Record(BatchToReturn.InboxWork.Count);
       return Task.FromResult(BatchToReturn);
     }
 
@@ -595,4 +625,43 @@ public class ClaimWorkerAttemptAccountingTests {
       Task.FromResult(new List<PerspectiveCursorInfo>());
     public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
+
+  [Test]
+  public async Task ExhaustedRowBudget_StillClaimsAtLeastOneStreamAsync() {
+    // The store claims by stream while the budget counts rows, so the worker divides its row
+    // headroom by a running rows-per-stream estimate. Here the whole batch stays outstanding, so
+    // the headroom closes and the division yields zero streams affordable.
+    //
+    // Zero is the one answer the worker must never give. The poll is the only thing that observes
+    // outstanding work, so a worker that stops claiming stops being able to discover that it has
+    // recovered -- it waits for a drop in outstanding that only its own polling could see. That
+    // deadlock is what the floor exists to prevent, and re-emitting rows already leased to this
+    // instance costs no new attempt, so polling at the floor is cheap and self-healing.
+    //
+    // Both shapes are exercised because the rows-per-stream estimate only updates when a batch
+    // carries stream ids as well as rows.
+    var options = new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxStreamsPerBatch = 1000,
+      MinStreamsPerBatch = 1,
+    };
+
+    foreach (var (rows, streams) in new[] { (40, 2), (40, 40) }) {
+      var meter = new WorkCompletionMeter();
+      var coord = new RecordingCoordinator {
+        BatchToReturn = _batchOfStreams(rows, streams, attempts: 1),
+        CompletionMeter = meter
+      };
+
+      using (var harness = _startWorker(coord, options, completionMeter: meter)) {
+        await coord.WaitForCallsAsync(8, TimeSpan.FromSeconds(15));
+      }
+
+      await Assert.That(coord.LastMaxStreams).IsGreaterThanOrEqualTo(1)
+        .Because($"with {rows} rows across {streams} streams the row budget is spent, and a claim "
+               + "of zero streams would stop the only poll that could observe recovery");
+    }
+  }
+
 }

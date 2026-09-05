@@ -118,9 +118,10 @@ public class ClaimWorkerDoorbellLivenessTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(90));
-    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(90));
-    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(90));
+    var judged = _judgement(liveness);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await judged.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await Assert.That(liveness.ConsecutiveMissedDoorbells)
       .IsEqualTo(1)
@@ -143,11 +144,11 @@ public class ClaimWorkerDoorbellLivenessTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(90));
+    var judged = _judgement(liveness);
+    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
     worker.SignalNewWork();
-    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(90));
-    worker.SignalNewWork();
-    await coord.ThirdCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(90));
+    await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
+    await judged.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
     await Assert.That(liveness.ConsecutiveMissedDoorbells)
       .IsEqualTo(0)
@@ -156,4 +157,24 @@ public class ClaimWorkerDoorbellLivenessTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  /// <summary>
+  /// Completes when the worker has judged the empty-to-non-empty edge.
+  /// </summary>
+  /// <remarks>
+  /// These tests used to wait for a THIRD claim as a stand-in for "the edge has been judged",
+  /// which made them depend on something the worker does not promise. Its wake is a
+  /// SemaphoreSlim(0, 1) and RequestImmediatePoll only releases when the count is zero, so two
+  /// doorbells rung close together collapse into a single wake and produce one claim, not two.
+  /// Under load that collapse happens, the third claim never arrives, and with polling parked at
+  /// 60s to force doorbell-driven claims nothing else wakes the worker inside the timeout --
+  /// roughly one run in three. The coalescing is correct: one claim picks up all available work.
+  /// The assumption of one claim per signal was not.
+  /// </remarks>
+  private static TaskCompletionSource _judgement(SignalBusLivenessState liveness) {
+    var judged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    liveness.DoorbellEvaluated += () => judged.TrySetResult();
+    return judged;
+  }
+
 }

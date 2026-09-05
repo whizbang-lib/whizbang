@@ -506,4 +506,50 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
 
     await executor.StopAsync();
   }
+
+  [Test]
+  [Timeout(10000)]
+  public async Task ExecuteAsync_WorkCanceledWhileQueued_FaultsTheCallerInsteadOfHangingAsync(
+      CancellationToken cancellationToken) {
+    // The companion to ExecuteAsync_CancellationToken_SkipsCanceledWork, which asserts the
+    // handler does not run and then abandons the caller's task without awaiting it. Skipping
+    // the work is only half the contract: the caller is sitting on a ValueTask backed by a
+    // PooledValueTaskSource that only the execute path ever completes, so a skip that does not
+    // finish the source hangs that caller for the life of the process -- no exception, nothing
+    // logged. Cancellation has to surface as OperationCanceledException.
+    var executor = new SerialExecutor(channelCapacity: 1);
+    await executor.StartAsync(cancellationToken);
+    var envelope = CreateTestEnvelope("test");
+    var context = CreateTestContext();
+
+    var blocking = new TaskCompletionSource<int>();
+    using var cts = new CancellationTokenSource();
+    var handlerCalled = 0;
+
+    // Occupy the worker so the next item stays queued.
+    var blockingTask = executor.ExecuteAsync<int>(
+      envelope, async (env, ctx) => await blocking.Task, context, CancellationToken.None).AsTask();
+
+    var queued = executor.ExecuteAsync<int>(
+      envelope,
+      (env, ctx) => {
+        Interlocked.Increment(ref handlerCalled);
+        return ValueTask.FromResult(42);
+      },
+      context,
+      cts.Token).AsTask();
+
+    // Cancel after it is queued but before the worker can reach it, then let the worker run.
+    await cts.CancelAsync();
+    blocking.SetResult(1);
+    await blockingTask;
+
+    await Assert.That(async () => await queued).Throws<OperationCanceledException>()
+      .Because("a caller whose work is dropped must observe the cancellation, not wait forever");
+    await Assert.That(handlerCalled).IsEqualTo(0)
+      .Because("the handler is still not run -- that half of the contract is unchanged");
+
+    await executor.StopAsync(CancellationToken.None);
+  }
+
 }

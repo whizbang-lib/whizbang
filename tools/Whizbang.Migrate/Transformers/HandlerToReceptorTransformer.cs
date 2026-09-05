@@ -221,12 +221,24 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
 
     // Remove Wolverine using and add Whizbang.Core
     var newUsings = new List<UsingDirectiveSyntax>();
-    var addedWhizbang = false;
+    var addedWhizbang = compilationUnit.Usings
+        .Any(u => u.Name?.ToString() == "Whizbang.Core");
 
     foreach (var usingDirective in compilationUnit.Usings) {
       var name = usingDirective.Name?.ToString();
 
-      if (name == "Wolverine") {
+      if (name == "Wolverine" && addedWhizbang) {
+        // Whizbang.Core is already imported -- another transformer in the pipeline
+        // rewrote its own Wolverine/Marten using first. Emitting a second one is
+        // legal C# but raises CS0105, which fails any migrated project building
+        // with warnings-as-errors. Drop this one instead.
+        changes.Add(new CodeChange(
+            usingDirective.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
+            ChangeType.UsingRemoved,
+            "Removed 'using Wolverine' (Whizbang.Core already imported)",
+            "using Wolverine;",
+            ""));
+      } else if (name == "Wolverine") {
         // Replace with Whizbang.Core - preserve original formatting
         var whizbangUsing = usingDirective
             .WithName(SyntaxFactory.ParseName("Whizbang.Core")
@@ -248,8 +260,14 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
 
     // If no Whizbang using was added, add it
     if (!addedWhizbang) {
+      // Unreachable today -- the guard above requires an exact `using Wolverine;`, which the
+      // loop always replaces -- but the name still needs its own leading space. SyntaxFactory
+      // emits `using` and the name as adjacent tokens, so a directive built from scratch
+      // without it renders as `usingWhizbang.Core;` and the migrated file does not compile. Kept
+      // correct so loosening that guard later cannot quietly start emitting broken source.
       var whizbangUsing = SyntaxFactory.UsingDirective(
-          SyntaxFactory.ParseName("Whizbang.Core"))
+          SyntaxFactory.ParseName("Whizbang.Core")
+              .WithLeadingTrivia(SyntaxFactory.Space))
           .WithTrailingTrivia(SyntaxFactory.CarriageReturnLineFeed);
       newUsings.Insert(0, whizbangUsing);
 

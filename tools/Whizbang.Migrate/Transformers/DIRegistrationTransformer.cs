@@ -104,7 +104,8 @@ public sealed class DIRegistrationTransformer : ICodeTransformer {
     }
 
     var newUsings = new List<UsingDirectiveSyntax>();
-    var addedWhizbang = false;
+    var addedWhizbang = compilationUnit.Usings
+        .Any(u => u.Name?.ToString() == "Whizbang.Core");
 
     foreach (var usingDirective in compilationUnit.Usings) {
       var name = usingDirective.Name?.ToString();

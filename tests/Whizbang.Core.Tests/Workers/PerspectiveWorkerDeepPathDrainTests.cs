@@ -1057,7 +1057,6 @@ public class PerspectiveWorkerDeepPathDrainTests {
       ReceivedBatches.Enqueue([.. events.Select(e => e.MessageId.Value)]);
       ObservedCursors.Enqueue(lastProcessedEventId);
       _started.TrySetResult();
-      _firstRunWithEvents.TrySetResult();
       if (BlockUntilCanceled) {
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var registration = cancellationToken.Register(() => blocked.TrySetResult());
@@ -1065,11 +1064,47 @@ public class PerspectiveWorkerDeepPathDrainTests {
         cancellationToken.ThrowIfCancellationRequested();
       }
       if (RunWithEventsException is not null) {
+        // BeforeThrow is where a test cancels, so signalling before it would release the waiter
+        // one step ahead of the state it is waiting for: it would resume while this runner had
+        // neither cancelled nor thrown. Signal once the runner is actually about to throw.
         BeforeThrow?.Invoke();
+
+        // BeforeThrow cancels the token the worker was STARTED with. The worker's own token is
+        // linked to that one, and this lease token is linked to the worker's in turn
+        // (PerspectiveWorker passes linkedTokens: [ct] when it takes the lease). Linked
+        // propagation runs as callbacks, so there is a window where the outer source is cancelled
+        // and the token the worker's exception filter tests is not yet.
+        //
+        // That filter is the whole decision: `catch (OCE) when (ct.IsCancellationRequested)` means
+        // shutdown and stops the stream; falling past it means "one perspective misbehaving" and
+        // logs a warning per perspective per stream. Throwing inside the window sends a shutdown
+        // down the misbehaving path -- which is exactly what this test asserts against, and why it
+        // failed about one run in five under load.
+        //
+        // Waiting here closes it: this token is downstream of the one the filter tests, so once it
+        // is cancelled the filter's token certainly is.
+        if (BeforeThrow is not null) {
+          await _whenCancelled(cancellationToken);
+        }
+
+        _firstRunWithEvents.TrySetResult();
         throw RunWithEventsException;
       }
+
+      _firstRunWithEvents.TrySetResult();
       var lastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.Empty;
       return _completed(streamId, perspectiveName, lastEventId);
+    }
+
+
+    /// <summary>Completes once the token is cancelled. Waits on the condition, never a duration.</summary>
+    private static async Task _whenCancelled(CancellationToken token) {
+      if (token.IsCancellationRequested) {
+        return;
+      }
+      var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+      await using var registration = token.Register(() => cancelled.TrySetResult());
+      await cancelled.Task;
     }
 
     public Task<PerspectiveCursorCompletion> RewindAndRunAsync(Guid streamId, string perspectiveName, Guid triggeringEventId, CancellationToken cancellationToken = default) {

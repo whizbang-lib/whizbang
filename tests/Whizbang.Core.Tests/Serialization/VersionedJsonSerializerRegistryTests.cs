@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Serialization;
@@ -7,87 +8,54 @@ using Whizbang.Core.Serialization;
 namespace Whizbang.Core.Tests.Serialization;
 
 /// <summary>
-/// Tests for the versioned-serializer registry — the framework recalls the correct serializer
-/// implementation by version. Both type-agnostic (base interface) and type-specific (generic
-/// interface) serializers register and resolve uniformly by <see cref="IVersionedJsonSerializer.Version"/>.
+/// The registry that picks which payload format is written and which can be read.
+/// <para>
+/// Versioned serializers exist so a stored payload written by an older build still deserializes
+/// after the format changes. That only holds if the version-to-serializer mapping is unambiguous:
+/// two serializers claiming one version means the reader's choice depends on registration order,
+/// so the same stored bytes could be read differently by two hosts running the same code. The
+/// registry refuses that at construction rather than resolving it silently.
+/// </para>
+/// <para>
+/// An empty registry is refused for the same reason — there would be no format to write, and the
+/// failure would otherwise surface on the first serialize, far from the wiring that caused it.
+/// </para>
 /// </summary>
+/// <code-under-test>src/Whizbang.Core/Serialization/VersionedJsonSerializerRegistry.cs</code-under-test>
 public class VersionedJsonSerializerRegistryTests {
-  [Test]
-  public async Task Current_IsHighestRegisteredVersionAsync() {
-    var registry = new VersionedJsonSerializerRegistry([new V1Serializer(), new V2Serializer()]);
 
-    await Assert.That(registry.Current.Version).IsEqualTo(2);
+  private sealed class StubSerializer(int version) : IVersionedJsonSerializer {
+    public int Version => version;
+    public JsonDocument SerializePayload(object model, JsonTypeInfo typeInfo)
+      => JsonDocument.Parse("{}");
+    public object DeserializePayload(JsonElement payload, JsonTypeInfo typeInfo)
+      => new();
   }
 
   [Test]
-  public async Task TryGet_RecallsSerializerByVersionAsync() {
-    var registry = new VersionedJsonSerializerRegistry([new V1Serializer(), new V2Serializer()]);
-
-    var got = registry.TryGet(1, out var v1);
-
-    await Assert.That(got).IsTrue();
-    await Assert.That(v1!.Version).IsEqualTo(1);
+  public async Task TwoSerializersClaimingOneVersion_AreRefusedAtConstructionAsync() {
+    await Assert.That(() => new VersionedJsonSerializerRegistry(
+        [new StubSerializer(1), new StubSerializer(1)]))
+      .Throws<ArgumentException>()
+      .Because("the reader's choice would depend on registration order, so the same stored bytes "
+             + "could be read differently by two hosts running identical code");
   }
 
   [Test]
-  public async Task TryGet_UnknownVersion_ReturnsFalseAsync() {
-    var registry = new VersionedJsonSerializerRegistry([new V2Serializer()]);
-
-    await Assert.That(registry.TryGet(99, out _)).IsFalse();
+  public async Task AnEmptyRegistry_IsRefusedRatherThanFailingOnFirstUseAsync() {
+    await Assert.That(() => new VersionedJsonSerializerRegistry([]))
+      .Throws<ArgumentException>()
+      .Because("with no serializer there is no format to write, and discovering that on the first "
+             + "serialize puts the failure far from the wiring that caused it");
   }
 
   [Test]
-  public async Task TypeAgnosticSerializer_RoundTripsViaTypeInfoAsync() {
-    var serializer = new V2Serializer();
-    var ti = _modelTypeInfo();
-    var model = new Sample { Count = 9 };
+  public async Task TheHighestVersion_BecomesTheCurrentWriterAsync() {
+    var registry = new VersionedJsonSerializerRegistry(
+      [new StubSerializer(1), new StubSerializer(3), new StubSerializer(2)]);
 
-    using var payload = serializer.SerializePayload(model, ti);
-    var back = (Sample)serializer.DeserializePayload(payload.RootElement, ti);
-
-    await Assert.That(back.Count).IsEqualTo(9);
-  }
-
-  [Test]
-  public async Task GenericSerializer_IsResolvableAsBaseByVersionAsync() {
-    // A type-specific serializer (implements the generic interface) registers + recalls
-    // uniformly through the non-generic base the registry keys on.
-    var registry = new VersionedJsonSerializerRegistry([new TypedSampleSerializer()]);
-
-    var got = registry.TryGet(7, out var s);
-
-    await Assert.That(got).IsTrue();
-    await Assert.That(s).IsAssignableTo<IVersionedJsonSerializer<Sample>>();
-  }
-
-  private static JsonTypeInfo<Sample> _modelTypeInfo() =>
-    (JsonTypeInfo<Sample>)new JsonSerializerOptions { TypeInfoResolver = SampleContext.Default }
-      .GetTypeInfo(typeof(Sample));
-
-  public sealed class Sample { public int Count { get; set; } }
-
-  // Type-agnostic serializers: one instance serves any model type via the supplied TypeInfo.
-  private sealed class V1Serializer : IVersionedJsonSerializer {
-    public int Version => 1;
-    public JsonDocument SerializePayload(object model, JsonTypeInfo typeInfo) => JsonSerializer.SerializeToDocument(model, typeInfo);
-    public object DeserializePayload(JsonElement payload, JsonTypeInfo typeInfo) => JsonSerializer.Deserialize(payload.GetRawText(), typeInfo)!;
-  }
-
-  private sealed class V2Serializer : IVersionedJsonSerializer {
-    public int Version => 2;
-    public JsonDocument SerializePayload(object model, JsonTypeInfo typeInfo) => JsonSerializer.SerializeToDocument(model, typeInfo);
-    public object DeserializePayload(JsonElement payload, JsonTypeInfo typeInfo) => JsonSerializer.Deserialize(payload.GetRawText(), typeInfo)!;
-  }
-
-  // Type-specific serializer: implements the generic interface (and thus the base).
-  private sealed class TypedSampleSerializer : IVersionedJsonSerializer<Sample> {
-    public int Version => 7;
-    public JsonDocument SerializePayload(Sample model, JsonTypeInfo<Sample> typeInfo) => JsonSerializer.SerializeToDocument(model, typeInfo);
-    public Sample DeserializePayload(JsonElement payload, JsonTypeInfo<Sample> typeInfo) => JsonSerializer.Deserialize(payload.GetRawText(), typeInfo)!;
-    public JsonDocument SerializePayload(object model, JsonTypeInfo typeInfo) => SerializePayload((Sample)model, (JsonTypeInfo<Sample>)typeInfo);
-    public object DeserializePayload(JsonElement payload, JsonTypeInfo typeInfo) => DeserializePayload(payload, (JsonTypeInfo<Sample>)typeInfo);
+    await Assert.That(registry.Current.Version).IsEqualTo(3)
+      .Because("new payloads are written in the newest format; picking anything else would write "
+             + "old-format data that a later migration then has to account for");
   }
 }
-
-[System.Text.Json.Serialization.JsonSerializable(typeof(VersionedJsonSerializerRegistryTests.Sample))]
-internal sealed partial class SampleContext : System.Text.Json.Serialization.JsonSerializerContext;
