@@ -49,11 +49,17 @@ public class DeadLetterRecoveryWorkerTests {
       _fetchSignals.GetOrAdd(ordinal, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
 
     public System.Collections.Concurrent.ConcurrentQueue<int> FetchedBatchSizes { get; } = new();
+
+    /// <summary>Fails the first scan so a test can check the loop outlives one.</summary>
+    public bool FetchThrowsOnFirstCall { get; set; }
     public Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
       FetchedBatchSizes.Enqueue(maxCount);
       _fetchCount++;
       _fetchSignals.GetOrAdd(_fetchCount, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
       if (_fetchCount == 1) { FirstFetchSignal.TrySetResult(); } else if (_fetchCount == 2) { SecondFetchSignal.TrySetResult(); }
+      if (FetchThrowsOnFirstCall && _fetchCount == 1) {
+        throw new InvalidOperationException("simulated scan failure");
+      }
       var batch = FetchBatches.Count > 0 ? FetchBatches.Dequeue() : [];
       return Task.FromResult<IReadOnlyList<DeadLetterEntry>>(batch);
     }
@@ -765,6 +771,39 @@ public class DeadLetterRecoveryWorkerTests {
     await Assert.That(first).IsEqualTo(25)
       .Because("a forced pass is recovery running AGAINST a busy service's interest — it "
              + "earns a trickle, and the full batch waits for genuine settledness");
+  }
+
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ScanThatThrows_DoesNotEndRecoveryAsync(CancellationToken testToken) {
+    // A scan reads the dead-letter table, so a transient database fault is expected rather than
+    // exceptional. If it escaped the loop the worker would stop for the remaining life of the
+    // process and dead letters would simply stop being retried -- with nothing failing, because
+    // a queue nobody is draining looks exactly like a queue with nothing in it.
+    var listener = new FakeNotificationListener();
+    var (worker, svc) = _newWorker(listener: listener);
+    svc.FetchThrowsOnFirstCall = true;
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    try {
+      await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+      // Wake it rather than waiting out the scan interval, the same way the other tests here
+      // drive successive scans.
+      listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+
+      // The scan AFTER the failed one. Only a loop that survived performs it.
+      await svc.FetchSignal(2).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    } finally {
+      await cts.CancelAsync();
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    }
+
+    await Assert.That(svc.FetchedBatchSizes.Count).IsGreaterThanOrEqualTo(2)
+      .Because("the scan after a failed one still has to run; one bad read is not a reason to "
+             + "stop retrying dead letters for the life of the process");
   }
 
 }

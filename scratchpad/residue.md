@@ -731,6 +731,25 @@ failed to -- one grepped for the wrong test name, one hit four clean runs. The f
 (exact call count vs. absence of the "skipping to next perspective" warning) would split the
 remaining space in half immediately.
 
+## V. ASB ServiceCollectionExtensions: the namespace-mirror path needs a subscription
+
+Traced rather than assumed, because this file is 94% covered and the remainder is not uniform.
+
+- `404-410` -- logs after `peer.InitializeAsync()`. Needs a live namespace.
+- `428-438` -- `_activeConsumeNamespaceKeys`, pure logic and tempting. It is reached ONLY through
+  a deferred delegate handed to `NamespaceRoutingTransport`, which invokes it from
+  `_activeMirrorTransports()`, which is called from `_mirrorSubscribeAsync` -- i.e. only when a
+  subscription is actually opened. The registration itself composes fine offline (the existing
+  tests do exactly that with `AutoProvisionInfrastructure = false`), but nothing invokes the
+  delegate without a broker.
+- `524-532` -- merging non-default namespaces from configuration over the code map, inside the
+  `IInfrastructureProvisioner` factory. Probably reachable offline: the factory needs an
+  `IServiceBusAdminClient`, which the offline harness already supplies. Observing the merge means
+  reaching into the provisioner, so it is awkward rather than blocked. Left as available work.
+
+The lesson repeated from category O: "needs a broker" is worth checking per block. Two of these
+three are genuinely gated; the third is not, it is just inconvenient.
+
 ## D. Excluded from the measurement by construction
 
 - `*.g.cs`, `obj/`, `.whizbang/` and `.whizbang-generated/` — source-generator output.
