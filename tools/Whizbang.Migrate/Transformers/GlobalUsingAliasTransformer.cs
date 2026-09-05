@@ -20,9 +20,13 @@ public sealed class GlobalUsingAliasTransformer : ICodeTransformer {
   /// Value: Whizbang replacement (null means remove the alias)
   /// </summary>
   private static readonly Dictionary<string, string?> _typeReplacements = new(StringComparer.Ordinal) {
-    // Marten.Events.IEvent is the event wrapper with metadata
-    // Whizbang uses MessageEnvelope for this purpose
-    ["Marten.Events.IEvent"] = "Whizbang.Core.Messaging.MessageEnvelope",
+    // Marten.Events.IEvent is the non-generic event wrapper carrying metadata.
+    // The Whizbang analogue is the non-generic IMessageEnvelope interface. It is NOT
+    // MessageEnvelope: that type is generic-only (MessageEnvelope<TMessage>), so a
+    // non-generic alias to it cannot compile, and it lives under Observability rather
+    // than Messaging. Both mistakes were present here, and because these are GLOBAL
+    // usings the resulting error takes out the whole migrated project.
+    ["Marten.Events.IEvent"] = "Whizbang.Core.Observability.IMessageEnvelope",
 
     // Marten.Events.IEvent<T> is the generic event wrapper
     // Remove - use MessageEnvelope<T> directly where needed
@@ -36,7 +40,8 @@ public sealed class GlobalUsingAliasTransformer : ICodeTransformer {
 
     // Wolverine types
     ["Wolverine.IMessageBus"] = "Whizbang.Core.IDispatcher",
-    ["Wolverine.MessageContext"] = "Whizbang.Core.Messaging.MessageEnvelope"
+    // Same correction as Marten.Events.IEvent above: the non-generic envelope interface.
+    ["Wolverine.MessageContext"] = "Whizbang.Core.Observability.IMessageEnvelope"
   };
 
   /// <summary>

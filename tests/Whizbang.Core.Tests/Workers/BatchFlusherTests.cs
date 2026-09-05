@@ -111,4 +111,92 @@ public class BatchFlusherTests {
 
     await Assert.That(flusher.StoppedSignal.IsCompletedSuccessfully).IsTrue();
   }
+
+  [Test]
+  public async Task DisposeAsync_FlushesItemsStillQueuedAsync() {
+    // Shutdown must not discard buffered work. Five workers share this flusher -- lease
+    // renewals, inbox handler commits, perspective completions, outbox completions and message
+    // failures -- so anything dropped here turns into expired leases, reprocessed messages,
+    // stalled cursors and messages stuck in-flight, once per deployment and with nothing logged.
+    var inFlush = new TaskCompletionSource();
+    var release = new TaskCompletionSource();
+    var flushed = new List<int>();
+    var gate = new Lock();
+
+    var flusher = new BatchFlusher<int>(
+      flush: async (items, _) => {
+        lock (gate) { flushed.AddRange(items); }
+        if (!inFlush.Task.IsCompleted) {
+          inFlush.SetResult();
+          await release.Task;
+        }
+      },
+      options: new BatchFlusherOptions {
+        ChannelCapacity = 100,
+        MaxBatchSize = 10,
+        CoalesceWindowMs = 1,
+        ImmediateFlushThreshold = 1,
+      },
+      logger: NullLogger.Instance);
+
+    // Item 1 gets picked up and parks the loop inside the flush callback.
+    await flusher.Writer.WriteAsync(1);
+    await inFlush.Task;
+
+    // These queue behind it, still in the channel when shutdown begins.
+    await flusher.Writer.WriteAsync(2);
+    await flusher.Writer.WriteAsync(3);
+
+    var dispose = flusher.DisposeAsync();
+    release.SetResult();
+    await dispose;
+
+    List<int> seen;
+    lock (gate) { seen = [.. flushed]; }
+    await Assert.That(seen).Contains(2)
+      .Because("an item accepted by the writer before shutdown has to reach the flush callback");
+    await Assert.That(seen).Contains(3);
+  }
+
+
+  [Test]
+  [Timeout(30000)]
+  public async Task DisposeAsync_WhenAFlushWillNotReturn_StillCompletesAsync(
+      CancellationToken testToken) {
+    // Draining on shutdown is what stops buffered work being discarded, but the drain cannot be
+    // unbounded: a flush callback blocked on a database that has already gone away would hold
+    // host shutdown open indefinitely, and the process would have to be killed. The drain is
+    // therefore bounded, and past the bound the loop is cancelled and the remainder dropped --
+    // losing a batch is recoverable, a host that will not stop is not.
+    var inFlush = new TaskCompletionSource();
+    var release = new TaskCompletionSource();
+
+    var flusher = new BatchFlusher<int>(
+      flush: async (items, ct) => {
+        inFlush.TrySetResult();
+        // Parks until the drain gives up and cancels, which is the path under test.
+        await release.Task.WaitAsync(ct);
+      },
+      options: new BatchFlusherOptions {
+        ChannelCapacity = 100,
+        MaxBatchSize = 10,
+        CoalesceWindowMs = 1,
+        ImmediateFlushThreshold = 1,
+        DrainTimeoutMs = 200,
+      },
+      logger: NullLogger.Instance);
+
+    await flusher.Writer.WriteAsync(1, testToken);
+    await inFlush.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    // Waits on the disposal completing, not on any interval. Before the bound existed this
+    // never returned, and the assertion below was never reached.
+    await flusher.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    release.TrySetResult();
+
+    await Assert.That(flusher.StoppedSignal.IsCompleted).IsTrue()
+      .Because("shutdown finished despite a flush that never returned on its own");
+  }
+
 }

@@ -273,4 +273,174 @@ public class DecisionFileTests {
     await Assert.That(restored.Decisions.EventStore.AppendExclusive).IsEqualTo(original.Decisions.EventStore.AppendExclusive);
     await Assert.That(restored.Decisions.IdGeneration.GuidNewGuid).IsEqualTo(original.Decisions.IdGeneration.GuidNewGuid);
   }
+
+  // ── Commented (JSONC) form ────────────────────────────────────────────────
+
+  private static DecisionFile _fullyDecided() {
+    var file = DecisionFile.Create("/src/MyProject");
+    file.State.Status = MigrationStatus.InProgress;
+    file.State.CompletedCategories.Add("handlers");
+    file.State.CurrentCategory = "projections";
+    file.State.CurrentItem = 5;
+    file.Decisions.Handlers.Default = DecisionChoice.Skip;
+    file.Decisions.Handlers.Overrides["legacy.cs"] = DecisionChoice.Convert;
+    file.Decisions.Projections.Default = DecisionChoice.ConvertWithWarning;
+    file.State.GitCommitBefore = "abc123";
+    file.ExcludePatterns.Add("**/Generated/**");
+    return file;
+  }
+
+  [Test]
+  public async Task ToJsonWithComments_RoundTripsBackThroughFromJson_Async() {
+    // The commented form is hand-built string by string rather than serialized, so it is a
+    // second implementation of the same document that nothing keeps in step with the model.
+    // If it ever stops parsing, a user who saved with comments cannot resume at all.
+    var original = _fullyDecided();
+
+    var restored = DecisionFile.FromJson(original.ToJsonWithComments());
+
+    await Assert.That(restored.ProjectPath).IsEqualTo(original.ProjectPath);
+    await Assert.That(restored.Version).IsEqualTo(original.Version);
+  }
+
+  [Test]
+  public async Task ToJsonWithComments_PreservesTheDecisionsAUserMadeByHand_Async() {
+    // Per-file overrides and category defaults are the whole point of the file. Losing one does
+    // not throw -- it silently reverts to the default and re-converts code somebody chose to
+    // skip, which is the failure this format exists to prevent.
+    var original = _fullyDecided();
+
+    var restored = DecisionFile.FromJson(original.ToJsonWithComments());
+
+    await Assert.That(restored.Decisions.Handlers.Default).IsEqualTo(DecisionChoice.Skip);
+    await Assert.That(restored.Decisions.Projections.Default).IsEqualTo(DecisionChoice.ConvertWithWarning);
+    await Assert.That(restored.GetHandlerDecision("legacy.cs")).IsEqualTo(DecisionChoice.Convert)
+      .Because("a per-file override is a decision somebody made one file at a time; losing it "
+             + "silently re-converts code they chose to leave alone");
+  }
+
+  [Test]
+  public async Task ToJsonWithComments_PreservesResumeState_Async() {
+    // Resume reads exactly these fields. Losing them restarts a partially finished migration
+    // from the top and re-asks every question the user already answered.
+    var original = _fullyDecided();
+
+    var restored = DecisionFile.FromJson(original.ToJsonWithComments());
+
+    await Assert.That(restored.State.Status).IsEqualTo(MigrationStatus.InProgress);
+    await Assert.That(restored.State.CompletedCategories).Contains("handlers");
+    await Assert.That(restored.State.CurrentCategory).IsEqualTo("projections");
+    await Assert.That(restored.State.CurrentItem).IsEqualTo(5);
+    await Assert.That(restored.State.GitCommitBefore).IsEqualTo("abc123")
+      .Because("the pre-migration commit is what a revert rewinds to -- losing it strands the "
+             + "migration with no way back");
+    await Assert.That(restored.ExcludePatterns).Contains("**/Generated/**");
+  }
+
+  [Test]
+  public async Task ToJsonWithComments_ActuallyCarriesComments_Async() {
+    // Otherwise this overload is just a slower ToJson. The comments are the reason a user is
+    // invited to open and hand-edit the file.
+    var json = _fullyDecided().ToJsonWithComments();
+
+    await Assert.That(json).Contains("//");
+  }
+
+  [Test]
+  public async Task SaveAsync_WithComments_IsReadableByLoadAsync_Async() {
+    // End to end on disk: the commented file is the one a user edits, so a save it cannot load
+    // back would strand the migration.
+    var dir = Path.Combine(Path.GetTempPath(), "whizbang-decisionfile", Guid.NewGuid().ToString("N"));
+    try {
+      var path = Path.Combine(dir, "decisions.jsonc");
+      var original = _fullyDecided();
+
+      await original.SaveAsync(path, includeComments: true);
+      var loaded = await DecisionFile.LoadAsync(path);
+
+      await Assert.That(loaded.ProjectPath).IsEqualTo(original.ProjectPath);
+      await Assert.That(loaded.State.CurrentCategory).IsEqualTo("projections");
+      await Assert.That(await File.ReadAllTextAsync(path)).Contains("//");
+    } finally {
+      if (Directory.Exists(dir)) { Directory.Delete(dir, recursive: true); }
+    }
+  }
+
+  // ── Paths, defaults and failure modes ─────────────────────────────────────
+
+  [Test]
+  public async Task SaveAsync_CreatesMissingDirectories_Async() {
+    // The default location sits under the user profile and does not exist on a first run.
+    var root = Path.Combine(Path.GetTempPath(), "whizbang-decisionfile", Guid.NewGuid().ToString("N"));
+    try {
+      var path = Path.Combine(root, "nested", "deeper", "decisions.json");
+
+      await DecisionFile.Create("/src/MyProject").SaveAsync(path);
+
+      await Assert.That(File.Exists(path)).IsTrue();
+    } finally {
+      if (Directory.Exists(root)) { Directory.Delete(root, recursive: true); }
+    }
+  }
+
+  [Test]
+  public async Task GetProjectionDecision_WithoutAnOverride_UsesTheCategoryDefault_Async() {
+    // Overrides are sparse by design, so the default carries most files. A fallback that
+    // ignored it would apply the wrong action to everything not named explicitly.
+    var file = DecisionFile.Create("/src/MyProject");
+    file.Decisions.Projections.Default = DecisionChoice.Prompt;
+
+    await Assert.That(file.GetProjectionDecision("src/View.cs")).IsEqualTo(DecisionChoice.Prompt);
+
+    file.SetProjectionDecision("src/View.cs", DecisionChoice.Skip);
+
+    await Assert.That(file.GetProjectionDecision("src/View.cs")).IsEqualTo(DecisionChoice.Skip);
+    await Assert.That(file.GetProjectionDecision("src/Other.cs")).IsEqualTo(DecisionChoice.Prompt)
+      .Because("one override must not move the default for every other file");
+  }
+
+  [Test]
+  public async Task MarkCategoryComplete_RepeatedForTheSameCategory_DoesNotDuplicateIt_Async() {
+    // Resuming replays the same transition, so this has to be idempotent or the completed list
+    // grows on every restart.
+    var file = DecisionFile.Create("/src/MyProject");
+
+    file.MarkCategoryComplete("handlers", "projections");
+    file.MarkCategoryComplete("handlers", "projections");
+
+    await Assert.That(file.State.CompletedCategories.Count(c => c == "handlers")).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task MarkCategoryComplete_ResetsThePositionWithinTheCategory_Async() {
+    // A stale CurrentItem would resume the next category partway through and skip its first
+    // entries without reporting anything.
+    var file = DecisionFile.Create("/src/MyProject");
+    file.UpdateState(s => s.CurrentItem = 7);
+
+    file.MarkCategoryComplete("handlers", "projections");
+
+    await Assert.That(file.State.CurrentItem).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task MarkCategoryComplete_WithNoNextCategory_ClearsTheCurrentOne_Async() {
+    // The end of the run: leaving the last category set would make a finished migration look
+    // like it still had work pending.
+    var file = DecisionFile.Create("/src/MyProject");
+    file.MarkCategoryComplete("handlers", "projections");
+
+    file.MarkCategoryComplete("projections", null);
+
+    await Assert.That(file.State.CurrentCategory).IsNull();
+  }
+
+  [Test]
+  public async Task FromJson_OnJsonNull_ThrowsRatherThanReturningABlankFile_Async() {
+    // Handing back an empty decision file would read as "nothing decided yet" and quietly
+    // re-ask or re-convert everything the user already answered.
+    await Assert.That(() => DecisionFile.FromJson("null")).Throws<InvalidOperationException>();
+  }
+
+
 }

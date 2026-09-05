@@ -135,21 +135,6 @@ public static partial class AuditOutboxMessageBuilder {
     };
   }
 
-  private static bool _shouldAudit(Type eventType, SystemEventOptions options) {
-    // EventAudited itself is excluded (prevents infinite loop)
-    if (eventType == typeof(EventAudited)) {
-      return false;
-    }
-
-    var attr = eventType
-        .GetCustomAttributes(typeof(AuditEventAttribute), inherit: true)
-        .FirstOrDefault() as AuditEventAttribute;
-
-    return options.AuditMode == AuditMode.OptOut
-      ? attr?.Exclude != true           // audit unless excluded
-      : attr?.Exclude == false;         // audit only if marked
-  }
-
   private static Type? _resolveEventType(string assemblyQualifiedName, ILogger logger) {
     try {
 #pragma warning disable IL2057 // Type.GetType with dynamic string — needed to resolve event type for audit attribute check

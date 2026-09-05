@@ -98,6 +98,7 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
 
     var workItem = new WorkItem(
       executeAsync: _executeWithPooledStateAsync<TResult>,
+      cancelAsync: _cancelPooledStateAsync<TResult>,
       state: state,
       cancellationToken: ct
     );
@@ -194,14 +195,18 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.ProcessWorkItems");
 
     await foreach (var workItem in _channel.Reader.ReadAllAsync(ct)) {
-      // DEFENSIVE: Should never happen - WriteAsync throws before queueing canceled work
-      // Kept as safety net if cancellation happens between WriteAsync and processing
+      // Cancellation arriving AFTER the item was queued and before the worker reached it.
+      // WriteAsync rejects an already-canceled token, so this is the only way to get here --
+      // and it is ordinary, not defensive: a timeout or a shutdown firing while the worker is
+      // busy with earlier work. The caller must be finished rather than skipped, because only
+      // the execute path completes its value-task source.
       if (workItem.CancellationToken.IsCancellationRequested) {
         WhizbangActivitySource.RecordDefensiveCancellation(
           activity,
           "Work item canceled after queueing but before execution"
         );
-        continue; // Skip canceled work
+        await workItem.CancelAsync(workItem.State, workItem.CancellationToken);
+        continue; // Handler is not run; the caller observes OperationCanceledException.
       }
 
       try {
@@ -223,6 +228,26 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   /// Static delegate method that executes handler with pooled state.
   /// Eliminates lambda closure allocations.
   /// </summary>
+  /// <summary>
+  /// Finishes a work item the worker is going to skip because its token was canceled while it
+  /// sat in the channel.
+  /// </summary>
+  /// <remarks>
+  /// Without this the caller's <c>await</c> never returns. Only the execute path completes the
+  /// value-task source, so skipping the item left the source permanently incomplete -- a hang
+  /// with no exception and nothing logged -- and leaked the pooled state as well.
+  /// </remarks>
+  private static ValueTask _cancelPooledStateAsync<TResult>(object? stateObj, CancellationToken ct) {
+    var state = (ExecutionState<TResult>)stateObj!;
+    try {
+      state.Source.SetException(new OperationCanceledException(ct));
+    } finally {
+      state.Reset();
+      ExecutionStatePool<TResult>.Return(state);
+    }
+    return ValueTask.CompletedTask;
+  }
+
   private static async ValueTask _executeWithPooledStateAsync<TResult>(object? stateObj) {
     var state = (ExecutionState<TResult>)stateObj!;
     try {
@@ -243,11 +268,18 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   /// </summary>
   private readonly struct WorkItem(
     Func<object?, ValueTask> executeAsync,
+    Func<object?, CancellationToken, ValueTask> cancelAsync,
     object? state,
     CancellationToken cancellationToken
     ) {
     /// <summary>The delegate that executes the handler with pooled state.</summary>
     public readonly Func<object?, ValueTask> ExecuteAsync = executeAsync;
+    /// <summary>
+    /// Completes the caller's value-task source as canceled and returns the pooled state.
+    /// Typed the same way as <see cref="ExecuteAsync"/> so the worker, which has no TResult,
+    /// can still finish a caller it is not going to run.
+    /// </summary>
+    public readonly Func<object?, CancellationToken, ValueTask> CancelAsync = cancelAsync;
     /// <summary>The pooled execution state containing the handler, envelope, and context.</summary>
     public readonly object? State = state;
     /// <summary>The cancellation token associated with this work item.</summary>

@@ -117,14 +117,42 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
       await _stoppedSignal.Task.ConfigureAwait(false);
       return;
     }
+
+    // Completing the writer is what lets the loop DRAIN: ReadAsync throws ChannelClosedException
+    // only once the channel is both completed and empty, so the loop finishes the work already
+    // queued and then exits on its own. Cancelling first -- as this used to -- makes ReadAsync
+    // throw immediately and silently discards whatever had not been read yet. Five workers share
+    // this flusher (lease renewals, inbox handler commits, perspective completions, outbox
+    // completions, message failures), so that discard showed up as expired leases, reprocessed
+    // messages, stalled cursors and messages stuck in-flight, once per graceful shutdown.
     _channel.Writer.TryComplete();
-    await _stop.CancelAsync();
-    try { await _loop; } catch (OperationCanceledException) { }
+    try {
+      // CancellationToken.None is deliberate and load-bearing: _stop is what this method cancels
+      // *after* the drain gives up, so flowing it in here would let an external cancel abort the
+      // drain early and discard the buffered work this whole path exists to flush.
+      await _loop
+        .WaitAsync(TimeSpan.FromMilliseconds(_options.DrainTimeoutMs), CancellationToken.None)
+        .ConfigureAwait(false);
+    } catch (TimeoutException) {
+      // A flush callback that will not return must not hold host shutdown open forever.
+      LogDrainTimeout(_logger, _options.DrainTimeoutMs);
+      await _stop.CancelAsync().ConfigureAwait(false);
+      try { await _loop.ConfigureAwait(false); } catch (OperationCanceledException) { }
+    } catch (OperationCanceledException) {
+    }
+
+    if (!_stop.IsCancellationRequested) {
+      await _stop.CancelAsync().ConfigureAwait(false);
+    }
     _stop.Dispose();
   }
 
   /// <summary>Test/diagnostic hook: completes when the loop has exited.</summary>
   public Task StoppedSignal => _stoppedSignal.Task;
+
+  [LoggerMessage(EventId = 2, Level = LogLevel.Warning,
+    Message = "BatchFlusher drain exceeded {DrainTimeoutMs}ms during shutdown; remaining items dropped")]
+  static partial void LogDrainTimeout(ILogger logger, int drainTimeoutMs);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
     Message = "BatchFlusher flush failed for batch of {Count}; items lost (caller flush should be idempotent)")]
@@ -145,4 +173,11 @@ public sealed class BatchFlusherOptions {
 
   /// <summary>If batch reaches this size before the window closes, flush immediately. Default 250.</summary>
   public int ImmediateFlushThreshold { get; set; } = 250;
+
+  /// <summary>
+  /// How long shutdown waits for queued items to drain before giving up and cancelling.
+  /// Bounds the case where a flush callback never returns; reaching it drops the remainder
+  /// and logs a warning, which is strictly better than blocking host shutdown indefinitely.
+  /// </summary>
+  public int DrainTimeoutMs { get; set; } = 5_000;
 }

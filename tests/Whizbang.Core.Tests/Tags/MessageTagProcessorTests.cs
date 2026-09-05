@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -23,6 +24,33 @@ namespace Whizbang.Core.Tests.Tags;
 [Category("Core")]
 [Category("Tags")]
 public class MessageTagProcessorTests {
+
+  [Test]
+  public async Task WithDebugLoggingOn_TheProcessorNarratesWhatItDecidedAsync() {
+    // The processor's diagnostic logging is guarded on IsEnabled(Debug), and the suite has always
+    // run it with a null logger — so the narration an operator turns on to find out WHY a tag hook
+    // did or did not fire had never executed. That is the half of this class people reach for when
+    // a hook silently does nothing.
+    var services = new ServiceCollection();
+    services.AddLogging(b => b.SetMinimumLevel(LogLevel.Debug));
+    var sp = services.BuildServiceProvider();
+    var processor = new MessageTagProcessor(
+      new TagOptions(), sp.GetRequiredService<IServiceScopeFactory>());
+
+    await processor.ProcessTagsAsync(
+      new { OrderId = "123" }, typeof(object), LifecycleStage.PreOutboxInline);
+  }
+
+  [Test]
+  public async Task WithNeitherResolverNorScopeFactory_ItReturnsWithoutWorkAsync() {
+    // Nothing can resolve a hook, so there is no work to do and no reason to build a scope. The
+    // early return is what keeps a host that registered no hooks from paying for tag processing
+    // on every message.
+    var processor = new MessageTagProcessor(new TagOptions());
+
+    await processor.ProcessTagsAsync(
+      new { OrderId = "123" }, typeof(object), LifecycleStage.PreOutboxInline);
+  }
 
   [Test]
   public async Task ProcessAsync_WithNoHooks_CompletesSuccessfullyAsync() {
