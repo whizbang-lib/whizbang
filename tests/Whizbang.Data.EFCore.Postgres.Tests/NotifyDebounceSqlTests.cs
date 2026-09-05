@@ -24,6 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// (its doorbell must fire so the deterministic re-target path takes over), and a
 /// non-positive setting disables suppression entirely (today's behavior).</para>
 /// </summary>
+/// <code-under-test>src/Whizbang.Data.Postgres/Migrations/131_DebounceArmsOnFoundWorkOnly.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/130_NotifyDebounce.sql</code-under-test>
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/126_FreshWorkClaimFairness.sql</code-under-test>
 [Category("Shard1")]
@@ -63,7 +64,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task StaleWatermark_Fires_AndStampsPredictedWakeAsync() {
+  public async Task StaleWatermark_Fires_WithoutStampingAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
     var inst = (Guid)TrackedGuid.NewMedo();
@@ -76,9 +77,51 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
       await _notifyAsync(conn, "inbox", stream));
 
     await Assert.That(received.Count).IsEqualTo(1);
-    await Assert.That(await _watermarkAgeSecondsAsync(conn, inst)).IsLessThan(2)
-      .Because("firing stamps a predicted-awake watermark, so the burst that follows the "
-             + "first store of an idle-to-busy edge is suppressed — one doorbell per edge");
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT count(*) FROM wh_notify_state WHERE instance_id = @id";
+    q.Parameters.AddWithValue("id", inst);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(0L)
+      .Because("a fire must NOT stamp the watermark (131): only a claim that actually finds "
+             + "work may arm suppression, because only found work arms the C# drain linger "
+             + "that makes suppression safe. The predicted-awake stamp armed suppression on a "
+             + "mere prediction — and when the woken claim found nothing (a pre-visibility "
+             + "wake ahead of a fenced stamp), the make-up doorbell was swallowed with no "
+             + "linger polling to cover it, quantizing visibility to the adaptive poll cap");
+  }
+
+  [Test]
+  public async Task DoorbellFire_WithNoWorkFoundSince_MustNotSuppressTheFollowUpAsync() {
+    // The fenced-commit sequence that motivated the make-up doorbell (118) and broke under
+    // the debounce (130): the commit-time doorbell fires and wakes a claim that finds
+    // NOTHING (the row is fence-held, pre-visibility), so the drain linger never arms —
+    // then the fenced-retry stamp rings the make-up doorbell, the only remaining wake for
+    // the now-visible row. If the first fire's stamp suppresses it, nobody is polling
+    // tight and visibility falls to the adaptive cap (observed: 10.4 s against a 1.5 s
+    // budget). Suppression must therefore arm ONLY on found work — the same condition
+    // that arms the linger.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var inst = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+    await _ownStreamAsync(conn, stream, inst);
+
+    // Doorbell #1: the commit-time ring (fires — no watermark yet). The woken claim finds
+    // nothing and stamps nothing (locked by ClaimWork_Empty_DoesNotStampAsync).
+    var first = await _captureNotificationsAsync(conn, [inst], async () =>
+      await _notifyAsync(conn, "perspective", stream));
+    await _claimAsync(conn, inst);   // the pre-visibility claim: empty, stamps nothing
+
+    // Doorbell #2: the make-up ring, moments later. No work was found in between, so the
+    // linger is not armed and this ring is the only prompt wake — it must fire.
+    var second = await _captureNotificationsAsync(conn, [inst], async () =>
+      await _notifyAsync(conn, "perspective", stream));
+
+    await Assert.That(first.Count).IsEqualTo(1);
+    await Assert.That(second.Count).IsEqualTo(1)
+      .Because("no claim found work between the two rings, so nothing armed the drain "
+             + "linger — a suppressed make-up doorbell here strands the stamped row on "
+             + "the adaptive/backstop cadence (issue #677)");
   }
 
   [Test]
@@ -155,6 +198,55 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await Assert.That(await _watermarkAgeSecondsAsync(conn, inst, "outbox")).IsLessThan(2)
       .Because("the stamp rides inside claim_work — zero extra round trips — and it is "
              + "what tells producers this instance is awake and polling");
+  }
+
+  [Test]
+  public async Task ClaimWork_PerspectiveEventWithUnstampedUnderlyingEvent_DoesNotArmWatermarkAsync() {
+    // The #677 root cause: a perspective_events row is created Stored at commit BEFORE its
+    // underlying wh_event_store event is stamped with a commit_sequence (the per-database
+    // ordering fence holds it). claim_work returns the stream, but the fetch gate hides the
+    // unstamped event so the drainer makes no progress — arming the perspective watermark for
+    // it is a lie that lets the debounce suppress the fence-clearing stamp's make-up ring.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var inst = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+    // Fence-held event: in wh_event_store with commit_sequence NULL (not yet stamped).
+    await _insertEventStoreRowAsync(conn, eventId, stream, commitSequenceNull: true);
+    // Leased perspective row referencing that unstamped event.
+    await _insertPerspectiveEventAsync(conn, stream, eventId, inst);
+
+    await _claimAsync(conn, inst);
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT count(*) FROM wh_notify_state WHERE instance_id = @id AND payload_kind = 'perspective'";
+    q.Parameters.AddWithValue("id", inst);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(0L)
+      .Because("a claimed-but-undrainable perspective stream (event unstamped) is no drain "
+             + "progress; arming the watermark for it strands the make-up doorbell (issue #677)");
+  }
+
+  [Test]
+  public async Task ClaimWork_PerspectiveEventWithStampedUnderlyingEvent_ArmsWatermarkAsync() {
+    // The partner case: once the underlying event IS stamped, the perspective work is genuinely
+    // drainable, so finding it is real progress and MUST arm the watermark (the #665 storm
+    // protection the debounce provides depends on a busy drainer keeping its watermark fresh).
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var inst = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+    await _insertEventStoreRowAsync(conn, eventId, stream, commitSequenceNull: false);
+    await _insertPerspectiveEventAsync(conn, stream, eventId, inst);
+
+    await _claimAsync(conn, inst);
+
+    await Assert.That(await _watermarkAgeSecondsAsync(conn, inst, "perspective")).IsLessThan(2)
+      .Because("a drainable perspective stream is real progress — its watermark must arm so "
+             + "producers suppress redundant doorbells toward this actively-draining instance");
   }
 
   [Test]
@@ -252,6 +344,31 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("p", payload);
     cmd.Parameters.AddWithValue("sid", streamId);
     await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _insertEventStoreRowAsync(NpgsqlConnection conn, Guid eventId, Guid streamId, bool commitSequenceNull) {
+    await using var ins = conn.CreateCommand();
+    ins.CommandText = commitSequenceNull
+      ? @"INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at)
+          VALUES (@eid, @sid, @sid, 'TestAggregate', 1, 'TestEvent', NULL, NOW())"
+      : @"INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, scope, created_at, commit_sequence)
+          VALUES (@eid, @sid, @sid, 'TestAggregate', 1, 'TestEvent', NULL, NOW(), nextval('wh_commit_seq'))";
+    ins.Parameters.AddWithValue("eid", eventId);
+    ins.Parameters.AddWithValue("sid", streamId);
+    await ins.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _insertPerspectiveEventAsync(NpgsqlConnection conn, Guid streamId, Guid eventId, Guid instanceId) {
+    await using var ins = conn.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_perspective_events
+        (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at, instance_id, lease_expiry)
+      VALUES
+        (gen_random_uuid(), @sid, 'TestPerspective', @eid, 0, 1, 0, NOW(), @iid, NOW() + INTERVAL '5 minutes')";
+    ins.Parameters.AddWithValue("sid", streamId);
+    ins.Parameters.AddWithValue("eid", eventId);
+    ins.Parameters.AddWithValue("iid", instanceId);
+    await ins.ExecuteNonQueryAsync();
   }
 
   private static async Task _claimAsync(NpgsqlConnection conn, Guid instanceId) {
