@@ -27,13 +27,13 @@ them is how a list like this stops being useful.
 | Q | The hardened `usingWhizbang` fallback | unreachable by construction, kept correct on purpose |
 | R | `root is not CompilationUnitSyntax` guards | ParseText always yields a compilation unit |
 | C | Broker receive/settle paths only | two of its four bullets were wrong; see the entry |
+| X | SharedSelfTest's failure arm, 1 line per host | only runs when a merged copy has diverged; cut from 12 lines/host to 1 |
 
 **Tractable — available work, not residue. Do not read these as done.**
 
 | | what | the obstacle, precisely |
 |---|---|---|
 | S | ClaimWorker rows-per-stream *effect* | needs the outstanding budget driven above outstanding; the update and its floor ARE now covered |
-| J | discovered-vs-executed test counts | never reconciled; unexplained, not impossible |
 
 **Corrected — recorded because being wrong here is the expensive failure mode**
 
@@ -42,9 +42,12 @@ while its conclusion held. N claimed most merged copies were unreachable; most w
 
 **Measurement context — not residue at all**
 
-B3, F, G, H: defects in how the number was produced, and their fixes. F is the running list.
+B3, F, G, H, J: defects in how the number was produced, and their fixes. F is the running list.
+J is the most consequential: a stall-killed project still writes a *partial* cobertura, so its
+un-run tests' lines enter the worklist as phantom gaps. A cobertura file is not proof a project
+completed.
 
-Branch: test/coverage-round-21 (PR #657, deliberately unmerged until the number lands).
+Branch: test/coverage-round-22 (PR #670, base develop).
 Rule applied: ai-docs/coverage-exclusions.md. Case 3 (a defensive branch *inside* an
 otherwise-covered member) gets NO `[ExcludeFromCodeCoverage]` — the attribute is
 member-level, so applying it there would suppress the member's real covered lines and
@@ -206,20 +209,41 @@ was a deliberate, user-visible behavior change, approved before implementing: a 
 passed because of the bug will now fail, correctly, on a step that was already broken.
 `--help` still exits 0, pinned by test so the fix cannot break pipelines from the other side.
 
-## J. Open: discovered-vs-executed test counts do not reconcile
+## J. RESOLVED (mechanism): a killed project still flushes a PARTIAL cobertura
 
-`Whizbang.Generators.Tests` reports **1763 executed** while `--list-tests` enumerates ~1778,
-and the 15 tests added in commits 93d40a377 / e8332572d are confirmed present in that
-enumeration. Run scoped, all 15 execute and pass; the full suite is green either way.
+Was: "~15 tests discovered but not executed in a full run, and I could not explain why."
+The mechanism is in the runner, not the tests, and it is worse than a miscount.
 
-So ~15 tests are discovered but not executed in a full run, and I could not explain why.
-Ruled out: missing from the assembly, not discovered, failing silently. Unresolved: why a
-filtered run executes them and an unfiltered one appears not to.
+`scripts/Run-Tests.ps1` terminates a test project two ways -- stall detection when the test
+count stops changing for `HangTimeout` (180 s default, ~line 1883) and silence detection at
+`HangTimeout * 2` (~line 1904) -- both via `$process.Kill($true)`. That is the SIGTERM behind
+`Exit code: 143`.
 
-Related open item: the `Whizbang.Core.Tests` flake (see B3) whose name the runner's 30-line
-per-project tail keeps truncating. Both are cases where the *runner's reporting*, not the
-code, is what cannot currently be verified. Neither blocks coverage work, but neither should
-be quoted as a clean number without a caveat.
+**A killed project still writes a cobertura file.** Coverage flushes for whatever executed
+before the kill, so the surviving report is not empty, it is *truncated*. Every test that had
+not yet run contributes nothing, and the lines only those tests reach are reported as
+uncovered -- indistinguishable from real gaps. The presence of a cobertura file is therefore
+NOT evidence that a project completed; I misread exactly that in run 14.
+
+Confirmed instance, `Whizbang.Core.Tests` in runs 13 and 14:
+`RecentlyProcessedEventCacheSweepWorker` showed its constructor at 8/8 (the DI registration
+tests ran) and `<ExecuteAsync>d__4` at 0/20. Running the same project alone gives **19/20** on
+that state machine. Nothing was wrong with the code or the tests -- the tests that drive
+`ExecuteAsync` never got to run before the kill. Ranking that report sent a whole cycle after a
+class that was already covered.
+
+The PARTIAL banner's premise is too narrow: it says "a failed project contributes no cobertura,
+so its lines leave the denominator". A *killed* project contributes a partial one instead, which
+keeps its lines in the denominator and invents uncovered ones.
+
+Fixed in the runner: cobertura files belonging to any failed or killed project are now dropped
+before the merge, and the excluded projects are named, so the banner's stated semantics hold.
+
+Operational rule regardless: **never rank a worklist from a run whose banner says PARTIAL**, and
+never treat "every project produced a cobertura" as proof the run completed whole.
+
+Still open from the original entry: whether `Whizbang.Generators.Tests`' ~15-test gap is this
+same kill. Same signature, not yet confirmed against a run that completes whole.
 
 ## H. Operational: one build at a time on this machine
 
@@ -858,3 +882,21 @@ Two bugs made the script's own output untrustworthy; both are fixed on this bran
 per-project cobertura files on disk date from March/April, and others came from a run that
 was killed mid-flight). Nothing here should be quoted as a final figure until a clean
 `Run-Tests.ps1 -Mode AiUnit -Coverage` lands.
+
+## X. SharedSelfTest's failure arm -- one line per host, unreachable in any build that ships
+
+`SharedSelfTest.Run()` verifies that each ILRepack-merged copy of the shared assembly behaves
+like its source. Every check reports a divergence by appending to a failure list, so the
+reporting arm runs *only when a copy has diverged* -- the condition the self-test exists to
+detect, and one that is false in every build that passes CI. The arm is uncovered by
+construction, and it is duplicated into all five hosts.
+
+Reduced, not eliminated. The original wrote `failures.Add(...)` at each of twelve checks, so
+each host carried twelve permanently-uncovered lines (23 uncovered of 107 on the HotChocolate
+copy). Every check now reports through a single `_expect` helper, leaving one such line per
+host. Covering even that one would mean feeding the self-test a deliberately-broken
+implementation, which defeats its purpose: it is meaningful precisely because it exercises the
+real merged code.
+
+Not a candidate for `[ExcludeFromCodeCoverage]` -- the attribute is member-level, and `_expect`'s
+covered guard sits on the same member as the uncovered arm.

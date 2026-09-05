@@ -1394,6 +1394,41 @@ try {
                 Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
                                $_.LastWriteTimeUtc -ge $script:runStartTime }
 
+            # Drop the cobertura of any project that failed or was killed.
+            #
+            # Stall detection (no change in test count for HangTimeout) and silence detection
+            # (HangTimeout * 2) both terminate a project with $process.Kill($true) -- the SIGTERM
+            # behind the "Exit code: 143" that shows up in the log. A killed project still flushes
+            # a cobertura for whatever executed before the kill, and merging that truncated file is
+            # strictly worse than dropping it: the lines its un-run tests would have covered stay
+            # in the denominator and are reported as uncovered, indistinguishable from real gaps.
+            # The per-class worklist then ranks code that is in fact already tested. Confirmed on
+            # run 13, where RecentlyProcessedEventCacheSweepWorker's constructor read 8/8 (the DI
+            # registration tests ran) while its ExecuteAsync state machine read 0/20 -- purely
+            # because the three tests that drive it never got to run before the kill.
+            #
+            # Dropping the file is also what the PARTIAL banner already tells the reader happened:
+            # "a failed project contributes no cobertura, so its lines leave the denominator."
+            if ($failedProjects.Count -gt 0) {
+                $excludedProjects = $failedProjects
+                $beforeCount = $coberturaFiles.Count
+                $coberturaFiles = @($coberturaFiles | Where-Object {
+                    $coberturaPath = $_.FullName
+                    $fromFailedProject = $false
+                    foreach ($excludedProject in $excludedProjects) {
+                        if ($coberturaPath -match "[/\\]tests[/\\]$([regex]::Escape($excludedProject))[/\\]") {
+                            $fromFailedProject = $true
+                            break
+                        }
+                    }
+                    -not $fromFailedProject
+                })
+                $droppedCount = $beforeCount - $coberturaFiles.Count
+                if ($droppedCount -gt 0) {
+                    Write-Host "Excluded $droppedCount partial cobertura file(s) from failed/killed project(s): $($excludedProjects -join ', ')" -ForegroundColor Yellow
+                }
+            }
+
             if ($coberturaFiles.Count -gt 0) {
                 $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($totalProjectsFailed -gt 0)
                 $coveragePct = $coverageResult.CoveragePct
