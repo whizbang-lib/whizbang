@@ -848,4 +848,269 @@ public class WolverineAnalyzerTests {
     await Assert.That(result.Handlers[0].MessageType).IsEqualTo("unknown");
   }
 
+
+  [Test]
+  public async Task AnalyzeAsync_BlockScopedNamespace_StillQualifiesTheHandlerAsync() {
+    // Both namespace styles appear in real codebases, often in the same solution. The analysis
+    // report is keyed by fully-qualified name, so a handler in a block-scoped namespace that comes
+    // back unqualified collides with any same-named handler elsewhere — and the migration plan
+    // then describes the wrong class, or two classes as one.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine;
+
+      namespace Ordering.Handlers {
+        public class CreateOrderHandler : IHandle<CreateOrderCommand> {
+          public Task Handle(CreateOrderCommand command) {
+            return Task.CompletedTask;
+          }
+        }
+
+        public record CreateOrderCommand(string OrderId);
+      }
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/CreateOrderHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Handlers[0].FullyQualifiedName).Contains("Ordering.Handlers")
+      .Because("the report keys on this name, and an unqualified one collides with every "
+             + "same-named handler in the solution");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_HandlerReturningValueTask_ReportsTheInnerTypeAsync() {
+    // The return type drives what the migrated receptor is declared to produce. ValueTask<T> is
+    // the same contract as Task<T> here, and reporting the wrapper instead of T would generate a
+    // receptor declared to return a ValueTask — a shape the framework does not handle.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class GetOrderHandler {
+        public ValueTask<OrderResult> Handle(GetOrderQuery query) {
+          return ValueTask.FromResult(new OrderResult());
+        }
+      }
+
+      public record GetOrderQuery(string OrderId);
+      public class OrderResult { }
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/GetOrderHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Handlers[0].ReturnType).IsEqualTo("OrderResult")
+      .Because("what the handler produces is the result inside the wrapper; carrying the "
+             + "ValueTask through would declare the receptor with a shape nothing consumes");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_HandlerOnACustomBaseClass_IsFlaggedForReviewAsync() {
+    // A base class can carry state, hooks, or its own Handle overloads, none of which travel with
+    // the class when it becomes a receptor. The migration cannot resolve that automatically, so
+    // the only safe outcome is to say so — silence here produces a receptor that compiles and
+    // quietly does less than the handler did.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class CreateOrderHandler : HandlerBase {
+        public Task Handle(CreateOrderCommand command) {
+          return Task.CompletedTask;
+        }
+      }
+
+      public abstract class HandlerBase { }
+      public record CreateOrderCommand(string OrderId);
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/CreateOrderHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Warnings.Any(w => w.Message.Contains("HandlerBase", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("whatever the base contributed does not come along, and a migration that says "
+             + "nothing leaves the author to discover the loss at runtime");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_NestedHandlerClass_IsFlaggedForReviewAsync() {
+    // Wolverine finds handlers nested inside another type. Whether the nesting survives the move
+    // is a decision the author has to make, and it is invisible in a diff that only shows the
+    // class being rewritten — so the analysis has to raise it.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class OrderEndpoints {
+        public class CreateOrderHandler : IHandle<CreateOrderCommand> {
+          public Task Handle(CreateOrderCommand command) {
+            return Task.CompletedTask;
+          }
+        }
+      }
+
+      public record CreateOrderCommand(string OrderId);
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/OrderEndpoints.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Warnings.Any(w => w.Message.Contains("nested", StringComparison.OrdinalIgnoreCase)))
+      .IsTrue()
+      .Because("the nesting is a placement decision the migration cannot make on the author's "
+             + "behalf, and nothing else in the diff points at it");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_NestedAttributeHandler_IsFlaggedTooAsync() {
+    // Wolverine finds handlers three ways — interface, attribute, convention — and each is a
+    // separate branch here. The nesting question does not depend on how the handler was found, so
+    // a warning that only fires on one path leaves the other two migrating a nested class in
+    // silence.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine.Attributes;
+
+      public class OrderEndpoints {
+        [WolverineHandler]
+        public class CreateOrderHandler {
+          public Task Handle(CreateOrderCommand command) {
+            return Task.CompletedTask;
+          }
+        }
+      }
+
+      public record CreateOrderCommand(string OrderId);
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/OrderEndpoints.cs");
+
+    await Assert.That(result.Handlers.Any(h => h.HandlerKind == HandlerKind.WolverineAttribute))
+      .IsTrue()
+      .Because("the attribute is what marks this one, and the test is only meaningful if it took "
+             + "that discovery path rather than another");
+    await Assert.That(result.Warnings.Any(w => w.Message.Contains("nested", StringComparison.OrdinalIgnoreCase)))
+      .IsTrue()
+      .Because("an attribute-marked handler nested in another type is exactly as awkward to move "
+             + "as an interface-marked one, and the author needs telling either way");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_NestedConventionHandler_IsFlaggedTooAsync() {
+    // The convention path is the one that finds handlers nobody marked, which makes it the most
+    // likely to turn up a nested class the author had forgotten was nested.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      public class OrderEndpoints {
+        public class CreateOrderHandler {
+          public Task HandleAsync(CreateOrderCommand command) {
+            return Task.CompletedTask;
+          }
+        }
+      }
+
+      public record CreateOrderCommand(string OrderId);
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/OrderEndpoints.cs");
+
+    await Assert.That(result.Handlers.Any(h => h.HandlerKind == HandlerKind.ConventionBased))
+      .IsTrue()
+      .Because("nothing marks this class, so only the convention scan can find it — and that is "
+             + "the path under test");
+    await Assert.That(result.Warnings.Any(w => w.Message.Contains("nested", StringComparison.OrdinalIgnoreCase)))
+      .IsTrue()
+      .Because("a handler found only by convention is the one least likely to be noticed as "
+             + "nested during review");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_SynchronousHandler_ReportsItsReturnTypeAsIsAsync() {
+    // Not every handler is async. A synchronous one returns the result directly, with no wrapper
+    // to unwrap, and the migration plan needs the type it actually returns — reporting null or a
+    // stripped-down name here produces a receptor declared to return nothing from a handler that
+    // returns something.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class GetOrderHandler {
+        public OrderResult Handle(GetOrderQuery query) {
+          return new OrderResult();
+        }
+      }
+
+      public record GetOrderQuery(string OrderId);
+      public class OrderResult { }
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/GetOrderHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Handlers[0].ReturnType).IsEqualTo("OrderResult")
+      .Because("there is no Task or ValueTask around it, so the declared type is the answer — "
+             + "and a receptor generated as returning nothing would silently drop the result");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_BasesThatAreNotCustom_ProduceNoWarningAsync() {
+    // The custom-base warning tells the author something does not travel with the class. Most
+    // base-list entries are not that: an interface the handler implements, an explicit `object`,
+    // a framework type the migration already understands. Warning about those buries the one
+    // warning that matters under one per handler in the codebase — and a report nobody reads is
+    // the same as no report.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class CreateOrderHandler : object, IHandle<CreateOrderCommand>, IDisposable {
+        public Task Handle(CreateOrderCommand command) {
+          return Task.CompletedTask;
+        }
+
+        public void Dispose() { }
+      }
+
+      public record CreateOrderCommand(string OrderId);
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/CreateOrderHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Warnings.Any(w => w.WarningKind == MigrationWarningKind.CustomHandlerBaseClass))
+      .IsFalse()
+      .Because("an interface, object, and the Wolverine interface itself all carry nothing that "
+             + "fails to survive the move, so flagging them trains the reader to skip the "
+             + "warnings that do matter");
+  }
+
+  [Test]
+  public async Task AnalyzeAsync_GenericMessageType_KeepsItsOwnTypeArgumentAsync() {
+    // Message types are themselves sometimes generic. Splitting the handler's type arguments on
+    // commas without tracking angle-bracket depth would cut `Envelope<OrderCreated>` in half and
+    // report a message type that does not exist, which is the kind of wrong that only shows up
+    // once someone tries to compile the migrated receptor.
+    var analyzer = new WolverineAnalyzer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class EnvelopeHandler : IHandle<Envelope<OrderCreated>> {
+        public Task Handle(Envelope<OrderCreated> command) {
+          return Task.CompletedTask;
+        }
+      }
+
+      public class Envelope<T> { }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await analyzer.AnalyzeAsync(sourceCode, "Handlers/EnvelopeHandler.cs");
+
+    await Assert.That(result.Handlers.Count).IsEqualTo(1);
+    await Assert.That(result.Handlers[0].MessageType).IsEqualTo("Envelope<OrderCreated>")
+      .Because("the whole generic type is the message; a depth-blind comma split would report "
+             + "`Envelope<OrderCreated` and name a type nothing can resolve");
+  }
 }

@@ -1244,3 +1244,36 @@ What remains, and why each is a poor target rather than an untested behaviour:
 All sit inside members whose other lines are covered, so Case 3 applies and none takes an
 attribute. Worth keeping: every one of them is the conservative answer, and the alternative to a
 guard here is a NullReferenceException inside a migration tool halfway through rewriting a file.
+
+## AI. WolverineAnalyzer: 21 uncovered down to 4
+
+Covered this round, chosen because each one changes what the migration report says about a
+handler rather than whether a line ran:
+
+- A handler in a **block-scoped namespace** is still fully qualified. The report keys on that
+  name, so an unqualified one collides with every same-named handler in the solution.
+- **ValueTask<T>** reports T, and a **synchronous** handler reports its declared type. Getting
+  either wrong generates a receptor whose signature does not match what the handler produced.
+- A **custom base class** is flagged, and non-custom bases -- an interface, `object`, the
+  Wolverine interface itself -- are NOT. The second half matters as much: a warning that fires
+  for every handler implementing an interface trains the reader to skip the one that matters.
+- A **nested handler** is flagged however it was discovered. Wolverine finds handlers three ways
+  and each is a separate branch here; a warning wired to only one leaves the other two migrating
+  a nested class silently. (The first version of this test used the interface path and passed
+  while the attribute and convention branches stayed dark -- the coverage check is what showed
+  the assertion was answering for a different branch than the one it named.)
+- A **generic message type** keeps its own type argument. A depth-blind comma split would report
+  `Envelope<OrderCreated` and name a type nothing resolves.
+
+The four left:
+
+- **275** the `IHandle<>` branch falling through with no type argument -- a malformed interface
+  the compiler would already have rejected.
+- **342** `return null` from the Handle-method finder, reached only when the enclosing scan has
+  already established a Handle method is present.
+- **422, 437** the skips for known Marten types and for ignored base-class patterns
+  (FastEndpoints). Testable, but each needs a base type named in a private allow-list, and the
+  behaviour they implement -- "do not warn about this one" -- is already asserted by the
+  interface/object case that covers the sibling arms.
+
+Case 3 for all four: the members around them are covered, so none takes an attribute.
