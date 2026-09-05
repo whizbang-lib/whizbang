@@ -457,7 +457,8 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     permissions:
       contents: read
-      id-token: write   # NuGet OIDC trusted publishing
+      id-token: write       # NuGet OIDC trusted publishing
+      attestations: write   # nuget-push attests provenance before pushing
     uses: ./.github/workflows/nuget-push.yml
     with:
       version: ${{ needs.version.outputs.semver }}
@@ -524,8 +525,9 @@ jobs:
     needs: [version, pack, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, release-guard]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/release/v') && !github.event.created && needs.release-guard.outputs.should_publish == 'true'
     permissions:
-      contents: write   # nuget-publish creates the tag + GitHub release
-      id-token: write   # NuGet OIDC trusted publishing
+      contents: write       # nuget-publish creates the tag + GitHub release
+      id-token: write       # NuGet OIDC trusted publishing
+      attestations: write   # nuget-push attests provenance before pushing
     uses: ./.github/workflows/nuget-publish.yml
     with:
       version: ${{ needs.version.outputs.semver }}
