@@ -53,11 +53,24 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
 
   /// <summary>
-  /// UNSCALED wall-clock budget for commit → perspective-visible. Deliberately NOT scaled by
-  /// any test-timeout multiplier: the whole point is that production-default cadences land the
-  /// apply well under the 5 s backstop, so a fixed absolute bound is the lock.
+  /// UNSCALED wall-clock budget for commit → perspective-visible on the UNFENCED path.
+  /// Deliberately NOT scaled by any test-timeout multiplier: the whole point is that
+  /// production-default cadences land the apply well under the 5 s backstop, so a fixed
+  /// absolute bound is the lock.
   /// </summary>
   private static readonly TimeSpan _visibilityBudget = TimeSpan.FromSeconds(1.5);
+
+  /// <summary>
+  /// The FENCED path has a larger inherent floor than the unfenced one: the scenario holds an
+  /// older same-database transaction open ~300 ms, and after it clears the make-up stamp lands
+  /// on the next <see cref="CommitOrderStamperOptions.FencedRetryInterval"/> tick (≤ 250 ms
+  /// granularity) before claim → drain → apply even begins. That ~550 ms of fence-specific
+  /// latency sits ON TOP of the unfenced claim/drain/apply cost, so the two paths cannot share
+  /// a budget (they did, and the fenced test flaked at the shared 1.5 s edge). This bound still
+  /// locks out the regression it guards — visibility quantizing to the 5 s backstop — by a wide
+  /// margin: a backstop-quantized apply is ≥ 5 s, never ~2.5 s.
+  /// </summary>
+  private static readonly TimeSpan _fencedVisibilityBudget = TimeSpan.FromSeconds(2.5);
 
   /// <summary>All real components composed the way a booting pod composes them.</summary>
   private sealed class RealPipeline {
@@ -311,12 +324,12 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       await blockerTx.RollbackAsync(cancellationToken);
 
       var elapsed = await applied.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
-      Console.WriteLine($"commit → perspective-visible elapsed (fenced): {elapsed.TotalMilliseconds:F0} ms (budget {_visibilityBudget.TotalMilliseconds:F0} ms, fence held 300 ms)");
+      Console.WriteLine($"commit → perspective-visible elapsed (fenced): {elapsed.TotalMilliseconds:F0} ms (budget {_fencedVisibilityBudget.TotalMilliseconds:F0} ms, fence held 300 ms)");
 
-      await Assert.That(elapsed).IsLessThan(_visibilityBudget)
-        .Because("the 1.5 s budget covers the 300 ms fence hold + ≤250 ms fenced re-stamp retry + "
+      await Assert.That(elapsed).IsLessThan(_fencedVisibilityBudget)
+        .Because("the fenced budget covers the 300 ms fence hold + ≤250 ms fenced re-stamp retry + "
                + "claim/drain/apply; a stamp that sleeps until the next backstop tick quantizes "
-               + "perspective visibility to the backstop cadence");
+               + "perspective visibility to the backstop cadence (issue #677)");
       await Assert.That(await _countOrderRowsAsync(conn, streamId, cancellationToken)).IsEqualTo(1L)
         .Because("the completion signal fires after the wh_per_order upsert committed — the row must be readable");
     } finally {
