@@ -230,11 +230,39 @@ sequenceDiagram
 
 ---
 
-## Develop pushes skip the redundant matrix (queue-validated)
+## CI skips redundant matrices (queue-validated + ff-validated)
 
-The merge queue fast-forwards develop to the **exact SHA** it just ran the full matrix on, so the
-post-merge push run used to re-test identical bytes for ~35-40 minutes before the alpha could
-publish. `ci.yml` short-circuits that redundancy while keeping the publish gate provable:
+Every merge used to run the full test matrix **three** times — the PR run, the merge-queue run,
+and the post-merge develop push run. Two guards in `ci.yml` remove the redundant legs while
+keeping every publish gate provable. A fast-forward merge now runs the matrix **once** (the PR
+run); a real merge (develop moved) runs it **twice** (PR + queue).
+
+### ff-validated — skip the redundant *queue* matrix on a fast-forward
+
+When a single PR's branch already contains the current develop tip, the merge queue's
+prospective-merge commit has a tree **byte-identical** to what the PR run already tested in full.
+`ff-validated` (merge_group runs only) detects this and skips the six suites and quality in the
+queue run:
+
+- It reads the queue commit's parents: exactly two (base + one PR head) means a single-PR group;
+  more means a batch, which the PR runs never tested as-merged → full matrix.
+- It requires the queue commit's **tree** to equal the PR head's tree (the merge added nothing —
+  a true fast-forward). develop is append-only, so an identical tree proves the PR run's own
+  test-merge was this exact tree.
+- It requires the PR run for that head to have gone fully green **including Quality**, so a
+  dependabot PR (whose Quality is skipped) still gets a real queue run.
+- Any uncertainty — batched group, moved develop, missing or non-green PR run — falls through to
+  the full queue matrix. The queue **Build** always runs, so the determinism manifest exists for
+  the push run's verify-rebuild.
+
+Escape hatch: repo variable `QUEUE_RUN_FULL_MATRIX=true` forces the full queue matrix.
+
+### queue-validated — skip the redundant *push* matrix
+
+The merge queue fast-forwards develop to the **exact SHA** it just ran (whether that queue run was
+full or ff-skipped), so the post-merge push run used to re-test identical bytes for ~35-40 minutes
+before the alpha could publish. `ci.yml` short-circuits that redundancy while keeping the publish
+gate provable:
 
 - **queue-validated** (develop pushes only) looks for a successful `merge_group` CI run on the
   pushed SHA. Found ⇒ the six suites and quality skip in the push run.
@@ -352,6 +380,12 @@ and `start-release minor` after the stable computes `0.960.0`.
   `PUSH_RUN_FULL_MATRIX=true` — falls back to the full matrix or blocks the publish. Never widen
   the match beyond the exact SHA, and never grow the nondeterminism allowlist without a proven
   upstream root cause.
+- **The fast-forward queue skip is tree-keyed and fails safe.** `ff-validated` skips the queue
+  suites only for a single-PR group whose merge tree is byte-identical to a fully-green (incl.
+  Quality) PR run's tree. Every uncertain path emits `skip=false` (full queue matrix) and the job
+  never fails the run. Never loosen the single-PR / identical-tree / PR-run-green trio — those
+  three together are what make trusting the PR run in place of the queue run sound; the queue
+  **Build** must keep running unconditionally so verify-rebuild still has a manifest.
 - **Two publish paths don't compete.** A push to a `release/v*` branch can publish via
   `ci.yml`'s `release-publish`, and the merge to main publishes via `release.yml` — both would target
   the same version+tag. The `release-guard` job skips `release-publish` whenever the branch has an
