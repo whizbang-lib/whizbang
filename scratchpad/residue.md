@@ -688,13 +688,48 @@ differ only by whether cancellation is observed, and the assertions are an exact
 the absence of a "skipping to next perspective" warning. Either could flip if contention moves
 where cancellation is observed relative to the throw.
 
-**Do not guess the fix.** Adding `[NotInParallel]` would probably mask it and would serialise a
-whole class, and it would not establish which arm is racing. The next step is to capture WHICH
-assertion fails -- the run only recorded the test name -- by running the full suite with the
-failure detail retained. The capture in scripts/Run-Tests.ps1 now anchors on the first reported
-failure, so a coverage run will show it.
+**Do not add [NotInParallel].** It would mask the symptom, serialise a whole class, and
+establish nothing about the mechanism.
 
-Roughly one run in three to six means about three full-suite runs to reproduce once.
+### Hypotheses tested and DISPROVED — do not re-run these
+
+1. **The DrainRunner signals too early.** `RunWithEventsAsync` calls
+   `_firstRunWithEvents.TrySetResult()` at line 1060, then `BeforeThrow?.Invoke()` (which cancels
+   the test's CTS) and throws at 1068-69. So the test resumes one step before the state it
+   depends on. This is a REAL ordering defect in a shared test double and worth fixing on its own
+   merits -- but it is NOT the cause. Widening that window with a deliberate 150ms delay between
+   the signal and the throw: **3/3 passed.**
+
+2. **Thread-pool starvation under full-suite load.** Running the test alone with
+   `DOTNET_ThreadPool_ForceMinWorkerThreads=1` and `ForceMaxWorkerThreads=2`: **3/3 passed.**
+
+3. **Shared static state.** `PerspectiveWorker` references none of the four static perspective
+   registries. `_createWorker` builds every collaborator per test -- coordinator, registry,
+   logger, harness, instance provider. Nothing is shared.
+
+### What is established
+
+    isolation            6/6 clean
+    own class (19 tests) 5/5 clean
+    widened race window  3/3 clean
+    starved thread pool  3/3 clean
+    full suite           ~3 failures in ~15 runs (~20%)
+
+Cross-class interaction. Assertion-shaped (~132ms), not a timeout, so the test observes the wrong
+thing rather than waiting for something absent. The two arms it distinguishes differ only by
+`when (ct.IsCancellationRequested)` at the moment the exception filter runs.
+
+### Next step, and why it is expensive
+
+Bisect the suite: run half plus the target, repeatedly. At a ~20% rate each half needs several
+runs before "clean" means anything -- roughly 8-10 runs per bisection step to be reasonably
+confident, at ~2.5 min each. That is the honest cost, and it is why this is recorded rather than
+finished.
+
+Cheaper alternative worth trying first: capture the failure WITH its assertion text. Two attempts
+failed to -- one grepped for the wrong test name, one hit four clean runs. The failing assertion
+(exact call count vs. absence of the "skipping to next perspective" warning) would split the
+remaining space in half immediately.
 
 ## D. Excluded from the measurement by construction
 
