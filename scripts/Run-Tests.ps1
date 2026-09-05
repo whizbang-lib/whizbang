@@ -365,10 +365,18 @@ if ($useAiOutput) {
 # FailFast defaults to true in AI modes (stop on first failure to save time).
 # -NoFailFast force-disables it (shell-friendly alternative to -FailFast:$false,
 # which breaks in zsh where $false expands to empty).
+#
+# It must NOT default on for a coverage run. Fail-fast cancels every test still running the
+# moment one fails, and a cancelled test contributes no coverage -- so one flaky test truncates
+# its entire project exactly the way a stall-kill does, the project is marked failed, and its
+# lines leave the denominator. Run 15 lost all of Whizbang.Data.EFCore.Postgres.Tests to a single
+# latency assertion that failed at 10.5 s; the twelve further "failures" in that project were
+# fail-fast collateral, every one cancelled at 0 ms. Measuring coverage with fail-fast on is
+# self-defeating: the flakier the suite, the less of it the number describes.
 if ($NoFailFast) {
     $FailFast = $false
 } elseif ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
-    $FailFast = $true
+    $FailFast = -not $Coverage
 }
 
 # Initialize tee logging if -LogFile is specified
@@ -1293,6 +1301,7 @@ try {
         $totalTestsFailed = 0
         $totalTestsSkipped = 0
         $failedProjects = @()
+        $truncatedProjects = @()
 
         $resultIndex = 0
         foreach ($result in $results) {
@@ -1315,6 +1324,14 @@ try {
             } else {
                 $totalProjectsFailed++
                 $failedProjects += $result.ProjectName
+                # A project whose tests all ran and merely reported failures still produced a
+                # COMPLETE cobertura, and dropping it would discard real coverage. Only a project
+                # that was cut short mid-run produces a truncated one. Exit code 143 is the
+                # SIGTERM from this script's own stall/hang Kill($true); under fail-fast any
+                # failure also cancels the rest of that project's run.
+                if ($result.ExitCode -eq 143 -or $FailFast) {
+                    $truncatedProjects += $result.ProjectName
+                }
                 if ($useAiOutput) {
                     Write-Host "  ✗ $($result.ProjectName) failed" -ForegroundColor Red
                 } else {
@@ -1409,8 +1426,8 @@ try {
             #
             # Dropping the file is also what the PARTIAL banner already tells the reader happened:
             # "a failed project contributes no cobertura, so its lines leave the denominator."
-            if ($failedProjects.Count -gt 0) {
-                $excludedProjects = $failedProjects
+            if ($truncatedProjects.Count -gt 0) {
+                $excludedProjects = $truncatedProjects
                 $beforeCount = $coberturaFiles.Count
                 $coberturaFiles = @($coberturaFiles | Where-Object {
                     $coberturaPath = $_.FullName
@@ -1425,7 +1442,7 @@ try {
                 })
                 $droppedCount = $beforeCount - $coberturaFiles.Count
                 if ($droppedCount -gt 0) {
-                    Write-Host "Excluded $droppedCount partial cobertura file(s) from failed/killed project(s): $($excludedProjects -join ', ')" -ForegroundColor Yellow
+                    Write-Host "Excluded $droppedCount truncated cobertura file(s) (project cut short mid-run): $($excludedProjects -join ', ')" -ForegroundColor Yellow
                 }
             }
 

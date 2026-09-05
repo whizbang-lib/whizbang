@@ -900,3 +900,47 @@ real merged code.
 
 Not a candidate for `[ExcludeFromCodeCoverage]` -- the attribute is member-level, and `_expect`'s
 covered guard sits on the same member as the uncovered arm.
+
+## Y. OPEN, unproven: a narrow lost-wake window in ClaimWorker.RequestImmediatePoll
+
+Observed once in six consecutive full-project runs of `Whizbang.Core.Tests` (2026-09-05):
+`GateFlipsToAvailable_TriggersImmediatePollAsync` timed out on its 30 s safety net. It passes
+scoped and passed the other five runs.
+
+That test is built so a timeout cannot be a latency flake -- the base interval is an hour, so
+within the safety net a claim can arrive ONLY because a gate transition woke the loop. A timeout
+therefore means a wake was genuinely lost, not merely late.
+
+Candidate mechanism, from reading the code, NOT yet demonstrated:
+
+```csharp
+public void RequestImmediatePoll() {
+  if (_wake.CurrentCount == 0) {
+    try { _wake.Release(); } catch (SemaphoreFullException) { }
+  }
+}
+```
+
+The check-then-act is not atomic, and the coalescing it implements is only sound if every
+pending permit guarantees a poll that *begins after* the wake request. There is a window where
+it does not:
+
+1. Worker's `_wake.WaitAsync` begins consuming the permit; the decrement is not yet visible.
+2. The poll it is about to run reads the gate state -- still the old value.
+3. `gate.Set(true)` then `_wakeNow()` -> `RequestImmediatePoll` reads `CurrentCount` as 1
+   (pre-decrement) and skips the `Release`.
+4. The poll from step 2 completes without observing the new gate state, and the loop parks on
+   the hour-long wait. The transition's wake is gone.
+
+In production this reads as a worker sleeping through a gate recovery until its max interval --
+exactly the symptom the immediate-poll path exists to prevent.
+
+The standard fix is to stop using the permit count as the state: an `Interlocked.Exchange`-style
+pending-wake flag that the loop clears *after* a poll has begun, re-polling when it was set
+again in the meantime. That is a production change to a hot path, so it is recorded rather than
+made on the strength of one observation.
+
+Next step: reproduce deliberately -- drive the transition against a worker held at the moment of
+permit consumption -- before changing anything. Do not "fix" this from the reasoning alone; the
+same reasoning looked airtight for three earlier hypotheses in this session that measurement
+disproved.
