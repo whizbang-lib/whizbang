@@ -609,8 +609,15 @@ public class ClaimWorkerAttemptAccountingTests {
 
     public Task WaitForReleaseAsync(TimeSpan timeout) => _released.Task.WaitAsync(timeout);
 
-    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) =>
-      Task.FromResult(true);
+    /// <summary>Fails the startup registration so a test can check the loop outlives it.</summary>
+    public bool HeartbeatThrows { get; set; }
+
+    public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken cancellationToken = default) {
+      if (HeartbeatThrows) {
+        throw new InvalidOperationException("simulated registration failure");
+      }
+      return Task.FromResult(true);
+    }
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) =>
       Task.FromResult(new WorkCoordinatorStatistics());
@@ -662,6 +669,69 @@ public class ClaimWorkerAttemptAccountingTests {
         .Because($"with {rows} rows across {streams} streams the row budget is spent, and a claim "
                + "of zero streams would stop the only poll that could observe recovery");
     }
+  }
+
+
+  [Test]
+  [Timeout(30000)]
+  public async Task StartupHeartbeatThatThrows_DoesNotStopTheWorkerAsync(CancellationToken testToken) {
+    // Registration is a courtesy, not a precondition: the row it writes is re-established by the
+    // first claim anyway. If the failure escaped, a transient database blip during startup would
+    // leave this instance permanently not claiming -- and it would look healthy, because nothing
+    // faulted and the process is up.
+    var coord = new RecordingCoordinator {
+      HeartbeatThrows = true,
+      BatchToReturn = _batchOf(rows: 1, attempts: 1)
+    };
+
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+    });
+
+    // A claim at all is the proof: it comes after the heartbeat in ExecuteAsync, so it cannot
+    // happen unless the worker carried on past the failure.
+    await coord.WaitForCallsAsync(1, TimeSpan.FromSeconds(15));
+
+    await Assert.That(coord.CallCount).IsGreaterThanOrEqualTo(1)
+      .Because("a failed registration self-heals on the first claim; treating it as fatal would "
+             + "silently retire the instance");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task PerspectiveOnly_DoesNotClaimAsync(CancellationToken testToken) {
+    // In this mode the legacy publisher owns claiming. ClaimWorker doing its own claim_work would
+    // race process_work_batch and lease orphan rows before it sees them, breaking the event-store
+    // auto-create chain -- so the worker must park, not poll.
+    //
+    // The control worker runs first so the negative below cannot pass merely because the fixture
+    // never drove a claim.
+    var options = new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+    };
+
+    var control = new RecordingCoordinator { BatchToReturn = _batchOf(rows: 1, attempts: 1) };
+    using (var controlHarness = _startWorker(control, options)) {
+      await control.WaitForCallsAsync(1, TimeSpan.FromSeconds(15));
+    }
+    await Assert.That(control.CallCount).IsGreaterThanOrEqualTo(1)
+      .Because("the fixture drives claims when the mode allows it");
+
+    var parked = new RecordingCoordinator { BatchToReturn = _batchOf(rows: 1, attempts: 1) };
+    using (var parkedHarness = _startWorker(parked, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      PerspectiveOnly = true,
+    })) {
+      // Long enough that the control worker had already claimed several times over.
+      await Task.Delay(TimeSpan.FromMilliseconds(500), testToken);
+    }
+
+    await Assert.That(parked.CallCount).IsEqualTo(0)
+      .Because("claiming here races process_work_batch and leases orphan rows before it sees "
+             + "them; the mode exists to keep exactly one poller");
   }
 
 }

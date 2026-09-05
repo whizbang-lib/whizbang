@@ -27,13 +27,13 @@ them is how a list like this stops being useful.
 | Q | The hardened `usingWhizbang` fallback | unreachable by construction, kept correct on purpose |
 | R | `root is not CompilationUnitSyntax` guards | ParseText always yields a compilation unit |
 | C | Broker receive/settle paths only | two of its four bullets were wrong; see the entry |
+| X | SharedSelfTest's failure arm, 1 line per host | only runs when a merged copy has diverged; cut from 12 lines/host to 1 |
 
 **Tractable — available work, not residue. Do not read these as done.**
 
 | | what | the obstacle, precisely |
 |---|---|---|
 | S | ClaimWorker rows-per-stream *effect* | needs the outstanding budget driven above outstanding; the update and its floor ARE now covered |
-| J | discovered-vs-executed test counts | never reconciled; unexplained, not impossible |
 
 **Corrected — recorded because being wrong here is the expensive failure mode**
 
@@ -42,9 +42,12 @@ while its conclusion held. N claimed most merged copies were unreachable; most w
 
 **Measurement context — not residue at all**
 
-B3, F, G, H: defects in how the number was produced, and their fixes. F is the running list.
+B3, F, G, H, J: defects in how the number was produced, and their fixes. F is the running list.
+J is the most consequential: a stall-killed project still writes a *partial* cobertura, so its
+un-run tests' lines enter the worklist as phantom gaps. A cobertura file is not proof a project
+completed.
 
-Branch: test/coverage-round-21 (PR #657, deliberately unmerged until the number lands).
+Branch: test/coverage-round-22 (PR #670, base develop).
 Rule applied: ai-docs/coverage-exclusions.md. Case 3 (a defensive branch *inside* an
 otherwise-covered member) gets NO `[ExcludeFromCodeCoverage]` — the attribute is
 member-level, so applying it there would suppress the member's real covered lines and
@@ -206,20 +209,41 @@ was a deliberate, user-visible behavior change, approved before implementing: a 
 passed because of the bug will now fail, correctly, on a step that was already broken.
 `--help` still exits 0, pinned by test so the fix cannot break pipelines from the other side.
 
-## J. Open: discovered-vs-executed test counts do not reconcile
+## J. RESOLVED (mechanism): a killed project still flushes a PARTIAL cobertura
 
-`Whizbang.Generators.Tests` reports **1763 executed** while `--list-tests` enumerates ~1778,
-and the 15 tests added in commits 93d40a377 / e8332572d are confirmed present in that
-enumeration. Run scoped, all 15 execute and pass; the full suite is green either way.
+Was: "~15 tests discovered but not executed in a full run, and I could not explain why."
+The mechanism is in the runner, not the tests, and it is worse than a miscount.
 
-So ~15 tests are discovered but not executed in a full run, and I could not explain why.
-Ruled out: missing from the assembly, not discovered, failing silently. Unresolved: why a
-filtered run executes them and an unfiltered one appears not to.
+`scripts/Run-Tests.ps1` terminates a test project two ways -- stall detection when the test
+count stops changing for `HangTimeout` (180 s default, ~line 1883) and silence detection at
+`HangTimeout * 2` (~line 1904) -- both via `$process.Kill($true)`. That is the SIGTERM behind
+`Exit code: 143`.
 
-Related open item: the `Whizbang.Core.Tests` flake (see B3) whose name the runner's 30-line
-per-project tail keeps truncating. Both are cases where the *runner's reporting*, not the
-code, is what cannot currently be verified. Neither blocks coverage work, but neither should
-be quoted as a clean number without a caveat.
+**A killed project still writes a cobertura file.** Coverage flushes for whatever executed
+before the kill, so the surviving report is not empty, it is *truncated*. Every test that had
+not yet run contributes nothing, and the lines only those tests reach are reported as
+uncovered -- indistinguishable from real gaps. The presence of a cobertura file is therefore
+NOT evidence that a project completed; I misread exactly that in run 14.
+
+Confirmed instance, `Whizbang.Core.Tests` in runs 13 and 14:
+`RecentlyProcessedEventCacheSweepWorker` showed its constructor at 8/8 (the DI registration
+tests ran) and `<ExecuteAsync>d__4` at 0/20. Running the same project alone gives **19/20** on
+that state machine. Nothing was wrong with the code or the tests -- the tests that drive
+`ExecuteAsync` never got to run before the kill. Ranking that report sent a whole cycle after a
+class that was already covered.
+
+The PARTIAL banner's premise is too narrow: it says "a failed project contributes no cobertura,
+so its lines leave the denominator". A *killed* project contributes a partial one instead, which
+keeps its lines in the denominator and invents uncovered ones.
+
+Fixed in the runner: cobertura files belonging to any failed or killed project are now dropped
+before the merge, and the excluded projects are named, so the banner's stated semantics hold.
+
+Operational rule regardless: **never rank a worklist from a run whose banner says PARTIAL**, and
+never treat "every project produced a cobertura" as proof the run completed whole.
+
+Still open from the original entry: whether `Whizbang.Generators.Tests`' ~15-test gap is this
+same kill. Same signature, not yet confirmed against a run that completes whole.
 
 ## H. Operational: one build at a time on this machine
 
@@ -731,6 +755,76 @@ failed to -- one grepped for the wrong test name, one hit four clean runs. The f
 (exact call count vs. absence of the "skipping to next perspective" warning) would split the
 remaining space in half immediately.
 
+## V. ASB ServiceCollectionExtensions: the namespace-mirror path needs a subscription
+
+Traced rather than assumed, because this file is 94% covered and the remainder is not uniform.
+
+- `404-410` -- logs after `peer.InitializeAsync()`. Needs a live namespace.
+- `428-438` -- `_activeConsumeNamespaceKeys`, pure logic and tempting. It is reached ONLY through
+  a deferred delegate handed to `NamespaceRoutingTransport`, which invokes it from
+  `_activeMirrorTransports()`, which is called from `_mirrorSubscribeAsync` -- i.e. only when a
+  subscription is actually opened. The registration itself composes fine offline (the existing
+  tests do exactly that with `AutoProvisionInfrastructure = false`), but nothing invokes the
+  delegate without a broker.
+- `524-532` -- merging non-default namespaces from configuration over the code map, inside the
+  `IInfrastructureProvisioner` factory. Probably reachable offline: the factory needs an
+  `IServiceBusAdminClient`, which the offline harness already supplies. Observing the merge means
+  reaching into the provisioner, so it is awkward rather than blocked. Left as available work.
+
+The lesson repeated from category O: "needs a broker" is worth checking per block. Two of these
+three are genuinely gated; the third is not, it is just inconvenient.
+
+## W. Timing and scheduling assertions cannot hold under the parallel coverage run
+
+Run 12 came back PARTIAL (41 of 46 projects) because
+`CommitToPerspectiveVisible_FencedByOpenSameDbTransaction_StillLandsUnder1500msAsync` took
+10.5 s against a 1500 ms budget. Everything after it was the usual --fail-fast cancellation
+cascade.
+
+    isolation, 3 runs : 3 clean
+    46-project run    : 7x over budget
+
+The test measures a real end-to-end pipeline -- wh_committed wake, stamp, instance-routed
+doorbell, claim, drain window, apply -- and asserts it lands under 1500 ms. That is a production
+latency characteristic being measured on a machine running 46 test projects at once, where the
+workers in that pipeline are competing for the same cores.
+
+**Not a defect, and not something to quietly weaken.** The assertion guards something real: the
+comment says anything near 5 s means visibility has quantized to the backstop cadence, which is
+exactly the regression it exists to catch. Raising the budget until it stops failing would
+remove the signal.
+
+Options, none of which is obviously right and all of which are a call for the maintainer:
+
+- `[NotInParallel]` reduces in-assembly contention but not the other 45 projects, so it would
+  likely still fail.
+- Move latency assertions to a category excluded from the parallel coverage run and run them
+  on their own. Keeps the signal, costs a separate run.
+- Measure the fenced operation rather than total elapsed wall time, if the pipeline exposes a
+  point to measure between. That narrows what the budget covers, which may or may not still
+  catch the quantization it is aimed at.
+
+**A second instance confirms this is a category, not a tuning problem.** Run 13 came back
+PARTIAL on a different test:
+
+    run 12   CommitToPerspectiveVisible_..._StillLandsUnder1500msAsync   latency budget
+    run 13   ThreadPoolFloor_AbsorbsAFanOutBurst_LivenessKeepsGettingAThreadAsync   thread availability
+
+Both assert a property of the machine as much as of the code -- one an end-to-end latency, the
+other that a thread-pool floor absorbs a burst and liveness still gets a thread. Neither can
+hold by construction when 46 test projects contend for the same cores and the same pool. One
+instance looked like a badly-tuned threshold; two make it a design constraint.
+
+The practical consequence for anyone running this loop: measurements come back PARTIAL at some
+rate unrelated to coverage work. Run 11 was whole; 12 and 13 were not, for two different timing
+tests. The banner makes that visible instead of silent, so the number is discarded rather than
+misread -- but expect roughly every other run to be unusable until these are separated from the
+parallel run.
+
+Recorded rather than changed. It is a test-strategy decision about what these assertions are
+for, and raising thresholds until they stop failing would remove the regressions they exist to
+catch.
+
 ## D. Excluded from the measurement by construction
 
 - `*.g.cs`, `obj/`, `.whizbang/` and `.whizbang-generated/` — source-generator output.
@@ -788,3 +882,175 @@ Two bugs made the script's own output untrustworthy; both are fixed on this bran
 per-project cobertura files on disk date from March/April, and others came from a run that
 was killed mid-flight). Nothing here should be quoted as a final figure until a clean
 `Run-Tests.ps1 -Mode AiUnit -Coverage` lands.
+
+## X. SharedSelfTest's failure arm -- one line per host, unreachable in any build that ships
+
+`SharedSelfTest.Run()` verifies that each ILRepack-merged copy of the shared assembly behaves
+like its source. Every check reports a divergence by appending to a failure list, so the
+reporting arm runs *only when a copy has diverged* -- the condition the self-test exists to
+detect, and one that is false in every build that passes CI. The arm is uncovered by
+construction, and it is duplicated into all five hosts.
+
+Reduced, not eliminated. The original wrote `failures.Add(...)` at each of twelve checks, so
+each host carried twelve permanently-uncovered lines (23 uncovered of 107 on the HotChocolate
+copy). Every check now reports through a single `_expect` helper, leaving one such line per
+host. Covering even that one would mean feeding the self-test a deliberately-broken
+implementation, which defeats its purpose: it is meaningful precisely because it exercises the
+real merged code.
+
+Not a candidate for `[ExcludeFromCodeCoverage]` -- the attribute is member-level, and `_expect`'s
+covered guard sits on the same member as the uncovered arm.
+
+## Y. OPEN, unproven: a narrow lost-wake window in ClaimWorker.RequestImmediatePoll
+
+Observed once in six consecutive full-project runs of `Whizbang.Core.Tests` (2026-09-05):
+`GateFlipsToAvailable_TriggersImmediatePollAsync` timed out on its 30 s safety net. It passes
+scoped and passed the other five runs.
+
+That test is built so a timeout cannot be a latency flake -- the base interval is an hour, so
+within the safety net a claim can arrive ONLY because a gate transition woke the loop. A timeout
+therefore means a wake was genuinely lost, not merely late.
+
+Candidate mechanism, from reading the code, NOT yet demonstrated:
+
+```csharp
+public void RequestImmediatePoll() {
+  if (_wake.CurrentCount == 0) {
+    try { _wake.Release(); } catch (SemaphoreFullException) { }
+  }
+}
+```
+
+The check-then-act is not atomic, and the coalescing it implements is only sound if every
+pending permit guarantees a poll that *begins after* the wake request. There is a window where
+it does not:
+
+1. Worker's `_wake.WaitAsync` begins consuming the permit; the decrement is not yet visible.
+2. The poll it is about to run reads the gate state -- still the old value.
+3. `gate.Set(true)` then `_wakeNow()` -> `RequestImmediatePoll` reads `CurrentCount` as 1
+   (pre-decrement) and skips the `Release`.
+4. The poll from step 2 completes without observing the new gate state, and the loop parks on
+   the hour-long wait. The transition's wake is gone.
+
+In production this reads as a worker sleeping through a gate recovery until its max interval --
+exactly the symptom the immediate-poll path exists to prevent.
+
+The standard fix is to stop using the permit count as the state: an `Interlocked.Exchange`-style
+pending-wake flag that the loop clears *after* a poll has begun, re-polling when it was set
+again in the meantime. That is a production change to a hot path, so it is recorded rather than
+made on the strength of one observation.
+
+Next step: reproduce deliberately -- drive the transition against a worker held at the moment of
+permit consumption -- before changing anything. Do not "fix" this from the reasoning alone; the
+same reasoning looked airtight for three earlier hypotheses in this session that measurement
+disproved.
+
+## Z. BacklogAgeWorker line 103 -- the disposed-timer exit, unreachable by construction
+
+```csharp
+using var timer = new PeriodicTimer(_options.Interval);
+while (!stoppingToken.IsCancellationRequested) {
+  try {
+    if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) {
+      return;                                  // <- line 103
+    }
+```
+
+`WaitForNextTickAsync` returns `false` only when the `PeriodicTimer` has been disposed. This one
+is a `using var` local, so the only thing that disposes it is the method returning -- which cannot
+happen while the method is parked inside it. No caller holds a reference to dispose it early.
+
+The remaining 13 lines of `ExecuteAsync` are covered: the disabled/nothing-wired guard, the
+started log, the timer loop, the peek, and the cancellation exit. This is Case 3 from
+ai-docs/coverage-exclusions.md -- a defensive branch inside an otherwise-covered member -- so it
+gets no `[ExcludeFromCodeCoverage]`: the attribute is member-level and would suppress the 13
+covered lines beside it.
+
+Worth keeping rather than deleting. `WaitForNextTickAsync` genuinely has a false return, and a
+loop that ignored it would spin once the timer was disposed. It is correct code guarding a state
+this construction cannot currently reach.
+
+## AA. Shutdown landing inside a database round-trip -- two workers, one line each
+
+```csharp
+try {
+  await _tickOnceAsync(stoppingToken);
+} catch (OperationCanceledException) {
+  break;                                   // <- line 69
+} catch (Exception ex) {
+  LogTickFailed(_logger, ex);
+}
+```
+
+The other 20 lines of `ExecuteAsync` are now covered, including the gate-cancel return and the
+error arm (driven by a connection to a refused port, which also proves the loop survives a
+database outage and comes back round).
+
+Line 69 needs cancellation to arrive *while a scan is in flight* and to surface as an
+`OperationCanceledException`. A refused port fails instantly, so there is no window to cancel
+inside. Producing one means pointing the monitor at a black-hole address so the connect hangs,
+then cancelling once the tick has demonstrably begun -- and with `DirectConnectionString` there is
+no configuration read to signal that beginning, so the test would be timing-dependent on how
+Npgsql surfaces a cancelled connect.
+
+`PgDurableSignalRetentionWorker` line 74 is the same line in the same shape -- `break` when the
+sweep is cancelled rather than failing -- and is uncovered for exactly the same reason. Its other
+21 lines are covered, including the gate-cancel exit and the sweep-failure arm.
+
+Tractable, not impossible -- but a test whose green depends on out-racing a network connect is
+worth less than the line it covers, and this session has spent more time on flaky waits than on
+the gaps they were meant to close. Recorded rather than built. If it is ever wanted, the honest
+route is a seam on each worker that reports when a pass starts, not a cleverer sleep.
+
+## AB. SlidingWindowOutboxBatchStrategy: six arms that only run while something is going wrong
+
+The idle-eviction sweep is now covered in both directions -- an idle stream loses its buffer, an
+active one keeps it -- which was the part that mattered: stream ids are unbounded, so that sweep
+is the only ceiling on the buffer map. What remains is six lines, each reachable only from a
+state the test would have to manufacture by breaking something:
+
+- **128** `continue` when the batcher yields an empty batch. `SlidingWindowBatcher` does not
+  publish empty batches; this is a guard against a future one that might.
+- **140** `return` when the flush is cancelled *and* the strategy is stopping. Needs a flush
+  suspended precisely across a `FlushAndStopAsync`.
+- **150** the shutdown `catch (OperationCanceledException)` closing the drain loop.
+- **155** `return` when the sweep timer fires after disposal. The timer is disposed during stop,
+  so hitting this means winning a race against the disposal that is meant to prevent it.
+- **163** `continue` when `TryRemove` loses to a concurrent removal of the same buffer.
+- **170** the empty `catch` around awaiting an evicted stream's worker. `_drainBufferAsync`
+  already catches cancellation and per-batch failures, so the worker faulting means an
+  unanticipated escape from code written specifically not to.
+
+All six sit inside members whose other lines are covered, so per ai-docs/coverage-exclusions.md
+this is Case 3 and none of them gets `[ExcludeFromCodeCoverage]` -- the attribute is member-level
+and would suppress the covered lines beside them.
+
+One line from this class did leave the denominator honestly: `StreamBuffer.Reader` was dead. The
+batcher is handed `channel.Reader` directly at construction, nothing ever read the property, and
+the inbox sibling of this class does not declare it. Deleted rather than left as an uncoverable
+line, which is the difference between removing code and hiding it.
+
+## AC. EFCoreDeadLetterRecoveryService line 122 -- a no-rows fallback the function never produces
+
+```csharp
+await using var reader = await cmd.ExecuteReaderAsync(ct);
+if (!await reader.ReadAsync(ct)) {
+  return new CanaryVerdict(CanaryVerdictKind.Pending, 0, 0, 0);   // <- line 122
+}
+```
+
+`evaluate_canary_campaign` is a set-returning function that yields a row for any fingerprint and
+generation, including ones no campaign has ever used -- the cold-connection test calls it with
+`fp-none / gen-none` and gets `Pending` back, with this branch unexecuted. So the guard fires only
+if that function is one day rewritten to return an empty set.
+
+Worth keeping. A reader that returns nothing would otherwise throw on the field access below it,
+turning a schema change into an exception on a maintenance path instead of the conservative
+"look again next scan" answer this returns. Case 3 from ai-docs/coverage-exclusions.md: the rest
+of the member is covered, so no member-level attribute.
+
+The other 23 lines that were uncovered on this class are now covered. All but one were the same
+guard repeated across twelve entry points -- `if (conn.State != Open) await conn.OpenAsync(ct)` --
+dead in the suite because every other test reaches the service through a context EF Core has
+already opened, while in production a scoped DbContext resolved for a maintenance pass arrives
+closed and that guard is the first thing that runs.

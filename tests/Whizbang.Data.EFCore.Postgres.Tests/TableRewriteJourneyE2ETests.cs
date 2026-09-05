@@ -85,9 +85,63 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
         WHERE setting_key LIKE 'bloat\_%' AND substring(setting_key FROM 7)::INT > 1500";
       await carve.ExecuteNonQueryAsync(ct);
     }
+    await _waitUntilTheDeletedRowsAreRemovableAsync(conn, ct);
     await using (var analyze = conn.CreateCommand()) {
       analyze.CommandText = "ANALYZE wh_settings";
       await analyze.ExecuteNonQueryAsync(ct);
+    }
+  }
+
+  /// <summary>
+  /// Blocks until PostgreSQL will actually let the carved rows go.
+  /// </summary>
+  /// <remarks>
+  /// <para>Deleting rows does not make them removable. A dead tuple survives until no snapshot
+  /// anywhere in the cluster could still see it, and that horizon is held by the oldest running
+  /// transaction on the whole server -- including transactions in OTHER databases. Until it
+  /// advances past this DELETE, <c>VACUUM FULL</c> copies the dead rows into the new heap and the
+  /// table comes out exactly the size it went in.</para>
+  ///
+  /// <para>That is what made this test flaky on a shared container: with another suite running
+  /// against its own database on the same server, the rewrite reclaimed nothing and the step
+  /// correctly reported it as ineffective. PostgreSQL says as much when asked --
+  /// <c>VACUUM (FULL, VERBOSE)</c> reported "0 removable, 20022 nonremovable row versions" -- and a
+  /// second rewrite did no better, because the horizon, not the rewrite, was the problem. Nothing
+  /// was wrong with the product: a rewrite that cannot reclaim SHOULD stay queued for the next
+  /// boot, which is exactly what it did.</para>
+  ///
+  /// <para>The snapshot's own xmax after the DELETE is a transaction id no older than it, so once
+  /// the cluster's oldest running transaction reaches that mark, every transaction that could
+  /// still have seen those rows has finished and they are removable by definition. This polls
+  /// because a cleanup horizon is external state with nothing to subscribe to; it is a wait on a
+  /// real condition rather than a sleep chosen by feel.</para>
+  /// </remarks>
+  private static async Task _waitUntilTheDeletedRowsAreRemovableAsync(
+      NpgsqlConnection conn, CancellationToken ct) {
+    long deletedThrough;
+    await using (var mark = conn.CreateCommand()) {
+      mark.CommandText = "SELECT pg_snapshot_xmax(pg_current_snapshot())::TEXT::BIGINT";
+      deletedThrough = (long)(await mark.ExecuteScalarAsync(ct))!;
+    }
+
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(60);
+    while (true) {
+      long horizon;
+      await using (var probe = conn.CreateCommand()) {
+        probe.CommandText = "SELECT pg_snapshot_xmin(pg_current_snapshot())::TEXT::BIGINT";
+        horizon = (long)(await probe.ExecuteScalarAsync(ct))!;
+      }
+      if (horizon >= deletedThrough) {
+        return;
+      }
+      if (DateTimeOffset.UtcNow > deadline) {
+        throw new InvalidOperationException(
+          $"The cluster's cleanup horizon never advanced past the carve (xmin {horizon} still "
+          + $"below {deletedThrough}) after 60s, so VACUUM FULL cannot reclaim the deleted rows "
+          + "and this test cannot demonstrate a rewrite. A long-running transaction on this "
+          + "server -- in any database -- is holding the horizon open.");
+      }
+      await Task.Delay(TimeSpan.FromMilliseconds(50), ct);
     }
   }
 
@@ -142,7 +196,18 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
     await Assert.That(executed[0].Reason).Contains("rewrote 1 table")
       .Because("the winner did the real rewrite, not a no-op");
     await Assert.That(skipped).Count().IsEqualTo(1);
-    await Assert.That(skipped[0].Reason).IsEqualTo("capability not held")
+    // The non-holder skips for one of two reasons, and which one it gets is a matter of how the
+    // two pipelines happen to overlap: denied the duty while the winner still holds it, or granted
+    // it afterwards and finding the table already rewritten. Both say the same thing about the
+    // product -- it did not perform a second rewrite and it did not block waiting for one -- so
+    // pinning the test to whichever the machine produced makes it a timing assertion. Exclusivity
+    // itself is not left unguarded: DutyElectionE2ETests covers it directly, twice.
+    var nonHolder = skipped[0].Reason switch {
+      "capability not held" => "skipped without rewriting",
+      "no rewrites owed" => "skipped without rewriting",
+      var other => other,
+    };
+    await Assert.That(nonHolder).IsEqualTo("skipped without rewriting")
       .Because("nobody blocks on a rewrite — the non-holder skips and carries on");
 
     // Requested → rewritten → CLEARED: re-measuring offers nothing, and the pending request is gone.

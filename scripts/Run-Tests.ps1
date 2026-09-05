@@ -365,10 +365,18 @@ if ($useAiOutput) {
 # FailFast defaults to true in AI modes (stop on first failure to save time).
 # -NoFailFast force-disables it (shell-friendly alternative to -FailFast:$false,
 # which breaks in zsh where $false expands to empty).
+#
+# It must NOT default on for a coverage run. Fail-fast cancels every test still running the
+# moment one fails, and a cancelled test contributes no coverage -- so one flaky test truncates
+# its entire project exactly the way a stall-kill does, the project is marked failed, and its
+# lines leave the denominator. Run 15 lost all of Whizbang.Data.EFCore.Postgres.Tests to a single
+# latency assertion that failed at 10.5 s; the twelve further "failures" in that project were
+# fail-fast collateral, every one cancelled at 0 ms. Measuring coverage with fail-fast on is
+# self-defeating: the flakier the suite, the less of it the number describes.
 if ($NoFailFast) {
     $FailFast = $false
 } elseif ($useAiOutput -and -not $PSBoundParameters.ContainsKey('FailFast')) {
-    $FailFast = $true
+    $FailFast = -not $Coverage
 }
 
 # Initialize tee logging if -LogFile is specified
@@ -803,11 +811,12 @@ function Invoke-CoverageReport {
     Write-Host "=====================================" -ForegroundColor Cyan
     Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
 
-    # A project that failed contributes no cobertura file, so its lines leave the denominator
-    # entirely and the percentage is computed over whatever survived. Under --fail-fast a single
-    # failure also skips every project after it. The number that prints is then not comparable to
-    # the previous run's and must not be read as a trend -- it is a different measurement, and
-    # nothing about its format says so.
+    # Partial means lines LEFT THE DENOMINATOR, not merely that some test failed. A project whose
+    # tests all ran and reported failures still measured every one of its lines, so its number is
+    # comparable and saying otherwise trains the reader to ignore the banner. What is not
+    # comparable is a project cut short -- killed by stall/hang detection, or cancelled by
+    # fail-fast -- whose truncated cobertura is dropped before the merge. The percentage is then
+    # computed over whatever survived, and nothing about its format says so.
     if ($RunWasPartial) {
         Write-Host "  PARTIAL RUN — not comparable to a complete one." -ForegroundColor Red
         Write-Host "  Projects failed or were skipped, so their lines are absent from both" -ForegroundColor Red
@@ -1293,6 +1302,7 @@ try {
         $totalTestsFailed = 0
         $totalTestsSkipped = 0
         $failedProjects = @()
+        $truncatedProjects = @()
 
         $resultIndex = 0
         foreach ($result in $results) {
@@ -1315,6 +1325,14 @@ try {
             } else {
                 $totalProjectsFailed++
                 $failedProjects += $result.ProjectName
+                # A project whose tests all ran and merely reported failures still produced a
+                # COMPLETE cobertura, and dropping it would discard real coverage. Only a project
+                # that was cut short mid-run produces a truncated one. Exit code 143 is the
+                # SIGTERM from this script's own stall/hang Kill($true); under fail-fast any
+                # failure also cancels the rest of that project's run.
+                if ($result.ExitCode -eq 143 -or $FailFast) {
+                    $truncatedProjects += $result.ProjectName
+                }
                 if ($useAiOutput) {
                     Write-Host "  ✗ $($result.ProjectName) failed" -ForegroundColor Red
                 } else {
@@ -1394,8 +1412,43 @@ try {
                 Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]TestResults" -and
                                $_.LastWriteTimeUtc -ge $script:runStartTime }
 
+            # Drop the cobertura of any project that failed or was killed.
+            #
+            # Stall detection (no change in test count for HangTimeout) and silence detection
+            # (HangTimeout * 2) both terminate a project with $process.Kill($true) -- the SIGTERM
+            # behind the "Exit code: 143" that shows up in the log. A killed project still flushes
+            # a cobertura for whatever executed before the kill, and merging that truncated file is
+            # strictly worse than dropping it: the lines its un-run tests would have covered stay
+            # in the denominator and are reported as uncovered, indistinguishable from real gaps.
+            # The per-class worklist then ranks code that is in fact already tested. Confirmed on
+            # run 13, where RecentlyProcessedEventCacheSweepWorker's constructor read 8/8 (the DI
+            # registration tests ran) while its ExecuteAsync state machine read 0/20 -- purely
+            # because the three tests that drive it never got to run before the kill.
+            #
+            # Dropping the file is also what the PARTIAL banner already tells the reader happened:
+            # "a failed project contributes no cobertura, so its lines leave the denominator."
+            if ($truncatedProjects.Count -gt 0) {
+                $excludedProjects = $truncatedProjects
+                $beforeCount = $coberturaFiles.Count
+                $coberturaFiles = @($coberturaFiles | Where-Object {
+                    $coberturaPath = $_.FullName
+                    $fromFailedProject = $false
+                    foreach ($excludedProject in $excludedProjects) {
+                        if ($coberturaPath -match "[/\\]tests[/\\]$([regex]::Escape($excludedProject))[/\\]") {
+                            $fromFailedProject = $true
+                            break
+                        }
+                    }
+                    -not $fromFailedProject
+                })
+                $droppedCount = $beforeCount - $coberturaFiles.Count
+                if ($droppedCount -gt 0) {
+                    Write-Host "Excluded $droppedCount truncated cobertura file(s) (project cut short mid-run): $($excludedProjects -join ', ')" -ForegroundColor Yellow
+                }
+            }
+
             if ($coberturaFiles.Count -gt 0) {
-                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($totalProjectsFailed -gt 0)
+                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($truncatedProjects.Count -gt 0)
                 $coveragePct = $coverageResult.CoveragePct
                 $totalLines = $coverageResult.TotalLines
                 $totalCovered = $coverageResult.TotalCovered

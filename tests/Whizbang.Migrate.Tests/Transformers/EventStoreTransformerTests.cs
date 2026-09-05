@@ -735,4 +735,115 @@ public class EventStoreTransformerTests {
         w.Contains("Tenant") ||
         w.Contains("scoped"))).IsTrue();
   }
+
+  [Test]
+  public async Task TransformAsync_ConsecutiveAppends_WarnsAboutBatchingAsync() {
+    // Appending in a loop or back-to-back is a round trip per event. The migration cannot batch
+    // it automatically -- only the author knows whether the appends belong in one transaction --
+    // so the operator has to be told, or the migrated code keeps the per-event cost silently.
+    var transformer = new EventStoreTransformer();
+    const string sourceCode = """
+      using Marten;
+
+      public class OrderService {
+        public void Record(IDocumentSession session, string streamId) {
+          session.Events.Append(streamId, new OrderPlaced());
+          session.Events.Append(streamId, new OrderConfirmed());
+          session.Events.Append(streamId, new OrderShipped());
+        }
+      }
+
+      public record OrderPlaced();
+      public record OrderConfirmed();
+      public record OrderShipped();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("AppendBatchAsync", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("consecutive appends are one round trip each; the operator decides whether they "
+             + "belong in a batch, so the tool has to raise it rather than migrate silently");
+  }
+
+  [Test]
+  public async Task TransformAsync_WorkCoordinatorPattern_WarnsAsync() {
+    // A hand-rolled coordinator is the thing Whizbang replaces. Migrating the calls inside it
+    // while leaving the coordinator in place produces code that compiles and then fights the
+    // framework for the same responsibility.
+    var transformer = new EventStoreTransformer();
+    const string sourceCode = """
+      using Marten;
+
+      public class OrderBatchProcessor {
+        public void Process(IDocumentSession session) {
+          session.Events.StartStream("s", new OrderPlaced());
+        }
+      }
+
+      public record OrderPlaced();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderBatchProcessor.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("IWorkCoordinator", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("a hand-rolled batch processor duplicates what IWorkCoordinator does, and leaving "
+             + "both in place is worse than either alone");
+  }
+
+  [Test]
+  public async Task TransformAsync_EventStorePatternsWithoutAMartenUsing_AddsTheMessagingUsingAsync() {
+    // A file can use the event-store API through a global using or a fully qualified name, so the
+    // rewritten code needs Whizbang.Core.Messaging imported even though no "using Marten;" was
+    // there to replace. Without it the migrated file does not compile.
+    var transformer = new EventStoreTransformer();
+    const string sourceCode = """
+      using System;
+
+      public class OrderService {
+        public void Record(IDocumentSession session, string streamId) {
+          session.Events.StartStream(streamId, new OrderPlaced());
+        }
+      }
+
+      public record OrderPlaced();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
+
+    await Assert.That(result.TransformedCode).Contains("using Whizbang.Core.Messaging;")
+      .Because("the rewritten calls resolve out of that namespace; without the import the "
+             + "migrated file does not compile");
+    await Assert.That(result.TransformedCode).DoesNotContain("usingWhizbang")
+      .Because("a directive built from scratch needs its own leading space, or it renders as one "
+             + "token and the file does not parse -- that bug has shipped in this repo before");
+  }
+
+  [Test]
+  public async Task TransformAsync_GlobalUsingAlias_IsLeftForItsOwnTransformerAsync() {
+    // Global using aliases belong to GlobalUsingAliasTransformer. Rewriting them here too would
+    // have two transformers editing the same directive in one pass, and the second would act on
+    // what the first already changed.
+    var transformer = new EventStoreTransformer();
+    const string sourceCode = """
+      global using MartenIEvent = Marten.Events.IEvent;
+      using Marten;
+
+      public class OrderService {
+        public void Record(IDocumentSession session, string streamId) {
+          session.Events.StartStream(streamId, new OrderPlaced());
+        }
+      }
+
+      public record OrderPlaced();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
+
+    await Assert.That(result.TransformedCode).Contains("global using MartenIEvent = Marten.Events.IEvent;")
+      .Because("the alias is another transformer's responsibility; touching it here would mean "
+             + "two passes editing the same directive");
+  }
+
 }
