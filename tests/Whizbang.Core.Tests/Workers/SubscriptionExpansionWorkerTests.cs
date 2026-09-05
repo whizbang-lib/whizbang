@@ -104,10 +104,77 @@ public class SubscriptionExpansionWorkerTests {
       .Because("a request that cannot be sent stays Pending — the next boot retries it.");
   }
 
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_AFailedPassIsNonFatalAsync(CancellationToken testToken) {
+    // This runs at startup, before the app serves. A reconcile that cannot reach the registry
+    // must cost the pass, not the process: the expansion stays recorded and is re-detected next
+    // boot, and the audit phases surface anything still pending. Faulting here would take a
+    // healthy service out of rotation over a transient read.
+    var coordinator = new _registryCoordinator { FailReads = true };
+    var worker = _buildWorker(coordinator, transport: null);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await worker.ExecuteTask!.WaitAsync(testToken);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("a startup reconcile failure is logged and swallowed; a faulted hosted service "
+             + "stops the host from ever serving");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_ShutdownBeforeSchemaReady_TouchesNothingAsync(
+      CancellationToken testToken) {
+    // A host that fails during migration stops everything it built. This worker reads registry
+    // tables that may not exist yet, so it waits on the schema gate -- and a shutdown arriving
+    // during that wait must not be reported as a reconcile failure.
+    var coordinator = new _registryCoordinator();
+    var gate = new _blockingGate();
+    var worker = _buildWorker(coordinator, transport: null, gate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Without waiting for the worker to actually reach the gate, everything below is answered by
+    // a worker that never ran -- the registry is untouched either way.
+    await gate.WaitEntered.WaitAsync(testToken);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("shutdown during the schema wait is an ordinary stop, not an error to report");
+    await Assert.That(coordinator.Registry).IsEmpty()
+      .Because("nothing may be written before the schema those tables live in is ready");
+  }
+
+  private static SchemaReadyGate _readyGate() {
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    return gate;
+  }
+
+  /// <summary>A gate that never opens, and reports when the worker began waiting on it.</summary>
+  private sealed class _blockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _waitEntered =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task WaitEntered => _waitEntered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _waitEntered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static SubscriptionExpansionWorker _buildWorker(
-      _registryCoordinator coordinator, _captureTransport? transport, StreamIntegrityOptions? options = null) {
+      _registryCoordinator coordinator, _captureTransport? transport, StreamIntegrityOptions? options = null,
+      ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IEventTypeProvider>(new _typeProvider());
@@ -122,7 +189,7 @@ public class SubscriptionExpansionWorkerTests {
     var sp = services.BuildServiceProvider();
     return new SubscriptionExpansionWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
+      gate ?? _readyGate(),
       Options.Create(options ?? new StreamIntegrityOptions()),
       NullLogger<SubscriptionExpansionWorker>.Instance);
   }
@@ -148,9 +215,15 @@ public class SubscriptionExpansionWorkerTests {
   private sealed class _registryCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public Dictionary<string, ConsumedTypeBackfillStatus> Registry { get; } = [];
 
+    /// <summary>Set to make the registry read throw, as a database outage at startup would.</summary>
+    public bool FailReads { get; set; }
+
     public Task<IReadOnlyList<ConsumedTypeRegistration>> GetConsumedTypeRegistrationsAsync(CancellationToken cancellationToken = default) =>
-      Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>(
-        [.. Registry.Select(kv => new ConsumedTypeRegistration { EventType = kv.Key, Status = kv.Value })]);
+      FailReads
+        ? Task.FromException<IReadOnlyList<ConsumedTypeRegistration>>(
+            new InvalidOperationException("registry unavailable"))
+        : Task.FromResult<IReadOnlyList<ConsumedTypeRegistration>>(
+            [.. Registry.Select(kv => new ConsumedTypeRegistration { EventType = kv.Key, Status = kv.Value })]);
 
     public Task RegisterConsumedTypesAsync(IReadOnlyList<string> eventTypes, bool asBaseline, CancellationToken cancellationToken = default) {
       foreach (var type in eventTypes) {

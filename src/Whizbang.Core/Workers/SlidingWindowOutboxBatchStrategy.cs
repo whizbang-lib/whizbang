@@ -186,7 +186,6 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
 
   private sealed class StreamBuffer(Guid key, Channel<OutboxMessage> channel, DateTimeOffset createdAt) {
     public Guid Key { get; } = key;
-    public ChannelReader<OutboxMessage> Reader => channel.Reader;
     public ChannelWriter<OutboxMessage> Writer => channel.Writer;
     public DateTimeOffset LastActivity { get; set; } = createdAt;
     public Task Worker { get; set; } = Task.CompletedTask;

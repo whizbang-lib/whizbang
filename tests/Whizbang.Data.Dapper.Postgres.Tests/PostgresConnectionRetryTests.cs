@@ -134,7 +134,7 @@ public class PostgresConnectionRetryTests {
       await adminConnection.ExecuteAsync($@"
         SELECT pg_terminate_backend(pid) FROM pg_stat_activity
         WHERE datname = '{testDbName}' AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {testDbName}");
+      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {testDbName} WITH (FORCE)");
     }
   }
 
@@ -173,7 +173,7 @@ public class PostgresConnectionRetryTests {
       await adminConnection.ExecuteAsync($@"
         SELECT pg_terminate_backend(pid) FROM pg_stat_activity
         WHERE datname = '{testDbName}' AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {testDbName}");
+      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {testDbName} WITH (FORCE)");
     }
   }
 
@@ -221,7 +221,7 @@ public class PostgresConnectionRetryTests {
       await adminConnection.ExecuteAsync($@"
         SELECT pg_terminate_backend(pid) FROM pg_stat_activity
         WHERE datname = '{testDbName}' AND pid <> pg_backend_pid()");
-      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {testDbName}");
+      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {testDbName} WITH (FORCE)");
     }
   }
 

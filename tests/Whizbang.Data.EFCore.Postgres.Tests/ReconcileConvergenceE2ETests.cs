@@ -73,7 +73,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
         await admin.ExecuteAsync($@"
           SELECT pg_terminate_backend(pid) FROM pg_stat_activity
           WHERE datname = '{_consumerDbName}' AND pid <> pg_backend_pid()");
-        await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_consumerDbName}");
+        await admin.ExecuteAsync($"DROP DATABASE IF EXISTS {_consumerDbName} WITH (FORCE)");
       } catch {
         // container teardown collects strays
       }

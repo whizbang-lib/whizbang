@@ -107,7 +107,7 @@ public class SplitModeIntegrationTests : IAsyncDisposable {
         await adminConnection.ExecuteAsync($@"
           SELECT pg_terminate_backend(pid) FROM pg_stat_activity
           WHERE datname = '{_testDatabaseName}' AND pid <> pg_backend_pid()");
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch { /* cleanup errors */ }
       _testDatabaseName = null;
     }

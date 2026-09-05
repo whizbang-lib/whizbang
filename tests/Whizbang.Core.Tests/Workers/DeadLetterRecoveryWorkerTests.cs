@@ -49,11 +49,17 @@ public class DeadLetterRecoveryWorkerTests {
       _fetchSignals.GetOrAdd(ordinal, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
 
     public System.Collections.Concurrent.ConcurrentQueue<int> FetchedBatchSizes { get; } = new();
+
+    /// <summary>Fails the first scan so a test can check the loop outlives one.</summary>
+    public bool FetchThrowsOnFirstCall { get; set; }
     public Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
       FetchedBatchSizes.Enqueue(maxCount);
       _fetchCount++;
       _fetchSignals.GetOrAdd(_fetchCount, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
       if (_fetchCount == 1) { FirstFetchSignal.TrySetResult(); } else if (_fetchCount == 2) { SecondFetchSignal.TrySetResult(); }
+      if (FetchThrowsOnFirstCall && _fetchCount == 1) {
+        throw new InvalidOperationException("simulated scan failure");
+      }
       var batch = FetchBatches.Count > 0 ? FetchBatches.Dequeue() : [];
       return Task.FromResult<IReadOnlyList<DeadLetterEntry>>(batch);
     }
@@ -717,7 +723,7 @@ public class DeadLetterRecoveryWorkerTests {
       RecoveryAttempts: 0,
       Generation: "test/0.0.1");
 
-    for (var i = 0; i < 4; i++) { svc.FetchBatches.Enqueue([Fresh(), Fresh()]); }
+    for (var i = 0; i < 6; i++) { svc.FetchBatches.Enqueue([Fresh(), Fresh()]); }
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -732,14 +738,27 @@ public class DeadLetterRecoveryWorkerTests {
     listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
     await svc.FetchSignal(3).WaitAsync(TimeSpan.FromSeconds(5));
 
-    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(1);
-    await Assert.That(worker.IsLoopBreakerOpen).IsTrue();
-
-    // And it stops recovering: the tripping cycle's rows were left alone.
-    var recoveredAfterTrip = svc.RecoverCalls.Count;
+    // A fetch signal fires as the cycle STARTS gathering rows; the breaker decision is taken
+    // afterwards, while that batch is processed. Waiting on fetch 3 therefore says nothing about
+    // whether cycle 3 has reached its decision, and under load the assertion below wins the race
+    // and reads a trip count of 0. Cycle 4 cannot fetch until cycle 3 has returned, so its fetch
+    // is the signal that the third cycle -- and its breaker decision -- is genuinely complete.
     listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
     await svc.FetchSignal(4).WaitAsync(TimeSpan.FromSeconds(5));
-    await Assert.That(svc.RecoverCalls.Count).IsEqualTo(recoveredAfterTrip);
+
+    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(1)
+      .Because("the second consecutive wholly-fresh batch is the signal that recovery is feeding "
+             + "itself, and tripping once is what stops the cycle from running forever");
+    await Assert.That(worker.IsLoopBreakerOpen).IsTrue();
+
+    // And it stops recovering. The rows keep coming -- batches are still queued -- so a recovery
+    // count that does not move can only be the open breaker holding it back, not an empty queue.
+    var recoveredAfterTrip = svc.RecoverCalls.Count;
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(5).WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(svc.RecoverCalls.Count).IsEqualTo(recoveredAfterTrip)
+      .Because("with the breaker open the worker must leave the rows alone; recovering them is "
+             + "what would re-create the dead letters it just decided it was looping on");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -979,6 +998,38 @@ public class DeadLetterRecoveryWorkerTests {
     await Assert.That(svc.FetchedBatchSizes.TryDequeue(out var first)).IsTrue();
     await Assert.That(first).IsEqualTo(137)
       .Because("with the controller off, the fixed ScanBatchSize is used every settled scan");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ScanThatThrows_DoesNotEndRecoveryAsync(CancellationToken testToken) {
+    // A scan reads the dead-letter table, so a transient database fault is expected rather than
+    // exceptional. If it escaped the loop the worker would stop for the remaining life of the
+    // process and dead letters would simply stop being retried -- with nothing failing, because
+    // a queue nobody is draining looks exactly like a queue with nothing in it.
+    var listener = new FakeNotificationListener();
+    var (worker, svc) = _newWorker(listener: listener);
+    svc.FetchThrowsOnFirstCall = true;
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    try {
+      await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+      // Wake it rather than waiting out the scan interval, the same way the other tests here
+      // drive successive scans.
+      listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+
+      // The scan AFTER the failed one. Only a loop that survived performs it.
+      await svc.FetchSignal(2).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    } finally {
+      await cts.CancelAsync();
+      try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    }
+
+    await Assert.That(svc.FetchedBatchSizes.Count).IsGreaterThanOrEqualTo(2)
+      .Because("the scan after a failed one still has to run; one bad read is not a reason to "
+             + "stop retrying dead letters for the life of the process");
   }
 
 }
