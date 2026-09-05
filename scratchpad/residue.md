@@ -969,3 +969,31 @@ covered lines beside it.
 Worth keeping rather than deleting. `WaitForNextTickAsync` genuinely has a false return, and a
 loop that ignored it would spin once the timer was disposed. It is correct code guarding a state
 this construction cannot currently reach.
+
+## AA. PgInstanceLifecycleMonitor line 69 -- shutdown landing inside a scan
+
+```csharp
+try {
+  await _tickOnceAsync(stoppingToken);
+} catch (OperationCanceledException) {
+  break;                                   // <- line 69
+} catch (Exception ex) {
+  LogTickFailed(_logger, ex);
+}
+```
+
+The other 20 lines of `ExecuteAsync` are now covered, including the gate-cancel return and the
+error arm (driven by a connection to a refused port, which also proves the loop survives a
+database outage and comes back round).
+
+Line 69 needs cancellation to arrive *while a scan is in flight* and to surface as an
+`OperationCanceledException`. A refused port fails instantly, so there is no window to cancel
+inside. Producing one means pointing the monitor at a black-hole address so the connect hangs,
+then cancelling once the tick has demonstrably begun -- and with `DirectConnectionString` there is
+no configuration read to signal that beginning, so the test would be timing-dependent on how
+Npgsql surfaces a cancelled connect.
+
+Tractable, not impossible -- but a test whose green depends on out-racing a network connect is
+worth less than the line it covers, and this session has spent more time on flaky waits than on
+the gaps they were meant to close. Recorded rather than built. If it is ever wanted, the honest
+route is a seam on the monitor that reports when a tick starts, not a cleverer sleep.

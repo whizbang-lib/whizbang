@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
@@ -168,6 +169,102 @@ public class PgNotificationStackStartupGateTests {
 
   /// <summary>Counts configuration reads — the gated workers' first act is resolving their
   /// connection string, which consults configuration, so zero reads means none began.</summary>
+  [Test]
+  [Timeout(60000)]
+  public async Task InstanceLifecycleMonitor_AnUnreachableDatabase_DoesNotStopDeathDetectionAsync(
+      CancellationToken ct) {
+    // This loop is what announces a dead pod, and the announcement is what triggers takeover of
+    // the streams that pod owned. If a failed tick ended the loop, no death would be announced
+    // again for the life of the process and those streams would stay stranded -- with nothing in
+    // the logs after the first warning to say the monitor had stopped watching.
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var log = new _recordingMonitorLogger();
+    var worker = new PgInstanceLifecycleMonitor(
+      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = UNREACHABLE_DATABASE }),
+      _plainConfig(),
+      new _noOpSignalBus(),
+      log,
+      schemaReadyGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // The SECOND failure is the assertion: it can only happen if the loop survived the first and
+    // came back round after its interval. The first proves only that a tick ran.
+    await log.SecondTickFailure.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the monitor keeps scanning through a database outage and still stops cleanly "
+             + "when asked");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task InstanceLifecycleMonitor_ShutdownBeforeTheGateOpens_ExitsCleanlyAsync(
+      CancellationToken ct) {
+    // A pod stopped while the migration is still running never gets to scan. That exit has to be
+    // an ordinary shutdown: a fault here would report a death-detection crash on every rollout
+    // that happens to be slow.
+    var gate = new _blockingGate();
+    var worker = new PgInstanceLifecycleMonitor(
+      Options.Create(_optionsWithKey()),
+      _plainConfig(),
+      new _noOpSignalBus(),
+      NullLogger<PgInstanceLifecycleMonitor>.Instance,
+      schemaReadyGate: gate);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Observed at the gate first, or "exited cleanly" is answered by a worker that never began.
+    await gate.WaitEntered.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("stopping while gated is a shutdown, not a monitor failure");
+  }
+
+  /// <summary>A refused port: the connection plan is available, and opening it always fails.</summary>
+  private const string UNREACHABLE_DATABASE =
+    "Host=127.0.0.1;Port=1;Database=none;Username=u;Password=p;Timeout=1;Command Timeout=1";
+
+  /// <summary>A schema gate that never opens, and reports when the worker began waiting on it.</summary>
+  private sealed class _blockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _waitEntered =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task WaitEntered => _waitEntered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _waitEntered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>Reports the monitor's second failed tick, which only a surviving loop reaches.</summary>
+  private sealed class _recordingMonitorLogger : ILogger<PgInstanceLifecycleMonitor> {
+    private const int TICK_FAILED_EVENT_ID = 1;
+    private readonly TaskCompletionSource _secondFailure =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _failures;
+
+    public Task SecondTickFailure => _secondFailure.Task;
+
+    IDisposable? ILogger.BeginScope<TState>(TState state) => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (eventId.Id == TICK_FAILED_EVENT_ID && Interlocked.Increment(ref _failures) >= 2) {
+        _secondFailure.TrySetResult();
+      }
+    }
+  }
+
   private sealed class _countingConfiguration : IConfiguration {
     private readonly IConfiguration _inner = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
     private int _reads;
