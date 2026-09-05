@@ -27,6 +27,12 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   // must schema-qualify them the same way EFCoreWorkCoordinator qualifies its SQL — a bare call only
   // resolves when the connection's search_path happens to include the service schema, which is not
   // guaranteed (e.g. the ECommerce per-service schemas: 42883 "function ... does not exist").
+  // Tables need the same schema qualification as functions — see _fn's rationale.
+  private string _tbl(string name) {
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
+    return string.IsNullOrWhiteSpace(schema) || schema == "public" ? name : $"\"{schema}\".{name}";
+  }
+
   private string _fn(string name) {
     var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
     return string.IsNullOrWhiteSpace(schema) || schema == "public" ? name : $"\"{schema}\".{name}";
@@ -191,6 +197,47 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
     cmd.CommandText = $"SELECT {_fn("record_dead_letter_stacks")}(@entries::jsonb)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter(nameof(entries), NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = sb.ToString() });
     return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+  }
+
+  /// <inheritdoc />
+  public async Task<DeadLetterStatusSummary> GetStatusSummaryAsync(CancellationToken ct = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    long pending = 0, recovering = 0, held = 0, permanentlyFailed = 0, recovered = 0;
+    await using (var counts = conn.CreateCommand()) {
+      counts.CommandText =
+        "SELECT count(*) FILTER (WHERE recovered_at IS NULL AND recovery_status = 0), "
+      + "       count(*) FILTER (WHERE recovered_at IS NULL AND recovery_status = 1), "
+      + "       count(*) FILTER (WHERE recovered_at IS NULL AND recovery_status = 2), "
+      + "       count(*) FILTER (WHERE recovery_status = 4), "
+      + "       count(*) FILTER (WHERE recovered_at IS NOT NULL) "
+      + $"FROM {_tbl("wh_dead_letters")}";
+      await using var r = await counts.ExecuteReaderAsync(ct).ConfigureAwait(false);
+      if (await r.ReadAsync(ct).ConfigureAwait(false)) {
+        pending = r.GetInt64(0);
+        recovering = r.GetInt64(1);
+        held = r.GetInt64(2);
+        permanentlyFailed = r.GetInt64(3);
+        recovered = r.GetInt64(4);
+      }
+    }
+    var cohorts = await ListHeldCohortsAsync(ct).ConfigureAwait(false);
+    var campaigns = new List<CampaignStatus>();
+    await using (var camp = conn.CreateCommand()) {
+      camp.CommandText =
+        "SELECT fingerprint, generation, verdict, probes_succeeded, probes_failed, wave "
+      + $"FROM {_tbl("wh_dlq_probe_campaigns")} ORDER BY started_at DESC LIMIT 20";
+      await using var r = await camp.ExecuteReaderAsync(ct).ConfigureAwait(false);
+      while (await r.ReadAsync(ct).ConfigureAwait(false)) {
+        campaigns.Add(new CampaignStatus(
+          r.GetString(0), r.GetString(1), (CanaryVerdictKind)r.GetInt32(2),
+          r.GetInt32(3), r.GetInt32(4), r.GetInt32(5)));
+      }
+    }
+    return new DeadLetterStatusSummary(pending, recovering, held, permanentlyFailed, recovered, cohorts, campaigns);
   }
 
   /// <inheritdoc />

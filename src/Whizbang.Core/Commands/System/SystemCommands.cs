@@ -140,3 +140,35 @@ public record PauseProcessingCommand(
 public record ResumeProcessingCommand(
     string? Reason = null
 ) : ICommand;
+
+/// <summary>
+/// Command to release HELD dead-letter cohorts back into recovery — the message-fabric
+/// form of the operator release endpoint, so any service (or an admin API composing over
+/// the fleet) can trigger a release with a dispatch instead of service-to-service HTTP.
+/// Released rows are staggered and receive a fresh attempt (see canary recovery docs).
+/// </summary>
+/// <param name="Fingerprint">Cohort to release (error fingerprint). Null = every held cohort on the receiving service.</param>
+/// <param name="StaggerMinutes">Window to spread the release across. Default 30; 0 releases due-now.</param>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Commands/System/SystemCommandsTests.cs:ReleaseHeldDeadLettersCommand_CreatesCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DeadLetterOperationsReceptorTests.cs</tests>
+[PinnedId("d55cbc1d-a7c4-4798-9d8c-d82743ad6ebb")]
+public record ReleaseHeldDeadLettersCommand(
+    string? Fingerprint = null,
+    int StaggerMinutes = 30
+) : ICommand, Messaging.IControlPlaneMessage;
+
+/// <summary>
+/// Command to schedule a dead-letter recovery sweep NOW on the receiving service —
+/// re-offering every non-terminal, non-held row for the given (or current) generation.
+/// The message-fabric form of the operator scan-now endpoint. Deliberate and interactive:
+/// re-offers are due immediately (no stagger), matching the endpoint's semantics.
+/// </summary>
+/// <param name="Generation">Generation to replay onto. Null = the receiving service's current generation.</param>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+/// <tests>tests/Whizbang.Core.Tests/Commands/System/SystemCommandsTests.cs:RequestDeadLetterScanCommand_CreatesCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DeadLetterOperationsReceptorTests.cs</tests>
+[PinnedId("7fa751e7-db48-49d2-b35f-a8a393ef08ba")]
+public record RequestDeadLetterScanCommand(
+    string? Generation = null
+) : ICommand, Messaging.IControlPlaneMessage;

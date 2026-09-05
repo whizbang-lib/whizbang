@@ -38,6 +38,18 @@
       "formerNames": []
     },
     {
+      "pinnedId": "d55cbc1d-a7c4-4798-9d8c-d82743ad6ebb",
+      "clrTypeName": "Whizbang.Core.Commands.System.ReleaseHeldDeadLettersCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
+      "pinnedId": "7fa751e7-db48-49d2-b35f-a8a393ef08ba",
+      "clrTypeName": "Whizbang.Core.Commands.System.RequestDeadLetterScanCommand",
+      "kind": "command",
+      "formerNames": []
+    },
+    {
       "pinnedId": "c50126f7-aa4f-4cb8-b46f-36f589e0c36b",
       "clrTypeName": "Whizbang.Core.Commands.System.ResumeProcessingCommand",
       "kind": "command",

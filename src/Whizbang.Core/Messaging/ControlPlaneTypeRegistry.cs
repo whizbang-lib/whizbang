@@ -45,6 +45,8 @@ public static class ControlPlaneTypeRegistry {
     Register(typeof(Whizbang.Core.Minting.AuditEventsComposite));
     Register(typeof(Whizbang.Core.Minting.CoalescedEventsComposite));
     Register(typeof(Whizbang.Core.Commands.System.RebuildPerspectiveCommand));
+    Register(typeof(Whizbang.Core.Commands.System.ReleaseHeldDeadLettersCommand));
+    Register(typeof(Whizbang.Core.Commands.System.RequestDeadLetterScanCommand));
   }
 
   /// <summary>Registers a message type name as control-plane. Idempotent.</summary>

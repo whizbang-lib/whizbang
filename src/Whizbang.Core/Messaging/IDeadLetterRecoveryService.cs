@@ -126,6 +126,12 @@ public interface IDeadLetterRecoveryService {
   Task<int> RecordStacksAsync(IReadOnlyList<(Guid DeadLetterId, Whizbang.Core.DeadLetters.StackIdentity Stack)> entries, CancellationToken ct = default);
 
   /// <summary>
+  /// One service's dead-letter posture in a single read — the status surface behind the
+  /// shipped operator endpoint and any admin API composing fleet views.
+  /// </summary>
+  Task<DeadLetterStatusSummary> GetStatusSummaryAsync(CancellationToken ct = default);
+
+  /// <summary>
   /// Prunes rolling stack-history rows older than <paramref name="retentionDays"/> days.
   /// A non-positive retention disables the cleanup (the log is kept forever). Returns rows
   /// pruned.
@@ -136,6 +142,31 @@ public interface IDeadLetterRecoveryService {
 /// <summary>A dead letter awaiting stack normalization.</summary>
 /// <docs>operations/dead-letter-queue/canary-recovery</docs>
 public sealed record UnstackedDeadLetter(Guid DeadLetterId, string ErrorText);
+
+/// <summary>
+/// One service's dead-letter posture: unrecovered counts by recovery status, total recovered,
+/// held cohorts, and the most recent canary campaigns. The single read behind the shipped
+/// GET /whizbang/dlq/status endpoint and the fleet views an admin API composes over it.
+/// </summary>
+/// <docs>operations/dead-letter-queue/canary-recovery</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DlqStatusSummarySqlTests.cs</tests>
+public sealed record DeadLetterStatusSummary(
+    long Pending,
+    long Recovering,
+    long Held,
+    long PermanentlyFailed,
+    long Recovered,
+    IReadOnlyList<HeldCohort> HeldCohorts,
+    IReadOnlyList<CampaignStatus> RecentCampaigns);
+
+/// <summary>One canary campaign's state for the status surface.</summary>
+public sealed record CampaignStatus(
+    string Fingerprint,
+    string Generation,
+    CanaryVerdictKind Verdict,
+    int ProbesSucceeded,
+    int ProbesFailed,
+    int Wave);
 
 /// <summary>One campaign unit: held rows sharing an error fingerprint.</summary>
 /// <docs>operations/dead-letter-queue/canary-recovery</docs>
