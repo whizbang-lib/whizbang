@@ -1079,3 +1079,34 @@ guard repeated across twelve entry points -- `if (conn.State != Open) await conn
 dead in the suite because every other test reaches the service through a context EF Core has
 already opened, while in production a scoped DbContext resolved for a maintenance pass arrives
 closed and that guard is the first thing that runs.
+
+## AD. OPEN: 21 test databases per full run still leak, mechanism not established
+
+Fixed and verified: `EFCoreTestBase` was dropping its per-test database with a terminate followed
+by a separate DROP, which race each other, and swallowing the failure on the grounds the container
+would be torn down anyway. Returning the connection pool first and using `DROP ... WITH (FORCE)`
+fixed the bulk of it, and every other test-database drop in both Postgres suites now uses FORCE
+too (25 files). The effect is not subtle: the EFCore suite went from **16m37s back to ~7m25s**,
+matching its old baseline, because the databases were no longer piling up under it.
+
+What is NOT explained: a full 2,675-test run still leaves exactly **21** `test_%` databases, and
+the count was identical across three runs with different fixes in between. Ruled out:
+
+- Not the base class alone -- running two base-derived classes leaves zero.
+- Not the standalone classes that create their own database -- running one leaves zero.
+- Not the racy DROP -- the leftovers drop instantly with FORCE afterwards, and adding a bounded
+  retry to the base changed nothing.
+- Not teardown hiding via inheritance -- the classes with their own CREATE DATABASE are standalone
+  (`: IAsyncDisposable`), not derived, so no `[After(Test)]` is being shadowed.
+
+Stable at 21 across runs suggests something systematic under parallelism rather than a race, but
+that is a guess and it is written here as one.
+
+Why it still matters even at 21: every leaked database brings backends whose open transactions
+hold the cluster's cleanup horizon back, which is the exact condition behind issue #671. The
+volume is now far below what was measured before (71 across a two-hour container), so it degrades
+slowly rather than quickly.
+
+Next step if picked up: instrument the swallowed catch to record which database failed to drop and
+from which class, then read it off one unattended full run. Bisecting by running classes in
+isolation does not reproduce it and has already been tried.

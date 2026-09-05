@@ -130,7 +130,7 @@ public class ColdBootJourneyE2ETests {
           WHERE datname = '{_databaseName}' AND pid <> pg_backend_pid()";
         await terminate.ExecuteNonQueryAsync();
         await using var drop = admin.CreateCommand();
-        drop.CommandText = $"DROP DATABASE IF EXISTS {_databaseName}";
+        drop.CommandText = $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)";
         await drop.ExecuteNonQueryAsync();
       } catch {
         // container teardown reclaims stragglers

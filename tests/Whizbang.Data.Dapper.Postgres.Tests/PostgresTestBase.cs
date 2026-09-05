@@ -98,7 +98,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
           AND pid <> pg_backend_pid()");
 
         // Drop the database
-        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
       } catch {
         // Ignore cleanup errors - the database will be cleaned up when the container stops
       }

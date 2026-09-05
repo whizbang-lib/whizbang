@@ -136,8 +136,22 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
         // same suite slowed from 6m52s to 16m37s as they accumulated, and every extra database
         // brings backends whose open transactions hold the cluster's cleanup horizon back --
         // which is what makes VACUUM FULL reclaim nothing and produced the flake in issue #671.
-        await adminConnection.ExecuteAsync(
-          $"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
+        //
+        // Retried because FORCE is not quite atomic against an arriving connection: a background
+        // worker the test started can reconnect between the terminate and the drop, and the drop
+        // then fails with the database still in use. One pass left 21 databases behind across a
+        // 2,675-test run; the ones that survive are droppable moments later, so what is needed is
+        // another attempt rather than a different statement.
+        for (var attempt = 1; ; attempt++) {
+          try {
+            await adminConnection.ExecuteAsync(
+              $"DROP DATABASE IF EXISTS {_testDatabaseName} WITH (FORCE)");
+            break;
+          } catch when (attempt < 3) {
+            NpgsqlConnection.ClearPool(new NpgsqlConnection(ConnectionString));
+            await Task.Delay(TimeSpan.FromMilliseconds(150));
+          }
+        }
       } catch {
         // Still swallowed: a teardown failure must not mask the result of the test that just ran.
       }
