@@ -1241,4 +1241,42 @@ public class InboxDispatchWorkerGapTests {
       .Because("the no-op is worth a line — a burst of them is the signature of double-feed");
   }
 
+
+  [Test]
+  public async Task DisabledSubsystemMessage_IsDiscardedByCompleting_NotDispatchedAsync() {
+    // #664 worker half: a leftover wrapped checkpoint arriving while checkpoints are
+    // disabled is discarded AS its processing — a terminal completion through the normal
+    // commit channel (lifecycle signaled by construction), an in-flight release, a log
+    // line, and no dispatch attempt. Before this, it dispatched into a nonexistent
+    // handler and livelocked on lease-expiry re-claims.
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var writer = new FakeInboxChannelWriter();
+    var logger = new RecordingLogger<InboxDispatchWorker>();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    await using var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeInstanceProvider(), writer, handlerCommit, new FakeFailureChannel(), gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions { CheckpointsEnabled = false }));
+
+    var work = _makeWork();
+    work = work with {
+      MessageType = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Messaging.IntegrityCheckpoint, "
+                  + "Whizbang.Core, Version=0.900.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core",
+    };
+    await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+
+    var routed = handlerCommit.All.Single();
+    var expectedStatus = (int)(work.Status | MessageProcessingStatus.Published);
+    await Assert.That(routed.InboxCompletion.Status).IsEqualTo(expectedStatus)
+      .Because("the discard IS the processing — a terminal completion through the normal "
+             + "machinery, so the row deletes and can never re-claim");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("disabled", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("a discarded message logs WHAT was dropped and WHY — never a silent swallow");
+  }
+
 }
