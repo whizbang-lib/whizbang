@@ -239,6 +239,46 @@ public class MergedSharedCopyTests {
   }
 
 
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_PhysicalFieldInfoStillComparesByValueAsync(MergedHost host) {
+    // Incremental generators cache on these records, and the caching is only correct because the
+    // record compares by value. A merged copy that compared by reference would report every
+    // rebuild as a change and re-run the whole generator on each keystroke; one that compared
+    // everything equal would never re-run it and emit stale code. Neither failure announces
+    // itself -- the generator still produces output, just at the wrong time.
+    //
+    // Two of the four hosts never construct one of these in their own generator, so their copy's
+    // synthesized members had never executed. Reflection is the only way in: the record type is
+    // internal to each host and a distinct type identity per copy.
+    const string physicalField = "Whizbang.Generators.Shared.Models.PhysicalFieldInfo";
+    var fieldType = _type(host.Assembly, physicalField);
+
+    object?[] arguments = [
+      "Embedding", "embedding", "float[]", true, false, null, true, null, null, null, null,
+    ];
+    var one = Activator.CreateInstance(fieldType, arguments)!;
+    var same = Activator.CreateInstance(fieldType, arguments)!;
+
+    object?[] differing = [.. arguments];
+    differing[1] = "a_different_column";
+    var other = Activator.CreateInstance(fieldType, differing)!;
+
+    await Assert.That(ReferenceEquals(one, same)).IsFalse()
+      .Because("these are two separate instances; comparing them is the point of the test");
+    await Assert.That(one.Equals(same)).IsTrue()
+      .Because("two fields describing the same column are the same value, and the generator's "
+             + "incremental cache depends on that being true across the merge boundary");
+    await Assert.That(one.GetHashCode()).IsEqualTo(same.GetHashCode())
+      .Because("equal values must hash alike or the cache lookup misses even when equality holds");
+    await Assert.That(one.Equals(other)).IsFalse()
+      .Because("a copy that found every field equal would cache a stale result and emit code for "
+             + "a column that had been renamed");
+    await Assert.That(one.ToString()).Contains("Embedding")
+      .Because("the record's generated ToString is what a generator diagnostic prints when it "
+             + "reports which field it choked on");
+  }
+
   // ── The symbol-dependent surface, per host ────────────────────────────────
 
   private const string SYMBOL_SOURCE = """
