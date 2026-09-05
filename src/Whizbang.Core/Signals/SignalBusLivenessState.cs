@@ -76,10 +76,37 @@ public sealed class SignalBusLivenessState {
   public void MarkWireSignalReceived(DateTimeOffset at) => Volatile.Write(ref _lastWireSignalTicks, at.UtcTicks);
 
   /// <summary>Record a claim woken by a new-work doorbell — resets the missed streak.</summary>
-  public void RecordDoorbellWake() => Interlocked.Exchange(ref _consecutiveMissed, 0);
+  public void RecordDoorbellWake() {
+    Interlocked.Exchange(ref _consecutiveMissed, 0);
+    _raiseEvaluated();
+  }
 
   /// <summary>Record work discovered by poll on an edge where a doorbell should have rung.</summary>
-  public void RecordMissedDoorbell() => Interlocked.Increment(ref _consecutiveMissed);
+  public void RecordMissedDoorbell() {
+    Interlocked.Increment(ref _consecutiveMissed);
+    _raiseEvaluated();
+  }
+
+  /// <summary>
+  /// Raised once per empty-to-non-empty edge, after the verdict is recorded.
+  /// </summary>
+  /// <remarks>
+  /// The verdict is only reachable through <see cref="ConsecutiveMissedDoorbells"/>, and zero
+  /// there means both "no doorbell was missed" and "no edge has been judged yet" -- so an
+  /// observer cannot tell a healthy route from one that has not been exercised. This says when
+  /// the judgement happened, which is the difference between the two.
+  /// </remarks>
+  public event Action? DoorbellEvaluated;
+
+  /// <summary>Count of edges judged, for callers that prefer polling a number to a subscription.</summary>
+  public int DoorbellEvaluations => Volatile.Read(ref _doorbellEvaluations);
+
+  private int _doorbellEvaluations;
+
+  private void _raiseEvaluated() {
+    Interlocked.Increment(ref _doorbellEvaluations);
+    DoorbellEvaluated?.Invoke();
+  }
 
   /// <summary>The signal-bus component's self-reported health.</summary>
   public ComponentHealth Report() {
