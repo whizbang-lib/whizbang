@@ -360,9 +360,20 @@ BEGIN
   IF v_debug_mode THEN
     v_rows := 0;
   ELSE
-    DELETE FROM __SCHEMA__.wh_dead_letters
-    WHERE recovery_status = 3
-      AND dead_lettered_at < NOW() - (v_dead_letter_retention_days || ' days')::INTERVAL;
+    -- Retention keys on when the row SETTLED (#682): a backlog older than the window would
+    -- otherwise have its receipts deleted within one maintenance cycle of recovering —
+    -- recovered counts went BACKWARDS while a drain made real progress. recovered_at is
+    -- NULL only on legacy rows settled before it was stamped; those fall back to the
+    -- original failure time rather than living forever.
+    -- A row referenced by an UNRESOLVED campaign's probe_ids is evidence, not clutter:
+    -- deleting it resolves the campaign on an empty evidence set (see 127's evaluate).
+    DELETE FROM __SCHEMA__.wh_dead_letters d
+    WHERE d.recovery_status = 3
+      AND COALESCE(d.recovered_at, d.dead_lettered_at) < NOW() - (v_dead_letter_retention_days || ' days')::INTERVAL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_dlq_probe_campaigns c
+        WHERE c.verdict = 0 AND d.dead_letter_id = ANY(c.probe_ids)
+      );
     GET DIAGNOSTICS v_rows = ROW_COUNT;
   END IF;
   RETURN QUERY SELECT
@@ -383,5 +394,5 @@ ON CONFLICT (setting_key) DO NOTHING;
 -- Retention (days) for SETTLED wh_dead_letters rows. Only Recovered(3) rows are eligible; a row
 -- still awaiting a human decision is never purged on age.
 INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, description)
-VALUES ('dead_letter_retention_days', '7', 'integer', 'Days a recovered dead-letter row is kept before perform_maintenance purges it.')
+VALUES ('dead_letter_retention_days', '7', 'integer', 'Days a recovered dead-letter row is kept, measured from recovered_at, before perform_maintenance purges it. Rows referenced by an unresolved canary campaign are exempt.')
 ON CONFLICT (setting_key) DO NOTHING;

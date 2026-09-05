@@ -537,6 +537,33 @@ public sealed class DeadLetterCanaryCampaignTests {
   }
 
   [Test]
+  public async Task Canary_EvidenceLostVerdict_ReprobesInsteadOfWaitingForeverAsync() {
+    // Issue #682: a Pending verdict with NOTHING outstanding and NOTHING counted means the
+    // campaign's probe rows were destroyed (retention purge). Waiting for the next scan
+    // re-evaluates the same emptiness forever; the worker must re-mint probes so the
+    // campaign regains evidence (begin_canary_probes refreshes a probe-less campaign).
+    var svc = new CampaignFake { Cohorts = [new("fp-aaa", 5000, 3)] };
+    svc.Verdicts["fp-aaa"] = new Queue<CanaryVerdict>([
+      new(CanaryVerdictKind.Pending, 0, 0, 0),
+      new(CanaryVerdictKind.Pass, 2, 0, 0),
+    ]);
+    var (worker, _, _, bell) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.EvaluateSignal(1).WaitAsync(_timeout);
+    bell.Ring();
+    await svc.ReleaseSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.BeginCalls.Count).IsEqualTo(2)
+      .Because("evidence-lost Pending (0 outstanding, 0 succeeded, 0 failed) must trigger a "
+             + "re-probe — the startup Begin plus one refresh — not a silent forever-wait");
+    await Assert.That(svc.ReleaseCalls.Count).IsEqualTo(1)
+      .Because("the refreshed campaign still resolves normally: the follow-up Pass releases");
+  }
+
+  [Test]
   public async Task Full_ReleasesEveryCohort_WithoutProbingAsync() {
     var svc = new CampaignFake { Cohorts = [new("fp-aaa", 5000, 3), new("fp-bbb", 200, 1)] };
     var (worker, _, _, bell) = _build(_opts(RetryHeldOnStartupMode.Full), svc);

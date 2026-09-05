@@ -335,4 +335,90 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
                + "arriving at once is exactly the storm shape the arbitration exists to prevent");
     }
   }
+
+  // ==== #682: a verdict must never be reached on destroyed evidence ====
+
+  [Test]
+  public async Task Evaluate_AllProbeRowsDeleted_StaysPendingNotPassAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    for (var i = 0; i < 4; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
+    var svc = _svc(ctx);
+    await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+
+    // The retention purge deletes the probe rows out from under the live campaign
+    // (issue #682: retention keyed on dead_lettered_at made this the NORMAL case for
+    // cohorts older than the window, not an edge case).
+    await using (var del = conn.CreateCommand()) {
+      del.CommandText = "DELETE FROM wh_dead_letters WHERE error_fingerprint=@fp AND recovery_status=0";
+      del.Parameters.AddWithValue("fp", fp);
+      await del.ExecuteNonQueryAsync();
+    }
+
+    var verdict = await svc.EvaluateCampaignAsync(fp, "gen/1");
+    await Assert.That(verdict.Kind).IsNotEqualTo(CanaryVerdictKind.Pass)
+      .Because("zero surviving probes is zero evidence — 0 succeeded / 0 failed must not "
+             + "satisfy the failed=0 branch and release an entire cohort vacuously");
+    await Assert.That(verdict.Kind).IsEqualTo(CanaryVerdictKind.Pending)
+      .Because("evidence loss resolves to Pending so the worker re-probes rather than concluding");
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT verdict FROM wh_dlq_probe_campaigns WHERE fingerprint=@fp AND generation='gen/1'";
+    q.Parameters.AddWithValue("fp", fp);
+    await Assert.That((int)(await q.ExecuteScalarAsync() ?? -1)).IsEqualTo((int)CanaryVerdictKind.Pending)
+      .Because("no terminal verdict may persist from an empty evidence set");
+  }
+
+  [Test]
+  public async Task BeginProbes_EvidenceLost_RefreshesProbeSetFromSurvivorsAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    for (var i = 0; i < 6; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
+    var svc = _svc(ctx);
+    var first = await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+    await Assert.That(first).IsEqualTo(2);
+
+    // Purge destroys the minted probes (they flipped to Pending=0); held rows survive.
+    await using (var del = conn.CreateCommand()) {
+      del.CommandText = "DELETE FROM wh_dead_letters WHERE error_fingerprint=@fp AND recovery_status=0";
+      del.Parameters.AddWithValue("fp", fp);
+      await del.ExecuteNonQueryAsync();
+    }
+
+    var refreshed = await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+    await Assert.That(refreshed).IsEqualTo(2)
+      .Because("a campaign whose entire probe set was destroyed must re-mint from the "
+             + "surviving held rows instead of resuming as a zero-evidence campaign; "
+             + "idempotent-resume (return 0) is only correct while probe rows still exist");
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = @"SELECT COUNT(*) FROM wh_dead_letters d
+      JOIN wh_dlq_probe_campaigns c ON d.dead_letter_id = ANY(c.probe_ids)
+      WHERE c.fingerprint=@fp AND c.generation='gen/1' AND d.recovery_status=0";
+    q.Parameters.AddWithValue("fp", fp);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(2L)
+      .Because("the refreshed probe_ids must reference live Pending rows the evaluator can count");
+  }
+
+  [Test]
+  public async Task BeginProbes_ProbesStillPresent_RemainsIdempotentAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    for (var i = 0; i < 4; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
+    var svc = _svc(ctx);
+    var first = await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+    await Assert.That(first).IsEqualTo(2);
+
+    var resumed = await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+    await Assert.That(resumed).IsEqualTo(0)
+      .Because("control: while the probe rows survive, a restart resumes the campaign "
+             + "rather than minting a second probe set — the refresh path must not regress this");
+  }
+
 }

@@ -303,6 +303,17 @@ public partial class DeadLetterRecoveryWorker(
       var verdict = await svc.EvaluateCampaignAsync(fingerprint, _campaignGeneration, ct).ConfigureAwait(false);
       switch (verdict.Kind) {
         case CanaryVerdictKind.Pending:
+          // Issue #682: Pending with NOTHING outstanding and NOTHING counted means the
+          // campaign's probe rows were destroyed (the retention purge can delete evidence
+          // out from under a live campaign). Re-evaluating the same emptiness every scan
+          // waits forever — re-mint probes instead. BeginCanaryProbesAsync refreshes a
+          // probe-less unresolved campaign from the surviving held rows.
+          if (verdict.ProbesOutstanding == 0 && verdict.ProbesSucceeded == 0 && verdict.ProbesFailed == 0) {
+            var refreshed = await svc.BeginCanaryProbesAsync(
+              fingerprint, _campaignGeneration, _options.CanaryProbeSize,
+              _options.GenerationBudget, ct).ConfigureAwait(false);
+            LogCampaignEvidenceLost(_logger, fingerprint, refreshed);
+          }
           break;
         case CanaryVerdictKind.Pass:
           var released = await svc.ReleaseHeldCohortAsync(fingerprint, stagger, ct).ConfigureAwait(false);
@@ -598,6 +609,10 @@ public partial class DeadLetterRecoveryWorker(
   [LoggerMessage(EventId = 20, Level = LogLevel.Information,
     Message = "Held cohort {Fingerprint} released ({Released} row(s), {Mode}) — rows return to Pending staggered; the paced scans drain them")]
   static partial void LogCohortReleased(ILogger logger, string fingerprint, int released, string mode);
+
+  [LoggerMessage(EventId = 28, Level = LogLevel.Warning,
+    Message = "Campaign {Fingerprint} lost its probe evidence (0 outstanding / 0 counted) — probe rows were purged or deleted mid-campaign; re-minted {Refreshed} probe(s) from the surviving held rows")]
+  static partial void LogCampaignEvidenceLost(ILogger logger, string fingerprint, int refreshed);
 
   [LoggerMessage(EventId = 21, Level = LogLevel.Information,
     Message = "Canary campaign for cohort {Fingerprint} FAILED ({ProbesFailed} probe(s) re-dead-lettered) — the cohort stays held; the bug is still live")]
