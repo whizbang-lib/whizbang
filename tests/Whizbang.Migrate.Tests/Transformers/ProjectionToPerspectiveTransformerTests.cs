@@ -718,4 +718,129 @@ public class ProjectionToPerspectiveTransformerTests {
              + "framework ignoring the result and the row never being deleted");
   }
 
+
+  [Test]
+  public async Task TransformAsync_UsingsThatAreNotMartens_SurviveTheSwapAsync() {
+    // The migrator replaces one import. Every other using in the file belongs to the author, and
+    // dropping one produces a file that no longer compiles for a reason unrelated to the
+    // migration — the kind of breakage that gets blamed on the framework rather than the tool.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using System;
+      using System.Collections.Generic;
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Tags = new List<string>();
+        }
+      }
+
+      public class Order { public List<string> Tags { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("using System;")
+      .Because("the file used System before the migration and still does after it");
+    await Assert.That(result.TransformedCode).Contains("using System.Collections.Generic;")
+      .Because("List<string> in the body needs its import kept, or the migrated file stops "
+             + "compiling for a reason that has nothing to do with the migration");
+    await Assert.That(result.TransformedCode).Contains("using Whizbang.Core.Perspectives;")
+      .Because("the Marten import is the one being swapped, and the replacement has to arrive");
+  }
+
+  [Test]
+  public async Task TransformAsync_ABaseTypeThatIsNotTheProjection_IsKeptAsync() {
+    // A projection can carry other bases — a marker interface, a shared abstract class. Only the
+    // Marten base is being replaced, and silently dropping the rest changes what the type is: the
+    // class stops satisfying whatever the codebase resolved it by, which surfaces far from here
+    // as a registration that no longer finds it.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order>, IAuditable {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public interface IAuditable { }
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IAuditable")
+      .Because("the interface was not Marten's to take away; a class that quietly stops "
+             + "implementing it fails wherever the codebase resolved it by that interface");
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated>")
+      .Because("the Marten base is still the one that gets replaced");
+  }
+
+  [Test]
+  public async Task TransformAsync_FullyQualifiedIEventParameter_IsNotMistakenForAnEventTypeAsync() {
+    // Marten's IEvent<T> wrapper carries metadata, not the event. It is already skipped when
+    // written plainly; written fully qualified it must be skipped too, or the perspective is
+    // generated as handling `Marten.Events.IEvent<OrderCreated>` — a type that does not exist
+    // after the migration, in the very declaration the migration exists to produce.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Marten.Events.IEvent<OrderCreated> metadata, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated>")
+      .Because("the event type is the one the handler is really about");
+    await Assert.That(result.TransformedCode).DoesNotContain("IPerspectiveFor<Order, Marten.Events.IEvent")
+      .Because("naming the metadata wrapper as the handled event puts a type that no longer "
+             + "exists into the declaration the migration just wrote");
+  }
+
+  [Test]
+  public async Task TransformAsync_ClassesThatAreNotProjections_AreLeftAloneAsync() {
+    // A file rarely holds only the projection. Every other class in it has a base list the
+    // rewriter also visits, and rewriting one of those would be an edit nobody asked for in a
+    // file the author opened to review a projection change.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public class AuditLog : IAuditable {
+        public string Entry { get; set; }
+      }
+
+      public interface IAuditable { }
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("public class AuditLog : IAuditable")
+      .Because("AuditLog is not a projection and its declaration is not the migration's to touch");
+    await Assert.That(result.Changes.Count(c => c.ChangeType == ChangeType.BaseClassReplacement))
+      .IsEqualTo(1)
+      .Because("exactly one base was Marten's; reporting more would mean the rewriter walked into "
+             + "a class it had no business changing");
+  }
 }

@@ -1212,3 +1212,35 @@ built from an unrelated class asserts an absence that the early return already g
 passed without reaching the using logic it named. The version kept here includes `IMessageBus`
 without a file-level `using Wolverine;`, which is how the type arrives via a global using, and it
 does reach the branch.
+
+## AH. ProjectionToPerspectiveTransformer: 22 uncovered down to 15, and what the 15 are
+
+Covered this round, each a behaviour a migrated file depends on: non-Marten usings survive the
+import swap (a dropped `using System.Collections.Generic;` breaks the build for a reason unrelated
+to the migration), a non-projection base type is kept (a class that silently stops implementing a
+marker interface fails wherever the codebase resolved it by that interface), a fully-qualified
+`Marten.Events.IEvent<T>` metadata parameter is not mistaken for the handled event type, and
+classes in the file that are not projections are left alone.
+
+What remains, and why each is a poor target rather than an untested behaviour:
+
+- **78, 85** `return root` guards -- a root that is not a `CompilationUnitSyntax`, and a file with
+  no Marten import. `ParseText` always yields a compilation unit; this is residue R appearing in a
+  third transformer.
+- **301, 447, 483** "could not determine" returns -- `"unknown"`, and two `null`s from helpers that
+  walk a base list looking for a shape the caller has already established is there. Reaching them
+  means constructing a projection whose own declaration contradicts itself.
+- **322, 338** `continue` arms in parameter loops, skipping shapes the surrounding code has
+  already filtered for.
+- **387-388** a warning emitted when neither event nor model type can be derived for a
+  `ShouldDelete` transform -- same shape as above: the enclosing method only runs once those types
+  resolved.
+- **474-475, 479-481** the fallback in generic-argument parsing for `IPerspectiveFor<T>` written
+  with ONE argument. The transformer always emits two (`IPerspectiveFor<Model, Event>`), so this
+  is a guard against hand-edited or future output, not against anything the tool produces.
+- **513** the default `("Delete", true)` arm of the ShouldDelete classifier, below two returns that
+  already cover the shapes its callers construct.
+
+All sit inside members whose other lines are covered, so Case 3 applies and none takes an
+attribute. Worth keeping: every one of them is the conservative answer, and the alternative to a
+guard here is a NullReferenceException inside a migration tool halfway through rewriting a file.
