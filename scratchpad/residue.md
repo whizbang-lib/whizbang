@@ -825,6 +825,31 @@ Recorded rather than changed. It is a test-strategy decision about what these as
 for, and raising thresholds until they stop failing would remove the regressions they exist to
 catch.
 
+### Update (run 19): now the only failing test in the suite, and not reproducible on demand
+
+`CommitToPerspectiveVisible_FencedByOpenSameDbTransaction_StillLandsUnder1500msAsync` is the sole
+failure in an otherwise green 46-project run, at **10.6 s against a 1500 ms budget**. That is not
+jitter: the budget exists because after the fence clears there is no further external wake, so
+only `CommitOrderStamperOptions.FencedRetryInterval` (250 ms) can stamp the row -- otherwise it
+waits for the 5 s backstop. 10.6 s is roughly TWO backstop ticks, which would mean the fenced
+retry never fired AND the first backstop tick missed it.
+
+Attempts to reproduce: 3 runs in isolation, 4 more with a second Postgres suite hammering the same
+container. All 7 passed. It appears only under the full 46-project run, where a single reproduction
+costs ~35 minutes, so bisecting the mechanism this way is not affordable.
+
+What this changes about the entry: option 1 (`[NotInParallel]`) is now clearly the wrong shape --
+the contention is cross-assembly and this test already runs serialized within its own. Option 3
+(measure the fenced operation rather than total elapsed) is the only one that both keeps the
+assertion meaningful and survives an arbitrarily loaded machine, because what the test cares about
+is that the fenced retry stamps the row promptly after the fence clears, not that the whole
+machine was fast that minute.
+
+If it is worth the run time, the cheap next step is to make the failure explain itself rather than
+to chase it: have the test report, on failure, whether the row was stamped by the fenced retry or
+by a backstop tick. The elapsed value already hints at the answer; that would confirm it from a
+single unattended full run instead of a reproduction loop.
+
 ## D. Excluded from the measurement by construction
 
 - `*.g.cs`, `obj/`, `.whizbang/` and `.whizbang-generated/` — source-generator output.
