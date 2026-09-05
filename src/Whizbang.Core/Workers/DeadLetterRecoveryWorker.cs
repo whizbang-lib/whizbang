@@ -293,6 +293,33 @@ public partial class DeadLetterRecoveryWorker(
     }
   }
 
+  /// <summary>
+  /// Terminal transition for an exhausted row: HoldForReview or PermanentlyFailed per the
+  /// rule. Extracted so the #681 pass-verdict bypass and the plain path share one body.
+  /// </summary>
+  private async Task _transitionExhaustedAsync(
+      IDeadLetterRecoveryService svc, DeadLetterEntry entry, RecoveryPolicy rule, CancellationToken ct) {
+    try {
+      if (rule.HoldForReviewAfterExhaustion) {
+        await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+        Interlocked.Increment(ref _totalHeld);
+        LogHeld(_logger, entry.DeadLetterId, rule.Name);
+        _metrics?.Held.Add(1,
+          new KeyValuePair<string, object?>("policy_name", rule.Name),
+          new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+      } else {
+        await svc.MarkPermanentlyFailedAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+        Interlocked.Increment(ref _totalPermanentlyFailed);
+        LogPermanentlyFailed(_logger, entry.DeadLetterId, rule.Name);
+        _metrics?.PermanentlyFailed.Add(1,
+          new KeyValuePair<string, object?>("policy_name", rule.Name),
+          new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+      }
+    } catch (Exception ex) {
+      LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
+    }
+  }
+
   private async Task _evaluateCampaignsAsync(IDeadLetterRecoveryService svc, CancellationToken ct) {
     if (_campaignsInFlight.Count == 0 || _campaignGeneration is null) {
       return;
@@ -502,6 +529,13 @@ public partial class DeadLetterRecoveryWorker(
 
       _previousScanStartedAt = scanStartedAt;
 
+      // #681: fingerprints with a terminal Pass campaign on the CURRENT generation. A Pass
+      // is standing evidence about the build — the one-shot canary-pass release freed only
+      // the rows held at verdict time, and every scan after it re-held the rest of the
+      // cohort. Fetched at most once per scan, and only when an exhausted fingerprinted row
+      // actually needs it.
+      HashSet<string>? passedFingerprints = null;
+
       foreach (var entry in entries) {
         if (ct.IsCancellationRequested) { return; }
         if (!policy.ShouldRecover(entry)) { continue; }
@@ -511,26 +545,25 @@ public partial class DeadLetterRecoveryWorker(
         // Exhaustion check first: if RecoveryAttempts already reached MaxRecoveryAttempts,
         // transition to terminal state per HoldForReviewAfterExhaustion.
         if (entry.RecoveryAttempts >= rule.MaxRecoveryAttempts) {
-          try {
-            if (rule.HoldForReviewAfterExhaustion) {
-              await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
-              Interlocked.Increment(ref _totalHeld);
-              LogHeld(_logger, entry.DeadLetterId, rule.Name);
-              _metrics?.Held.Add(1,
-                new KeyValuePair<string, object?>("policy_name", rule.Name),
-                new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
-            } else {
-              await svc.MarkPermanentlyFailedAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
-              Interlocked.Increment(ref _totalPermanentlyFailed);
-              LogPermanentlyFailed(_logger, entry.DeadLetterId, rule.Name);
-              _metrics?.PermanentlyFailed.Add(1,
-                new KeyValuePair<string, object?>("policy_name", rule.Name),
-                new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+          // #681: a proven-safe cohort keeps its fresh attempt instead of re-quarantining.
+          // Failure still paces itself: a failed re-drive schedules the policy cooldown, so
+          // a genuinely broken row retries once per cooldown, never in a hot loop.
+          if (rule.HoldForReviewAfterExhaustion && entry.ErrorFingerprint is not null) {
+            if (passedFingerprints is null) {
+              var passed = await svc.GetPassedCampaignFingerprintsAsync(
+                _generationProvider.GetGeneration(), ct).ConfigureAwait(false);
+              passedFingerprints = [.. passed];
             }
-          } catch (Exception ex) {
-            LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
+            if (passedFingerprints.Contains(entry.ErrorFingerprint)) {
+              LogExhaustionBypassedByPass(_logger, entry.DeadLetterId, entry.ErrorFingerprint);
+            } else {
+              await _transitionExhaustedAsync(svc, entry, rule, ct).ConfigureAwait(false);
+              continue;
+            }
+          } else {
+            await _transitionExhaustedAsync(svc, entry, rule, ct).ConfigureAwait(false);
+            continue;
           }
-          continue;
         }
 
         // Try the recovery.
@@ -609,6 +642,10 @@ public partial class DeadLetterRecoveryWorker(
   [LoggerMessage(EventId = 20, Level = LogLevel.Information,
     Message = "Held cohort {Fingerprint} released ({Released} row(s), {Mode}) — rows return to Pending staggered; the paced scans drain them")]
   static partial void LogCohortReleased(ILogger logger, string fingerprint, int released, string mode);
+
+  [LoggerMessage(EventId = 29, Level = LogLevel.Information,
+    Message = "DLQ row {DeadLetterId} is exhausted but its cohort {Fingerprint} PASSED its canary on this generation — re-driving instead of holding (#681)")]
+  static partial void LogExhaustionBypassedByPass(ILogger logger, Guid deadLetterId, string fingerprint);
 
   [LoggerMessage(EventId = 28, Level = LogLevel.Warning,
     Message = "Campaign {Fingerprint} lost its probe evidence (0 outstanding / 0 counted) — probe rows were purged or deleted mid-campaign; re-minted {Refreshed} probe(s) from the surviving held rows")]

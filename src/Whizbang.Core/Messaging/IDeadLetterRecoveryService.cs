@@ -92,6 +92,15 @@ public interface IDeadLetterRecoveryService {
   Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default);
 
   /// <summary>
+  /// Fingerprints whose canary campaign reached a terminal <see cref="CanaryVerdictKind.Pass"/>
+  /// for <paramref name="generation"/>. A Pass is standing evidence about the build, not a
+  /// one-shot release trigger: the recovery worker consults this before quarantining an
+  /// exhausted row, so a proven-safe cohort keeps re-driving instead of re-holding (#681).
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/canary-recovery</docs>
+  Task<IReadOnlyList<string>> GetPassedCampaignFingerprintsAsync(string generation, CancellationToken ct = default);
+
+  /// <summary>
   /// Releases up to <paramref name="waveSize"/> held rows of a Mixed cohort as one
   /// trickle wave (staggered inside the wave window) and stamps the campaign's wave
   /// state. Returns rows released — 0 means the cohort is fully drained.

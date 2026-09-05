@@ -26,6 +26,8 @@ namespace Whizbang.Hosting.AspNet.Tests;
 public class DeadLetterOperatorEndpointsTests {
 
   private sealed class FakeRecoveryService : IDeadLetterRecoveryService {
+    public Task<IReadOnlyList<string>> GetPassedCampaignFingerprintsAsync(string generation, CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<string>>([]);
     // Campaign surface (P1) — inert; operator endpoints do not drive campaigns.
     public Task<IReadOnlyList<UnstackedDeadLetter>> FetchUnstackedAsync(int maxCount, CancellationToken ct = default) =>
       Task.FromResult<IReadOnlyList<UnstackedDeadLetter>>([]);

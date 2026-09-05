@@ -119,6 +119,12 @@ public class DeadLetterRecoveryWorkerTests {
       Task.FromResult(new CanaryVerdict(CanaryVerdictKind.Pass, 0, 0, 0));
     public Task<int> ReleaseHeldCohortAsync(string fingerprint, TimeSpan stagger, CancellationToken ct = default) =>
       Task.FromResult(0);
+    public List<string> PassedFingerprints { get; set; } = [];
+    public List<string> PassedFingerprintQueries { get; } = [];
+    public Task<IReadOnlyList<string>> GetPassedCampaignFingerprintsAsync(string generation, CancellationToken ct = default) {
+      PassedFingerprintQueries.Add(generation);
+      return Task.FromResult<IReadOnlyList<string>>([.. PassedFingerprints]);
+    }
 
     public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) {
       ResetForGenerationCalls.Add(currentGeneration);
@@ -158,7 +164,8 @@ public class DeadLetterRecoveryWorkerTests {
   private static DeadLetterEntry _entry(
       MessageFailureReason reason = MessageFailureReason.Throttled,
       int recoveryAttempts = 0,
-      DeadLetterRecoveryStatus status = DeadLetterRecoveryStatus.Pending) {
+      DeadLetterRecoveryStatus status = DeadLetterRecoveryStatus.Pending,
+      string? fingerprint = null) {
     return new DeadLetterEntry(
       DeadLetterId: Guid.NewGuid(),
       SourceTable: DeadLetterSourceTable.OUTBOX,
@@ -170,7 +177,77 @@ public class DeadLetterRecoveryWorkerTests {
       DeadLetteredAt: DateTimeOffset.UtcNow.AddMinutes(-1),
       RecoveryStatus: status,
       RecoveryAttempts: recoveryAttempts,
-      Generation: "test/0.0.1");
+      Generation: "test/0.0.1",
+      ErrorFingerprint: fingerprint);
+  }
+
+  [Test]
+  public async Task ExhaustedEntry_FingerprintPassedThisGeneration_RetriesInsteadOfHoldingAsync() {
+    // Issue #681: MaxAttemptsExceeded → ConservativeRetry (Max=1, HoldForReviewAfterExhaustion).
+    // The row is exhausted — but its fingerprint's canary campaign PASSED on this generation.
+    // The verdict is standing evidence that the cohort is safe on this build: the row must be
+    // re-driven, not quarantined. (Holding it was the accumulate-forever half of #681 — the
+    // one-shot release retired the campaign while the scan kept holding 200 rows a cycle.)
+    var (worker, svc) = _newWorker();
+    svc.PassedFingerprints = ["fp-passed"];
+    var entry = _entry(MessageFailureReason.MaxAttemptsExceeded, recoveryAttempts: 1, fingerprint: "fp-passed");
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
+      .Because("a Pass verdict for the current generation grants the fresh attempt the "
+             + "exhaustion check would otherwise deny");
+    await Assert.That(svc.HoldCalls).IsEmpty()
+      .Because("re-holding a proven-safe cohort inverts the canary's purpose");
+    await Assert.That(svc.PassedFingerprintQueries).Contains("test/0.0.1")
+      .Because("the verdict is generation-scoped: evidence about THIS build only");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ExhaustedEntry_FingerprintNotPassed_StillHoldsAsync() {
+    // Control for the bypass: no Pass verdict → the exhaustion quarantine stands unchanged.
+    var (worker, svc) = _newWorker();
+    var entry = _entry(MessageFailureReason.MaxAttemptsExceeded, recoveryAttempts: 1, fingerprint: "fp-unproven");
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    await Assert.That(svc.HoldCalls).Contains(entry.DeadLetterId)
+      .Because("without a Pass verdict the exhaustion hold is the correct quarantine");
+    await Assert.That(svc.RecoverCalls).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task ExhaustedEntry_NoFingerprint_HoldsWithoutQueryingVerdictsAsync() {
+    // A row with no fingerprint has no cohort and no campaign — the bypass must not even
+    // ask, or every legacy unfingerprinted row costs a query per scan.
+    var (worker, svc) = _newWorker();
+    var entry = _entry(MessageFailureReason.MaxAttemptsExceeded, recoveryAttempts: 1, fingerprint: null);
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    await Assert.That(svc.HoldCalls).Contains(entry.DeadLetterId);
+    await Assert.That(svc.PassedFingerprintQueries).IsEmpty()
+      .Because("no fingerprint, no lookup — the fast path must stay fast");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 
   [Test]

@@ -40,7 +40,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
       await conn.OpenAsync(ct).ConfigureAwait(false);
     }
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = $"SELECT dead_letter_id, source_table, source_id, stream_id, message_type, failure_reason, attempts_when_dlq, dead_lettered_at, recovery_status, recovery_attempts, generation FROM {_fn("fetch_dead_letters_due")}(NOW(), @max)";
+    cmd.CommandText = $"SELECT dead_letter_id, source_table, source_id, stream_id, message_type, failure_reason, attempts_when_dlq, dead_lettered_at, recovery_status, recovery_attempts, generation, error_fingerprint FROM {_fn("fetch_dead_letters_due")}(NOW(), @max)";
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("max", NpgsqlTypes.NpgsqlDbType.Integer) { Value = maxCount });
     var results = new List<DeadLetterEntry>();
     await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -56,7 +56,8 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
         DeadLetteredAt: reader.GetFieldValue<DateTimeOffset>(7),
         RecoveryStatus: (DeadLetterRecoveryStatus)reader.GetInt32(8),
         RecoveryAttempts: reader.GetInt32(9),
-        Generation: reader.GetString(10)));
+        Generation: reader.GetString(10),
+        ErrorFingerprint: reader.IsDBNull(11) ? null : reader.GetString(11)));
     }
     return results;
   }
@@ -137,6 +138,25 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("fp", NpgsqlTypes.NpgsqlDbType.Varchar) { Value = fingerprint });
     cmd.Parameters.Add(new Npgsql.NpgsqlParameter("stagger", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (int)stagger.TotalSeconds });
     return (int)(await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false) ?? 0);
+  }
+
+  /// <inheritdoc />
+  public async Task<IReadOnlyList<string>> GetPassedCampaignFingerprintsAsync(string generation, CancellationToken ct = default) {
+    ArgumentException.ThrowIfNullOrEmpty(generation);
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT fingerprint FROM {_fn("get_passed_campaign_fingerprints")}(@gen)";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("gen", NpgsqlTypes.NpgsqlDbType.Text) { Value = generation });
+    var results = new List<string>();
+    await using var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+    while (await reader.ReadAsync(ct).ConfigureAwait(false)) {
+      results.Add(reader.GetString(0));
+    }
+    return results;
   }
 
   /// <inheritdoc />

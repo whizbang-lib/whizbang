@@ -134,6 +134,8 @@ public sealed class DeadLetterCanaryCampaignTests {
     }
     public Task<int> CountWaveRequarantinesAsync(string fingerprint, string generation, CancellationToken ct = default) =>
       Task.FromResult(WaveRequarantineReturns.Count > 0 ? WaveRequarantineReturns.Dequeue() : 0);
+    public Task<IReadOnlyList<string>> GetPassedCampaignFingerprintsAsync(string generation, CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<string>>([]);
   }
 
   [Test]
@@ -237,6 +239,8 @@ public sealed class DeadLetterCanaryCampaignTests {
   }
 
   private sealed class FailingRecoveryFake(DeadLetterEntry entry) : IDeadLetterRecoveryService {
+    public Task<IReadOnlyList<string>> GetPassedCampaignFingerprintsAsync(string generation, CancellationToken ct = default) =>
+      Task.FromResult<IReadOnlyList<string>>([]);
     private bool _served;
     public TaskCompletionSource Scheduled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public DateTimeOffset? ScheduledAt { get; private set; }

@@ -421,4 +421,54 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
              + "rather than minting a second probe set — the refresh path must not regress this");
   }
 
+
+  // ==== #681: Pass verdicts are standing, generation-scoped evidence ====
+
+  [Test]
+  public async Task PassedFingerprints_ReturnsOnlyPassVerdicts_ForTheGenerationAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fpPass = Guid.NewGuid().ToString("N")[..16];
+    var fpFail = Guid.NewGuid().ToString("N")[..16];
+    var fpOtherGen = Guid.NewGuid().ToString("N")[..16];
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_dlq_probe_campaigns (fingerprint, generation, probe_ids, verdict) VALUES
+          (@a, 'gen/1', '{}'::uuid[], 1),
+          (@b, 'gen/1', '{}'::uuid[], 2),
+          (@c, 'gen/2', '{}'::uuid[], 1)";
+      ins.Parameters.AddWithValue("a", fpPass);
+      ins.Parameters.AddWithValue("b", fpFail);
+      ins.Parameters.AddWithValue("c", fpOtherGen);
+      await ins.ExecuteNonQueryAsync();
+    }
+    var svc = _svc(ctx);
+
+    var passed = await svc.GetPassedCampaignFingerprintsAsync("gen/1");
+
+    await Assert.That(passed).Contains(fpPass);
+    await Assert.That(passed.Contains(fpFail)).IsFalse()
+      .Because("a Fail verdict is evidence AGAINST the cohort — never a retry grant");
+    await Assert.That(passed.Contains(fpOtherGen)).IsFalse()
+      .Because("verdicts are generation-scoped: a pass on another build proves nothing here");
+  }
+
+  [Test]
+  public async Task FetchDue_CarriesTheErrorFingerprintAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    await _seedHeldAsync(conn, fp, "T.A", status: 0);
+    var svc = _svc(ctx);
+
+    var due = await svc.FetchDueAsync(500);
+
+    var mine = due.FirstOrDefault(e => e.ErrorFingerprint == fp);
+    await Assert.That(mine).IsNotNull()
+      .Because("the worker's #681 pass-verdict bypass keys on the fingerprint; a fetch that "
+             + "drops it would silently disable the bypass for every row");
+  }
+
 }
