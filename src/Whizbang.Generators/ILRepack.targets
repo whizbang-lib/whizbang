@@ -69,6 +69,7 @@
       InputAssemblies="@(InputAssemblies)"
       TargetKind="SameAsPrimaryAssembly"
       OutputFile="$(OutputPath)$(TargetName)$(TargetExt)"
+      KeyFile="$(AssemblyOriginatorKeyFile)"
       LibraryPath="$(OutputPath);$(_ILRepackSearchDirs)"
     />
   </Target>

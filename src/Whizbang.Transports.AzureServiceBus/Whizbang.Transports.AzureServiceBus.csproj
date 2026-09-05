@@ -14,6 +14,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Whizbang.Transports.AzureServiceBus.Tests" />
+    <!-- Integration tests exercise the internal SubscribeAsync API ("internal for
+         backward compat during migration" per the transport's own comment). -->
+    <InternalsVisibleTo Include="Whizbang.Transports.AzureServiceBus.Integration.Tests" />
   </ItemGroup>
 
   <ItemGroup>
