@@ -66,6 +66,35 @@
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
+  <!-- Strong naming: identity, not security — the modern .NET runtime never validates
+       strong names at load. The committed key is deliberately public (OSS convention;
+       the .NET runtime and Newtonsoft.Json ship theirs the same way) because it only
+       anchors assembly identity and InternalsVisibleTo friendship. Do NOT rotate the
+       key: a key change alters every assembly's identity and is binary-breaking for
+       consumers. AssemblyStrongNamingTests guards this configuration. -->
+  <PropertyGroup>
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)whizbang.snk</AssemblyOriginatorKeyFile>
+    <!-- Full public key of whizbang.snk; consumed by the InternalsVisibleTo defaults below. -->
+    <WhizbangPublicKey>0024000004800000140100000602000000240000525341310008000001000100d3df8b2aab8d59da416312bcea5f528e843f7fbdc9e94cb5e9ff4d34ae3490fe66728994e346e985e97e9aef88ffe5ec5ba31e172a90390a1986fdb1b2bd70834da5449a01232f9081ac821daf16aa05c0557c6e6cfa16fe42e34a177d5ebf333bd52e9495a2a2845cb520932a07bd156ed7a6af38d314060e818b6f980124f8fd5502218d81b63cb56976e9704077daef4a3b0e654c13ee720b444b8cf1185c53417cdb8fb2aa1a8cfd9efcbdb9c12b66c1d21e8e17e9ee266e4c8e40f0b16ed8bf3b53a216de7692cf00f74aa345363b06c1312f6ae22b518e2a5eb9a584b0116d99cf699a9528518fabe5fde71d299d8a7affb0b4c80ce73e1f787b57d5d1</WhizbangPublicKey>
+    <!-- CS8002 (strong-named assembly references unsigned assembly): a few author-unsigned
+         NuGet dependencies (Medo.Uuid7, HotChocolate, Dapper, Pgvector.EntityFrameworkCore)
+         are knowingly accepted — the runtime never enforces strong names, so the warning is
+         pure identity noise. AssemblyStrongNamingTests keeps the accepted set explicit and
+         fails on any new unsigned reference of Whizbang.Core. -->
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
+  </PropertyGroup>
+
+  <!-- Every InternalsVisibleTo item picks up the Whizbang public key by default: a
+       strong-named assembly may only name signed friends (CS1726 otherwise), and this
+       keeps the 576-char blob out of every declaration. Items that need a different
+       key (e.g. Castle's DynamicProxyGenAssembly2) override Key per item. -->
+  <ItemDefinitionGroup>
+    <InternalsVisibleTo>
+      <Key>$(WhizbangPublicKey)</Key>
+    </InternalsVisibleTo>
+  </ItemDefinitionGroup>
+
   <!-- Framework Debugging Directive -->
   <!-- Usage: dotnet build /p:WhizbangFrameworkDebugging=true -->
   <PropertyGroup Condition="'$(WhizbangFrameworkDebugging)' == 'true'">

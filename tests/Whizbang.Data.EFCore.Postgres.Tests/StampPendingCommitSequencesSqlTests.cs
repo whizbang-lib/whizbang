@@ -262,12 +262,17 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Steady-state stamping must NOT ring: the commit-time doorbell is alive and about to do
-  /// the same job, and per-batch rings during bulk stamping (startup backlogs, imports) herd
-  /// every owner's wake loops — observed as connection-pool exhaustion in tightly-pooled hosts.
+  /// EVERY stamp that affects rows rings the owners (132) — the caller's opt-in flag proved
+  /// un-computable: a stamper whose first look at a row lands after the fence already cleared
+  /// stamps on the steady-state path, never observes the fence, and skips the ring — while the
+  /// commit-time doorbell was already consumed by a pre-visibility claim. The row then sits
+  /// stamped-but-unannounced until the adaptive poll cap (observed: 10.5-10.7 s against a
+  /// 1.5 s visibility budget; issue #677). Only the doorbell DEBOUNCE (130/131) can make the
+  /// redundant-ring judgment, because only the database knows whether the target is actively
+  /// finding work.
   /// </summary>
   [Test]
-  public async Task Stamp_DefaultCall_StampsButDoesNotRingDoorbellAsync() {
+  public async Task Stamp_DefaultCall_RingsDoorbell_DebounceOwnsRedundancyAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
 
@@ -283,9 +288,48 @@ public class StampPendingCommitSequencesSqlTests : EFCoreTestBase {
       await Assert.That(stamped).IsEqualTo(1);
     });
 
+    await Assert.That(received).Contains("perspective")
+      .Because("stamping IS the visibility event and the commit-time doorbell may already be "
+             + "consumed; an idle target (no found-work watermark) must be rung — the debounce, "
+             + "not a caller flag, is what suppresses redundant rings toward busy drainers");
+  }
+
+  /// <summary>
+  /// The #665 storm protection, now owned by the debounce: during bulk stamping the drainers
+  /// keep finding work, claim_work keeps their found-work watermarks fresh (126/131), and the
+  /// post-stamp ring toward such a target is suppressed — per-batch rings cannot herd every
+  /// owner's wake loops the way the pre-118 always-ring did.
+  /// </summary>
+  [Test]
+  public async Task Stamp_TargetActivelyDraining_RingIsDebouncedAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, instanceId);
+
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    await _pinStreamAsync(conn, streamId, instanceId);
+    await _insertEventStoreRowAsync(conn, (Guid)TrackedGuid.NewMedo(), streamId, version: 1);
+
+    // A fresh found-work watermark: this instance's claim just found perspective work, so it
+    // is draining (or lingering) and will discover the stamped row by polling.
+    await using (var wm = conn.CreateCommand()) {
+      wm.CommandText = @"INSERT INTO wh_notify_state (instance_id, payload_kind, last_work_at)
+                         VALUES (@id, 'perspective', NOW())
+                         ON CONFLICT (instance_id, payload_kind) DO UPDATE SET last_work_at = NOW()";
+      wm.Parameters.AddWithValue("id", instanceId);
+      await wm.ExecuteNonQueryAsync();
+    }
+
+    var received = await _captureNotificationsAsync(conn, $"wh_work_i_{instanceId}", async () => {
+      var stamped = await _stampAsync(conn, batchSize: 10);
+      await Assert.That(stamped).IsEqualTo(1);
+    });
+
     await Assert.That(received).IsEmpty()
-      .Because("steady-state stamps keep the pre-make-up-doorbell rate — only the fenced-retry "
-             + "drain opts into the ring");
+      .Because("a target actively finding work is covered by its drain-linger polling; ringing "
+             + "it per batch is the #665 wake storm the debounce exists to absorb");
   }
 
   [Test]

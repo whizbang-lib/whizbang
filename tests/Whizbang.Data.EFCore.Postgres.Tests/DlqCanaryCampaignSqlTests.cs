@@ -335,4 +335,195 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
                + "arriving at once is exactly the storm shape the arbitration exists to prevent");
     }
   }
+
+  // ==== #682: a verdict must never be reached on destroyed evidence ====
+
+  [Test]
+  public async Task Evaluate_AllProbeRowsDeleted_StaysPendingNotPassAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    for (var i = 0; i < 4; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
+    var svc = _svc(ctx);
+    await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+
+    // The retention purge deletes the probe rows out from under the live campaign
+    // (issue #682: retention keyed on dead_lettered_at made this the NORMAL case for
+    // cohorts older than the window, not an edge case).
+    await using (var del = conn.CreateCommand()) {
+      del.CommandText = "DELETE FROM wh_dead_letters WHERE error_fingerprint=@fp AND recovery_status=0";
+      del.Parameters.AddWithValue("fp", fp);
+      await del.ExecuteNonQueryAsync();
+    }
+
+    var verdict = await svc.EvaluateCampaignAsync(fp, "gen/1");
+    await Assert.That(verdict.Kind).IsNotEqualTo(CanaryVerdictKind.Pass)
+      .Because("zero surviving probes is zero evidence — 0 succeeded / 0 failed must not "
+             + "satisfy the failed=0 branch and release an entire cohort vacuously");
+    await Assert.That(verdict.Kind).IsEqualTo(CanaryVerdictKind.Pending)
+      .Because("evidence loss resolves to Pending so the worker re-probes rather than concluding");
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT verdict FROM wh_dlq_probe_campaigns WHERE fingerprint=@fp AND generation='gen/1'";
+    q.Parameters.AddWithValue("fp", fp);
+    await Assert.That((int)(await q.ExecuteScalarAsync() ?? -1)).IsEqualTo((int)CanaryVerdictKind.Pending)
+      .Because("no terminal verdict may persist from an empty evidence set");
+  }
+
+  [Test]
+  public async Task BeginProbes_EvidenceLost_RefreshesProbeSetFromSurvivorsAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    for (var i = 0; i < 6; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
+    var svc = _svc(ctx);
+    var first = await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+    await Assert.That(first).IsEqualTo(2);
+
+    // Purge destroys the minted probes (they flipped to Pending=0); held rows survive.
+    await using (var del = conn.CreateCommand()) {
+      del.CommandText = "DELETE FROM wh_dead_letters WHERE error_fingerprint=@fp AND recovery_status=0";
+      del.Parameters.AddWithValue("fp", fp);
+      await del.ExecuteNonQueryAsync();
+    }
+
+    var refreshed = await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+    await Assert.That(refreshed).IsEqualTo(2)
+      .Because("a campaign whose entire probe set was destroyed must re-mint from the "
+             + "surviving held rows instead of resuming as a zero-evidence campaign; "
+             + "idempotent-resume (return 0) is only correct while probe rows still exist");
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = @"SELECT COUNT(*) FROM wh_dead_letters d
+      JOIN wh_dlq_probe_campaigns c ON d.dead_letter_id = ANY(c.probe_ids)
+      WHERE c.fingerprint=@fp AND c.generation='gen/1' AND d.recovery_status=0";
+    q.Parameters.AddWithValue("fp", fp);
+    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(2L)
+      .Because("the refreshed probe_ids must reference live Pending rows the evaluator can count");
+  }
+
+  [Test]
+  public async Task BeginProbes_ProbesStillPresent_RemainsIdempotentAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    for (var i = 0; i < 4; i++) { await _seedHeldAsync(conn, fp, "T.A"); }
+    var svc = _svc(ctx);
+    var first = await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+    await Assert.That(first).IsEqualTo(2);
+
+    var resumed = await svc.BeginCanaryProbesAsync(fp, "gen/1", 2, 3);
+    await Assert.That(resumed).IsEqualTo(0)
+      .Because("control: while the probe rows survive, a restart resumes the campaign "
+             + "rather than minting a second probe set — the refresh path must not regress this");
+  }
+
+
+  // ==== #681: Pass verdicts are standing, generation-scoped evidence ====
+
+  [Test]
+  public async Task PassedFingerprints_ReturnsOnlyPassVerdicts_ForTheGenerationAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fpPass = Guid.NewGuid().ToString("N")[..16];
+    var fpFail = Guid.NewGuid().ToString("N")[..16];
+    var fpOtherGen = Guid.NewGuid().ToString("N")[..16];
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_dlq_probe_campaigns (fingerprint, generation, probe_ids, verdict) VALUES
+          (@a, 'gen/1', '{}'::uuid[], 1),
+          (@b, 'gen/1', '{}'::uuid[], 2),
+          (@c, 'gen/2', '{}'::uuid[], 1)";
+      ins.Parameters.AddWithValue("a", fpPass);
+      ins.Parameters.AddWithValue("b", fpFail);
+      ins.Parameters.AddWithValue("c", fpOtherGen);
+      await ins.ExecuteNonQueryAsync();
+    }
+    var svc = _svc(ctx);
+
+    var passed = await svc.GetPassedCampaignFingerprintsAsync("gen/1");
+
+    await Assert.That(passed).Contains(fpPass);
+    await Assert.That(passed.Contains(fpFail)).IsFalse()
+      .Because("a Fail verdict is evidence AGAINST the cohort — never a retry grant");
+    await Assert.That(passed.Contains(fpOtherGen)).IsFalse()
+      .Because("verdicts are generation-scoped: a pass on another build proves nothing here");
+  }
+
+  [Test]
+  public async Task FetchDue_CarriesTheErrorFingerprintAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    await _seedHeldAsync(conn, fp, "T.A", status: 0);
+    var svc = _svc(ctx);
+
+    var due = await svc.FetchDueAsync(500);
+
+    var mine = due.FirstOrDefault(e => e.ErrorFingerprint == fp);
+    await Assert.That(mine).IsNotNull()
+      .Because("the worker's #681 pass-verdict bypass keys on the fingerprint; a fetch that "
+             + "drops it would silently disable the bypass for every row");
+  }
+
+
+  // ==== #684: disabled-subsystem rows settle, they don't quarantine ====
+
+  [Test]
+  public async Task MarkDiscarded_SettlesTheRow_WithTheNoteAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    var id = await _seedHeldAsync(conn, fp, "Whizbang.Core.Messaging.IntegrityCheckpoint", status: 0);
+    var svc = _svc(ctx);
+
+    await svc.MarkDiscardedAsync(id, "auto-discarded by recovery scan: subsystem disabled");
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = @"SELECT recovery_status, recovered_at IS NOT NULL, operator_notes
+                      FROM wh_dead_letters WHERE dead_letter_id=@id";
+    q.Parameters.AddWithValue("id", id);
+    await using var r = await q.ExecuteReaderAsync();
+    await r.ReadAsync();
+    await Assert.That(r.GetInt32(0)).IsEqualTo(3)
+      .Because("discarded = settled: Recovered status so the retention purge ages it out");
+    await Assert.That(r.GetBoolean(1)).IsTrue()
+      .Because("recovered_at anchors the retention window for the settled row");
+    await Assert.That(r.GetString(2)).Contains("subsystem disabled")
+      .Because("the note is the operator's answer to 'where did those rows go'");
+  }
+
+  [Test]
+  public async Task MarkDiscarded_AlreadySettledRow_IsUntouchedAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    var id = await _seedHeldAsync(conn, fp, "T.A", status: 0);
+    await using (var settle = conn.CreateCommand()) {
+      settle.CommandText = "UPDATE wh_dead_letters SET recovery_status=3, recovered_at=NOW() - interval '1 hour' WHERE dead_letter_id=@id";
+      settle.Parameters.AddWithValue("id", id);
+      await settle.ExecuteNonQueryAsync();
+    }
+    var svc = _svc(ctx);
+
+    await svc.MarkDiscardedAsync(id, "should not overwrite");
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT COALESCE(operator_notes,''), recovered_at > NOW() - interval '30 minutes' FROM wh_dead_letters WHERE dead_letter_id=@id";
+    q.Parameters.AddWithValue("id", id);
+    await using var r = await q.ExecuteReaderAsync();
+    await r.ReadAsync();
+    await Assert.That(r.GetString(0)).DoesNotContain("should not overwrite")
+      .Because("idempotence: a settled row's history is not rewritten by a late discard");
+    await Assert.That(r.GetBoolean(1)).IsFalse()
+      .Because("recovered_at keeps its original settle time");
+  }
+
 }

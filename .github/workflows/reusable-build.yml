@@ -58,6 +58,39 @@ jobs:
       # Formatting verification runs as a separate parallel job (ci.yml `format`) so it
       # stays off the build -> test-suites critical path.
 
+      # Determinism manifest: sha256 of every packable output (src/ + tools/), hashed
+      # BEFORE coverage instrumentation rewrites anything, plus the exact version and SDK
+      # that produced them. A later develop-push run that skips its test matrix because
+      # the merge queue already validated this exact SHA proves "same toolchain, same
+      # bits" by rebuilding with this manifest's version and diffing hashes — see
+      # ci.yml's verify-rebuild job. Cheap enough to run unconditionally.
+      # NOTE: the output directory must NOT be dot-prefixed. actions/upload-artifact v4+
+      # defaults include-hidden-files: false and silently excludes a hidden directory's
+      # entire contents ("No files were found with the provided path"), so a `.determinism/`
+      # dir uploaded NOTHING while the step still reported success — leaving verify-rebuild
+      # with no manifest and blocking every develop alpha. Keep this name non-hidden.
+      - name: Generate determinism manifest
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p build-determinism
+          printf '%s' "${VERSION:-}" > build-determinism/version.txt
+          dotnet --version > build-determinism/sdk.txt
+          find src tools -path "*/bin/Release/*" \( -name "*.dll" -o -name "*.exe" \) -type f \
+            ! -path "*/ref/*" | sort | xargs sha256sum > build-determinism/assemblies.sha256
+          echo "hashed $(wc -l < build-determinism/assemblies.sha256) assemblies at version '${VERSION:-<props default>}'"
+
+      - name: Upload determinism manifest
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: determinism-manifest-${{ github.run_id }}
+          path: build-determinism/
+          # Fail loudly instead of warning: a missing manifest here silently blocks every
+          # queue-validated develop publish downstream (verify-rebuild has nothing to check).
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:

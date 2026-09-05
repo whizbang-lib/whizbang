@@ -92,7 +92,8 @@ public sealed record DeadLetterEntry(
   DateTimeOffset DeadLetteredAt,
   DeadLetterRecoveryStatus RecoveryStatus,
   int RecoveryAttempts,
-  string Generation);
+  string Generation,
+  string? ErrorFingerprint = null);
 
 /// <summary>
 /// Decides whether and how to recover a dead-lettered row. Default implementation reads
