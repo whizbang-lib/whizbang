@@ -242,27 +242,60 @@ jobs:
     name: Republish Queue Run Reports
     # With the suites skipped, this run would otherwise upload no coverage (the
     # Codecov develop baseline PR comparisons rely on) and carry no TRX (the docs
-    # test-status and Codecov Test Analytics inputs). The queue run produced all of
-    # it for this same SHA — pull its artifacts and republish them in THIS run so
-    # every downstream consumer keeps working unchanged.
+    # test-status and Codecov Test Analytics inputs). Republish the full-matrix run's
+    # artifacts in THIS run so every downstream consumer keeps working unchanged.
+    #
+    # SOURCE RUN: normally the queue run for this SHA. But on a FAST-FORWARD merge the
+    # queue run itself ff-skipped its suites (ff-validated) and produced no coverage/TRX
+    # — there the full matrix ran in the PR run, so we fall back to it (the push merge
+    # commit's second parent is the PR head). Real merges keep using the queue run.
     needs: [queue-validated]
     if: ${{ !failure() && !cancelled() && needs.queue-validated.outputs.validated == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      contents: read
       actions: read
     steps:
-      - name: Download queue run's coverage and TRX artifacts
+      - name: Checkout (for the merge commit's PR-head parent)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 2
+
+      - name: Download the full-matrix run's coverage and TRX artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           QUEUE_RUN_ID: ${{ needs.queue-validated.outputs.queue-run-id }}
         run: |
           set -euo pipefail
-          gh api "repos/$REPO/actions/runs/$QUEUE_RUN_ID/artifacts?per_page=100" \
-            --jq '.artifacts[] | select((.name | startswith("coverage-")) or (.name | startswith("trx-"))) | "\(.id) \(.name)"' > artifacts.list
+
+          list_reports() {  # $1 = run id → writes "id name" lines for coverage-*/trx-*
+            gh api "repos/$REPO/actions/runs/$1/artifacts?per_page=100" \
+              --jq '.artifacts[] | select((.name | startswith("coverage-")) or (.name | startswith("trx-"))) | "\(.id) \(.name)"'
+          }
+
+          # Prefer the queue run. If it ff-skipped its suites (fast-forward), it has no
+          # coverage — fall back to the PR run that actually ran the full matrix, found via
+          # the merge commit's second parent (the PR head).
+          list_reports "$QUEUE_RUN_ID" > artifacts.list || true
+          SOURCE="queue run $QUEUE_RUN_ID"
           if ! grep -q " coverage-" artifacts.list; then
-            echo "::error::Queue run $QUEUE_RUN_ID has no coverage artifacts (expired?) — Codecov's develop baseline would go dark."
+            PR_HEAD=$(git rev-list --parents -n 1 HEAD | awk '{print $3}')
+            if [ -n "${PR_HEAD:-}" ]; then
+              PR_RUN=$(gh api "repos/$REPO/actions/runs?head_sha=$PR_HEAD&event=pull_request&per_page=30" \
+                --jq '[.workflow_runs[] | select(.name == "CI" and .status == "completed")]
+                      | sort_by(.run_started_at) | last | .id // ""' 2>/dev/null || echo "")
+              if [ -n "$PR_RUN" ]; then
+                echo "Queue run had no coverage (fast-forward ff-skip) — falling back to PR run $PR_RUN for $PR_HEAD."
+                list_reports "$PR_RUN" > artifacts.list || true
+                SOURCE="PR run $PR_RUN"
+              fi
+            fi
+          fi
+
+          if ! grep -q " coverage-" artifacts.list; then
+            echo "::error::No coverage artifacts on the queue run OR the PR run — Codecov's develop baseline would go dark."
             exit 1
           fi
           mkdir -p coverage trx
@@ -274,7 +307,7 @@ jobs:
             esac
             rm art.zip
           done < artifacts.list
-          echo "republishing $(wc -l < artifacts.list) artifacts: $(find coverage -name '*.cobertura.xml' | wc -l) coverage files, $(find trx -name '*.trx' | wc -l) TRX files"
+          echo "republishing $(wc -l < artifacts.list) artifacts from $SOURCE: $(find coverage -name '*.cobertura.xml' | wc -l) coverage files, $(find trx -name '*.trx' | wc -l) TRX files"
 
       # Same upload shape as the quality job's step, so Codecov's develop baseline is
       # indistinguishable from a full-matrix push run.
