@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -62,49 +63,142 @@ public class TransportDeadLetterDrainWorkerTests {
   }
 
   [Test]
-  public async Task WhenDisabled_TheWorkerParksInsteadOfExitingAsync() {
+  [Timeout(30000)]
+  public async Task WhenDisabled_TheWorkerParksAndDrainsNothingAsync(CancellationToken ct) {
     // A BackgroundService that returns on its own reads to the host as a crashed worker. Parking
     // keeps a deliberately-disabled drain distinguishable from one that fell over.
-    var worker = _buildWorker(new TransportDeadLetterDrainWorkerOptions { Enabled = false });
+    var drainer = new _recordingDrainer();
+    var log = new _recordingLogger();
+    var worker = _buildWorker(
+      new TransportDeadLetterDrainWorkerOptions { Enabled = false }, log, drainer);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Without waiting for the worker to reach the disabled branch, everything below is answered by
+    // a worker the thread pool has not started: an execute task that never began is also "not
+    // completed", and a drain that never ran also drained nothing.
+    await log.Disabled.WaitAsync(ct);
+
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("a disabled worker parks on its stopping token; returning is how the host detects "
+             + "a BackgroundService that has crashed");
+    await Assert.That(drainer.Calls).IsEqualTo(0)
+      .Because("disabled means no broker is touched at all, not merely drained less often");
+
     await worker.StopAsync(CancellationToken.None);
   }
 
   [Test]
-  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
+  [Timeout(30000)]
+  public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync(CancellationToken ct) {
     // The worker parks on the schema gate at startup. A pod stopped while still waiting has no
     // schema to drain against, so the exit must be silent rather than an error on every fast
     // restart.
     var services = new ServiceCollection();
     services.AddLogging();
     var provider = services.BuildServiceProvider();
+    var gate = new _blockingGate();
+    var log = new _recordingLogger();
     var worker = new TransportDeadLetterDrainWorker(
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new TransportDeadLetterDrainWorkerOptions { Enabled = true }),
       whizbangMetrics: new WhizbangMetrics(),
-      logger: NullLogger<TransportDeadLetterDrainWorker>.Instance,
-      schemaReadyGate: new SchemaReadyGate());   // never marked ready
+      logger: log,
+      schemaReadyGate: gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    await gate.WaitEntered.WaitAsync(ct);
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("stopping mid-wait is an ordinary shutdown; a faulted worker reports it as a crash");
+    await Assert.That(log.Events).DoesNotContain(CYCLE_ERROR_EVENT_ID)
+      .Because("a fast restart is not a drain failure, and logging it as one would make every "
+             + "rollout look like the DLQ drain is broken");
   }
 
   [Test]
-  public async Task ADrainerThatThrows_DoesNotStopTheCycleAsync() {
-    // Per-drainer failures are logged inside DrainOnceAsync; this catch is for the unexpected
-    // aggregate case. Either way the loop must survive — a transport whose DLQ drain dies stops
-    // recovering dead-lettered messages entirely, silently, for the life of the process.
+  [Timeout(30000)]
+  public async Task ADrainerThatThrows_DoesNotStopTheCycleAsync(CancellationToken ct) {
+    // A transport whose DLQ drain dies stops recovering dead-lettered messages entirely, silently,
+    // for the life of the process. One broker being unreachable must cost that tick only.
+    var drainer = new _recordingDrainer { Throws = true };
+    var log = new _recordingLogger();
     var worker = _buildWorker(
-      new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 10, IntervalMinutes = 60 },
-      new _throwingDrainer());
+      new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 10, IntervalMinutes = 0 },
+      log, drainer);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Only a second attempt proves the loop survived the first one throwing.
+    await drainer.SecondCall.WaitAsync(ct);
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the drain keeps cycling through a failing broker and still shuts down cleanly");
   }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task AnUnexpectedCycleFailure_DoesNotStopTheLoopAsync(CancellationToken ct) {
+    // Per-drainer failures are handled inside DrainOnceAsync. This is the aggregate case the
+    // comment there names -- a scope that cannot be created, so no drainer is ever reached. It is
+    // the more dangerous one: nothing drains at all, and without this catch the worker would exit
+    // and take the whole DLQ recovery path with it for the life of the process.
+    var scopeFactory = new _failingScopeFactory();
+    var log = new _recordingLogger();
+    var worker = new TransportDeadLetterDrainWorker(
+      scopeFactory: scopeFactory,
+      options: Options.Create(new TransportDeadLetterDrainWorkerOptions {
+        Enabled = true,
+        IntervalMinutes = 0
+      }),
+      whizbangMetrics: new WhizbangMetrics(),
+      logger: log,
+      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await scopeFactory.SecondAttempt.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(log.Events).Contains(CYCLE_ERROR_EVENT_ID)
+      .Because("an aggregate failure that is swallowed without a line in the log is the silent "
+             + "no-op this worker's own comments exist to prevent");
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the loop retries the next tick rather than ending");
+  }
+
+  [Test]
+  [Timeout(30000)]
+  public async Task ShutdownDuringADrain_EndsTheLoopRatherThanLoggingAFailureAsync(
+      CancellationToken ct) {
+    // Cancellation lands while a drain is in flight, which is where the loop spends its time.
+    // DrainOnceAsync rethrows cancellation rather than treating it as a drainer error, and the
+    // loop must break on it -- otherwise every shutdown logs a cycle failure and retries.
+    var drainer = new _recordingDrainer { BlocksUntilCancelled = true };
+    var log = new _recordingLogger();
+    var worker = _buildWorker(
+      new TransportDeadLetterDrainWorkerOptions { Enabled = true, MaxPerTick = 10, IntervalMinutes = 0 },
+      log, drainer);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainer.DrainEntered.WaitAsync(ct);
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("cancellation mid-drain ends the loop cleanly");
+    await Assert.That(log.Events).DoesNotContain(CYCLE_ERROR_EVENT_ID)
+      .Because("a shutdown is not a cycle failure; reporting it as one on every deploy teaches "
+             + "operators that drain errors are routine");
+  }
+
 
   private sealed class _throwingDrainer : ITransportDeadLetterDrainer {
     public string TransportName => "throwing";
@@ -199,12 +293,29 @@ public class TransportDeadLetterDrainWorkerTests {
   }
 
   private sealed class _recordingLogger : Microsoft.Extensions.Logging.ILogger<TransportDeadLetterDrainWorker> {
+    private readonly List<int> _events = [];
+    private readonly TaskCompletionSource _disabled = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public readonly List<(Microsoft.Extensions.Logging.LogLevel Level, string Message)> Entries = [];
+
+    /// <summary>Event ids seen so far, which is how a test tells one path from another.</summary>
+    public IReadOnlyList<int> Events { get { lock (_events) { return [.. _events]; } } }
+
+    /// <summary>Completes once the worker has announced it is disabled and is parking.</summary>
+    public Task Disabled => _disabled.Task;
+
     IDisposable? Microsoft.Extensions.Logging.ILogger.BeginScope<TState>(TState state) => null;
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
     public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
-        TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-      => Entries.Add((logLevel, formatter(state, exception)));
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (_events) {
+        _events.Add(eventId.Id);
+        Entries.Add((logLevel, formatter(state, exception)));
+      }
+      if (eventId.Id == DISABLED_EVENT_ID) {
+        _disabled.TrySetResult();
+      }
+    }
   }
 
   [Test]
@@ -254,4 +365,89 @@ public class TransportDeadLetterDrainWorkerTests {
       .Because("the pass stops where the cancellation was seen, rather than draining on through "
              + "the rest of the fleet");
   }
+
+  private const int CYCLE_ERROR_EVENT_ID = 4;
+  private const int DISABLED_EVENT_ID = 2;
+
+  private static TransportDeadLetterDrainWorker _buildWorker(
+      TransportDeadLetterDrainWorkerOptions opts,
+      ILogger<TransportDeadLetterDrainWorker> logger,
+      params ITransportDeadLetterDrainer[] drainers) {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    foreach (var d in drainers) {
+      services.AddSingleton(d);
+    }
+    var provider = services.BuildServiceProvider();
+    return new TransportDeadLetterDrainWorker(
+      scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(opts),
+      whizbangMetrics: new WhizbangMetrics(),
+      logger: logger,
+      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+  }
+
+  /// <summary>A drainer that reports when it has been asked to work, and how often.</summary>
+  private sealed class _recordingDrainer : ITransportDeadLetterDrainer {
+    private readonly TaskCompletionSource _second = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _calls;
+
+    public string TransportName => "recording";
+    public int Calls => Volatile.Read(ref _calls);
+
+    /// <summary>Completes on the second drain, which only a surviving loop can reach.</summary>
+    public Task SecondCall => _second.Task;
+
+    /// <summary>Completes as soon as a drain begins.</summary>
+    public Task DrainEntered => _entered.Task;
+
+    public bool Throws { get; set; }
+    public bool BlocksUntilCancelled { get; set; }
+
+    public async Task<int> DrainDeadLetterQueueAsync(int maxCount, CancellationToken ct = default) {
+      if (Interlocked.Increment(ref _calls) >= 2) {
+        _second.TrySetResult();
+      }
+      _entered.TrySetResult();
+      if (BlocksUntilCancelled) {
+        await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+      }
+      if (Throws) {
+        throw new InvalidOperationException("broker unreachable");
+      }
+      return 0;
+    }
+  }
+
+  /// <summary>A scope factory that cannot produce a scope -- the aggregate failure case.</summary>
+  private sealed class _failingScopeFactory : IServiceScopeFactory {
+    private readonly TaskCompletionSource _second = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _attempts;
+
+    /// <summary>Completes on the second attempt, proving the loop tried again.</summary>
+    public Task SecondAttempt => _second.Task;
+
+    public IServiceScope CreateScope() {
+      if (Interlocked.Increment(ref _attempts) >= 2) {
+        _second.TrySetResult();
+      }
+      throw new InvalidOperationException("scope unavailable");
+    }
+  }
+
+  /// <summary>A schema gate that never opens, and reports when the worker began waiting.</summary>
+  private sealed class _blockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _waitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task WaitEntered => _waitEntered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _waitEntered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
 }
