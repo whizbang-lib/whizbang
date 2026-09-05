@@ -161,4 +161,77 @@ public class FreshWorkClaimFairnessTests : EFCoreTestBase {
       .Because("the stream is claimable as a unit — classification chooses ordering "
              + "between streams, never visibility of rows behind a retried head");
   }
+
+  private static async Task<Guid> _seedBulkStreamAsync(
+      NpgsqlConnection conn, Guid? instanceId, int rows, string ageOffset) {
+    var streamId = Guid.NewGuid();
+    await using var ins = conn.CreateCommand();
+    ins.CommandText = @"
+      INSERT INTO wh_inbox
+        (message_id, handler_name, message_type, event_data, metadata, status, attempts,
+         received_at, stream_id, partition_number, instance_id, lease_expiry)
+      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 0,
+             NOW() + @age::interval + (s * INTERVAL '1 millisecond'), @stream, 0,
+             @inst, CASE WHEN @inst IS NULL THEN NULL ELSE NOW() + INTERVAL '5 minutes' END
+      FROM generate_series(1, @n) AS s";
+    ins.Parameters.AddWithValue("stream", streamId);
+    ins.Parameters.Add(new NpgsqlParameter("inst", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = (object?)instanceId ?? DBNull.Value });
+    ins.Parameters.AddWithValue("n", rows);
+    ins.Parameters.AddWithValue("age", ageOffset);
+    await ins.ExecuteNonQueryAsync();
+    return streamId;
+  }
+
+  [Test]
+  public async Task InteractiveStream_IsNotStarvedByABulkFloodOfFreshRowsAsync() {
+    // #568: fresh-vs-retry fairness cannot help when BOTH sides are fresh — a bulk flood's
+    // thousands of attempts=0 rows and an interactive request's one row share a class, and
+    // strict arrival order put the interactive row 300 deep. Breadth-first ranking competes
+    // stream heads against stream heads.
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await _seedBulkStreamAsync(conn, instanceId, rows: 300, ageOffset: "-10 minutes");
+    var interactive = await _seedBulkStreamAsync(conn, instanceId, rows: 1, ageOffset: "0");
+
+    var batch = await _coordinator(ctx).ClaimWorkAsync(new ClaimWorkRequest(
+      instanceId, "svc", "host", 1, MaxStreams: 50));
+
+    await Assert.That(batch.InboxStreamIds).Contains(interactive)
+      .Because("the interactive stream's FIRST row competes with the bulk stream's FIRST "
+             + "row, not its three-hundredth — one flood must never own the whole batch");
+  }
+
+  [Test]
+  public async Task OrphanAcquisition_InteractiveStream_EntersTheWindowDespiteABulkFloodAsync() {
+    // #568 acquisition half: the orphan claim's window was oldest-first over ROWS, so a
+    // bulk stream's flood filled p_max_rows end to end and the interactive row never even
+    // became a candidate — starved upstream of every downstream fairness mechanism.
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    await using (var hb = conn.CreateCommand()) {
+      hb.CommandText = "SELECT record_heartbeat(@id, 'svc', 'host', 1, '{}'::jsonb)";
+      hb.Parameters.AddWithValue("id", instanceId);
+      await hb.ExecuteNonQueryAsync();
+    }
+    await _seedBulkStreamAsync(conn, instanceId: null, rows: 300, ageOffset: "-10 minutes");
+    var interactive = await _seedBulkStreamAsync(conn, instanceId: null, rows: 1, ageOffset: "0");
+
+    await using var claim = conn.CreateCommand();
+    claim.CommandText = @"
+      SELECT count(*) FROM claim_orphaned_inbox(
+        @inst, 0, 1, NOW() + INTERVAL '5 minutes', NOW(), 10000, NOW() - INTERVAL '30 seconds', 50)
+      WHERE stream_id = @interactive";
+    claim.Parameters.AddWithValue("inst", instanceId);
+    claim.Parameters.AddWithValue("interactive", interactive);
+    var claimedInteractive = (long)(await claim.ExecuteScalarAsync() ?? 0L);
+
+    await Assert.That(claimedInteractive).IsEqualTo(1L)
+      .Because("acquisition is where starvation begins: a row that never enters the claim "
+             + "window is invisible to every fairness mechanism behind it");
+  }
+
 }

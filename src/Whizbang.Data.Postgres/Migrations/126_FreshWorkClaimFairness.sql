@@ -273,7 +273,14 @@ BEGIN
     ),
     ranked_inbox AS (
       SELECT ci.*,
-             ROW_NUMBER() OVER (PARTITION BY ci.is_fresh ORDER BY ci.received_at) AS class_rank
+             -- #568: breadth-first WITHIN a class. Strict received_at FIFO let one bulk
+             -- flood's thousands of FRESH rows starve a later interactive FRESH row — same
+             -- class, so the fresh/retry share could not help. Ranking stream_rank first
+             -- competes every stream's Nth row against other streams' Nth rows: an
+             -- interactive stream's head waits behind the OTHER HEADS, never behind a
+             -- single stream's 45,000-row body. Stream FIFO is untouched (stream_rank is
+             -- per-stream arrival order).
+             ROW_NUMBER() OVER (PARTITION BY ci.is_fresh ORDER BY ci.stream_rank, ci.received_at) AS class_rank
       FROM classified_inbox ci
     ),
     ordered_inbox AS (

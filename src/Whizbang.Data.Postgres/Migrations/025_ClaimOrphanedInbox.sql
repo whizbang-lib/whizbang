@@ -42,13 +42,19 @@ BEGIN
   --
   -- LIMIT NULL is unlimited in Postgres, so the default preserves the old behavior for any caller
   -- that has not been taught to pass a bound.
-  WITH candidates AS (
+  WITH pick AS (
     -- The FULL predicate belongs here, not a cheap pre-filter. Selecting rows by age alone and
     -- filtering for ownership afterwards would let another instance's rows permanently occupy this
     -- instance's window — it would take the limit in candidates, match none of them, and claim
-    -- nothing while its own work waited behind them. FOR UPDATE holds the chosen rows so the
-    -- update below cannot race a concurrent claimer between selection and write.
-    SELECT i.message_id AS cand_message_id
+    -- nothing while its own work waited behind them.
+    -- #568: the ordering is breadth-first across streams (each stream's Nth row competes
+    -- with other streams' Nth rows), so one bulk stream's flood cannot fill the whole
+    -- acquisition window while a later interactive stream's first row waits outside it.
+    -- Window functions cannot share a level with FOR UPDATE, so selection happens here and
+    -- the lock (with a re-check of the volatile predicates) happens in candidates below.
+    SELECT i.message_id AS cand_message_id,
+           ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at) AS stream_seq,
+           i.received_at AS cand_received_at
     FROM __SCHEMA__.wh_inbox i
     WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
@@ -85,8 +91,17 @@ BEGIN
           )
         )
       )
-    -- Oldest first: the retry budget of the longest-waiting rows is the closest to being spent.
-    ORDER BY i.received_at
+  ),
+  candidates AS (
+    -- Lock under breadth-first order. SKIP LOCKED skips rows a concurrent claimer holds, and
+    -- the volatile predicates re-check under the lock — a row leased between pick and here is
+    -- filtered exactly as the old single-level shape would have skipped it.
+    SELECT i.message_id AS cand_message_id
+    FROM __SCHEMA__.wh_inbox i
+    JOIN pick ON pick.cand_message_id = i.message_id
+    WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
+      AND i.processed_at IS NULL
+    ORDER BY pick.stream_seq, pick.cand_received_at
     LIMIT p_max_rows
     FOR UPDATE OF i SKIP LOCKED
   ),
