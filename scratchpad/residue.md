@@ -1296,3 +1296,31 @@ What is left is guards and loop skips: a project path that does not exist (unrea
 discovery path, which only returns files it globbed), early `return changes` arms, and `continue`
 arms for entries with no Include attribute or already present in the target set. Case 3
 throughout — the surrounding members are covered.
+
+## AK. CollectiveSettersRewriter: 13 uncovered down to 7
+
+Covered this round, both cases where the caller is doing something legal and the failure would be
+confusing:
+
+- **An explicitly object-typed selector.** `SetProperty` infers TProp, so a selector normally
+  arrives unwrapped — but written as `SetProperty<object>(j => j.ViewCount, 42)`, which is what a
+  shared helper or a loop over heterogeneous setters produces, the compiler boxes the access into
+  `Convert(j.ViewCount, object)`. Unstripped, the body is a UnaryExpression rather than a
+  MemberExpression and the lookup reports it cannot find a property that is plainly there.
+- **A value the rewriter cannot read** now has a test asserting the error names RawSql. This runs
+  while building an UPDATE, and an operator told only that "an expression node kind is
+  unsupported" has no way to discover which spec kind accepts richer value sources.
+
+The seven left:
+
+- **134-135** the arity guard on `SetProperty`. The interface declares exactly one overload, and
+  it takes two arguments, so this is a guard against an overload that does not exist yet.
+- **180-181** the loop body of `_stripConvert`, reachable only through the computed-comparison
+  path with an operand the compiler wrapped — an enum or nullable comparison. The test model has
+  neither, and adding one to reach two lines buys less than it costs in a shared fixture.
+- **188** the bare-`LambdaExpression` arm of `_unwrapLambda`. A lambda passed as an argument
+  inside an expression tree arrives Quoted, so the unquoted arm is for a tree built by hand.
+- **189-190** its throw, for a selector that is not a lambda at all — which the strongly typed
+  `Expression<Func<TModel, TProp>>` parameter makes unconstructible from C# source.
+
+Case 3 throughout; the surrounding members are covered.
