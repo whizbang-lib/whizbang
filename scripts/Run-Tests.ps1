@@ -811,11 +811,12 @@ function Invoke-CoverageReport {
     Write-Host "=====================================" -ForegroundColor Cyan
     Write-Host "  Code Coverage: $coveragePct% ($totalCovered / $totalLines lines)" -ForegroundColor $(if ($coveragePct -ge 100) { "Green" } elseif ($coveragePct -ge 80) { "Yellow" } else { "Red" })
 
-    # A project that failed contributes no cobertura file, so its lines leave the denominator
-    # entirely and the percentage is computed over whatever survived. Under --fail-fast a single
-    # failure also skips every project after it. The number that prints is then not comparable to
-    # the previous run's and must not be read as a trend -- it is a different measurement, and
-    # nothing about its format says so.
+    # Partial means lines LEFT THE DENOMINATOR, not merely that some test failed. A project whose
+    # tests all ran and reported failures still measured every one of its lines, so its number is
+    # comparable and saying otherwise trains the reader to ignore the banner. What is not
+    # comparable is a project cut short -- killed by stall/hang detection, or cancelled by
+    # fail-fast -- whose truncated cobertura is dropped before the merge. The percentage is then
+    # computed over whatever survived, and nothing about its format says so.
     if ($RunWasPartial) {
         Write-Host "  PARTIAL RUN — not comparable to a complete one." -ForegroundColor Red
         Write-Host "  Projects failed or were skipped, so their lines are absent from both" -ForegroundColor Red
@@ -1447,7 +1448,7 @@ try {
             }
 
             if ($coberturaFiles.Count -gt 0) {
-                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($totalProjectsFailed -gt 0)
+                $coverageResult = Invoke-CoverageReport -RepoRoot $repoRoot -CoberturaFiles $coberturaFiles -RunWasPartial ($truncatedProjects.Count -gt 0)
                 $coveragePct = $coverageResult.CoveragePct
                 $totalLines = $coverageResult.TotalLines
                 $totalCovered = $coverageResult.TotalCovered

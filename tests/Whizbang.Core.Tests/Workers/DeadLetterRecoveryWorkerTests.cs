@@ -584,7 +584,7 @@ public class DeadLetterRecoveryWorkerTests {
       RecoveryAttempts: 0,
       Generation: "test/0.0.1");
 
-    for (var i = 0; i < 4; i++) { svc.FetchBatches.Enqueue([Fresh(), Fresh()]); }
+    for (var i = 0; i < 6; i++) { svc.FetchBatches.Enqueue([Fresh(), Fresh()]); }
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -599,14 +599,27 @@ public class DeadLetterRecoveryWorkerTests {
     listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
     await svc.FetchSignal(3).WaitAsync(TimeSpan.FromSeconds(5));
 
-    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(1);
-    await Assert.That(worker.IsLoopBreakerOpen).IsTrue();
-
-    // And it stops recovering: the tripping cycle's rows were left alone.
-    var recoveredAfterTrip = svc.RecoverCalls.Count;
+    // A fetch signal fires as the cycle STARTS gathering rows; the breaker decision is taken
+    // afterwards, while that batch is processed. Waiting on fetch 3 therefore says nothing about
+    // whether cycle 3 has reached its decision, and under load the assertion below wins the race
+    // and reads a trip count of 0. Cycle 4 cannot fetch until cycle 3 has returned, so its fetch
+    // is the signal that the third cycle -- and its breaker decision -- is genuinely complete.
     listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
     await svc.FetchSignal(4).WaitAsync(TimeSpan.FromSeconds(5));
-    await Assert.That(svc.RecoverCalls.Count).IsEqualTo(recoveredAfterTrip);
+
+    await Assert.That(worker.TotalLoopBreakerTrips).IsEqualTo(1)
+      .Because("the second consecutive wholly-fresh batch is the signal that recovery is feeding "
+             + "itself, and tripping once is what stops the cycle from running forever");
+    await Assert.That(worker.IsLoopBreakerOpen).IsTrue();
+
+    // And it stops recovering. The rows keep coming -- batches are still queued -- so a recovery
+    // count that does not move can only be the open breaker holding it back, not an empty queue.
+    var recoveredAfterTrip = svc.RecoverCalls.Count;
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.FetchSignal(5).WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(svc.RecoverCalls.Count).IsEqualTo(recoveredAfterTrip)
+      .Because("with the breaker open the worker must leave the rows alone; recovering them is "
+             + "what would re-create the dead letters it just decided it was looping on");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
