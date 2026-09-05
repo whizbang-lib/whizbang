@@ -1057,7 +1057,6 @@ public class PerspectiveWorkerDeepPathDrainTests {
       ReceivedBatches.Enqueue([.. events.Select(e => e.MessageId.Value)]);
       ObservedCursors.Enqueue(lastProcessedEventId);
       _started.TrySetResult();
-      _firstRunWithEvents.TrySetResult();
       if (BlockUntilCanceled) {
         var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var registration = cancellationToken.Register(() => blocked.TrySetResult());
@@ -1065,9 +1064,15 @@ public class PerspectiveWorkerDeepPathDrainTests {
         cancellationToken.ThrowIfCancellationRequested();
       }
       if (RunWithEventsException is not null) {
+        // BeforeThrow is where a test cancels, so signalling before it would release the waiter
+        // one step ahead of the state it is waiting for: it would resume while this runner had
+        // neither cancelled nor thrown. Signal once the runner is actually about to throw.
         BeforeThrow?.Invoke();
+        _firstRunWithEvents.TrySetResult();
         throw RunWithEventsException;
       }
+
+      _firstRunWithEvents.TrySetResult();
       var lastEventId = events.Count > 0 ? events[^1].MessageId.Value : Guid.Empty;
       return _completed(streamId, perspectiveName, lastEventId);
     }
