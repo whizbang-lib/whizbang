@@ -91,10 +91,11 @@ public class ReceptorTests : DiagnosticTestBase {
         Items: [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
-    // Act
-    var task = receptor.HandleAsync(command);
-    await Assert.That(task.IsCompleted).IsFalse(); // Should be async
-    var result = await task;
+    // Act. The receptor's only awaited work is a 1 ms delay, so on a loaded host the task
+    // can legally complete before this method observes it — asserting IsCompleted==false
+    // was a race, not a contract. The contract worth locking is that an async receptor's
+    // result awaits cleanly and arrives intact.
+    var result = await receptor.HandleAsync(command);
 
     // Assert
     await Assert.That(result).IsNotNull();
