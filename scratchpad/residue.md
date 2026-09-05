@@ -1277,3 +1277,22 @@ The four left:
   interface/object case that covers the sibling arms.
 
 Case 3 for all four: the members around them are covered, so none takes an attribute.
+
+## AJ. PackageManager: 19 uncovered down to ~9
+
+Covered this round, both cases where getting it wrong breaks a build the author did not touch:
+
+- **Generator projects are skipped whole.** Source generators target netstandard2.0 and reference
+  Roslyn, not the runtime packages; adding Whizbang references to one does not migrate it, it
+  stops it compiling — and the failure lands in a project nobody edited. Asserted by leaving even
+  the stale Wolverine reference in place, and by reporting no change for that project, so the
+  author is not sent looking for an edit that was deliberately not made.
+- **A package with no Whizbang equivalent is removed from central versions**, and reported as
+  removed. Central package management splits a reference across two files; leaving the version
+  entry after the reference is gone is dead configuration that outlives the migration, and
+  nothing in the migrated solution mentions the package again to explain it.
+
+What is left is guards and loop skips: a project path that does not exist (unreachable from the
+discovery path, which only returns files it globbed), early `return changes` arms, and `continue`
+arms for entries with no Include attribute or already present in the target set. Case 3
+throughout — the surrounding members are covered.
