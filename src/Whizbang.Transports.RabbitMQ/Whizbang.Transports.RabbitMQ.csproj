@@ -10,6 +10,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Whizbang.Transports.RabbitMQ.Tests" />
+    <!-- Integration tests exercise the internal SubscribeAsync API ("internal for
+         backward compat during migration" per the transport's own comment). -->
+    <InternalsVisibleTo Include="Whizbang.Transports.RabbitMQ.Integration.Tests" />
   </ItemGroup>
 
   <ItemGroup>
