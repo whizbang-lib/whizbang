@@ -1029,3 +1029,28 @@ One line from this class did leave the denominator honestly: `StreamBuffer.Reade
 batcher is handed `channel.Reader` directly at construction, nothing ever read the property, and
 the inbox sibling of this class does not declare it. Deleted rather than left as an uncoverable
 line, which is the difference between removing code and hiding it.
+
+## AC. EFCoreDeadLetterRecoveryService line 122 -- a no-rows fallback the function never produces
+
+```csharp
+await using var reader = await cmd.ExecuteReaderAsync(ct);
+if (!await reader.ReadAsync(ct)) {
+  return new CanaryVerdict(CanaryVerdictKind.Pending, 0, 0, 0);   // <- line 122
+}
+```
+
+`evaluate_canary_campaign` is a set-returning function that yields a row for any fingerprint and
+generation, including ones no campaign has ever used -- the cold-connection test calls it with
+`fp-none / gen-none` and gets `Pending` back, with this branch unexecuted. So the guard fires only
+if that function is one day rewritten to return an empty set.
+
+Worth keeping. A reader that returns nothing would otherwise throw on the field access below it,
+turning a schema change into an exception on a maintenance path instead of the conservative
+"look again next scan" answer this returns. Case 3 from ai-docs/coverage-exclusions.md: the rest
+of the member is covered, so no member-level attribute.
+
+The other 23 lines that were uncovered on this class are now covered. All but one were the same
+guard repeated across twelve entry points -- `if (conn.State != Open) await conn.OpenAsync(ct)` --
+dead in the suite because every other test reaches the service through a context EF Core has
+already opened, while in production a scoped DbContext resolved for a maintenance pass arrives
+closed and that guard is the first thing that runs.
