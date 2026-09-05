@@ -903,4 +903,72 @@ public class CompositeInboxFanoutTests {
     await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
     await Assert.That(result.Detail).Contains("InnerCommitSequences");
   }
+
+  [Test]
+  public async Task TryExpand_RawComposite_WithInnerStreamIds_ChildrenKeepTheirOwnStreamsAsync() {
+    // #596: folding many source streams into one composite and expanding them all onto the
+    // COMPOSITE's stream collapsed the producer's parallelism — hundreds of independent
+    // streams serialized behind one drain lane at the receiver. When the producer records
+    // each single's stream, expansion restores it: the composite is transport packaging,
+    // not a stream-identity rewrite.
+    var compositeStream = Guid.NewGuid();
+    var s1 = Guid.NewGuid();
+    var s2 = Guid.NewGuid();
+    var composite = new Whizbang.Core.Minting.CoalescedEventsComposite {
+      StreamId = compositeStream,
+      InnerPayloads = [_raw("{\"a\":1}"), _raw("{\"b\":2}")],
+      InnerTypeNames = ["Contracts.FoldedA, Contracts", "Contracts.FoldedB, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+      InnerStreamIds = [s1, s2],
+    };
+    var source = _sourceEnvelope(compositeStream);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Expanded);
+    await Assert.That(result.Children[0].StreamId).IsEqualTo(s1)
+      .Because("the child belongs to ITS OWN stream — per-stream ordering and per-stream "
+             + "drain parallelism both key on it");
+    await Assert.That(result.Children[1].StreamId).IsEqualTo(s2);
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_NoInnerStreamIds_LegacyInheritsCompositeStreamAsync() {
+    // Back-compat: a composite minted by an older build carries no InnerStreamIds — its
+    // children inherit the composite's stream exactly as before.
+    var compositeStream = Guid.NewGuid();
+    var composite = new Whizbang.Core.Minting.CoalescedEventsComposite {
+      StreamId = compositeStream,
+      InnerPayloads = [_raw("{\"a\":1}")],
+      InnerTypeNames = ["Contracts.FoldedA, Contracts"],
+      InnerEventIds = [Guid.NewGuid()],
+    };
+    var source = _sourceEnvelope(compositeStream);
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Children.Single().StreamId).IsEqualTo(compositeStream);
+  }
+
+  [Test]
+  public async Task TryExpand_RawComposite_StreamIdCountMismatch_FailsStrictAsync() {
+    // Machine-built parallel lists: a desync is a producer bug, never data — same strictness
+    // as the id/payload pairing.
+    var composite = new Whizbang.Core.Minting.CoalescedEventsComposite {
+      StreamId = Guid.NewGuid(),
+      InnerPayloads = [_raw("{\"a\":1}"), _raw("{\"b\":2}")],
+      InnerTypeNames = ["Contracts.FoldedA, Contracts", "Contracts.FoldedB, Contracts"],
+      InnerEventIds = [Guid.NewGuid(), Guid.NewGuid()],
+      InnerStreamIds = [Guid.NewGuid()],
+    };
+    var source = _sourceEnvelope(Guid.NewGuid());
+    var sp = _provider();
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, sp);
+
+    await Assert.That(result.Outcome).IsEqualTo(CompositeInboxFanout.FanoutOutcome.Failed);
+  }
+
 }

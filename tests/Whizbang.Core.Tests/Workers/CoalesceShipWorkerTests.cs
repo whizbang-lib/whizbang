@@ -748,4 +748,30 @@ public class CoalesceShipWorkerTests {
              + "for rows claims cannot see, and a fold failure must never close it");
   }
 
+
+  [Test]
+  public async Task RunOnce_Fold_RecordsEachSinglesOwnStreamOnTheCompositeAsync() {
+    // #596 producer half: the composite must CARRY the folded singles' stream identities so
+    // the receiver's expansion can restore them — without this, hundreds of source streams
+    // collapse onto the composite's one stream and serialize behind a single drain lane.
+    var (worker, coordinator, _) = _build(configureBinding: c => c.SlideSeconds = 15);
+    coordinator.Stats = [_stats("record-digest", count: 2, oldestAge: 40, newestAge: 20)];
+    var singles = _singles(2);
+    // Capture BEFORE the run: the fake's fetch drains the shared list, and iterating it
+    // afterwards silently asserts nothing.
+    var expectedStreams = singles.Select(m => m.StreamId).ToList();
+    coordinator.PendingSingles["record-digest"] = singles;
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    var composite = coordinator.CompletedFolds.Single().Composites.Single();
+    var envelopeJson = composite.Envelope.Payload.GetRawText();
+    await Assert.That(expectedStreams.Count).IsEqualTo(2);
+    foreach (var expected in expectedStreams) {
+      await Assert.That(envelopeJson).Contains(expected.ToString()!)
+        .Because("each folded single's stream id rides the wire — the composite is transport "
+               + "packaging, not a stream-identity rewrite");
+    }
+  }
+
 }

@@ -263,7 +263,10 @@ public sealed partial class CoalesceShipWorker(
       Atomicity = batch.Atomicity,
       InnerPayloads = [.. batch.Singles.Select(m => m.Envelope.Payload)],
       InnerTypeNames = [.. batch.Singles.Select(m => m.MessageType)],
-      InnerEventIds = [.. batch.Singles.Select(m => m.MessageId)]
+      InnerEventIds = [.. batch.Singles.Select(m => m.MessageId)],
+      // #596: each single's OWN stream rides the wire, so the receiver's expansion restores
+      // per-stream identity instead of collapsing every child onto the composite's stream.
+      InnerStreamIds = [.. batch.Singles.Select(m => m.StreamId ?? Guid.Empty)]
     };
   }
 
