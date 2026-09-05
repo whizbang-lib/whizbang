@@ -36,6 +36,7 @@ public partial class DeadLetterRecoveryWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
   IOptions<DeadLetterRecoveryOptions> options,
+  IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions> integrityOptions,
   IGenerationProvider generationProvider,
   ILogger<DeadLetterRecoveryWorker> logger,
   DeadLetterMetrics? metrics = null,
@@ -46,6 +47,13 @@ public partial class DeadLetterRecoveryWorker(
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly DeadLetterRecoveryOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  // #684: the disabled-subsystem discard must run in THIS worker too — quarantine policies
+  // like PoisonRedeliveryLoop (MaxAttempts=0) hold before any dispatch, so the inbox-gate
+  // discard can never reach their rows. Required, like InboxDispatchWorker's: an optional
+  // param would be silently null at hand-construction sites and the discard absent in
+  // production while every unit test passes.
+  private readonly Whizbang.Core.Messaging.StreamIntegrityOptions _integrityOptions =
+    (integrityOptions ?? throw new ArgumentNullException(nameof(integrityOptions))).Value;
   private readonly IGenerationProvider _generationProvider = generationProvider ?? throw new ArgumentNullException(nameof(generationProvider));
   private readonly ILogger<DeadLetterRecoveryWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   // Optional: an unwired host keeps the pre-arbitration behavior rather than losing recovery.
@@ -293,6 +301,33 @@ public partial class DeadLetterRecoveryWorker(
     }
   }
 
+  /// <summary>
+  /// Terminal transition for an exhausted row: HoldForReview or PermanentlyFailed per the
+  /// rule. Extracted so the #681 pass-verdict bypass and the plain path share one body.
+  /// </summary>
+  private async Task _transitionExhaustedAsync(
+      IDeadLetterRecoveryService svc, DeadLetterEntry entry, RecoveryPolicy rule, CancellationToken ct) {
+    try {
+      if (rule.HoldForReviewAfterExhaustion) {
+        await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+        Interlocked.Increment(ref _totalHeld);
+        LogHeld(_logger, entry.DeadLetterId, rule.Name);
+        _metrics?.Held.Add(1,
+          new KeyValuePair<string, object?>("policy_name", rule.Name),
+          new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+      } else {
+        await svc.MarkPermanentlyFailedAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
+        Interlocked.Increment(ref _totalPermanentlyFailed);
+        LogPermanentlyFailed(_logger, entry.DeadLetterId, rule.Name);
+        _metrics?.PermanentlyFailed.Add(1,
+          new KeyValuePair<string, object?>("policy_name", rule.Name),
+          new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+      }
+    } catch (Exception ex) {
+      LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
+    }
+  }
+
   private async Task _evaluateCampaignsAsync(IDeadLetterRecoveryService svc, CancellationToken ct) {
     if (_campaignsInFlight.Count == 0 || _campaignGeneration is null) {
       return;
@@ -303,6 +338,17 @@ public partial class DeadLetterRecoveryWorker(
       var verdict = await svc.EvaluateCampaignAsync(fingerprint, _campaignGeneration, ct).ConfigureAwait(false);
       switch (verdict.Kind) {
         case CanaryVerdictKind.Pending:
+          // Issue #682: Pending with NOTHING outstanding and NOTHING counted means the
+          // campaign's probe rows were destroyed (the retention purge can delete evidence
+          // out from under a live campaign). Re-evaluating the same emptiness every scan
+          // waits forever — re-mint probes instead. BeginCanaryProbesAsync refreshes a
+          // probe-less unresolved campaign from the surviving held rows.
+          if (verdict.ProbesOutstanding == 0 && verdict.ProbesSucceeded == 0 && verdict.ProbesFailed == 0) {
+            var refreshed = await svc.BeginCanaryProbesAsync(
+              fingerprint, _campaignGeneration, _options.CanaryProbeSize,
+              _options.GenerationBudget, ct).ConfigureAwait(false);
+            LogCampaignEvidenceLost(_logger, fingerprint, refreshed);
+          }
           break;
         case CanaryVerdictKind.Pass:
           var released = await svc.ReleaseHeldCohortAsync(fingerprint, stagger, ct).ConfigureAwait(false);
@@ -491,35 +537,60 @@ public partial class DeadLetterRecoveryWorker(
 
       _previousScanStartedAt = scanStartedAt;
 
+      // #681: fingerprints with a terminal Pass campaign on the CURRENT generation. A Pass
+      // is standing evidence about the build — the one-shot canary-pass release freed only
+      // the rows held at verdict time, and every scan after it re-held the rest of the
+      // cohort. Fetched at most once per scan, and only when an exhausted fingerprinted row
+      // actually needs it.
+      HashSet<string>? passedFingerprints = null;
+
       foreach (var entry in entries) {
         if (ct.IsCancellationRequested) { return; }
         if (!policy.ShouldRecover(entry)) { continue; }
+
+        // #684: a message whose subsystem is DISABLED is settled here, ahead of every
+        // policy decision — especially the exhaustion check, whose MaxAttempts=0 rules
+        // (PoisonRedeliveryLoop) would otherwise re-hold the row before any dispatch and
+        // make it permanently undisposable. Mirrors the inbox-gate discard (#664).
+        if (DisabledSubsystemDiscardPolicy.ShouldDiscard(entry.MessageType, _integrityOptions)) {
+          try {
+            await svc.MarkDiscardedAsync(
+              entry.DeadLetterId,
+              "auto-discarded by recovery scan: subsystem disabled for message type " + entry.MessageType,
+              ct).ConfigureAwait(false);
+            LogDisabledSubsystemDiscarded(_logger, entry.DeadLetterId, entry.MessageType);
+          } catch (Exception ex) {
+            // Settle failed (DB hiccup): the row stays due and the next scan retries the
+            // discard — losing the log line would hide that the disposal is stalling.
+            LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
+          }
+          continue;
+        }
 
         var rule = policy.GetPolicy(entry);
 
         // Exhaustion check first: if RecoveryAttempts already reached MaxRecoveryAttempts,
         // transition to terminal state per HoldForReviewAfterExhaustion.
         if (entry.RecoveryAttempts >= rule.MaxRecoveryAttempts) {
-          try {
-            if (rule.HoldForReviewAfterExhaustion) {
-              await svc.MarkHoldingAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
-              Interlocked.Increment(ref _totalHeld);
-              LogHeld(_logger, entry.DeadLetterId, rule.Name);
-              _metrics?.Held.Add(1,
-                new KeyValuePair<string, object?>("policy_name", rule.Name),
-                new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
-            } else {
-              await svc.MarkPermanentlyFailedAsync(entry.DeadLetterId, ct).ConfigureAwait(false);
-              Interlocked.Increment(ref _totalPermanentlyFailed);
-              LogPermanentlyFailed(_logger, entry.DeadLetterId, rule.Name);
-              _metrics?.PermanentlyFailed.Add(1,
-                new KeyValuePair<string, object?>("policy_name", rule.Name),
-                new KeyValuePair<string, object?>("reason", entry.FailureReason.ToString()));
+          // #681: a proven-safe cohort keeps its fresh attempt instead of re-quarantining.
+          // Failure still paces itself: a failed re-drive schedules the policy cooldown, so
+          // a genuinely broken row retries once per cooldown, never in a hot loop.
+          if (rule.HoldForReviewAfterExhaustion && entry.ErrorFingerprint is not null) {
+            if (passedFingerprints is null) {
+              var passed = await svc.GetPassedCampaignFingerprintsAsync(
+                _generationProvider.GetGeneration(), ct).ConfigureAwait(false);
+              passedFingerprints = [.. passed];
             }
-          } catch (Exception ex) {
-            LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
+            if (passedFingerprints.Contains(entry.ErrorFingerprint)) {
+              LogExhaustionBypassedByPass(_logger, entry.DeadLetterId, entry.ErrorFingerprint);
+            } else {
+              await _transitionExhaustedAsync(svc, entry, rule, ct).ConfigureAwait(false);
+              continue;
+            }
+          } else {
+            await _transitionExhaustedAsync(svc, entry, rule, ct).ConfigureAwait(false);
+            continue;
           }
-          continue;
         }
 
         // Try the recovery.
@@ -598,6 +669,18 @@ public partial class DeadLetterRecoveryWorker(
   [LoggerMessage(EventId = 20, Level = LogLevel.Information,
     Message = "Held cohort {Fingerprint} released ({Released} row(s), {Mode}) — rows return to Pending staggered; the paced scans drain them")]
   static partial void LogCohortReleased(ILogger logger, string fingerprint, int released, string mode);
+
+  [LoggerMessage(EventId = 30, Level = LogLevel.Information,
+    Message = "DLQ row {DeadLetterId} discarded: its message type {MessageType} belongs to a disabled subsystem — settled without re-driving (#684)")]
+  static partial void LogDisabledSubsystemDiscarded(ILogger logger, Guid deadLetterId, string messageType);
+
+  [LoggerMessage(EventId = 29, Level = LogLevel.Information,
+    Message = "DLQ row {DeadLetterId} is exhausted but its cohort {Fingerprint} PASSED its canary on this generation — re-driving instead of holding (#681)")]
+  static partial void LogExhaustionBypassedByPass(ILogger logger, Guid deadLetterId, string fingerprint);
+
+  [LoggerMessage(EventId = 28, Level = LogLevel.Warning,
+    Message = "Campaign {Fingerprint} lost its probe evidence (0 outstanding / 0 counted) — probe rows were purged or deleted mid-campaign; re-minted {Refreshed} probe(s) from the surviving held rows")]
+  static partial void LogCampaignEvidenceLost(ILogger logger, string fingerprint, int refreshed);
 
   [LoggerMessage(EventId = 21, Level = LogLevel.Information,
     Message = "Canary campaign for cohort {Fingerprint} FAILED ({ProbesFailed} probe(s) re-dead-lettered) — the cohort stays held; the bug is still live")]

@@ -82,4 +82,54 @@ public class PostgresTableStatisticsProviderTests : EFCoreTestBase {
     await Assert.That(depths["inbox"]).IsGreaterThanOrEqualTo(1)
       .Because("Should count the unprocessed inbox message");
   }
+
+  // ==== #683: dead letters are the one queue whose depth was not observable ====
+
+  [Test]
+  public async Task GetQueueDepthsAsync_FreshDatabase_ReportsDeadLetterZerosAsync() {
+    var depths = await _provider.GetQueueDepthsAsync();
+
+    await Assert.That(depths.ContainsKey("dead_letters_held")).IsTrue()
+      .Because("standing quarantine inventory must be a positively-reported zero, not an "
+             + "absent series — a five-figure held population was invisible on dashboards "
+             + "for twelve days because only transitions were counted (#683)");
+    await Assert.That(depths.ContainsKey("dead_letters_pending")).IsTrue();
+    await Assert.That(depths.ContainsKey("dead_letters_failed")).IsTrue();
+    await Assert.That(depths["dead_letters_held"]).IsEqualTo(0);
+    await Assert.That(depths["dead_letters_pending"]).IsEqualTo(0);
+    await Assert.That(depths["dead_letters_failed"]).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task GetQueueDepthsAsync_CountsDeadLettersByStatusAsync() {
+    await using var connection = new NpgsqlConnection(ConnectionString);
+    await connection.OpenAsync();
+
+    // Two held (2), one pending (0), one permanently failed (4), one recovered (3 — not
+    // counted anywhere: settled rows are receipts, not depth).
+    foreach (var (status, recovered) in new[] { (2, false), (2, false), (0, false), (4, false), (3, true) }) {
+      await using var cmd = new NpgsqlCommand("""
+        INSERT INTO wh_dead_letters
+          (dead_letter_id, source_table, source_id, message_type, envelope, failure_reason,
+           attempts_when_dlq, dead_lettered_at, recovery_status, recovered_at, generation)
+        VALUES (@id, 'wh_inbox', @src, 'T.A', '{}'::jsonb, 5, 3, NOW(), @st,
+                CASE WHEN @rec THEN NOW() ELSE NULL END, 'seed/1')
+        """, connection);
+      cmd.Parameters.AddWithValue("id", Guid.CreateVersion7());
+      cmd.Parameters.AddWithValue("src", Guid.CreateVersion7());
+      cmd.Parameters.AddWithValue("st", status);
+      cmd.Parameters.AddWithValue("rec", recovered);
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    var depths = await _provider.GetQueueDepthsAsync();
+
+    await Assert.That(depths["dead_letters_held"]).IsEqualTo(2)
+      .Because("HoldForReview rows are the quarantine an operator must be able to see");
+    await Assert.That(depths["dead_letters_pending"]).IsEqualTo(1)
+      .Because("unrecovered Pending rows are the recovery backlog");
+    await Assert.That(depths["dead_letters_failed"]).IsEqualTo(1)
+      .Because("PermanentlyFailed rows are the operator-decision pile");
+  }
+
 }

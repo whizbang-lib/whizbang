@@ -133,9 +133,28 @@ BEGIN
   ON CONFLICT (fingerprint, generation) DO NOTHING;
   GET DIAGNOSTICS v_inserted = ROW_COUNT;
   IF v_inserted = 0 THEN
-    -- Campaign already exists (restart mid-campaign): resume it, do not mint a second
-    -- probe set — the caller treats 0 as "evaluate the existing campaign".
-    RETURN 0;
+    -- Campaign already exists (restart mid-campaign). While any of its probe rows survive,
+    -- resume it — minting a second probe set would double-probe. But when the retention
+    -- purge has destroyed EVERY probe row (issue #682), "resume" means evaluating an empty
+    -- evidence set forever: refresh the unresolved campaign's probe_ids from the surviving
+    -- held rows instead, so the campaign regains countable evidence. started_at moves with
+    -- the refresh — the re-dead-letter clock must measure the NEW probes, not the old ones.
+    IF EXISTS (
+      SELECT 1
+      FROM __SCHEMA__.wh_dlq_probe_campaigns c
+      JOIN __SCHEMA__.wh_dead_letters d ON d.dead_letter_id = ANY(c.probe_ids)
+      WHERE c.fingerprint = p_fingerprint AND c.generation = p_generation
+    ) THEN
+      RETURN 0;
+    END IF;
+    UPDATE __SCHEMA__.wh_dlq_probe_campaigns c
+    SET probe_ids = v_probe_ids, started_at = NOW()
+    WHERE c.fingerprint = p_fingerprint AND c.generation = p_generation AND c.verdict = 0;
+    GET DIAGNOSTICS v_inserted = ROW_COUNT;
+    IF v_inserted = 0 THEN
+      -- Terminal campaign with no surviving probes: its verdict already stands.
+      RETURN 0;
+    END IF;
   END IF;
 
   UPDATE __SCHEMA__.wh_dead_letters
@@ -160,7 +179,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.begin_canary_probes IS
-'Starts a canary campaign (127): stratified probe rows return to Pending due-now (the paced scans re-drive them), probed messages'' observation windows reset (generation-scoped evidence), and the campaign row records them. Idempotent per (fingerprint, generation) — a conflict returns 0; a cohort whose campaigns failed on p_generation_budget distinct generations returns -1 and touches nothing.';
+'Starts a canary campaign (127): stratified probe rows return to Pending due-now (the paced scans re-drive them), probed messages'' observation windows reset (generation-scoped evidence), and the campaign row records them. Idempotent per (fingerprint, generation) — a conflict resumes while probe rows survive (returns 0) and refreshes the probe set when the purge destroyed all of them (#682); a cohort whose campaigns failed on p_generation_budget distinct generations returns -1 and touches nothing.';
 
 -- ============================================================================
 -- evaluate_canary_campaign — probe arithmetic and durable verdict
@@ -206,6 +225,17 @@ BEGIN
     WHERE p.dead_letter_id = ANY(v_campaign.probe_ids)
   ) dl;
 
+  IF v_succeeded + v_failed + v_outstanding = 0 THEN
+    -- Issue #682: every probe row is GONE — the retention purge can destroy evidence out
+    -- from under a live campaign, and rows can be deleted by operators. Zero evidence must
+    -- never resolve: the failed=0 branch below would return Pass vacuously (and the
+    -- symmetric partial-purge skew condemns half-passed cohorts as Fail). Report Pending;
+    -- the worker re-probes via begin_canary_probes, which refreshes a probe-less
+    -- unresolved campaign from the surviving held rows.
+    RETURN QUERY SELECT 0, 0, 0, 0;
+    RETURN;
+  END IF;
+
   IF v_outstanding > 0 THEN
     v_verdict := 0;  -- Pending
   ELSIF v_failed = 0 THEN
@@ -229,7 +259,7 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.evaluate_canary_campaign IS
-'Campaign probe arithmetic (127): recovered-and-stayed-recovered probes succeed; a probe whose message dead-lettered again after the campaign started failed regardless of its own row; anything else is outstanding. Terminal verdicts persist exactly once.';
+'Campaign probe arithmetic (127): recovered-and-stayed-recovered probes succeed; a probe whose message dead-lettered again after the campaign started failed regardless of its own row; anything else is outstanding. An empty evidence set (all probe rows destroyed) resolves to Pending, never to a terminal verdict (#682). Terminal verdicts persist exactly once.';
 
 -- ============================================================================
 -- release_held_dead_letter_cohort — staggered eligibility, never a firehose

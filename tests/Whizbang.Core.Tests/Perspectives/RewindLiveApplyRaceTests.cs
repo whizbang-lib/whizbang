@@ -201,7 +201,7 @@ public class RewindLiveApplyRaceTests {
     // (source-generator emits Acquire/Release around RewindAndRunAsync and
     // RunWithEventsAsync) MUST preserve.
     var store = new GatedInMemoryStore();
-    var coordinator = new PerspectiveApplyCoordinator();
+    var coordinator = new PerspectiveApplyCoordinator(Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveApplyCoordinator>.Instance);
     var streamId = Guid.NewGuid();
     await ApplyEventsAsync(store, streamId, eventsToApply: 3, seedFromEmpty: true, CancellationToken.None, coordinator);
 
