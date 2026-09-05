@@ -1183,3 +1183,32 @@ fifty seconds of a unit suite that otherwise finishes in eighteen, for one log l
 progress rather than changes behaviour. Not worth the run time; recorded instead.
 
 Both are Case 3 -- the members around them are covered -- so neither gets an attribute.
+
+## AG. MessageBusToDispatcherTransformer: a real bug, and what is left after fixing it
+
+Writing a coverage test for the type-argument branch found a defect rather than a gap.
+`List<IMessageBus>` was never rewritten: the identifier's PARENT is the `TypeArgumentListSyntax`,
+but the check looked at `parent?.Parent`, which is the `GenericNameSyntax`. Off by one level, so
+the branch never fired. The migrated file kept a Wolverine interface while losing the using that
+imported it -- it did not compile, and the migration reported success. Fixed, and the branch is now
+covered by a test that asserts `List<IDispatcher>` comes out.
+
+Remaining uncovered, all defensive:
+
+- **71** `return root` when the root is not a `CompilationUnitSyntax`. `ParseText` always yields
+  one; this is residue R in a second transformer.
+- **127-139** the "add a Whizbang using from scratch" fallback, which the code's own comment
+  marks unreachable: the guard above requires an exact `using Wolverine;`, which the loop always
+  replaces. Kept correct so loosening that guard later cannot start emitting `usingWhizbang.Core;`
+  -- the same shape, and the same reasoning, as residue Q.
+- **223, 317** closing branches reached only when the identifier is literally `IMessageBus` but is
+  not a type usage -- a member access or a name in a position the rewriter deliberately ignores.
+- **368** the default arm of a member-name switch, taken when the member is neither a plain nor a
+  generic name.
+
+One test in this batch had to be rewritten before it meant anything. `TransformAsync` returns
+early when a file contains no `IMessageBus` at all, so a "file that never used Wolverine" test
+built from an unrelated class asserts an absence that the early return already guarantees -- it
+passed without reaching the using logic it named. The version kept here includes `IMessageBus`
+without a file-level `using Wolverine;`, which is how the type arrives via a global using, and it
+does reach the branch.
