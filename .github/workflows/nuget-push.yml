@@ -46,7 +46,8 @@ jobs:
     timeout-minutes: 10
     environment: nuget-publish
     permissions:
-      id-token: write
+      id-token: write       # NuGet OIDC trusted publishing + Sigstore keyless signing
+      attestations: write   # SLSA build provenance for the published packages
     outputs:
       version: ${{ inputs.version }}
 
@@ -59,6 +60,28 @@ jobs:
 
       - name: List packages
         run: ls -la ./packages/*.nupkg
+
+      # Provenance BEFORE push: what ships must already be attested. This binds each
+      # .nupkg hash to this repo, workflow, commit, and run (SLSA, Sigstore-signed) —
+      # verifiable by anyone with:
+      #   gh attestation verify <pkg>.nupkg --owner whizbang-lib
+      # A Sigstore outage therefore blocks the publish (rare, and the approval gate
+      # means a human is already watching); never reorder this after the push, or a
+      # package could reach nuget.org without provenance.
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ./packages/*.nupkg
+
+      # The Sigstore bundle also travels as a run artifact so release-shaped callers
+      # (nuget-publish.yml) can attach it to the GitHub Release for offline verification.
+      - name: Upload attestation bundle
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: attestation-bundle-${{ github.run_id }}
+          path: ${{ steps.attest.outputs.bundle-path }}
+          retention-days: 7
 
       - name: NuGet Login (OIDC Trusted Publishing)
         uses: nuget/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
