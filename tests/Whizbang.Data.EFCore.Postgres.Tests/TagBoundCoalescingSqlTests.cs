@@ -292,4 +292,54 @@ public class TagBoundCoalescingSqlTests : EFCoreTestBase {
   }
 
   #endregion
+
+  [Test]
+  public async Task CoalescePendingRow_DoesNotBlockLaterRowsOnItsStreamAsync() {
+    // #668 H3: a coalesce-pending row parks with scheduled_for = created + MaxDelay. The
+    // claim path's stream-ordering guard read that as "an earlier deferred delivery" and
+    // refused to claim ANY later row on the same stream for the whole window — re-armed by
+    // every new coalesce row, i.e. permanently under sustained ingest. That is the
+    // publish-at-zero half of the incident: the backlog was not just unfolded, it was
+    // gating unrelated rows on its streams. Coalesce rows are parked for FOLDING, not
+    // deferred deliveries — they must not gate their stream.
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) { await connection.OpenAsync(); }
+    var instanceId = Guid.NewGuid();
+    await _heartbeatAsync(connection, instanceId);
+
+    var sharedStream = Guid.NewGuid();
+    // Earlier coalesce-pending row: parked into the future, same stream.
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = $@"
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, event_data, metadata, status, attempts,
+           created_at, stream_id, partition_number, coalesce_group, scheduled_for)
+        VALUES (@msg, 'test-topic', 'TestEvent', '{{}}', '{{}}', 0, 0,
+           NOW() - INTERVAL '10 seconds', @stream, 0, 'sys-audit', NOW() + INTERVAL '110 seconds')";
+      ins.Parameters.AddWithValue("msg", Guid.NewGuid());
+      ins.Parameters.AddWithValue("stream", sharedStream);
+      await ins.ExecuteNonQueryAsync();
+    }
+    // Later NORMAL row on the same stream: claimable now.
+    var normalId = Guid.NewGuid();
+    await using (var ins = connection.CreateCommand()) {
+      ins.CommandText = $@"
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, event_data, metadata, status, attempts,
+           created_at, stream_id, partition_number)
+        VALUES (@msg, 'test-topic', 'TestEvent', '{{}}', '{{}}', 0, 0, NOW(), @stream, 0)";
+      ins.Parameters.AddWithValue("msg", normalId);
+      ins.Parameters.AddWithValue("stream", sharedStream);
+      await ins.ExecuteNonQueryAsync();
+    }
+
+    var claimed = await _claimAllAsync(connection, instanceId);
+
+    await Assert.That(claimed).Contains(normalId)
+      .Because("a parked coalesce row is the FOLD worker's business; the stream's live "
+             + "traffic must keep flowing around it — blocking it for the MaxDelay window "
+             + "is how a bulk ingest starves its own streams");
+  }
+
 }

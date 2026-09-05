@@ -158,8 +158,28 @@ public sealed partial class CoalesceShipWorker(
 
       var quiet = now - groupStats.NewestCreatedAt >= TimeSpan.FromSeconds(binding.SlideSeconds);
       var overdue = now - groupStats.OldestCreatedAt >= TimeSpan.FromSeconds(binding.MaxDelaySeconds);
-      if (quiet || overdue) {
-        await _foldGroupAsync(coordinator, serializer, groupStats.Group, binding, partitionCount, cancellationToken).ConfigureAwait(false);
+      // #668: under sustained arrivals the slide never goes quiet, so the deadline was the
+      // ONLY trigger — steady-state pending grew to arrival_rate x MaxDelaySeconds (a bulk
+      // ingest accumulated 15.5k rows). A group holding a full chunk is due NOW: waiting
+      // gains nothing and loses a window of backlog. The deadline remains the floor for
+      // small groups; this makes folding CONTINUOUS under exactly the load composites
+      // exist for.
+      var full = groupStats.PendingCount >= binding.MaxBatchCount;
+      if (quiet || overdue || full) {
+        try {
+          await _foldGroupAsync(coordinator, serializer, groupStats.Group, binding, partitionCount, cancellationToken).ConfigureAwait(false);
+        } catch (OperationCanceledException) {
+          throw;
+        } catch (Exception ex) {
+          // #668: per-group isolation. Claims exclude coalesce-pending rows by design — this
+          // worker is their ONLY exit — so one group's deterministic failure (a missing
+          // composite JsonTypeInfo, a transient store error) must never abort the other
+          // groups' folds or the release backstop below. Logged with the group named; the
+          // rows stay claim-invisible until the fold heals or the release floor frees them.
+          if (_logger is not null) {
+            LogFoldFailed(_logger, groupStats.Group, ex);
+          }
+        }
       }
     }
 
@@ -319,11 +339,16 @@ public sealed partial class CoalesceShipWorker(
     Message = "CoalesceShipWorker parked: no enabled coalesce bindings in this host")]
   static partial void LogParkedNoBindings(ILogger logger);
 
+  [LoggerMessage(EventId = 7, Level = LogLevel.Error,
+    Message = "CoalesceShipWorker fold failed for group '{Group}' — other groups and the release backstop still ran; "
+            + "the group's rows remain claim-invisible until the fold heals or the release floor frees them")]
+  static partial void LogFoldFailed(ILogger logger, string group, Exception ex);
+
   [LoggerMessage(EventId = 3, Level = LogLevel.Warning,
     Message = "Released {Count} matured coalesce-pending singles for group '{Group}' to individual shipping (deadline degrade — the fold did not get to them in time)")]
   static partial void LogReleasedMatured(ILogger logger, int count, string group);
 
-  [LoggerMessage(EventId = 4, Level = LogLevel.Debug,
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information,
     Message = "Folded {Count} pending singles of group '{Group}' into composite {CompositeMessageId}")]
   static partial void LogFolded(ILogger logger, int count, string group, Guid compositeMessageId);
 
