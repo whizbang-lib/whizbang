@@ -34,6 +34,16 @@ public interface IDeadLetterRecoveryService {
   Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default);
 
   /// <summary>
+  /// Settles a row whose message belongs to a DISABLED subsystem: recovery_status becomes
+  /// Recovered with an explanatory operator note, without re-driving anything. The message
+  /// has no meaning while its feature is off — holding it forever recreates invisible
+  /// quarantine inventory, and re-driving it is impossible for reasons like
+  /// PoisonRedeliveryLoop whose policy quarantines before dispatch (#684).
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/canary-recovery</docs>
+  Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default);
+
+  /// <summary>
   /// After a failed recovery attempt, sets <c>next_recovery_at</c> to apply the policy
   /// cooldown and returns the row to Pending.
   /// </summary>

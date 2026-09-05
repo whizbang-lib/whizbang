@@ -63,6 +63,7 @@ public sealed class DeadLetterCanaryCampaignTests {
     public Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) => Task.FromResult(true);
     public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
     public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default) => Task.CompletedTask;
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) => Task.CompletedTask;
     public int GenerationReplayReturn { get; set; }
     public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) =>
@@ -207,6 +208,7 @@ public sealed class DeadLetterCanaryCampaignTests {
       provider.GetRequiredService<IServiceScopeFactory>(),
       new Gate(),
       Options.Create(options),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new Gen(),
       provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
   }
@@ -253,6 +255,7 @@ public sealed class DeadLetterCanaryCampaignTests {
       throw new InvalidOperationException("recovery fails — the point of this fake");
     public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
     public Task MarkPermanentlyFailedAsync(Guid deadLetterId, CancellationToken ct = default) => Task.CompletedTask;
+    public Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default) => Task.CompletedTask;
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
       ScheduledAt = nextAt;
       Scheduled.TrySetResult();
@@ -404,6 +407,7 @@ public sealed class DeadLetterCanaryCampaignTests {
       provider.GetRequiredService<IServiceScopeFactory>(),
       new Gate(),
       Options.Create(options),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new Gen(),
       provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>(),
       notificationListener: bell);
@@ -674,6 +678,7 @@ public sealed class DeadLetterCanaryCampaignTests {
       provider.GetRequiredService<IServiceScopeFactory>(),
       new Gate(),
       Options.Create(_opts(RetryHeldOnStartupMode.Canary)),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new Gen(),
       provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
     using var cts = new CancellationTokenSource();

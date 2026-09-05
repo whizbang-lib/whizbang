@@ -71,6 +71,10 @@ public class DeadLetterRecoveryWorkerTests {
       if (TerminalTransitionShouldThrow) { throw new InvalidOperationException("simulated terminal-set failure"); }
       PermanentlyFailedCalls.Add(deadLetterId); return Task.CompletedTask;
     }
+    public List<(Guid Id, string Note)> DiscardCalls { get; } = [];
+    public Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default) {
+      DiscardCalls.Add((deadLetterId, note)); return Task.CompletedTask;
+    }
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
       if (ScheduleShouldThrow) { throw new InvalidOperationException("simulated schedule failure"); }
       ScheduleCalls.Add((deadLetterId, nextAt)); return Task.CompletedTask;
@@ -251,6 +255,60 @@ public class DeadLetterRecoveryWorkerTests {
   }
 
   [Test]
+  public async Task DisabledSubsystemEntry_PoisonRow_IsDiscardedNotHeldAsync() {
+    // Issue #684: PoisonRedeliveryLoop policy is ("HoldForReview", MaxAttempts: 0) — the
+    // exhaustion check re-holds the row BEFORE any dispatch, so the inbox-gate discard
+    // (#664) can never see it. A dead letter for a DISABLED subsystem must be settled by
+    // the recovery worker itself, ahead of the exhaustion check, or it is undisposable
+    // forever (observed live: a released cohort of checkpoint rows cycled straight back
+    // to Held with zero dispatches).
+    var (worker, svc) = _newWorker(
+      integrity: new Whizbang.Core.Messaging.StreamIntegrityOptions { CheckpointsEnabled = false });
+    var entry = _entry(MessageFailureReason.PoisonRedeliveryLoop, recoveryAttempts: 0)
+      with { MessageType = "Whizbang.Core.Messaging.IntegrityCheckpoint, Whizbang.Core" };
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    await Assert.That(svc.DiscardCalls.Select(d => d.Id)).Contains(entry.DeadLetterId)
+      .Because("the subsystem is off: the message has no meaning, and settling it is the "
+             + "only disposal a before-dispatch quarantine can ever reach");
+    await Assert.That(svc.HoldCalls).IsEmpty()
+      .Because("holding garbage for review recreates the invisible-inventory problem");
+    await Assert.That(svc.RecoverCalls).IsEmpty()
+      .Because("re-driving a disabled subsystem's message is never the answer — the "
+             + "policy comment on reason 18 is right about that");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
+  public async Task DisabledSubsystemEntry_SubsystemEnabled_QuarantinesNormallyAsync() {
+    // Control: checkpoints ON — the same row follows the reason-18 policy unchanged.
+    var (worker, svc) = _newWorker(
+      integrity: new Whizbang.Core.Messaging.StreamIntegrityOptions { CheckpointsEnabled = true });
+    var entry = _entry(MessageFailureReason.PoisonRedeliveryLoop, recoveryAttempts: 0)
+      with { MessageType = "Whizbang.Core.Messaging.IntegrityCheckpoint, Whizbang.Core" };
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    await Assert.That(svc.HoldCalls).Contains(entry.DeadLetterId)
+      .Because("an ENABLED subsystem's poison row is real evidence for an operator");
+    await Assert.That(svc.DiscardCalls).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  [Test]
   public async Task TheCounters_StartAtZeroAndAreReadableAsync() {
     // These are the worker's only external account of what it has done — an operator reads them to
     // tell "the sweep is running and finding nothing" apart from "the sweep is not running". They
@@ -279,6 +337,7 @@ public class DeadLetterRecoveryWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       new NeverReadySchemaGate(),
       Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGenerationProvider("test/0.0.1"),
       NullLogger<DeadLetterRecoveryWorker>.Instance,
       metrics: null,
@@ -304,7 +363,8 @@ public class DeadLetterRecoveryWorkerTests {
   private static (DeadLetterRecoveryWorker Worker, FakeRecoveryService Svc) _newWorker(
       DeadLetterRecoveryOptions? options = null,
       string generation = "test/0.0.1",
-      FakeNotificationListener? listener = null) {
+      FakeNotificationListener? listener = null,
+      Whizbang.Core.Messaging.StreamIntegrityOptions? integrity = null) {
     var svc = new FakeRecoveryService();
     var services = new ServiceCollection();
     services.AddSingleton<IDeadLetterRecoveryService>(svc);
@@ -314,6 +374,7 @@ public class DeadLetterRecoveryWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       new ImmediateSchemaGate(),
       Options.Create(options ?? new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
+      Options.Create(integrity ?? new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGenerationProvider(generation),
       NullLogger<DeadLetterRecoveryWorker>.Instance,
       metrics: null,
@@ -340,6 +401,7 @@ public class DeadLetterRecoveryWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       new ImmediateSchemaGate(),
       Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGenerationProvider("test/0.0.1"),
       NullLogger<DeadLetterRecoveryWorker>.Instance);
 
@@ -738,6 +800,7 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
       sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
       notificationListener: null, housekeeping: housekeeping);
     svc.FetchBatches.Enqueue([_entry()]);
@@ -790,6 +853,7 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator();
     var worker = new DeadLetterRecoveryWorker(
       sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
       notificationListener: null, housekeeping: housekeeping);
     svc.FetchBatches.Enqueue([_entry()]);
@@ -829,6 +893,7 @@ public class DeadLetterRecoveryWorkerTests {
     var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 0 });
     var worker = new DeadLetterRecoveryWorker(
       sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
       notificationListener: null, housekeeping: housekeeping);
 

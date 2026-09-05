@@ -471,4 +471,59 @@ public class DlqCanaryCampaignSqlTests : EFCoreTestBase {
              + "drops it would silently disable the bypass for every row");
   }
 
+
+  // ==== #684: disabled-subsystem rows settle, they don't quarantine ====
+
+  [Test]
+  public async Task MarkDiscarded_SettlesTheRow_WithTheNoteAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    var id = await _seedHeldAsync(conn, fp, "Whizbang.Core.Messaging.IntegrityCheckpoint", status: 0);
+    var svc = _svc(ctx);
+
+    await svc.MarkDiscardedAsync(id, "auto-discarded by recovery scan: subsystem disabled");
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = @"SELECT recovery_status, recovered_at IS NOT NULL, operator_notes
+                      FROM wh_dead_letters WHERE dead_letter_id=@id";
+    q.Parameters.AddWithValue("id", id);
+    await using var r = await q.ExecuteReaderAsync();
+    await r.ReadAsync();
+    await Assert.That(r.GetInt32(0)).IsEqualTo(3)
+      .Because("discarded = settled: Recovered status so the retention purge ages it out");
+    await Assert.That(r.GetBoolean(1)).IsTrue()
+      .Because("recovered_at anchors the retention window for the settled row");
+    await Assert.That(r.GetString(2)).Contains("subsystem disabled")
+      .Because("the note is the operator's answer to 'where did those rows go'");
+  }
+
+  [Test]
+  public async Task MarkDiscarded_AlreadySettledRow_IsUntouchedAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) { await conn.OpenAsync(); }
+    var fp = Guid.NewGuid().ToString("N")[..16];
+    var id = await _seedHeldAsync(conn, fp, "T.A", status: 0);
+    await using (var settle = conn.CreateCommand()) {
+      settle.CommandText = "UPDATE wh_dead_letters SET recovery_status=3, recovered_at=NOW() - interval '1 hour' WHERE dead_letter_id=@id";
+      settle.Parameters.AddWithValue("id", id);
+      await settle.ExecuteNonQueryAsync();
+    }
+    var svc = _svc(ctx);
+
+    await svc.MarkDiscardedAsync(id, "should not overwrite");
+
+    await using var q = conn.CreateCommand();
+    q.CommandText = "SELECT COALESCE(operator_notes,''), recovered_at > NOW() - interval '30 minutes' FROM wh_dead_letters WHERE dead_letter_id=@id";
+    q.Parameters.AddWithValue("id", id);
+    await using var r = await q.ExecuteReaderAsync();
+    await r.ReadAsync();
+    await Assert.That(r.GetString(0)).DoesNotContain("should not overwrite")
+      .Because("idempotence: a settled row's history is not rewritten by a late discard");
+    await Assert.That(r.GetBoolean(1)).IsFalse()
+      .Because("recovered_at keeps its original settle time");
+  }
+
 }

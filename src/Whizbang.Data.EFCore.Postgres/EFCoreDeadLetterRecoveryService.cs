@@ -295,6 +295,20 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
     => _execAsync($"SELECT {_fn("mark_dead_letter_permanently_failed")}(@id)", deadLetterId, ct);
 
   /// <inheritdoc />
+  public async Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default) {
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
+    var conn = _dbContext.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(ct).ConfigureAwait(false);
+    }
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = $"SELECT {_fn("mark_dead_letter_discarded")}(@id, @note)";
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("id", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = deadLetterId });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("note", NpgsqlTypes.NpgsqlDbType.Text) { Value = note ?? (object)DBNull.Value });
+    await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+  }
+
+  /// <inheritdoc />
   public async Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
     using var __ = _gate is null ? default : await _gate.AcquireAsync(ct).ConfigureAwait(false);
     var conn = _dbContext.Database.GetDbConnection();

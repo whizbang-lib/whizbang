@@ -78,6 +78,7 @@ public class DeadLetterOperatorEndpointsTests {
       GaveUpIds.Add(deadLetterId);
       return Task.CompletedTask;
     }
+    public Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default) => Task.CompletedTask;
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
       ScheduledIds.Add(deadLetterId);
       ScheduledTimes.Add(nextAt);

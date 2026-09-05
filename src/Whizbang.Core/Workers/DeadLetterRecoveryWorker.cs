@@ -36,6 +36,7 @@ public partial class DeadLetterRecoveryWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
   IOptions<DeadLetterRecoveryOptions> options,
+  IOptions<Whizbang.Core.Messaging.StreamIntegrityOptions> integrityOptions,
   IGenerationProvider generationProvider,
   ILogger<DeadLetterRecoveryWorker> logger,
   DeadLetterMetrics? metrics = null,
@@ -46,6 +47,13 @@ public partial class DeadLetterRecoveryWorker(
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly DeadLetterRecoveryOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  // #684: the disabled-subsystem discard must run in THIS worker too — quarantine policies
+  // like PoisonRedeliveryLoop (MaxAttempts=0) hold before any dispatch, so the inbox-gate
+  // discard can never reach their rows. Required, like InboxDispatchWorker's: an optional
+  // param would be silently null at hand-construction sites and the discard absent in
+  // production while every unit test passes.
+  private readonly Whizbang.Core.Messaging.StreamIntegrityOptions _integrityOptions =
+    (integrityOptions ?? throw new ArgumentNullException(nameof(integrityOptions))).Value;
   private readonly IGenerationProvider _generationProvider = generationProvider ?? throw new ArgumentNullException(nameof(generationProvider));
   private readonly ILogger<DeadLetterRecoveryWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   // Optional: an unwired host keeps the pre-arbitration behavior rather than losing recovery.
@@ -540,6 +548,25 @@ public partial class DeadLetterRecoveryWorker(
         if (ct.IsCancellationRequested) { return; }
         if (!policy.ShouldRecover(entry)) { continue; }
 
+        // #684: a message whose subsystem is DISABLED is settled here, ahead of every
+        // policy decision — especially the exhaustion check, whose MaxAttempts=0 rules
+        // (PoisonRedeliveryLoop) would otherwise re-hold the row before any dispatch and
+        // make it permanently undisposable. Mirrors the inbox-gate discard (#664).
+        if (DisabledSubsystemDiscardPolicy.ShouldDiscard(entry.MessageType, _integrityOptions)) {
+          try {
+            await svc.MarkDiscardedAsync(
+              entry.DeadLetterId,
+              "auto-discarded by recovery scan: subsystem disabled for message type " + entry.MessageType,
+              ct).ConfigureAwait(false);
+            LogDisabledSubsystemDiscarded(_logger, entry.DeadLetterId, entry.MessageType);
+          } catch (Exception ex) {
+            // Settle failed (DB hiccup): the row stays due and the next scan retries the
+            // discard — losing the log line would hide that the disposal is stalling.
+            LogTerminalSetFailed(_logger, entry.DeadLetterId, ex);
+          }
+          continue;
+        }
+
         var rule = policy.GetPolicy(entry);
 
         // Exhaustion check first: if RecoveryAttempts already reached MaxRecoveryAttempts,
@@ -642,6 +669,10 @@ public partial class DeadLetterRecoveryWorker(
   [LoggerMessage(EventId = 20, Level = LogLevel.Information,
     Message = "Held cohort {Fingerprint} released ({Released} row(s), {Mode}) — rows return to Pending staggered; the paced scans drain them")]
   static partial void LogCohortReleased(ILogger logger, string fingerprint, int released, string mode);
+
+  [LoggerMessage(EventId = 30, Level = LogLevel.Information,
+    Message = "DLQ row {DeadLetterId} discarded: its message type {MessageType} belongs to a disabled subsystem — settled without re-driving (#684)")]
+  static partial void LogDisabledSubsystemDiscarded(ILogger logger, Guid deadLetterId, string messageType);
 
   [LoggerMessage(EventId = 29, Level = LogLevel.Information,
     Message = "DLQ row {DeadLetterId} is exhausted but its cohort {Fingerprint} PASSED its canary on this generation — re-driving instead of holding (#681)")]
