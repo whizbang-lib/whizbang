@@ -2102,7 +2102,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
-    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC", CultureInfo.InvariantCulture);
+    // Deterministic: wall-clock here would change the compiled output hash every build.
+    var timestamp = TemplateUtilities.GetDeterministicBuildStamp(typeof(ReceptorDiscoveryGenerator).Assembly);
 
     // Load template from embedded resource
     var template = TemplateUtilities.GetEmbeddedTemplate(

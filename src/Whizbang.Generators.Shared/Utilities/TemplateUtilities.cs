@@ -259,14 +259,38 @@ public static class TemplateUtilities {
   }
 
   /// <summary>
-  /// Replaces the HEADER region in a template with a generated header containing timestamp.
-  /// Loads the GENERATED_FILE_HEADER snippet and replaces __TIMESTAMP__ with current UTC time.
+  /// Deterministic replacement for wall-clock generation stamps: the generator
+  /// assembly's build version. Wall-clock text baked into generated source changes
+  /// the compiler's deterministic output hash (MVID + PDB id) on every build, so a
+  /// same-version rebuild would never be byte-identical — which CI's rebuild
+  /// verification requires. The generator version still tells a reader which build
+  /// of the generator produced the file.
+  /// </summary>
+  /// <param name="generatorAssembly">The generator assembly whose version stamps the output</param>
+  /// <returns>A stable, build-deterministic stamp string</returns>
+  public static string GetDeterministicBuildStamp(Assembly generatorAssembly) {
+    var version = generatorAssembly.GetName().Version?.ToString() ?? "0.0.0.0";
+    return $"generator v{version}";
+  }
+
+  /// <summary>
+  /// <see cref="GetDeterministicBuildStamp"/> for the assembly containing this class —
+  /// after ILRepack merges Shared into each generator package, that IS the generator
+  /// assembly. Exists so string interpolations can reference one fully-qualified token.
+  /// </summary>
+  public static string DeterministicBuildStamp => GetDeterministicBuildStamp(typeof(TemplateUtilities).Assembly);
+
+  /// <summary>
+  /// Replaces the HEADER region in a template with a generated header carrying the
+  /// deterministic build stamp. Loads the GENERATED_FILE_HEADER snippet and replaces
+  /// __TIMESTAMP__ with the stamp from <see cref="GetDeterministicBuildStamp"/> —
+  /// never wall-clock time, which would break build determinism.
   /// </summary>
   /// <param name="assembly">The assembly containing the embedded resources</param>
   /// <param name="template">The template content with a HEADER region</param>
-  /// <returns>Template with HEADER region replaced with timestamped header</returns>
+  /// <returns>Template with HEADER region replaced with the stamped header</returns>
   public static string ReplaceHeaderRegion(Assembly assembly, string template) {
-    var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC", CultureInfo.InvariantCulture);
+    var timestamp = GetDeterministicBuildStamp(assembly);
 
     // Load header snippet
     var headerSnippet = ExtractSnippet(

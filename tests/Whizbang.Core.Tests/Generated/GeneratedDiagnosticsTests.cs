@@ -29,16 +29,19 @@ public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
   }
 
   [Test]
-  public async Task Diagnostics_ShouldCaptureTimestampAsync() {
+  public async Task Diagnostics_ShouldCaptureDeterministicBuildStampAsync() {
     // Arrange & Act
     var output = WhizbangDiagnostics.Diagnostics(
       categories: DiagnosticCategories.ReceptorDiscovery,
       printToConsole: false
     );
 
-    // Assert - timestamp should be in UTC format
-    await Assert.That(output).Contains(" UTC");
-    await Assert.That(MyRegex().IsMatch(output)).IsTrue();
+    // Assert - the stamp is the generator's build version, never wall-clock time:
+    // wall-clock text baked into generated source changes the compiler's
+    // deterministic output hash (MVID + PDB id) on every build, which breaks the
+    // byte-identical rebuild verification CI performs (verify-rebuild in ci.yml).
+    await Assert.That(output).Contains("generator v");
+    await Assert.That(WallClockRegex().IsMatch(output)).IsFalse();
   }
 
   [Test]
@@ -78,5 +81,5 @@ public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
 
   [System.Text.RegularExpressions.GeneratedRegex(@"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC"
   )]
-  private static partial System.Text.RegularExpressions.Regex MyRegex();
+  private static partial System.Text.RegularExpressions.Regex WallClockRegex();
 }
