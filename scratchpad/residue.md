@@ -1675,3 +1675,33 @@ One test needed a fix at integration and the reason generalizes: with a `FakeTim
 injected failure, the log subscription — has to be armed *before* the clock moves, or the single
 sweep the test gets happens before the test is watching, and the wait then hangs to its timeout
 rather than failing with a useful message. Bound every such wait with `WaitAsync`.
+
+## AV. PostgresDeadlockRetry: 11 uncovered down to 1, and why the sibling is harder
+
+`PostgresDeadlockRetry.cs:94` — `throw new InvalidOperationException("Unreachable")` after the
+retry `for` loop in the generic overload. The loop returns on success, retries while
+`attempt < maxAttempts`, and rethrows when `attempt == maxAttempts`, so control cannot leave it
+normally. The compiler needs the statement; nothing can execute it.
+
+Everything else in that class is covered. The gap was the same shape found in `ReceptorInvoker`:
+every log call sits behind `if (logger is not null)`, and the existing `PostgresDeadlockRetryTests`
+never pass a logger. The retry behaviour was well covered; what it *reports* was not covered at
+all, and the generic overload's entire exhaustion path — log and rethrow — had never run.
+
+That matters more than a line count here. A deadlock retry that succeeds is invisible to the
+caller by construction, so the warning is the only evidence a database is thrashing; and it has to
+carry the SQL state, because 40P01 and 40001 are both retried by this code and point at different
+remedies. Exhaustion has to be Error rather than Warning, since that is the line an alert fires
+on, and it has to carry the exception.
+
+### Not attempted: PostgresConnectionRetry (11 uncovered)
+
+Same "log only when a logger was supplied" shape, but not reachable the same way.
+`PostgresConnectionRetry` constructs a real `NpgsqlConnection` and calls `OpenAsync`, and its
+schema path calls `_isSchemaReadyAsync`, which opens one too. Lines 77-78 and 114-115 log only
+when a *later* attempt succeeds (`attempt > 1`), which needs a connection that fails once and then
+works — not producible against a bogus host, which fails every time.
+
+Tractable in the live-Postgres suite: point the first attempt at a closed port, then at the real
+fixture connection string. Left for a round that is working in that project, rather than standing
+up a database fixture in the Dapper unit suite for it.
