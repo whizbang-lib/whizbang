@@ -2719,3 +2719,141 @@ accessor is the only thing such a test exercises. Deleted rather than repaired.
 the line was the point. TUnit's own analyzer rejected it (TUnitAssertions0005), which is a better
 guard than review. Replaced with assertions on the worker's `ExecuteTask` state — `IsCompleted` and
 `!IsFaulted` — which is the actual evidence that the best-effort catch swallowed both failures.
+
+## BZ. Wave 3 declines, and a worklist error of mine worth not repeating
+
+### A path I got wrong, caught by an agent rather than by a build
+
+I assigned `PerspectiveModelArrayAnalyzer` and `SerializablePropertyAnalyzer` to
+`Whizbang.Data.EFCore.Postgres.Tests`, having inferred their project from neighbouring rows in a
+worklist view that printed only basenames. They live in `src/Whizbang.Generators/`, and that test
+project references it as `OutputItemType="Analyzer" ReferenceOutputAssembly="false"` — an analyzer
+reference, not a compilable one — so any test file placed there could never have compiled. The
+agent verified this from the csproj AND from `obj/project.assets.json`, wrote no file, and said so.
+
+Two lessons. Keep the source path in the worklist view, not just the class name — the deduped
+script emits the full path and I threw it away in formatting. And "create NO file when the class
+turns out to be unreachable from here" is worth stating in every brief: the alternative is a file
+that fails to compile and costs a whole integration cycle to diagnose.
+
+### `PerspectiveCursorCache` 212 and 237 — two-read races with no seam
+
+Both guard a window between two reads with nothing overridable in between: 211-212 is
+`Interlocked.Read` followed by `CompareExchange`, and 236-237 is a live re-check against
+`_streamLastActivityTicks` during enumeration. There is no `TimeProvider` call or injectable
+dependency inside either window, so reaching them deterministically would need a production test
+seam. A probabilistic thread-race test could not honestly claim to exercise the line.
+
+### `CategoryBatch` 155, 160, 165 — write-only members, sixth instance
+
+`MigrationItem.Decision`, `.OriginalCode` and `.TransformedCode` are never read or written anywhere
+in `tools/`. The similarly-named properties that ARE read belong to unrelated types (`DecisionPoint`,
+`MigrationOption`), which is what makes this one easy to mis-grep. Sixth instance of the pattern
+(BD, BE, BJ, BR, BX, and `ScopedLensFactoryGenerator`'s pair in BY). They want deleting.
+
+### `BaseSagaModel` 63 and 66 — auto-properties whose round-trip asserts nothing
+
+`Summary` and `CreatedAt` are plain auto-properties. They are not dead — the ORM writes them and a
+dashboard reads them — but a test that assigns one and reads it back exercises only a
+compiler-generated accessor, which is the same filler as a write-only round-trip. Two such tests
+were produced and removed.
+
+Kept, and worth the distinction: `Hooks` (88) and `GetHooks` (193). `Hooks` has a lazy-init getter
+(`get => _hooks ??= [];`), so "an assigned list survives the getter" is a real contract with a real
+failure mode — a substituted default would silently drop the hook history a resumed saga had
+already recorded. The test was sharpened from comparing counts to asserting reference identity,
+because a count comparison passes even if the getter hands back a copy, and a copy is precisely
+what would make a later `Add()` vanish.
+
+### Analyzer guards, this wave
+
+`PerspectiveModelPolymorphicAnalyzer` 216 — `type is IArrayTypeSymbol` on a parameter statically
+typed `INamedTypeSymbol`; Roslyn's `ITypeSymbol` subkinds are mutually exclusive and the only caller
+already filtered arrays out. 244 and `PerspectiveModelDictionaryAnalyzer` 218 — `ContainingNamespace
+== null`, the established shape. `PerspectiveModelArrayAnalyzer` 61 — `GetDeclaredSymbol` null.
+`SerializablePropertyAnalyzer` 179-180 — `return true` for a `Nullable<object>` check, dead by
+construction since `Nullable<T>` constrains `T : struct` and `object` cannot satisfy it.
+
+Left explicitly undetermined rather than guessed: `PerspectiveModelPolymorphicAnalyzer` 264 and
+`PerspectiveModelDictionaryAnalyzer` 243, both `attrName == null` via a null `AttributeClass`. That
+is not among the established unreachable shapes and no compiler experiment was run to settle it.
+
+### One correction to a premise I put in a brief
+
+I told an agent that line 61 appearing in three analyzer files hinted at a shared guard. It appears
+in two, and in those it is two DIFFERENT guards sharing a number by coincidence. The genuinely
+shared guard is `iface.TypeArguments[0] is not INamedTypeSymbol modelType` at three different line
+numbers (Polymorphic 61, Dictionary 57, Vector 103), and it is reachable, not residue: a generic
+perspective whose own type parameter stands in for `TModel` yields an `ITypeParameterSymbol`. It now
+has a test in all three files, each written so that an unconditional-cast regression surfaces as an
+extra `AD0001` analyzer-crash diagnostic rather than as silence.
+
+## CA. Wave 3 verification: 156/158, and two more brace artifacts proven rather than assumed
+
+`PgDutyElector` 110 and 165 both read uncovered while their blocks demonstrably run. Proven from
+the same cobertura file rather than argued:
+
+- **110** is `}` closing a `catch` whose last statement is `throw;`. Lines 107 (`} catch {`), 108
+  (the dispose) and 109 (`throw;`) are all HIT. The catch runs; only its closing brace reads red.
+- **165** is `}` closing a `catch (Exception)` whose body is a comment only. Line 163 (`} catch
+  (Exception) {`) is HIT. Same shape: an empty catch's closing brace.
+
+Sixth and seventh confirmed instances of the closing-brace-after-unconditional-transfer artifact.
+The check that settles it in one step: read the block's OTHER lines out of the same coverage file.
+If the catch line is hit and only the brace is not, it is the artifact and not a gap.
+
+### `NotifySubscriptionRegistry` 45 and 72 — CAS retry paths, measured not guessed
+
+Both are the "lost the race, retry" continuation points in compare-and-swap loops: 45 closes the
+`else` arm after a failed `TryAdd`, 72 is the `continue` after a failed `ICollection.Remove`. Tests
+using 64 real OS threads on a `Barrier` were written and DO pass — a scoped `--coverage` run shows
+46, 60 and 78 hit but 45 and 72 missed, so the race did not land.
+
+The tests were kept anyway, and the distinction matters: their assertions are deterministic and
+they cover a real invariant (concurrent add/remove leaves the registry consistent). What is not
+reliable is their coverage of those two specific lines. A test whose *assertions* always hold is
+worth keeping; a test whose *coverage claim* is probabilistic must not be counted as covering the
+line. Recorded as residue, tests retained, 327ms.
+
+### `DbContextNotificationConnectionStringFallback` 59 and 89 — removed rather than kept
+
+An agent reached these double-checked-locking inner branches by reflecting the private `_gate`
+`Lock` out of the instance, taking it, starting a racer thread, then setting the private
+`_resolved`/`_cached` fields. It was careful work and it was honest about the residual ordering
+assumption — but `ai-docs/coverage-exclusions.md` forbids exactly this ("never assert an
+unreachable branch via reflection to force the line green"), and a test coupled to three private
+field names breaks on any rename while asserting nothing a caller can observe. Both tests and their
+helper were removed. The outer-check behavior remains covered by the two tests that survive.
+
+### Others this wave
+
+`EFCoreDeadLetterRecoveryService` 123 — `if (!await reader.ReadAsync())` after
+`evaluate_canary_campaign`. Every branch of that SQL function ends `RETURN QUERY SELECT ...;
+RETURN;`, so it always returns exactly one row; the C# fallback cannot fire without faking
+`NpgsqlDataReader` against a class designed around a real connection.
+
+`DomainOwnershipDetector` 119 — `continue` on an empty `domain`. Both producers were traced:
+`_extractDomainFromTypeName` always leaves at least one character (every strip requires
+`Length > pattern.Length`), and `_extractDomainFromNamespace` returns null or a non-empty segment.
+Apparently unreachable; flagged rather than forced.
+
+`AnalysisTypes` 45/78/108/167 — the `FilePath` positional parameter on `HandlerInfo`,
+`ProjectionInfo`, `EventStoreUsageInfo` and `MigrationWarning`. `Program.cs`'s report loops read
+other members of each of these types but never `.FilePath` — and DO read `.FilePath` on the
+unrelated `DIRegistrationInfo`, which is what proves the omission real rather than a bad grep.
+Seventh write-only instance.
+
+`RabbitMQConnectionRetry` 62/111/112 — the success path needs a real broker round trip, and
+`ConnectionFactory` is `public sealed` with the method taking the concrete type, so unlike
+`ServiceBusAdministrationClient` and `BlobContainerClient` there is no subclassing seam. 145 is
+the closing brace after an unconditional `ExceptionDispatchInfo.Throw`. Structurally the same as
+the ASB residue at AF/AP/BS.
+
+### A rule the shard guard enforced better than review would have
+
+`PhysicalFieldHydratorRegistryCoverageTests` landed in `Whizbang.Data.EFCore.Postgres.Tests` with
+no `[Category("ShardN")]`, because the brief that produced it did not mention the rule — I had not
+expected that file to land in that project. `ShardCoverageGuardTests` failed the build and said
+exactly why: "a class with no shard category runs in NO slice and silently stops being tested."
+That is the vacuity failure mode expressed as a build guard, and it is worth more than the
+convention it protects.
