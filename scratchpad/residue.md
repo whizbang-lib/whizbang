@@ -1477,3 +1477,28 @@ than a registration assertion: the namespace client factory singleton, the backl
 traffic-class ops-rate sources composed over the resolved transport, the multi-namespace peer
 initialization logging, both arms of the active-consume-namespace projection, and the
 configuration-only namespace being merged into a composite provisioner.
+
+## AQ. RabbitMQ ServiceCollectionExtensions: the connection factory needs a real broker
+
+`ServiceCollectionExtensions.cs:133-154` is the `AddSingleton<IConnection>` factory body, entered
+only when no `IConnection` has been pre-registered. It calls
+`RabbitMQConnectionRetry.CreateConnectionWithRetryAsync`, which calls the concrete
+`RabbitMQ.Client.ConnectionFactory.CreateConnectionAsync()` — a real socket connect with no seam
+to substitute.
+
+Worth noting precisely because the sibling path does have one: per-namespace connections go
+through `IRabbitMQNamespaceConnectionFactory`, which is why every multi-namespace test in this
+suite runs offline. The default connection has no equivalent interface. If that were ever
+extracted, these lines become ordinary unit-testable wiring; until then they belong to the
+integration suite.
+
+Everything else in both files is covered. `RabbitMQTransport` went from 14 uncovered to none of
+the targeted set, including the passive-declare path for a destination that requires a
+pre-provisioned entity, correlation and causation IDs reaching the wire headers, the batch-flush
+debug log, the nack path when reading a message's own properties throws, the comma-split routing
+fallback when a RoutingPattern override is present but empty, and idempotent double dispose.
+
+One line needed a real subscribe rather than a direct call: the closure passed to
+`NamespaceRoutingTransport` at line 288. Its two services are resolved once at container build,
+so testing the static helper it calls proves the logic and not the capture — a wiring mistake
+there would leave the helper correct and the mirror permanently blind.
