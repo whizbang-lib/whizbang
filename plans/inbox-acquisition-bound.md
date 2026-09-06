@@ -106,6 +106,25 @@ Add a latency observation with a target to both controllers and to the flusher b
   consumer's connection-string command timeout cannot kill a commit batch.
 * Poison admission: distinguish `LeaseExpired`-from-timeout from real poison (maintenance/sentinel keep
   handling true bad rows).
+* PerspectiveWorker deadlock (few fat streams): the drain consumer takes the per-(stream, perspective)
+  `SemaphoreSlim` (line ~1029) and then makes gated coordinator calls while holding it; other paths hold a
+  gate slot while waiting for a stream semaphore. With several consumers on a handful of streams that each
+  carry ~1k rows across ~27 projections and a coordinator gate already near its cap, a hold-and-wait cycle
+  forms: gate at cap, database idle, one instance holding every lease and RENEWING it, zero applies. The
+  stage progressed only at lease-expiry cadence (attempts climbing 2-4) and fully recovered with a single
+  consumer (4.2k rows in 31 s). Fix: one lock order (stream semaphore before any gate acquisition, never
+  a gate slot held across a semaphore wait), a gate hold-duration watchdog with per-caller metrics exposed
+  to operators, and lease renewal that stops for work that is not actually progressing.
+* Pinned pool vs gate: flush and claim workers borrow the single pinned connection first and then call the
+  coordinator (which takes the gate), while the coordinator takes the gate and then uses the ambient pinned
+  connection. Same inversion class; verify and give it the same single order.
+* Doorbell self-test under load: a pod whose signal-bus loopback probe misses its 5 s window at startup
+  settles on polling fallback for its whole lifetime ("every hop pays the poll interval"). The self-test
+  should retry with backoff and re-arm doorbells when the transport recovers.
+* Benchmark tests: a `[Category("Benchmark")]` class (seed ~100k pending rows across mixed streams, time
+  the acquisition call, assert a budget: 138 < 350 ms, 139 < 100 ms) excluded from the PR shard slices
+  by construction (the shard guard accepts Benchmark as the alternative to a Shard category) and run by
+  a scheduled/manual workflow job.
 
 ## Consumer-side follow-ups (until the framework owns them)
 
