@@ -2355,3 +2355,43 @@ normal PDB semantics corresponds to the normal-exit `ret`. The method hardcodes 
 `ConnectionFactory` with no injectable seam, so a normal return needs a real AMQP handshake; an
 offline test reaches every line above it and then leaves by exception. Needs a live broker, which
 this suite deliberately does not use.
+
+## BO. The Core batch: four classes closed, and PolicyContext's compatibility blocks are dead
+
+`OutboxDrainWorker` 12 -> 0, `BodyOffloadPostSerializeHook` 9 -> 0, `OutboxPublishWorker` 13 -> 1,
+`TransportConsumerBuilderExtensions` 13 -> 4, `DebuggerAwareClock` 9 -> 3,
+`MessageTagProcessor` 13 -> 5, `SlidingWindowInboxBatchStrategy` 8 -> 5.
+
+### PolicyContext 186-192 and 221-223 — dead, and no test file was kept for them
+
+`PolicyContext.HasTag` / `HasFlag` each contain a "backwards compatibility" block handling
+`string[]`, `IEnumerable<string>` and numeric metadata values. They cannot run.
+`IMessageEnvelope.GetMetadata(string)` is declared to return `JsonElement?`, so `PolicyContext`
+can only ever receive `null` or a boxed `JsonElement` — no implementer can put anything else
+through that signature. The `is JsonElement` checks above are therefore exhaustive.
+
+An agent produced a test file for this containing **no tests at all**, only prose explaining the
+above. That file was deleted rather than committed: a test class with zero tests adds nothing to
+the suite and hides its own reasoning where nobody looks for it. The reasoning belongs here.
+
+### The rest, by category
+
+**Logger-null by construction**: `MessageTagProcessor:86, 87, 113, 114`. Both blocks require
+`_scopeFactory is null`, and the `Logger` property returns `NullLogger.Instance` in exactly that
+case — so `Logger.IsEnabled(Debug)` is pinned false wherever these live. The existing debug-logging
+test reaches real logging only through the scope-factory constructor, which structurally excludes
+this path.
+
+**Mode-gated**: `DebuggerAwareClock:132, 137` sit in `_sampleCpuTime`, whose only caller is a timer
+created solely when `Mode` is `CpuTimeSampling` or `Auto`; `Mode` has no setter, so the
+`DebuggerAttached` arm and the switch default cannot run. `:326` is a `catch (ChannelClosedException)`
+around a channel `Dispose()` only ever completes gracefully.
+
+**Contract-guaranteed**: `MessageTagProcessor:137` guards a `continue` after `_enforcePayloadSize`,
+which has two returns, both `true` — the error path throws rather than returning false.
+
+**Races declined**: `SlidingWindowInboxBatchStrategy:141, 165, 170, 178, 185` — an empty batch the
+batcher's own contract never yields, an outer catch every inner handler already absorbs, and three
+paths requiring two idle sweeps or a disposal to interleave at a specific instruction. The agent
+declined all five rather than reach into private state or write a timing-dependent test, which is
+the right call.

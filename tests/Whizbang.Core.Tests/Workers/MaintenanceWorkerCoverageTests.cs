@@ -36,7 +36,7 @@ public class MaintenanceWorkerCoverageTests {
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(
-        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
       lock (_entries) { _entries.Add(new LogEntry(logLevel, eventId, formatter(state, exception), exception)); }
     }
