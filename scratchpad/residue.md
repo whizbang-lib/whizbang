@@ -1502,3 +1502,150 @@ One line needed a real subscribe rather than a direct call: the closure passed t
 `NamespaceRoutingTransport` at line 288. Its two services are resolved once at container build,
 so testing the static helper it calls proves the logic and not the capture — a wiring mistake
 there would leave the helper correct and the mirror permanently blind.
+
+## AR. Two dispose races, and three lines that are dead rather than untested
+
+### The `ObjectDisposedException` race, now seen twice
+
+`ClaimWorker.cs:294` and `PerStreamSerializer.cs:294` are the same shape, and it is worth
+naming as a class rather than rediscovering each time. Both are an empty
+`catch (ObjectDisposedException)` guarding a `Cancel()` on a `CancellationTokenSource` that the
+owning loop's teardown may have disposed in between another thread's `Volatile.Read` of the
+field and its `.Cancel()` call. Reaching it requires hitting that exact interleaving from
+outside, and neither class exposes a seam that would let a test place itself there.
+
+Both are correct code — the race is real and the catch is why it is harmless — and both are
+untestable without adding a production hook that exists only for the test. Recorded rather than
+faked with a sleep, which is what a test for this would amount to.
+
+### IntegrityManifestReceptors: dead, not untested
+
+`IntegrityManifestReceptors.cs:835` is a guard inside `_sendBulkBackfillRequestAsync` checking
+transport, serializer, requester and topic. Its only caller, `_handleTypeLevelAsync`, performs
+the byte-identical check on the same service provider and options at line 690-692 and returns
+before it can ever invoke this method. Singleton resolution is deterministic, so the condition
+cannot be true when reached. Note the neighbouring lines 839-840, which guard the *tracker's*
+origin topic, are genuinely reachable and are now covered — the two look alike and are not.
+
+`IntegrityManifestReceptors.cs:814` is the `streamLevel: true` arm of a ternary in
+`_tableDigestsWithFallbackAsync`. That private helper has exactly one call site, which hardcodes
+`streamLevel: false`. Reaching the other arm means reflection-invoking a private method no
+caller reaches, which would assert an implementation detail rather than a behaviour.
+
+`IntegrityManifestReceptors.cs:589-590` clears `_pagesFollowed` when it exceeds 256 entries.
+That dictionary is `private static readonly` — process-global, and NOT scoped by this class's
+`[NotInParallel]` key. Driving it past the cap, whether by real round trips or by seeding it
+through reflection, would clear it out from under any other test in the 46-project suite
+accumulating entries in the same dictionary at the same moment. Declined deliberately: covering
+one safety-valve line is not worth manufacturing cross-test flakiness, and there is no
+externally observable invariant here that does not amount to poking the field.
+
+## AS. PerspectiveWorker: dead wiring, two tests that pass for the wrong reason, and one more instrumentation artifact
+
+Entry L already settled 18 of this file's uncovered lines. This round closed 10 more with real
+assertions. Three findings from the attempt are worth keeping, because none of them is a
+coverage question.
+
+### Lines 460-461 are not untested — the wiring they perform does nothing
+
+```csharp
+if (workChannelWriter is not null) {
+  workChannelWriter.OnNewPerspectiveWorkAvailable += RequestImmediatePoll;
+}
+```
+
+`RequestImmediatePoll` releases `_pollWakeSignal`. That semaphore is declared at line 300,
+released at line 354, and **awaited nowhere in the file**. Verified by grep: two references
+total, the declaration and the release. `ClaimWorker` has the working version of this same
+pattern — `RequestImmediatePoll` → `_wake.Release` → a `WaitAsync` that actually returns — so
+this looks like the copy left behind when, as the comment three lines below says, "the work-pump
+decomposition migrated perspective traffic to the channel architecture."
+
+So these lines are reachable — a test need only supply a non-null writer — but there is no
+invariant to assert, because subscribing changes nothing observable. A test here would assert
+that a line ran, which is the thing this loop exists to avoid.
+
+**This is a question for the owner, not a coverage item.** Either the perspective poll loop was
+meant to wake on new work and silently no longer does, or the wiring is vestigial and should
+go. Deliberately not removed here: deleting production wiring is not a change to make on a
+coverage branch, and a reader today is reasonably misled into believing new-work signals wake
+this loop.
+
+### Two existing tests were passing for the wrong reason
+
+`Worker_WithoutEventTypeProvider_SkipsEventLoadingAsync` and its `...Empty...` sibling never
+register an `IReceptorInvoker`, so `shouldLoadEvents` is false and `_loadProcessedEventsAsync` —
+the method they are named for — is never entered. They pass without reaching the code under
+test. Replacements registering both `IReceptorInvoker` and `IEventStore` now cover lines
+3760-3761 and 3768-3769, keyed on the unique `LogWarningNoEventTypes` EventId as the signal.
+
+Same shape as `Worker_RegistryNotRegistered_SkipsPerspectiveAndContinuesAsync`, whose assertion
+is `ConsecutiveEmptyPolls >= 0` — a tautology. Its replacement proves the branch is taken for
+each of two concurrent stream items rather than merely that nothing crashed.
+
+### Line 1162 is another instrumentation artifact, not a gap
+
+It is the closing brace of a `catch` that ends in an unconditional `throw;`, and
+`Worker_PerspectiveRunThrows_ReportsFailureViaStrategyAsync` demonstrably executes that catch
+(proven by `ReportFailureCallCount`) while the line stays red. Same family as AO's line 154:
+a sequence point after an unconditional transfer, attributed unpredictably. Do not write a test
+for it.
+
+### Unreachable by construction, traced to their call sites
+
+`3735` — `_startLockKeepaliveAsync`'s `if (_streamLocker is null) return;`. Its single call site
+runs only when `lockAcquired` is true, which itself requires a non-null locker.
+`3628` and `3660` — null-invoker guards in the detached-stage fire paths, reached only after the
+caller resolved a non-null invoker from the same root provider.
+
+### Left for a future round, honestly rather than gold-plated
+
+`1228, 1236, 1301, 1310, 1320` (stream-affinity eviction guards), `1563, 1648, 1694, 1739, 1803,
+1852` and `2016, 2017` (drain-mode refetch guards), `3538`, `3637-3638`. All reachable in
+principle; all need a full drain-mode or lifecycle fixture for one guard clause each. Of these,
+**3637-3638 is the best next candidate** — the catch-and-log in the detached PrePerspective
+fallback is a real gap rather than unreachable code.
+
+## AT. Three things the round-24 integration turned up that are not coverage items
+
+### PerspectiveWorker's missing-registry branch is not reachable from its test harness
+
+`PerspectiveWorker.cs:2660-2661` logs and returns when `IPerspectiveRunnerRegistry` is absent.
+A test for it was written and then removed, because work enqueued through
+`PerspectiveWorkerTestHarness` never reaches `_resolveDependenciesAndLoadEventsAsync` at all:
+`LogPerspectiveRunnerRegistryNotRegistered` (EventId 11) is never emitted. Verified by waiting on
+it for ten seconds, for one emission and for two, three runs each — zero every time.
+
+The reason this went unnoticed is worth more than the line. The existing
+`Worker_RegistryNotRegistered_SkipsPerspectiveAndContinuesAsync` is named for this branch and
+asserts `ConsecutiveEmptyPolls >= 0` — true whether or not the branch is ever reached. It has
+been passing without executing the code it is named for. Left in place rather than deleted, but
+it should not be read as evidence this path works.
+
+### ClaimWorker treats a perspective-only batch as an empty poll
+
+`_distributeAsync` is called only `if (hadWork)`, and `hadWork` is:
+
+```csharp
+batch.OutboxWork.Count > 0 || batch.InboxWork.Count > 0
+  || batch.PerspectiveStreamIds.Count > 0
+  || batch.OutboxStreamIds.Count > 0 || batch.InboxStreamIds.Count > 0
+```
+
+`batch.PerspectiveWork.Count` is not among them, while `batch.OutboxWork` and `batch.InboxWork`
+are. A batch carrying perspective rows but no `PerspectiveStreamIds` therefore reads as an empty
+poll and is never distributed — the rows stay leased to this instance and nothing consumes them
+until the lease expires. Found because a test constructed exactly that batch shape and timed out.
+
+Today's stores populate both lists, so this is latent rather than live, and the asymmetry may
+well be deliberate. Flagged for the owner rather than changed: the fix would be a one-word edit
+to a claim-loop predicate, which is not a change to make on a coverage branch.
+
+### A closing brace after `throw;` is unreachable for instrumentation, again
+
+`Dispatcher.cs:3235` and `3337` are the closing braces of `catch` blocks whose last statement is
+an unconditional `throw;`. Tests drive both catches and assert the rethrown exception, and both
+lines stay red — the same shape as AO's `DeadLetterRecoveryWorker.cs:154` and AS's
+`PerspectiveWorker.cs:1162`. That is now four instances. **Treat `}` after an unconditional
+`throw` or `return` inside an async method as instrumentation noise, not a gap**, and do not
+spend a cycle on it.
