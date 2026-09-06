@@ -1968,3 +1968,47 @@ the machine was healthy. Duration and correctness need separate explanations.
 Standing condition during this run: 2.1 GB free against 21.1 GB of 22.5 GB swap consumed, and the
 OS killed a background shell outright to reclaim memory. Shutting down idle `dotnet build-server`
 processes after the build phase returned about 0.9 GB and is worth doing before any long run.
+
+## BD. EFCoreWorkCoordinator: 19 down to 6, and a dead property worth removing
+
+### Guards after a query that structurally cannot return zero rows
+
+`275`, `404`, `486`, `920` are all "the reader returned no row" branches placed immediately after
+a call that always returns exactly one. Traced individually rather than as a group:
+
+- `CountServiceBacklogAsync`'s SQL is a bare `SELECT` of scalar subqueries with no top-level
+  `FROM` — one row, always.
+- `reclassify_events_ephemeral` and `register_type_definition` are `RETURNS TABLE` functions whose
+  every code path ends in a single `RETURN QUERY SELECT` of one scalar row.
+- `wh_integrity_ledger_summary` is a `COUNT(*)` aggregate with no `GROUP BY`, which returns a row
+  even against an empty table.
+
+Reaching any of them means changing the SQL, not the test.
+
+### Two genuine cross-writer races
+
+`2939` — `return null` when the compare-and-set update loses, requiring the `wh_settings` row to
+change between this method's own SELECT and its own UPDATE. `2924` — the sibling case where
+another instance baselines the checkpoint first. Both need a real concurrent writer interleaved
+inside one method call. No deterministic seam exists, and manufacturing one with timing would be
+exactly the flaky test this loop keeps declining.
+
+### `OrphanedEventRow.Metadata` is dead
+
+`5088` is the getter of a property nothing reads. `_deserializeEventEnvelope` consumes
+`EventData`, `EventId` and `Scope` and never touches `Metadata`; a grep of the class finds no
+other reader. It is covered now only by a property round-trip test, which the test's own doc
+comment says plainly rather than dressing up as a behavioural lock.
+
+Worth an owner's look: a write-only field on a row type is either a column being carried for no
+reason or a deserialization path that was meant to use it and does not. Not removed here —
+deleting a public-ish member is not a coverage edit.
+
+### What did get covered, and why it matters more than the count
+
+Three of these tests exercise **backward compatibility with older SQL**: `get_stream_events`,
+`fetch_outbox_batch` and `fetch_inbox_batch` each have column-count fallbacks for databases whose
+functions predate a migration. Those paths run on every consumer who has not yet migrated, and
+nothing had ever executed them. Each test installs a period-accurate stub of the older function in
+its own per-test database, so the fallback is driven by a genuinely narrower result set rather
+than by a mocked reader.
