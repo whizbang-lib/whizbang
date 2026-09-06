@@ -2629,3 +2629,93 @@ file, because it reads as coverage that exists. The reasoning lives here instead
 
 Note for the owner: the two guards are not redundant defensive copies of each other — the second
 is simply dead. Deleting it would make the intent clearer than leaving a check that cannot run.
+
+## BY. Wave 2: what 34 classes left behind, and two agent claims that did not survive verification
+
+Covered and verified: 151 target lines across Core workers/resilience/coordinators, nine
+generators and analyzers, the EFCore Postgres collective classes, and four transport classes.
+
+### Declined, with reasons
+
+**The sliding-window family, third instance.** `SlidingWindowOutboxBatchStrategy` 128, 150, 155,
+163, 170 decline for the same five reasons already recorded for the Inbox and Apply siblings. Only
+line 140 was drivable (flush observing `_stopCts` through `Task.Delay(Timeout.Infinite, ct)`, which
+has no competing completion path). Three classes, same shape, same five declines — this is the
+family's structure, not a gap.
+
+**`PerStreamSerializer`** 166 (`TryRead` cannot fail immediately after `WaitToReadAsync` returned
+true under the class's own `SingleReader` invariant), 197/198 and 225 (require `_stopCts` to cancel
+a pending read BEFORE that same shutdown's `TryComplete()` continuation resolves it), 239
+(two-sweep `TryRemove` race).
+
+**`DeadLetterRecoveryWorker`** 227 — `Task.WhenAny` never propagates a constituent's exception to
+its own awaiter, so this is structurally unreachable rather than a race. 244-247 — the loop-breaker
+close branch reads `DateTimeOffset.UtcNow` directly with no `TimeProvider` seam and an int-minutes
+cooldown, so driving it needs a real 60-second wait. Worth a `TimeProvider` for the owner.
+
+**`BatchFlusher`** 142 — `_runAsync` converts every internal `OperationCanceledException` to a
+`break`, so its task can only end `RanToCompletion` or `Faulted`, never `Canceled`. The catch
+guards a status the current code cannot produce.
+
+**`WhizbangIdProviderRegistry`** 148 — the `_diRegistrations.Count == 0` guard. This assembly's own
+generated module initializer calls `RegisterDICallback` before any test runs, so the list is never
+empty in-process. Emptying it means reflecting into a private static that other tests in the same
+assembly read without their own `[NotInParallel]` guard.
+
+**`LeaseHandle`** 166 — the `catch (ObjectDisposedException)` in `Dispose()`. The `_disposed` guard
+sets its flag before either concurrent caller touches the CTS, so the catch guards a race the lock
+already prevents.
+
+**`ScopedWorkCoordinatorStrategy`** 210-214 — dead since Phase H moved claiming to `ClaimWorker`;
+`WorkCoordinatorFlushHelper.ExecuteFlushAsync` now returns an empty `WorkBatch` unconditionally.
+Rather than reflect into the private method to force the line green, the agent wrote a test that
+PINS the invariant keeping it dead: with inbox work queued and a real `IInboxChannelWriter` wired,
+`TryWrite` is never called. A future change that resurrects the branch fails that pin loudly. This
+is the right treatment for dead-but-not-obviously-dead code and is worth copying.
+
+**Roslyn-contract guards, eight more.** `LensQueryTypeArgumentAnalyzer` 64,
+`ScopedLensFactoryGenerator` 45, `PerspectivePurityAnalyzer` 141/261,
+`PerspectiveSyncInReceptorAnalyzer` 79, `PinnedIdRegistryGenerator` 46,
+`MessageTypeCatalogGenerator` 73, `MintedCompositeConstructionAnalyzer` 115/155. Same catalogue as
+before: a resolved symbol always has a containing type and namespace, `GetDeclaredSymbol` is
+non-null for a matched node.
+
+**`CollectiveSettersRewriter`** 134's true branch and 188 — both defeated by the BCL, not by the
+test. `ICollectiveSetters<TModel>` exposes only 2-parameter `SetProperty` overloads and
+`Expression.Call` validates argument count against the resolved `MethodInfo`, so
+`Arguments.Count != 2` is unconstructable. And `Expression.Call` auto-quotes a bare
+`LambdaExpression` passed for an `Expression<TDelegate>` parameter, so the `LambdaExpression direct`
+arm can never see an unquoted lambda; defeating the auto-quote produces a node that is not a
+`LambdaExpression` at all and lands in the throw branch instead.
+
+**`ScopedLensFactoryGenerator`** 212/215 — `LensTypeShortName` and `ModelTypeShortName` are written
+in `_extractLensInfo` and read nowhere. Fifth instance of the write-only-member pattern (BD, BE,
+BJ, BR, BX). They want deleting.
+
+**`WolverineHttpTransformer`** 108 — the fourth `if (root is not CompilationUnitSyntax)` guard;
+`ParseText(...).GetRoot()` always returns a compilation unit.
+
+### Two claims that did not survive the scoped coverage run
+
+Both were caught by step 3, not by reading the agent's report.
+
+**`PerspectiveMigrationWorker` 83** was reported covered. The whole inner region 77-85 was
+unreached: the test called `StartAsync` then `StopAsync` immediately, so the stopping token was
+already cancelled when the pending-migration loop made its cancellation check and the loop broke at
+the top. The fixture was correct; the sequencing was not. Fixed by making the failing callback
+itself the signal — a `TaskCompletionSource` set inside the throwing `UpdateMigrationStatus`,
+awaited before `StopAsync`. The sibling `GetPendingRebuilds`-throws test had the identical race and
+the identical fix. This is the `StartAsync` vacuity trap in a new dress: not "did `ExecuteAsync`
+run" but "did it get far enough before I cancelled it".
+
+**Three generator tests reached into internal records via reflection** to assert positional
+properties round-trip (`PinnedIdInfo`, `JsonWhizbangIdInfo`). They failed on a guessed constructor
+signature, and they were the write-only round-trip anti-pattern regardless — a compiler-generated
+accessor is the only thing such a test exercises. Deleted rather than repaired.
+
+### A vacuous assertion caught at build time
+
+`Assert.That(true).IsTrue()` appeared in one worker test, with a comment explaining that reaching
+the line was the point. TUnit's own analyzer rejected it (TUnitAssertions0005), which is a better
+guard than review. Replaced with assertions on the worker's `ExecuteTask` state — `IsCompleted` and
+`!IsFaulted` — which is the actual evidence that the best-effort catch swallowed both failures.
