@@ -2148,3 +2148,33 @@ the same line number in a third file.
 Every one of these is a race, not a missing fixture. Writing them would produce tests that pass
 locally and fail in a full suite, which is the failure mode this session has already paid for
 twice (see BF).
+
+## BH. RESOLVED: MarkProcessed could throw ArgumentException under concurrent load at the cap
+
+Found by a coverage test, and worth recording because the shape generalizes.
+
+`RecentlyProcessedEventCache._enforceCapIfNeeded` ordered the live `ConcurrentDictionary`
+directly:
+
+```csharp
+var toEvict = _entries.OrderBy(static p => p.Value).Take(batch)...
+```
+
+LINQ buffers a source for `OrderBy` via `Enumerable.ToArray`, which sees
+`ICollection<KeyValuePair<Guid, DateTimeOffset>>` and takes the `CopyTo` fast path. `CopyTo`
+sizes its destination from `Count` and then copies — so a concurrent `MarkProcessed` adding an
+entry in between throws `ArgumentException` **out of `MarkProcessed`**, on the inbox dedup path.
+
+The `_evictionLock` does not prevent it. It serializes evictions against each other, not against
+inserts, and inserts never take it.
+
+Reproduced deterministically: priming the cache to its cap and firing 100 concurrent inserts
+failed on every one of three runs before the fix, and passes on every one of three runs after.
+
+**Fixed** by snapshotting through `ConcurrentDictionary`'s own `ToArray()`, which takes all bucket
+locks and returns an atomic copy, before ordering.
+
+**The general rule:** `SomeConcurrentDictionary.OrderBy(...)`, `.ToArray()`, `.ToList()` and
+anything else that buffers are unsafe while other threads write. The collection's own `ToArray()`
+is the safe snapshot; LINQ's identically-named extension is not. Worth grepping for elsewhere —
+this instance was in a hot dedup path and had no test until now.
