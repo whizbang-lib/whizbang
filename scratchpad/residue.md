@@ -1324,3 +1324,32 @@ The seven left:
   `Expression<Func<TModel, TProp>>` parameter makes unconstructible from C# source.
 
 Case 3 throughout; the surrounding members are covered.
+
+## AL. AsbTrafficClassOpsRateSource: 11 lines behind a projection only a live subscription sets
+
+`Project()` walks the transport's namespaces and asks each for its idle ops-rate projection. Every
+uncovered line — the rate contribution itself and the whole of `_trafficClassFor` — sits past this
+guard:
+
+```csharp
+if (transport is not AzureServiceBusTransport asb
+    || asb.IdleOpsRateProjection is not { } projection) {
+  return;
+}
+```
+
+Two things make that unreachable from the unit suite. The check is against the CONCRETE
+`AzureServiceBusTransport`, not an interface, so no fake satisfies it. And
+`IdleOpsRateProjection` is get-only over a field assigned in exactly one place — the private
+`_reevaluateIdleOpsProjection`, which runs when a session subscription is established. A transport
+constructed in a test has never subscribed, so the projection is null and `_add` returns before
+doing anything.
+
+The existing tests cover what they can: a non-ASB transport contributes nothing, which is the
+behaviour that matters most (reporting a zero would read as "idle and free" on a namespace that is
+simply unmeasured).
+
+Reachable in principle from the integration suite, where a real subscription would populate the
+projection. Not reachable by adding a test here, and the alternative — widening the guard to an
+interface or exposing a setter purely so a test can reach it — changes production shape to serve
+coverage, which is the trade this loop has declined elsewhere.
