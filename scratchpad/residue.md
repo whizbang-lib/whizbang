@@ -2395,3 +2395,41 @@ batcher's own contract never yields, an outer catch every inner handler already 
 paths requiring two idle sweeps or a disposal to interleave at a specific instruction. The agent
 declined all five rather than reach into private state or write a timing-dependent test, which is
 the right call.
+
+## BP. Round-25 measurement: 98.2%, and a firm operational rule about agent load
+
+Full `-Mode Ai -Coverage`, **completed whole**: zero truncated projects, 46 projects, 21,282
+tests. **98.2% (115,554 / 117,602)**, up from 97.8% and 97.4% in the two prior measurements.
+Deduped worklist **1,942 -> 1,518**; classes carrying eight or more uncovered, **76 -> 31**. The
+report predates the last five commits, so the true figure is better again.
+
+### Two failures, both load-induced — and this is now a rule, not a hunch
+
+`OutboxBulkFlushCallback_...` and `WorkOutboxAvailableSignal_WakesClaimWorker` both failed in the
+run and both pass in isolation; the full Core suite had run 11,165 tests clean shortly before.
+Ten agents were writing files throughout this measurement.
+
+This is the **second consecutive measurement** where concurrent agent activity produced flaky
+failures and no other anomaly — round 23's run had six agents and one flake. Combined with BC's
+finding that memory pressure explains *duration* but not failures, the picture is now specific:
+
+- **Agent CPU contention causes timing-sensitive tests to fail.** It does not truncate projects and
+  does not change coverage numbers.
+- **Memory pressure and swap cause runs to take longer.** They do not by themselves cause failures.
+
+So a measurement taken with agents running is still **valid for coverage** — truncation is the only
+gate that matters, and it stayed zero — but its **failure list cannot be trusted** and must be
+re-checked in isolation before any of it is treated as a regression. Both were, and both passed.
+
+Worth noting I got this wrong once mid-run in an earlier cycle, concluding from a slower quiet run
+that agent load was *not* the explanation. That inference was backwards: the quiet run was slower
+**and** clean, which supports agent load explaining failures and memory explaining duration.
+
+### The shape of what is left
+
+Every one of the top ten remaining classes is already recorded residue: `PerspectiveWorker` (L, AS),
+`EFCoreServiceRegistrationGenerator` (M), `ReceptorDiscoveryGenerator` (AY), both Migrate
+transformers, ASB `ServiceCollectionExtensions` (AP), `MessageTagDiscoveryGenerator` (BE),
+`AsbTrafficClassOpsRateSource` (AL), `MessageJsonContextGenerator` (BA). That is the signal the
+stopping condition is approaching: the head of the worklist is no longer tractable work, it is
+documented residue, and what remains tractable has moved into the long tail.
