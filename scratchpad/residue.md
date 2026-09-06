@@ -2608,3 +2608,24 @@ The existing `DapperSqliteEventStoreDeepPathTests._seedRawEnvelopeRowAsync` alre
 comment naming this exact hazard. The rule: **when a fixture seeds data, at least one test in the
 file must assert something came back.** A suite that only ever asserts absence cannot distinguish
 correct filtering from an empty table.
+
+## BX. EnvelopeSerializer 40-45: the second double-serialization guard the first one shadows
+
+`SerializeEnvelope<TMessage>` checks for a `JsonElement` payload twice. The second check, at
+lines 40-45, is unreachable.
+
+When `TMessage` is `JsonElement`, `envelope.Payload` is statically a `JsonElement` — a sealed,
+non-nullable struct — so `payload?.GetType()` always evaluates and always equals
+`typeof(JsonElement)`, and the earlier "DOUBLE SERIALIZATION DETECTED" check at line 27 throws
+first, every time. `IMessageEnvelope<out TMessage>`'s covariance cannot route around it, since
+variance applies only to reference-type conversions.
+
+The already-committed `EnvelopeSerializerTests.SerializeEnvelope_WithJsonElementPayload_ThrowsInvalidOperationExceptionAsync`
+independently confirms this: it drives exactly this scenario and observes the FIRST throw.
+
+No test file was kept. An agent produced one containing only this reasoning and no `[Test]`
+method — the second such case this session (see BR). A test file with no tests is worse than no
+file, because it reads as coverage that exists. The reasoning lives here instead.
+
+Note for the owner: the two guards are not redundant defensive copies of each other — the second
+is simply dead. Deleting it would make the intent clearer than leaving a check that cannot run.
