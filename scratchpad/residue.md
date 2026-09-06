@@ -2201,3 +2201,28 @@ fixed count of four written rows, which never arrives — how much of the second
 cancellation is observed is a scheduling detail. It burned its own fifteen-second ceiling and then
 failed, which is the hang-shaped failure BF warns about. It now waits on the worker's own
 completion and asserts the fetch count, which is the actual invariant.
+
+## BJ. Write-only members, now the third instance — worth deleting rather than covering
+
+`WizardRunner.cs:166, 171, 176` are the getters of `WizardState.StartedAt`, `.GitCommitBefore`
+and `.DecisionFilePath`. `WizardState` is constructed in exactly one place (`WizardRunner` line 52)
+and used nowhere else in the repository; grepping every reader of those three names finds only the
+identically-named members of `DetectedMigrationState` and `DecisionFile.State`, which are
+different types. Nothing reads these.
+
+That makes three recorded instances of the same shape:
+
+- **BD** — `OrphanedEventRow.Metadata`: `_deserializeEventEnvelope` reads `EventData`, `EventId`
+  and `Scope`, never `Metadata`.
+- **BE** — `MessageTagDiscoveryGenerator`'s `TypeName`, `Namespace`, `AttributeName`: the file
+  consumes seven other members of that record and never these.
+- **BJ** — the three above.
+
+In every case a test can trivially turn the line green by reading the property back after setting
+it, and in every case that test asserts nothing about behaviour: it exercises a compiler-generated
+getter, not a decision the code makes. **The right fix is deletion, not coverage.** A write-only
+member is either a value being carried for no reason or a consumer that was meant to read it and
+does not — and the second possibility is a bug the property hides.
+
+Left in place here because removing public-ish members is not a coverage edit. Flagged together so
+the owner can decide the three at once.
