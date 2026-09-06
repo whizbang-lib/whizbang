@@ -1353,3 +1353,27 @@ Reachable in principle from the integration suite, where a real subscription wou
 projection. Not reachable by adding a test here, and the alternative — widening the guard to an
 interface or exposing a setter purely so a test can reach it — changes production shape to serve
 coverage, which is the trade this loop has declined elsewhere.
+
+## AM. Three `root is not CompilationUnitSyntax` guards, and one switch arm C# cannot produce
+
+Four lines across three classes, all the same shape: a defensive arm guarding a state the
+type system upstream has already ruled out.
+
+**`GuidToTrackedGuidTransformer` lines 87 and 125**, **`NewtonsoftToSystemTextJsonTransformer`
+line 38** — `if (root is not CompilationUnitSyntax) { return root; }`. Every caller obtains
+`root` from `CSharpSyntaxTree.ParseText(...).GetRoot()`, which returns a `CompilationUnitSyntax`
+for any input, including empty text and text that fails to parse. Nothing in these transformers
+constructs a root any other way. Case 3: the guard sits inside otherwise-covered members, so no
+member-level `[ExcludeFromCodeCoverage]` applies.
+
+**`DapperCollectiveSpecCompiler._setterVisitor` line 189** — the `LambdaExpression direct => direct`
+arm of `_unwrapLambda`. The rest of that switch is now covered: the `Quote` arm by ordinary specs,
+and the `default` throw arm by a hand-built tree passing a `ConstantExpression` as the selector.
+The middle arm is the one that cannot be reached. `SetProperty`'s first parameter is typed
+`Expression<Func<TModel, TProp>>`, so a lambda written in source is always wrapped in
+`UnaryExpression{Quote}` by the compiler, and `Expression.Call` will not accept a bare
+`LambdaExpression` for that parameter either — it quotes it or it throws at tree-construction
+time, so `Arguments[0]` is never an unquoted lambda. Reaching it would take reflection into
+private framework state, which would demonstrate nothing about the compiler's behaviour.
+
+Everything else in that class is now covered: 541 tests in the Dapper suite, one line left.
