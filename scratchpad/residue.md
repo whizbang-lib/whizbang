@@ -1887,3 +1887,47 @@ path is the one message-discovery route that does **not** filter `IsAbstract`, u
 The same omission means the generator will also emit a factory for that abstract type, which is
 CS0144 in the generated code. Worth an owner's look: the fix is an `IsAbstract` filter on the
 perspective discovery path, which would make 3614 unreachable rather than merely untested.
+
+## BB. Three lines left after the worker/registry batch, and two lessons that cost real time
+
+### ServiceBusConsumerWorker 226-227 — the idle wait cannot be made to fault
+
+The `catch (Exception ex)` around `ExecuteAsync`'s idle wait, reached only when the wait faults
+with something other than `OperationCanceledException`. A test was written on the premise that
+`Task.Delay(Timeout.Infinite, token)` throws `ObjectDisposedException` when the token's source was
+already disposed. **It does not** — the delay simply never completes, so the test hung to its
+timeout rather than failing. Removed. No seam in the current API makes that wait fault any other
+way.
+
+Worth generalizing: a test whose premise is unverified BCL behaviour fails by *hanging*, not by
+asserting. Bound every wait, and treat "no output at the timeout" as a wrong premise rather than
+a slow machine.
+
+### JsonContextRegistry 143-145 and 830/855
+
+`143-145` — the `_resolvers.IsEmpty` throw in `CreateCombinedOptions`. `_resolvers` is a
+process-global `ConcurrentQueue` filled by `[ModuleInitializer]`s before any test runs, with no
+unregister or reset API. Emptying it means reflecting into the private static field, which would
+permanently break every other test in the assembly that depends on Core's registered contexts.
+Declined for the same reason as AR's `_pagesFollowed`: covering one line is not worth corrupting
+shared state the rest of the run depends on.
+
+`830`, `855` — the true arm of `Setter = _setter != null ? ... : null` in `_createProperty` and
+`_createPropertyWithTypeInfo`. All three production call sites hardcode `null` for that argument.
+Reaching the other arm means reflecting into a private method with a synthetic delegate no real
+path produces.
+
+### A coverage subtlety that nearly sent a cycle the wrong way
+
+`WorkerPipelineExtensions.cs:1067` reported as **hit** while the log it contains never happened.
+The statement is `lifecycleLogger?.LogError(...)`: the null check executes and the line counts as
+covered whether or not the call runs. A `?.` on a line makes "covered" mean "the receiver was
+evaluated", not "the call happened" — which is exactly the gap a log-assertion test exists to
+close, and exactly why the count-based assertion around it had to be replaced with one keyed on
+message content.
+
+Related, and the reason the first assertion failed: the pre-distribute stage reports its own
+failure and does not rethrow, so the callback's pre-store catch never observes it. Only the
+post-store catch does. The invariant still holds and is now asserted — a failing lifecycle stage
+never blocks the outbox store, and the post-store failure says the store already happened so a
+reader does not retry a batch that is safely persisted.
