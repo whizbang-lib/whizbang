@@ -2012,3 +2012,50 @@ functions predate a migration. Those paths run on every consumer who has not yet
 nothing had ever executed them. Each test installs a period-accurate stub of the older function in
 its own per-test database, so the fallback is driven by a genuinely narrower result set rather
 than by a mocked reader.
+
+## BE. PerspectiveRunnerGenerator and MessageTagDiscoveryGenerator
+
+`PerspectiveRunnerGenerator` 14 -> 5, `MessageTagDiscoveryGenerator` 14 -> 12. What remains in
+each was traced to a call graph, not assumed.
+
+### PerspectiveRunnerGenerator — unreachable past an earlier guard
+
+`104` and `804` — `_extractModelType` returning null. Its caller already returns at line 94 when
+all three interface lists are empty, so by the time `_extractModelType` runs at least one is
+non-empty, and its two branches cover exactly those cases.
+
+`113` — `eventTypes.Count == 0`. The interface extractors only match arities of two or three, so
+`Skip(1)` / `Skip(2)` always leaves at least one event whenever the line-94 guard passed.
+
+`1063`, `1083` — `modelType is not INamedTypeSymbol`. Reaching those calls requires first passing
+`_findModelStreamIdProperty(modelType) is not null`, and a type with no named-type members cannot
+carry a `[StreamId]`-attributed property.
+
+### MessageTagDiscoveryGenerator — mostly guards against its own inputs
+
+`161`, `224`, `267` share one root cause: `_typedConstantToCSharpLiteral`'s `default` arm fires
+only for `TypedConstantKind.Error`, which requires a compile error in the attribute argument.
+`248` is dead by pre-emption — `value.IsNull` is checked ten lines earlier and is already true
+whenever `Value` is null for a non-array kind. `219` needs an empty constructor-parameter name.
+`71` and `273` are Roslyn-contract guards (`GetDeclaredSymbol` non-null; a present attribute's
+`AttributeClass` non-null). `579` is `_escapeString(null)`, and every call site passes either a
+non-nullable field defaulting to `""`, a pre-guarded value, or a pattern-matched non-null string.
+
+`188` deserves its own note because it took real effort to rule out: `_resolveNamingConvention`'s
+fallthrough after `rawValue is int intValue` fails. Both the Core enum and the generator's
+netstandard2.0 mirror are int-backed, so a normally-applied attribute always satisfies the
+pattern. No valid-C# scenario reaches it short of the enum ceasing to be int-backed.
+
+`604`, `605`, `607` are getters on an internal record — `TypeName`, `Namespace`, `AttributeName` —
+that **nothing reads**. The file consumes `TypeFullName`, `AttributeFullName`, `Tag`, `Properties`,
+`ExtraJson`, `TypeProperties` and `ExtraInitializers` and never these three. Reading them from a
+test purely to turn the lines green would assert nothing about the generator. Same category as
+`OrphanedEventRow.Metadata` in BD: dead members, worth deleting rather than covering.
+
+### A real gap the tests now document rather than fix
+
+A `StreamGroup` key containing `|` desyncs the pipe-delimited membership encoding, and the
+membership is **silently dropped with no diagnostic**. The test pins current behaviour and says so.
+The generator validates neither the key nor the encoding, so a perspective whose group key happens
+to contain a pipe simply never joins its group — at runtime, with nothing to explain it. Worth an
+owner's decision: reject the key with a diagnostic, or escape the delimiter.
