@@ -2321,3 +2321,37 @@ assuming the lines are untouched and writing them again.
 That last point is the reason step 3 of the loop exists. Three separate agents this session have
 reported "all target lines covered" while the scoped run showed otherwise, and in every case the
 report was written in good faith from careful reading. Reading cannot substitute for measuring.
+
+## BN. Five suites closed, and the EventId collision that keeps costing cycles
+
+`SearchService` 9 -> 0, `ServiceBusReadinessCheck` 8 -> 0, `RevertCommand` 9 -> 0,
+`MartenAnalyzer` 8 -> 0, `IRabbitMQNamespaceConnectionFactory` 10 -> 1,
+`DeadLetterOperatorEndpoints` 9 -> 7.
+
+### A standing note that belongs in every future prompt
+
+**`EventId` is ambiguous in this repo.** `Microsoft.Extensions.Logging.EventId` and
+`Whizbang.Core.ValueObjects.EventId` are both in scope in most test files, so any hand-rolled
+`ILogger` fake whose `Log<TState>` signature writes a bare `EventId eventId` fails to compile with
+CS0104 **and** CS0535 together (the ambiguity makes the override not match, so the interface also
+reads as unimplemented). It has now cost a fix in seven separate files this session.
+
+The fix is always the same: fully qualify the parameter as
+`Microsoft.Extensions.Logging.EventId eventId`. Worth stating in the brief for any task that
+involves a capturing logger, which is most of them.
+
+### Confirmed unreachable, matching an earlier finding exactly
+
+`DeadLetterOperatorEndpoints` lines `126, 127, 136, 137, 146, 147, 181` — the id-parse guard and
+its three call sites. All three routes are mapped `"/{id:guid}"`, so routing rejects a malformed id
+with 404 before the handler runs; `Guid.TryParse` inside `_tryGetIdFromRoute` can therefore never
+fail. This is the same conclusion an earlier round reached by sending a malformed id and asserting
+404, now confirmed a second time from the call graph. Two lines in the same file **were** covered:
+the whitespace-fingerprint guard, reachable because `%20` decodes to a non-empty segment that
+routing accepts and only the handler's own check rejects.
+
+`IRabbitMQNamespaceConnectionFactory:56` — the closing brace of `CreateConnection`, which under
+normal PDB semantics corresponds to the normal-exit `ret`. The method hardcodes its own
+`ConnectionFactory` with no injectable seam, so a normal return needs a real AMQP handshake; an
+offline test reaches every line above it and then leaves by exception. Needs a live broker, which
+this suite deliberately does not use.
