@@ -2253,3 +2253,42 @@ Also note `TransportSubscriptionBuilder.cs:108` — `return [];` guarding a null
 `RoutingOptions.InboxStrategy` is non-nullable with exactly two assignment sites, the constructor
 (which always assigns) and a setter that throws on null, and `RoutingOptions` is sealed. Reaching
 the branch needs an object graph no composition root can produce.
+
+## BL. Five generators: 53 uncovered down to 8, and one Roslyn fact worth keeping
+
+`ServiceRequirementsGenerator` goes to zero. The other four leave eight lines, every one traced
+to a call graph or an API contract.
+
+**Roslyn-contract guards** (residue M's category): `PerspectiveRunnerRegistryGenerator:70`,
+`CollectiveApplyDiscoveryGenerator:62`, `AutoPopulateDiscoveryGenerator:110`,
+`PinnedTypeLedgerGenerator:51` — all `GetDeclaredSymbol(...) is not I…Symbol` or
+`context.Node is not TypeDeclarationSyntax` checks on a node the syntax provider already matched.
+
+**Dead by construction:** `CollectiveApplyDiscoveryGenerator:167` — a null check inside `_emit`,
+where `Initialize` already applies `.Where(static info => info is not null)` before `.Collect()`.
+`AutoPopulateDiscoveryGenerator:395` and `:599` — default arms of switches over closed sets the
+generator itself produces, with every member handled explicitly above.
+
+**Could not be constructed, reported rather than guessed:** `AutoPopulateDiscoveryGenerator:129`
+— a `continue` when `attribute.AttributeClass?.ToDisplayString()` is null. Every malformed or
+unresolvable attribute shape reasoned through binds to an **error-type symbol** whose
+`ToDisplayString()` is still non-null, rather than to a null `AttributeClass`.
+
+### The Roslyn fact worth keeping
+
+`PinnedTypeLedgerGenerator:55` checks `TypeKind` is neither `Class` nor `Struct`. Its **true**
+outcome is unreachable, and the reason is not obvious: the only other `TypeKind` a
+`TypeDeclarationSyntax` can produce is `Interface`, and **Roslyn reports `IsAbstract == true` for
+every interface**, mirroring CLR reflection. The preceding line's abstract check therefore always
+short-circuits first. Anyone writing a "is this a concrete type" guard in a generator should know
+that an interface is already excluded by an `IsAbstract` test, so a following `TypeKind` test adds
+nothing.
+
+### Worth noting about the isolated-compilation technique
+
+Covering `AutoPopulateDiscoveryGenerator:77` required a compilation that does **not** reference
+the real `Whizbang.Core`, so `Whizbang.Core.Lenses.PerspectiveScope` fails to resolve at all — the
+shared `GeneratorTestHelper.RunGenerator` always adds that reference and hardcodes the assembly
+name. A local isolated-compilation helper was added in the test file. The same helper made
+`697-698` reachable by controlling the compiling assembly's name, which is what the identifier
+sanitizer operates on.
