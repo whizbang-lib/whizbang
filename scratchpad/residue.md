@@ -1931,3 +1931,40 @@ failure and does not rethrow, so the callback's pre-store catch never observes i
 post-store catch does. The invariant still holds and is now asserted — a failing lifecycle stage
 never blocks the outbox store, and the post-store failure says the store already happened so a
 reader does not retry a batch that is safely persisted.
+
+## BC. Round-24 measurement, and a correction to how AE gets used
+
+Full `-Mode Ai -Coverage`, **completed whole**: no PARTIAL, **zero truncated projects**, 46/46
+projects, 21,133 tests, **0 failures**. So the number is comparable.
+
+**97.8% (115,058 / 117,602)** — up from 97.4% (114,631) at round 23's measurement and 97.2% at
+run 20. Raw uncovered 2,971 -> 2,544. Deduped worklist 2,186 -> **1,942**; classes carrying eight
+or more uncovered, 88 -> **76**.
+
+### Correcting myself on the timing, because the wrong version of this is the dangerous one
+
+This run took **79m36s** against the previous **44m05s**. Mid-run I concluded that this refuted my
+earlier explanation of the round-23 flake — I had blamed six concurrently running agents, and here
+was a quieter run taking almost twice as long. That inference was wrong, and stating it plainly
+matters more than quietly dropping it.
+
+What the two runs actually show:
+
+| | agents running | duration | failures |
+|---|---|---|---|
+| round 23 | six, heavy file I/O | 44m05s | 1 (doorbell liveness, 30s timeout) |
+| round 24 | none | 79m36s | **0** |
+
+Slower *and* clean. So swap pressure makes the machine uniformly slow without tripping the timing
+races, while the concurrent-agent run was fast in wall-clock and still produced a flake. That is
+consistent with the original attribution — bursty CPU contention from agents perturbs a scheduling
+race that a uniformly slow machine does not — and it is the opposite of what I said mid-run.
+
+**The practical rule, which is what AE should be used for:** memory pressure explains *duration*,
+not *failures*. Do not reach for it to wave off a failing test, which is what I was starting to do.
+A slow run is not evidence that anything regressed in the code, and a fast run is not evidence that
+the machine was healthy. Duration and correctness need separate explanations.
+
+Standing condition during this run: 2.1 GB free against 21.1 GB of 22.5 GB swap consumed, and the
+OS killed a background shell outright to reclaim memory. Shutting down idle `dotnet build-server`
+processes after the build phase returned about 0.9 GB and is worth doing before any long run.
