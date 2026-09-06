@@ -1377,3 +1377,29 @@ time, so `Arguments[0]` is never an unquoted lambda. Reaching it would take refl
 private framework state, which would demonstrate nothing about the compiler's behaviour.
 
 Everything else in that class is now covered: 541 tests in the Dapper suite, one line left.
+
+## AN. Whizbang.LanguageServer/Program.cs: 22 lines, the whole file, resolved by exclusion
+
+Every line of the language server's entry point was uncovered, and all 22 are the same
+thing: top-level statements that bind the LSP server to the process's own standard input
+and output and then block on `WaitForExit` until the editor closes the connection. A test
+cannot run that. Doing so would take over the test host's console streams and never return.
+
+This is case 2 in ai-docs/coverage-exclusions.md — the whole member is unreachable, not one
+branch inside a covered one — so the attribute fits rather than a residue note alone. Applied
+via a `partial class Program` declaration carrying
+`[ExcludeFromCodeCoverage(Justification = ...)]`; the compiler emits the synthesized
+entry-point class as partial, so the attribute reaches `<Main>$` and the two logging closures
+nested in it. Verified by running the suite with coverage and confirming no `Program*` class
+appears in the cobertura output at all, with all 89 tests still passing.
+
+Worth stating why this is not hiding a gap: the file makes exactly one decision,
+`LanguageServerServices.ResolveDocsBaseUrl()`, and registers services through
+`AddLanguageServerServices`. Both are exercised directly by
+`tests/Whizbang.LanguageServer.Tests/LanguageServerServicesTests.cs`. What the attribute
+suppresses is the OmniSharp wiring and two log lines.
+
+Note this does NOT generalise to `tools/Whizbang.Migrate/Program.cs`, which also shows
+uncovered lines. That one has real command parsing with covered lines in the same members, so
+a member-level attribute there would suppress genuinely tested code — the exact thing the
+policy's one hard constraint forbids. It stays on the worklist as ordinary untested code.
