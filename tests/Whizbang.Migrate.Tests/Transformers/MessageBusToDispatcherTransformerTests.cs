@@ -460,4 +460,132 @@ public class MessageBusToDispatcherTransformerTests {
       .Because("the call survives the migration unchanged and keeps working, so a warning is the "
              + "only thing that tells the author the framework would have published it for them");
   }
+
+  [Test]
+  public async Task TransformAsync_TwoPublishAsyncCallsOnTheSameLineInAReceptor_WarnsOnlyOnceAsync() {
+    // A receptor that fires two PublishAsync calls on one line would otherwise get the same
+    // "return the event instead" warning twice. Two copies of the one warning that matters train
+    // an author to skim past the report instead of reading it.
+    var transformer = new MessageBusToDispatcherTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class OrderReceptor {
+        private readonly IMessageBus _messageBus;
+
+        public async Task HandleAsync(OrderPlaced message) {
+          await _messageBus.PublishAsync(new OrderConfirmed()); await _messageBus.PublishAsync(new OrderShipped());
+        }
+      }
+
+      public record OrderPlaced();
+      public record OrderConfirmed();
+      public record OrderShipped();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderReceptor.cs");
+
+    await Assert.That(result.Warnings.Count(w => w.Contains("PublishAsync"))).IsEqualTo(1)
+      .Because("both calls sit on the same source line, so repeating the same advice for each one "
+             + "adds noise instead of information");
+  }
+
+  [Test]
+  public async Task TransformAsync_IMessageBusInACastExpression_IsLeftUnrewrittenAsync() {
+    // The type-usage check recognizes fields, parameters, variable declarations, and generic type
+    // arguments -- not a cast. A cast to IMessageBus survives the migration unchanged while the
+    // using directive that used to provide it gets swapped to Whizbang.Core, so the file stops
+    // compiling and nothing in the transform result says why. This pins the current (imperfect)
+    // behavior so a future change to the classification does not make it worse -- e.g. by
+    // corrupting the cast instead of leaving it as recognizable, greppable text.
+    var transformer = new MessageBusToDispatcherTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class BusResolver {
+        public void Configure(object rawBus) {
+          var bus = (IMessageBus)rawBus;
+          bus.SendAsync(new Ping());
+        }
+      }
+
+      public record Ping();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "BusResolver.cs");
+
+    await Assert.That(result.TransformedCode).Contains("(IMessageBus)rawBus")
+      .Because("a cast is not one of the syntactic positions the type-usage check recognizes, so "
+             + "it is left as-is rather than rewritten incorrectly");
+    await Assert.That(result.TransformedCode).Contains("using Whizbang.Core;")
+      .Because("the using directive is swapped regardless, which is exactly what leaves the "
+             + "untouched cast referring to a type the file no longer imports");
+  }
+
+  [Test]
+  public async Task TransformAsync_MessageBusFieldReturnedDirectly_LeavesTheReturnStatementUnrenamedAsync() {
+    // The rename only recognizes a field used in member access, assignment, initializer, or
+    // argument position. A bare `return _messageBus;` matches none of those, so the field's
+    // declaration and constructor assignment become `_dispatcher` while this return statement
+    // still says `_messageBus` -- a reference to a field that no longer exists, and the migrated
+    // file no longer compiles. This pins the current gap so it stays visible if the classification
+    // changes make it silently worse.
+    var transformer = new MessageBusToDispatcherTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class BusAccessor {
+        private readonly IMessageBus _messageBus;
+
+        public BusAccessor(IMessageBus messageBus) {
+          _messageBus = messageBus;
+        }
+
+        public object GetBusReference() {
+          return _messageBus;
+        }
+      }
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "BusAccessor.cs");
+
+    await Assert.That(result.TransformedCode).Contains("_dispatcher")
+      .Because("the field declaration and constructor assignment are both recognized positions "
+             + "and are renamed");
+    await Assert.That(result.TransformedCode).Contains("return _messageBus;")
+      .Because("a bare return of the field is not one of the recognized usage positions, so it is "
+             + "left referring to a name the declaration no longer has");
+  }
+
+  [Test]
+  public async Task TransformAsync_NonGenericInvokeAsync_TransformsToLocalInvokeAsyncAsync() {
+    // InvokeAsync has a fire-and-forget, non-generic overload as well as the generic one the
+    // existing coverage exercises. The rewriter builds the replacement member name differently
+    // depending on whether Roslyn parsed a generic name or a plain identifier; missing the plain
+    // branch would leave a non-generic call still saying InvokeAsync, a method IDispatcher does
+    // not expose, so the file stops compiling.
+    var transformer = new MessageBusToDispatcherTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class OrderService {
+        private readonly IMessageBus _messageBus;
+
+        public async Task NotifyAsync() {
+          await _messageBus.InvokeAsync(new Ping());
+        }
+      }
+
+      public record Ping();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
+
+    await Assert.That(result.TransformedCode).Contains("LocalInvokeAsync")
+      .Because("the non-generic overload must be rewritten just like the generic one");
+    await Assert.That(result.TransformedCode).DoesNotContain("LocalInvokeAsync<")
+      .Because("there was no generic type argument on the original call, so none should appear on "
+             + "the replacement");
+    await Assert.That(result.TransformedCode).DoesNotContain("_messageBus.InvokeAsync");
+  }
 }

@@ -843,4 +843,132 @@ public class ProjectionToPerspectiveTransformerTests {
       .Because("exactly one base was Marten's; reporting more would mean the rewriter walked into "
              + "a class it had no business changing");
   }
+
+  [Test]
+  public async Task TransformAsync_ProjectionWithoutAFileLevelMartenUsing_AddsNoImportAsync() {
+    // A SingleStreamProjection base can reach a file without `using Marten.Events.Aggregation;` on
+    // it -- through a global using, for instance. The base type still has to be rewritten, but the
+    // using swap keys off a directive that is not there, and inventing one would add an import to
+    // a file whose imports were already correct, overstating what the migration touched.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      public class OrderProjection : SingleStreamProjection<Order> {
+        public void Apply(OrderCreated @event, Order state) {
+          state.Id = @event.OrderId;
+        }
+      }
+
+      public class Order { public string Id { get; set; } }
+      public record OrderCreated(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<Order, OrderCreated>")
+      .Because("the base type is what the migration is for, regardless of how the projection base "
+             + "reached this file");
+    await Assert.That(result.TransformedCode).DoesNotContain("using Whizbang.Core.Perspectives;")
+      .Because("this file never imported the Marten namespace, so there is no using to swap");
+    await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.UsingRemoved)).IsFalse()
+      .Because("reporting a using change that was not made overstates the migration's footprint");
+  }
+
+  [Test]
+  public async Task TransformAsync_ParameterlessShouldDelete_IsLeftUnmigratedWithAWarningAsync() {
+    // A ShouldDelete with no parameters has no event to extract, so it contributes nothing to the
+    // perspective's event list, and there is nothing to build the new Apply(TModel, TEvent)
+    // signature from either. Migrating it anyway would have to invent an event type out of thin
+    // air; instead the method is left as ShouldDelete and the report says why, rather than
+    // silently emitting a signature that does not match anything the model actually receives.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderSummaryProjection : SingleStreamProjection<OrderSummary> {
+        public bool ShouldDelete() => true;
+      }
+
+      public class OrderSummary { }
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IPerspectiveFor<OrderSummary>")
+      .Because("no event type could be extracted from a parameterless method, so the perspective "
+             + "carries only the model");
+    await Assert.That(result.TransformedCode).Contains("public bool ShouldDelete() => true;")
+      .Because("with no event type to build an Apply(TModel, TEvent) signature from, the method "
+             + "must be left as-is rather than guessed at");
+    await Assert.That(result.Warnings.Any(w => w.Contains("Could not determine event type or model type")))
+      .IsTrue()
+      .Because("silence here would read as a successful migration of a method nothing was actually done to");
+  }
+
+  [Test]
+  public async Task TransformAsync_ShouldDeleteOnAGlobalPerspective_CannotInferAModelTypeAsync() {
+    // IGlobalPerspectiveFor<T> carries only the aggregate type -- there is no second parameter and
+    // no comma-separated event list to fall back on the way IPerspectiveFor<TModel, TEvents...>
+    // has. A ShouldDelete with fewer than two parameters on a multi-stream projection therefore has
+    // no source to infer the model type from, and the method must be left alone with a warning
+    // rather than built with a made-up or missing model type.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public class OrderTotalsByRegionProjection : MultiStreamProjection<OrderTotals, string> {
+        public bool ShouldDelete(OrderCancelled @event) => true;
+      }
+
+      public class OrderTotals { }
+      public record OrderCancelled();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Projection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IGlobalPerspectiveFor<OrderTotals>");
+    await Assert.That(result.TransformedCode).Contains("public bool ShouldDelete(OrderCancelled @event) => true;")
+      .Because("with no model type to infer, the method is left as ShouldDelete instead of being "
+             + "guessed at");
+    await Assert.That(result.Warnings.Any(w => w.Contains("Could not determine event type or model type")))
+      .IsTrue()
+      .Because("an operator needs to know this ShouldDelete was skipped, not discover it later as a "
+             + "row that is never deleted");
+  }
+
+  [Test]
+  public async Task TransformAsync_AbstractShouldDelete_IsStillGivenAConcreteModelActionBodyAsync() {
+    // An abstract ShouldDelete has neither an expression body nor a block body to inspect, so the
+    // body analysis falls back to ModelAction.Delete with a review marker -- the same default used
+    // for logic it cannot follow. What is worth watching here is that the replacement method is
+    // built with only the `public` modifier: the transform does not special-case `abstract`, so a
+    // method a subclass was required to implement becomes a concrete one on the base class. That
+    // changes the class's contract, and nothing about the transform result calls it out.
+    var transformer = new ProjectionToPerspectiveTransformer();
+    const string sourceCode = """
+      using Marten.Events.Aggregation;
+
+      public abstract class BaseOrderProjection : SingleStreamProjection<OrderSummary> {
+        public abstract bool ShouldDelete(OrderCancelled @event);
+      }
+
+      public class OrderSummary { }
+      public record OrderCancelled();
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "BaseOrderProjection.cs");
+
+    await Assert.That(result.TransformedCode).Contains("ModelAction.Delete")
+      .Because("with no body to analyze, the fallback action is Delete, flagged for review");
+    await Assert.That(result.TransformedCode).Contains("TODO: Review")
+      .Because("a guessed action on a method the tool could not analyze must be visible in the code");
+    // Not DoesNotContain("ShouldDelete") -- the review comment the transform emits names the
+    // original method on purpose, which is the point of the marker. What must be gone is the
+    // declaration.
+    await Assert.That(result.TransformedCode).DoesNotContain("bool ShouldDelete(")
+      .Because("the method is replaced, and a surviving ShouldDelete declaration would mean the "
+             + "rewrite did not take");
+    await Assert.That(result.TransformedCode).DoesNotContain("abstract bool")
+      .Because("pins the current behavior: the replacement carries only 'public', so an abstract "
+             + "method a subclass was required to implement quietly becomes concrete here");
+  }
 }
