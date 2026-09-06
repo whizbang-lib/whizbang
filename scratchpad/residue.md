@@ -2465,3 +2465,146 @@ database in a specific partially-broken state (a missing migrations table mid-ro
 particular DDL parse failure). Two were already argued unreachable by the agent from the SQL: both
 `RollbackAsync:136` and `CleanupBackupsAsync:315` do `LastIndexOf("_bak_")` on strings that the
 query producing them already filtered with `LIKE '%\_bak\_%'`, so the index can never be -1.
+
+## BR. CustomParams: seven LSP notification properties nothing ever reads or writes
+
+`tools/Whizbang.LanguageServer/Protocol/CustomParams.cs` lines 120, 123, 133, 138, 141, 146, 149
+are auto-property declarations on protocol DTOs. They split two ways, and neither wants a test:
+
+- **120 `StatusInfo.CacheAgeMinutes`, 123 `StatusInfo.ServerUptime`** — the record is live
+  (`StatusHandler.Handle()` constructs one) but its object initializer never sets these two, and
+  nothing else in the repo touches them. Every real status response carries `0` and `null`.
+- **133 `RegistryChangedNotification.MessageCount`, 138/141 `DataLoadedNotification.Key`/`Count`,
+  146/149 `LogNotification.Level`/`Message`** — all three record types are referenced nowhere
+  outside their own declaration: no constructor call, no property read, no serializer
+  registration. The matching `CustomMethods` constants exist, but nothing ever sends these
+  notifications.
+
+This is the fourth instance of the write-only-member pattern (see BD, BE, BJ). A round-trip test
+would set a property and read it back, turning the line green while asserting nothing about any
+decision the code makes — the compiler-generated accessor is the only thing under test. The
+honest fixes are for the owner: delete the three dead notification records, and either wire
+`CacheAgeMinutes`/`ServerUptime` into `StatusHandler.Handle()` or drop them too.
+
+No test file was kept. An agent produced one containing only this prose and no `[Test]` method;
+a test file with no tests is worse than none, because it reads as coverage that exists.
+
+## BS. AzureServiceBusConnectionRetry 76-80, 87: the success path needs the management plane
+
+Confirms and extends AF/AP. `CreateClientWithRetryAsync` verifies connectivity by awaiting
+`ServiceBusAdministrationClient.GetNamespacePropertiesAsync` — a management-plane round trip the
+local emulator does not implement, and the class constructs the admin client inline with no seam
+to substitute one. Lines 76-78 (`LogConnectionEstablished`), 80 (`return client;`) and 87 (the
+async epilogue reached only through that return) are therefore unreachable without a live Azure
+namespace.
+
+Line 104 (`LogStillRetrying`) and 105 are NOT residue and are now covered: the heartbeat fires
+only when `attempt % 10 == 0` under `RetryIndefinitely`, so it needed a test that lets attempt 10
+complete before cancelling. The existing sibling test stops at attempt 4 and never reached it.
+
+## BT. MultiPassMessageTypeBinder: a real bug in pass 1, and why the pass-3 guard stays uncovered
+
+**The bug.** `_resolve` called `Type.GetType(assemblyQualifiedName, throwOnError: false)` directly.
+`throwOnError: false` suppresses `TypeLoadException` — the type not being found — but NOT the
+exceptions raised while the NAME is parsed, before any lookup happens. A wire header carrying a
+malformed assembly segment threw `FileLoadException: The given assembly name was invalid` straight
+out of `BindWithDiagnostics`, from `System.Reflection.Metadata.TypeNameParser.ParseNextTypeName`.
+
+That is the opposite of what the class is for. Its three-pass cascade exists so an unresolvable
+header comes back as `Miss` for the caller to dead-letter. Throwing at pass 1 skipped passes 2 and
+3 — and pass 2, which strips exactly that malformed metadata, would very likely have RESOLVED the
+type. It also skipped the cache write, so every redelivery paid the throw again.
+
+Found by a test an agent flagged as resting on an unverified CLR assumption. The assumption was
+wrong in the more interesting direction: not "the malformed segment is ignored" but "it throws".
+
+Fixed with `_tryGetType`, which treats `FileLoadException`/`BadImageFormatException`/
+`ArgumentException` as "did not resolve" and falls through to the next pass. The original test now
+passes and asserts recovery via `AssemblySimpleName`.
+
+**The residue.** The pass-3 counterpart `_tryGetTypeFrom` has two uncovered lines (its catch
+filter and `return null`), and this is a measured result, not an assumption: a fixture whose outer
+type is also unresolvable — so passes 1 and 2 both miss and pass 3 receives the raw name with the
+malformed segment intact — produced a clean `Miss` with the guard never entered.
+`Assembly.GetType(name, throwOnError: false, ignoreCase: false)` returns null where
+`Type.GetType` throws, because the assembly is already in hand and only the nested argument's
+assembly name remains to resolve.
+
+The guard stays. Its documented triggers are not about the name: a nested argument naming an
+assembly that exists but fails to load, or one built for another architecture. Both are
+deployment properties a unit test cannot stage, and the contract this fix establishes is that no
+header can make the binder throw. Two lines, deliberately.
+
+## BU. IntegrityAuditWorker 230-231 and the four workers batch
+
+`SlidingWindowApplyBatchStrategy` lines 163, 183, 188, 196, 203 are declined for the same five
+reasons the sibling `SlidingWindowInboxBatchStrategy` was: an empty batch `SlidingWindowBatcher`
+never yields, an outer catch whose inner handlers absorb everything reachable, a timer callback
+that must fire in the statement gap between `Interlocked.Exchange(ref _disposed, 1)` and
+`_idleSweepTimer.DisposeAsync()`, a sweep-vs-sweep `TryRemove` race with no seam to force it, and
+a catch-all around `await buffer.Worker` reachable only via a cancel-before-start race concurrent
+with a sweep on that same buffer. Lines 172 and 193 are covered.
+
+## BV. RabbitMQChannelPool: Reset() poisons any rental that spans it
+
+`Reset()` exists to be called on connection recovery. It restored the semaphore to full capacity:
+
+```csharp
+while (_semaphore.CurrentCount < maxChannels) { _semaphore.Release(); }
+```
+
+Any `PooledChannel` still outstanding at that moment then called `Return` on disposal, which
+released one more permit — past the maximum — and threw `SemaphoreFullException` out of
+`Dispose()`, and therefore out of the caller's `using` block.
+
+The ordering is not hypothetical. Recovery happens precisely because something broke mid-operation,
+so channels ARE in flight when `Reset()` runs, and the throw lands on top of the original failure
+and hides it. The stale channel would also have gone back into the available bag, to be handed to
+the next caller on a connection that no longer exists.
+
+Fixed with a generation counter: `Reset()` bumps `_generation`, each `PooledChannel` carries the
+value it was rented under, and a `Return` whose generation is stale disposes its channel and
+returns WITHOUT releasing a permit. All 301 tests in the RabbitMQ suite pass with the change.
+
+Found because a coverage test for the "Reset restores full capacity" line disposed the channel it
+had rented across the reset — something no existing test did.
+
+## BW. DapperSqliteEventStore: three dead guards, one of them load-bearing
+
+`JsonSerializerOptions.GetTypeInfo(Type)` **throws** `NotSupportedException` for a type the resolver
+chain does not know. It never returns null. Three guards in the polymorphic read path were written
+against a null return and so could never fire:
+
+- `_tryMatchEventType`: `if (typeInfo == null) continue;`
+- `_tryDeserializeMessageId`: `if (messageIdTypeInfo == null) return null;`
+- `_deserializeHops`: `if (hopsTypeInfo == null) return [];`
+
+The first is load-bearing and its failure is a real bug. `ReadPolymorphicAsync` takes a
+caller-supplied list of candidate event types — the whole point being that the store tries each and
+picks the one that fits. A caller listing ONE type absent from the JSON context did not get that
+candidate skipped; the read threw and the caller lost the entire stream. The third has the same
+shape for hops, which the method's own doc comment calls optional trace metadata: an unregistered
+hop shape took down delivery of the event carrying it.
+
+Fixed by switching all three to `TryGetTypeInfo`, which is what the guards were always written for.
+All 100 tests in `Whizbang.Data.Tests` pass, and all eleven target lines are now covered.
+
+Note `DapperSqliteEventStore` lines 56, 134 and 170 still use `GetTypeInfo(...) ?? throw ...` on the
+APPEND path. Those `??` operands are equally unreachable, but the behavior is already "throw", so
+the only cost is a less helpful exception message than the one the author wrote. Left for the owner.
+
+### The measurement trap this exposed — worth more than the fix
+
+Three of the five tests in this file were passing while asserting nothing. Their fixture seeded rows
+with a raw `SqliteCommand` binding `streamId.ToString()`, which stores a TEXT value the store's
+Guid-parameterized `WHERE` clause never matches. Every row was invisible to every read, so tests
+asserting "no events came back" passed without the code under test ever executing — the same
+vacuity as a `StartAsync` that returns before `ExecuteAsync` runs.
+
+They were caught only because two SIBLING tests in the same file asserted a POSITIVE result and
+failed. A file of purely negative assertions would have gone green and been committed.
+
+The existing `DapperSqliteEventStoreDeepPathTests._seedRawEnvelopeRowAsync` already carried a
+comment naming this exact hazard. The rule: **when a fixture seeds data, at least one test in the
+file must assert something came back.** A suite that only ever asserts absence cannot distinguish
+correct filtering from an empty table.

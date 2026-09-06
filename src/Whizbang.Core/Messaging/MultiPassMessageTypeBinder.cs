@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 
@@ -46,7 +47,7 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
 
   private static (Type? Type, MessageTypeBinderPass Pass) _resolve(string assemblyQualifiedName) {
     // Pass 1 — full strong name (Type.GetType honours Version/Culture/PublicKeyToken).
-    var p1 = Type.GetType(assemblyQualifiedName, throwOnError: false);
+    var p1 = _tryGetType(assemblyQualifiedName);
     if (p1 != null) {
       return (p1, MessageTypeBinderPass.ExactStrongName);
     }
@@ -54,7 +55,7 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
     // Pass 2 — strip Version/Culture/PublicKeyToken via existing helper, retry Type.GetType.
     var normalized = EventTypeMatchingHelper.NormalizeTypeName(assemblyQualifiedName);
     if (!string.Equals(normalized, assemblyQualifiedName, StringComparison.Ordinal)) {
-      var p2 = Type.GetType(normalized, throwOnError: false);
+      var p2 = _tryGetType(normalized);
       if (p2 != null) {
         return (p2, MessageTypeBinderPass.AssemblySimpleName);
       }
@@ -65,7 +66,7 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
     var fullName = _extractTypeFullName(assemblyQualifiedName);
     if (!string.IsNullOrEmpty(fullName)) {
       foreach (var asm in AppDomain.CurrentDomain.GetAssemblies()) {
-        var found = asm.GetType(fullName, throwOnError: false, ignoreCase: false);
+        var found = _tryGetTypeFrom(asm, fullName);
         if (found != null) {
           return (found, MessageTypeBinderPass.TypeFullNameAcrossAssemblies);
         }
@@ -73,6 +74,54 @@ public sealed class MultiPassMessageTypeBinder : IMessageTypeBinder {
     }
 
     return (null, MessageTypeBinderPass.Miss);
+  }
+
+  /// <summary>
+  /// <see cref="Type.GetType(string, bool)"/> with <c>throwOnError: false</c> only suppresses
+  /// <see cref="TypeLoadException"/> — the type not being found. It does NOT suppress the
+  /// exceptions raised while the NAME itself is being parsed, before any lookup happens: a
+  /// malformed assembly segment (an unparseable <c>Version=</c>, say) surfaces as
+  /// <see cref="FileLoadException"/>, and a name that parses but names something unloadable
+  /// surfaces as <see cref="BadImageFormatException"/> or <see cref="ArgumentException"/>.
+  ///
+  /// Those escaping is the opposite of what this binder is for. The whole point of the three-pass
+  /// design is that a type header which does not resolve comes back as a <c>Miss</c> the caller
+  /// can report and route to the dead letter queue. Letting a parse failure throw instead skips
+  /// passes 2 and 3 — which would very likely have resolved the type, since stripping the
+  /// malformed metadata is exactly what pass 2 does — and skips the cache write, so every
+  /// redelivery of that message pays the same throw again.
+  /// </summary>
+  private static Type? _tryGetType(string assemblyQualifiedName) {
+    try {
+      return Type.GetType(assemblyQualifiedName, throwOnError: false);
+    } catch (Exception ex) when (ex is FileLoadException or BadImageFormatException or ArgumentException) {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// The pass-3 counterpart of <see cref="_tryGetType"/>. One assembly rejecting the name must not
+  /// abandon the search across the others.
+  ///
+  /// Measured difference from pass 1: <see cref="Assembly.GetType(string, bool, bool)"/> does NOT
+  /// throw on a name that fails to parse -- a malformed nested assembly segment that makes
+  /// <see cref="Type.GetType(string, bool)"/> raise <see cref="FileLoadException"/> comes back as
+  /// null here, because the assembly is already in hand and only the nested argument's assembly
+  /// name is left to resolve. So this guard does not fire on malformed input, and no unit test
+  /// reaches it (see residue BT).
+  ///
+  /// It stays because the documented triggers are real and are not about the name at all: a
+  /// nested argument naming an assembly that EXISTS but fails to load raises
+  /// <see cref="FileLoadException"/>, and one built for another architecture raises
+  /// <see cref="BadImageFormatException"/>. Both are properties of the deployment, not of the
+  /// message -- and the binder's contract is that no header can make it throw.
+  /// </summary>
+  private static Type? _tryGetTypeFrom(Assembly assembly, string fullName) {
+    try {
+      return assembly.GetType(fullName, throwOnError: false, ignoreCase: false);
+    } catch (Exception ex) when (ex is FileLoadException or BadImageFormatException or ArgumentException) {
+      return null;
+    }
   }
 
   private static string? _extractTypeFullName(string assemblyQualifiedName) {
