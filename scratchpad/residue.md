@@ -1457,3 +1457,23 @@ did not). Any test written for them would be exactly that flaky.
 
 `PerStreamSerializer.cs:239` -- `TryRemove(KeyValuePair)` losing its race, reachable only by two
 concurrent sweeps hitting one entry. Scheduler-dependent; not worth a flaky test for one line.
+
+## AP. AzureServiceBus ServiceCollectionExtensions: 11 lines behind a real admin round-trip
+
+`ServiceCollectionExtensions.cs:146-156` is the `ServiceBusClient` factory lambda inside
+`_addTransport`, invoked only when no `ServiceBusClient` has been pre-registered. It calls
+`AzureServiceBusConnectionRetry.CreateClientWithRetryAsync`, which constructs a
+`ServiceBusAdministrationClient` and calls `GetNamespacePropertiesAsync` — a management-plane
+round trip with no seam to substitute, against a plane the local emulator does not implement
+(see AF).
+
+Worse than merely unreachable: on a failure it classifies as transient it retries indefinitely
+by default (`RetryIndefinitely = true`), so a test pointed at a bogus host would hang rather
+than fail cleanly. This is why the file's own test class documents pre-registering a
+`ServiceBusClient` as the standing convention.
+
+Everything else in the file is now covered, including the pieces that needed a resolve rather
+than a registration assertion: the namespace client factory singleton, the backlog peek and
+traffic-class ops-rate sources composed over the resolved transport, the multi-namespace peer
+initialization logging, both arms of the active-consume-namespace projection, and the
+configuration-only namespace being merged into a composite provisioner.
