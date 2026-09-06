@@ -1649,3 +1649,29 @@ lines stay red — the same shape as AO's `DeadLetterRecoveryWorker.cs:154` and 
 `PerspectiveWorker.cs:1162`. That is now four instances. **Treat `}` after an unconditional
 `throw` or `return` inside an async method as instrumentation noise, not a gap**, and do not
 spend a cycle on it.
+
+## AU. AzureServiceBusTransport: three lines defending against states the type system forbids
+
+28 of this class's 31 uncovered lines are now covered, offline, against fakes. What is left:
+
+`AzureServiceBusTransport.cs:1682` and `1761` — `default: throw new InvalidOperationException(
+$"Unknown AsbReceiveAction: {decision.Action}")`. `AsbReceiveAction` has exactly four members and
+all four are handled above. The `_decisionMaker` that produces the value is a private field with
+no injection point, so no test can hand the switch an out-of-range enum value.
+
+`AzureServiceBusTransport.cs:2041` — `if (_adminClient == null) throw ...` inside
+`_applyCorrelationFilterAsync`. Its single call site in the repo,
+`_applyCorrelationFilterFromMetadataAsync`, already guards with `if (_adminClient != null)` before
+calling it.
+
+Worth recording what this round proved *is* reachable, since the emulator's missing admin plane
+(AF) makes it tempting to assume otherwise: the throttle pause and its detached resume, the
+resume-failure path including that `EndPause()` still runs in the `finally`, the adaptive-acceptor
+resize failure and the sweep surviving it, and the sender-cache double-checked lock under two
+genuinely interleaved first callers. All driven by fakes with `AutoProvisionInfrastructure=false`.
+
+One test needed a fix at integration and the reason generalizes: with a `FakeTimeProvider`,
+`Advance()` fires the periodic tick synchronously. Anything the assertion depends on — the
+injected failure, the log subscription — has to be armed *before* the clock moves, or the single
+sweep the test gets happens before the test is watching, and the wait then hangs to its timeout
+rather than failing with a useful message. Bound every such wait with `WaitAsync`.
