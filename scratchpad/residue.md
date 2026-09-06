@@ -2178,3 +2178,26 @@ locks and returns an atomic copy, before ordering.
 anything else that buffers are unsafe while other threads write. The collection's own `ToArray()`
 is the safe snapshot; LINQ's identically-named extension is not. Worth grepping for elsewhere —
 this instance was in a hot dedup path and had no test until now.
+
+## BI. InboxDrainWorker's last two lines
+
+`535` — the `_logPerfIfInteresting(...)` call *after* the inner drain loop, reached only when the
+loop exits via its `while` condition (cancellation observed at an iteration boundary) rather than
+through the early `return` at 532 that every other exit takes. The cancellation test covers the
+invariant that matters — once canceled, no further fetch is issued, `CallCount` stops at two —
+but the loop still leaves through the inner return, so this trailing call stays dark. Covering it
+needs cancellation to land in the narrow window after a page is written and before the next
+iteration's condition is evaluated, without the page-smaller-than-cap early exit firing first.
+That is a timing window, not a fixture.
+
+`654` — `_admitRow`'s fallback `return true;` when a row's `MessageId` is not found in the fetch
+list it is checked against. Both call sites derive `row` from that same list through `GroupBy` /
+`OrderBy` projections, which do not copy elements, so the identity comparison always matches
+before the loop can fall through. A third caller with a mismatched pair would be needed, and none
+exists.
+
+Note the drain cancellation test was rewritten during integration. As written it waited on a
+fixed count of four written rows, which never arrives — how much of the second page lands before
+cancellation is observed is a scheduling detail. It burned its own fifteen-second ceiling and then
+failed, which is the hang-shaped failure BF warns about. It now waits on the worker's own
+completion and asserts the fetch count, which is the actual invariant.
