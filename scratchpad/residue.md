@@ -2109,3 +2109,42 @@ calls `TrySetCanceled`, and unlike this same method's other early return, which 
 `IStartupReadinessContributor`) is left parked forever even though the worker has already stopped.
 During a shutdown that races migrations, the host then never reports ready and the waiter never
 exits. The test pins today's behaviour and says so, so a fix has to consciously update it.
+
+## BG. PgSharedNotifyConnection: 23 down to 11, and why the rest are races
+
+Covered: the per-channel LISTEN failure (318-319), both alive-lock outcomes — lost to another
+session (445-446) and the claim function itself failing (450-452) — the idle keepalive (505-507),
+and the backoff stretching to `PeriodicReprobeInterval` after the configured failure count
+(627-628, no database needed, using the unresolvable-host technique from the sibling diagnostics
+suite).
+
+The keepalive test deserves a note because it asserts positively rather than by absence: it queries
+`pg_stat_activity` filtered by the connection's own `application_name` and checks the last
+statement was `SELECT 1`. Asserting merely that the connection stayed open would pass with the
+keepalive removed entirely.
+
+### Left uncovered — all the same reason
+
+`162-164` — `ProbeNowAsync`'s `catch (OperationCanceledException) when (!cancellationToken
+.IsCancellationRequested)`. Npgsql converts an internally-timed-out `OperationCanceledException`
+into `TimeoutException`/`NpgsqlException` before it escapes, and a genuine caller cancellation
+leaves `IsCancellationRequested` true, which fails the filter. Neither side of the guard can be
+satisfied.
+
+`230` and `461-463` — the self-test probe timing out. Both need the `SelfTestTimeout` to fire
+strictly after LISTEN and NOTIFY have succeeded but before the already-sent notification is read
+back. There is no signal for "we are now inside the wait", so any attempt races real Postgres
+delivery latency against a timer — including with a fake `TimeProvider`, whose callback either
+fires synchronously (zero loop iterations) or asynchronously (same race).
+
+`241` and `335-336` — UNLISTEN failing. Both need the connection to break after a successful
+LISTEN but before a specific UNLISTEN, without a competing handler observing the break first. The
+only lever is `pg_terminate_backend`, and there is no synchronization point that lands it in that
+window.
+
+`294` — the `ObjectDisposedException` dispose race, already recorded in AR and now confirmed at
+the same line number in a third file.
+
+Every one of these is a race, not a missing fixture. Writing them would produce tests that pass
+locally and fail in a full suite, which is the failure mode this session has already paid for
+twice (see BF).
