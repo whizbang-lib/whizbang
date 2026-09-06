@@ -1738,3 +1738,33 @@ not defensive at all: a work item whose token is canceled after queueing but bef
 Its comment says so explicitly, and the reason it matters is worth keeping — only the execute
 path completes the value-task source, so skipping such an item without finishing it would hang
 the caller's `await` with no exception and nothing logged.
+
+## AX. Migrate CLI: two of rollback's three messages cannot be reached, and why that will matter later
+
+`tools/Whizbang.Migrate/Program.cs:281` and `286-288` are the `--list` branch and the
+neither-argument-nor-list branch of the `rollback` handler. Only the middle branch,
+`else if (checkpoint != null)`, is reachable.
+
+The cause is an arity subtlety worth writing down. The argument is declared
+`new Argument<string?>("checkpoint", ...)`, and the `?` reads as optional — but nullable
+reference annotations are erased at runtime, and System.CommandLine's `ArgumentArity.Default`
+decides optionality via `Nullable.GetUnderlyingType(type) != null`, which is false for
+`string`. With no default value supplied either, the argument's arity is `ExactlyOne`: the
+checkpoint is **required**. `rollback --list` and bare `rollback` therefore fail in
+System.CommandLine's own parse-error middleware, which sets a `ParseErrorResult` without calling
+the next middleware — so `SetHandler`'s delegate never runs.
+
+**Today this is cosmetic.** Every branch of this handler writes "not yet implemented" and exits
+1, so `rollback --list` fails either way; the user just gets "Required argument missing" instead
+of the message the author wrote. The existing `Rollback_ListingCheckpoints_...` and
+`Rollback_WithoutCheckpointOrList_...` tests pass for exactly this reason — they assert a
+non-zero exit, and System.CommandLine's parse error supplies one. They do not reach the lines
+they appear to be about.
+
+**It stops being cosmetic the day rollback is implemented.** `--list` is documented in the
+option's own description and will still never reach the handler. Whoever implements it needs to
+give `checkpointArgument` an explicit `ArgumentArity.ZeroOrOne` (or a default value) first, or
+the listing feature will be unreachable from the command line while looking correct in code.
+
+Not changed here: altering a command's argument arity is a behavioural change to a shipped CLI,
+not a coverage edit.
