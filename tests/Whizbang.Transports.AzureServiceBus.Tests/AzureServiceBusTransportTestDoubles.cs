@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Azure;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
@@ -483,6 +484,13 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   public Exception? CreateSubscriptionException { get; init; }
 
   /// <summary>
+  /// Opt-in failure hook for <see cref="GetSubscriptionsAsync"/> — thrown during enumeration
+  /// (not before the async-enumerable is returned) so tests can drive the ownership-drift
+  /// check's best-effort catch path. Defaults to null so no existing test changes behavior.
+  /// </summary>
+  public Exception? GetSubscriptionsException { get; init; }
+
+  /// <summary>
   /// Total management-plane operations issued against this double — the phase-5 boot budget
   /// counter ("management-op count per boot bounded and asserted"). Every interface member
   /// increments it once per call (rule enumeration counts once, not per rule).
@@ -614,6 +622,11 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     ManagementOpCount++;
     await Task.CompletedTask;
+    if (GetSubscriptionsException is not null) {
+      // Thrown here — inside the iterator body — so it fires only once the caller starts
+      // enumerating (await foreach), not when GetSubscriptionsAsync is merely invoked.
+      throw GetSubscriptionsException;
+    }
     foreach (var (topic, subscription) in ExistingSubscriptions.ToList()) {
       if (!string.Equals(topic, topicName, StringComparison.OrdinalIgnoreCase)) {
         continue;

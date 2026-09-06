@@ -171,7 +171,8 @@ public class ServiceBusInfrastructureProvisionerTests {
   }
 
   /// <summary>
-  /// When topic already exists, should not attempt to create it.
+  /// When topic already exists, should not attempt to create it, and should report which
+  /// topic was found to already exist.
   /// </summary>
   [Test]
   public async Task EnsureTopicExistsAsync_TopicAlreadyExists_DoesNothingAsync() {
@@ -179,19 +180,24 @@ public class ServiceBusInfrastructureProvisionerTests {
     var adminClient = new TrackingAdminClient {
       ExistingTopics = { "myapp.orders" }
     };
-    var provisioner = new ServiceBusInfrastructureProvisioner(
-      adminClient,
-      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = new ServiceBusInfrastructureProvisioner(adminClient, logger);
 
     // Act
     await provisioner.EnsureTopicExistsAsync("myapp.orders");
 
     // Assert
     await Assert.That(adminClient.CreatedTopics).IsEmpty();
+    await Assert.That(logger.Messages.Any(m =>
+        m.Contains("myapp.orders", StringComparison.Ordinal)
+        && m.Contains("already exists", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the diagnostic must name which topic was found to already exist, not merely fire");
   }
 
   /// <summary>
-  /// When a race condition occurs (409), should handle gracefully.
+  /// When a race condition occurs (409), should handle gracefully and report which topic
+  /// raced.
   /// </summary>
   [Test]
   public async Task EnsureTopicExistsAsync_RaceCondition_HandlesGracefullyAsync() {
@@ -199,15 +205,19 @@ public class ServiceBusInfrastructureProvisionerTests {
     var adminClient = new TrackingAdminClient {
       SimulateRaceConditionForTopic = "myapp.orders"
     };
-    var provisioner = new ServiceBusInfrastructureProvisioner(
-      adminClient,
-      LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.Debug)).CreateLogger<ServiceBusInfrastructureProvisioner>());
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = new ServiceBusInfrastructureProvisioner(adminClient, logger);
 
     // Act - should not throw
     await provisioner.EnsureTopicExistsAsync("myapp.orders");
 
     // Assert - no topics created (race condition swallowed)
     await Assert.That(adminClient.CreatedTopics).IsEmpty();
+    await Assert.That(logger.Messages.Any(m =>
+        m.Contains("myapp.orders", StringComparison.Ordinal)
+        && m.Contains("race condition", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the diagnostic must name which topic raced during creation, not merely fire");
   }
 
   /// <summary>

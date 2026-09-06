@@ -1,3 +1,5 @@
+using Azure;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -44,9 +46,10 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
   private static ServiceBusInfrastructureProvisioner _provisioner(
       RecordingProvisioningAdminClient adminClient,
       AzureServiceBusOptions? options = null,
-      TopologyDriftState? driftState = null) =>
+      TopologyDriftState? driftState = null,
+      ILogger<ServiceBusInfrastructureProvisioner>? logger = null) =>
     new(adminClient,
-        NullLogger<ServiceBusInfrastructureProvisioner>.Instance,
+        logger ?? NullLogger<ServiceBusInfrastructureProvisioner>.Instance,
         options,
         driftState);
 
@@ -294,5 +297,75 @@ public class ServiceBusInfrastructureProvisionerManifestTests {
 
     await Assert.That(() => provisioner.ProvisionManifestAsync(null!))
       .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ProvisionManifest_SubscriptionCreate409Race_LogsAndSkipsAsync() {
+    // Multiple instances provision concurrently at startup by design — a 409 from another
+    // instance winning the subscription-create race must not fail boot for the loser. The
+    // observable contract is: no throw, and a diagnostic naming which subscription raced.
+    var adminClient = new RecordingProvisioningAdminClient {
+      CreateSubscriptionException = new RequestFailedException(409, "Subscription already exists", "Conflict", null)
+    };
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = _provisioner(adminClient, logger: logger);
+
+    // Act - should not throw despite every subscription create racing
+    await provisioner.ProvisionManifestAsync(_namespaceManifest());
+
+    var ownName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(
+      SERVICE_NAME, "inbox.myapp.orders.commands");
+    await Assert.That(logger.Messages.Any(m =>
+        m.Contains("inbox.myapp.orders.commands", StringComparison.Ordinal)
+        && m.Contains(ownName, StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the diagnostic must name which topic/subscription raced, not merely fire");
+  }
+
+  [Test]
+  public async Task ProvisionManifest_OwnershipDriftCheck_EnumerationFails_LogsAndContinuesAsync() {
+    // The ownership-drift check is explicitly best-effort: a transient management-plane error
+    // while enumerating existing subscriptions must never block provisioning or startup. The
+    // real invariant is that the provisioner completes normally and still creates this
+    // service's own subscription; the log line is evidence the failure was noticed, not
+    // swallowed blind.
+    var adminClient = new RecordingProvisioningAdminClient {
+      GetSubscriptionsException = new RequestFailedException(503, "Service temporarily unavailable", "ServiceUnavailable", null)
+    };
+    var logger = new CapturingLogger<ServiceBusInfrastructureProvisioner>();
+    var provisioner = _provisioner(adminClient, logger: logger);
+
+    // Act - should not throw despite the drift-check enumeration failing
+    await provisioner.ProvisionManifestAsync(_namespaceManifest());
+
+    var ownName = ServiceBusSubscriptionNameHelper.GenerateSubscriptionName(
+      SERVICE_NAME, "inbox.myapp.orders.commands");
+    await Assert.That(adminClient.CreatedSubscriptions.Select(s => s.Subscription)).Contains(ownName)
+      .Because("a best-effort drift-check failure must not block provisioning of this service's own subscription");
+    await Assert.That(logger.Messages.Any(m => m.Contains("inbox.myapp.orders.commands", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the diagnostic must name which topic's drift check was skipped, not merely fire");
+  }
+
+  /// <summary>A logger that is enabled at every level and keeps what it was told — the
+  /// zero-sink logger built via LoggerFactory.Create(...) reports IsEnabled(Debug) as false
+  /// with no provider attached, which would never enter the guarded log statements this file
+  /// tests against.</summary>
+  private sealed class CapturingLogger<T> : ILogger<T> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _messages = [];
+
+    public List<string> Messages {
+      get { lock (_lock) { return [.. _messages]; } }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_lock) { _messages.Add(formatter(state, exception)); }
+    }
   }
 }
