@@ -2433,3 +2433,35 @@ transformers, ASB `ServiceCollectionExtensions` (AP), `MessageTagDiscoveryGenera
 `AsbTrafficClassOpsRateSource` (AL), `MessageJsonContextGenerator` (BA). That is the signal the
 stopping condition is approaching: the head of the worklist is no longer tractable work, it is
 documented residue, and what remains tractable has moved into the long tail.
+
+## BQ. Postgres retry/locker/schema and five more generators
+
+`PinnedTypeLedger` 9 -> 0, `DapperPerspectiveStreamLocker` 8 -> 0,
+`PostgresConnectionRetry` 11 -> 1, four generators 8 -> 2 each,
+`PostgresSchemaInitializer` 9 -> 6.
+
+**`PostgresConnectionRetry:84`** — the closing brace of `if (_shouldRethrowAfterRetry(...)) { throw; }`.
+The tests drive that condition's false branch many times over; the brace is the same
+sequence-point-after-a-transfer shape recorded in AO, AT and BF. Fifth instance.
+
+**Roslyn-contract guards** in the four generators: `SignalTypeRegistryGenerator:41`,
+`EventNamespaceRegistryGenerator:76, 122`, `PerspectiveSchemaGenerator:132`.
+
+**Dead by construction**: `ReceptorRegistryQueryGenerator:299, 328` — null checks on collections
+both pipelines already filter with `.Where(static info => info is not null)` before `.Collect()`.
+`PerspectiveSchemaGenerator:190` — the outer `if`'s closing brace where the inner
+`modeArg.Value is int` is always true, because `PerspectiveStorageAttribute` takes an int-backed
+enum, so the line above always returns first.
+
+**`SignalTypeRegistryGenerator:76` and `EventNamespaceRegistryGenerator:94, 105`** were targeted by
+tests that did not reach them. Both agents flagged their own fixtures as depending on Roslyn's
+error-recovery for an undeclared type substituting into a constrained generic. The measurement says
+it does not. Recorded so a later round knows the technique fails rather than retrying it.
+
+### PostgresSchemaInitializer: six lines left, all needing a specific broken database
+
+`136, 172, 315, 416, 493, 746` — the covered three are the migration-failure paths. The rest need a
+database in a specific partially-broken state (a missing migrations table mid-rollback, a
+particular DDL parse failure). Two were already argued unreachable by the agent from the SQL: both
+`RollbackAsync:136` and `CleanupBackupsAsync:315` do `LastIndexOf("_bak_")` on strings that the
+query producing them already filtered with `LIKE '%\_bak\_%'`, so the index can never be -1.
