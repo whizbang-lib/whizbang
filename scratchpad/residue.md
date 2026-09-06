@@ -1768,3 +1768,56 @@ the listing feature will be unreachable from the command line while looking corr
 
 Not changed here: altering a command's argument arity is a behavioural change to a shipped CLI,
 not a coverage edit.
+
+## AY. ReceptorDiscoveryGenerator: one block is dead code, the rest defend against inputs the generator itself cannot produce
+
+Five lines closed with real assertions; the remaining sixteen split into three kinds, each
+traced rather than assumed.
+
+### Dead code with zero live callers — worth deleting, not testing
+
+`ReceptorDiscoveryGenerator.cs:1817-1820` is the `else` branch of `_buildReceptorInvocationsCore`,
+guarded by its `useStageFiltering` parameter. **Both** call sites — lines 1766 and 1781 — pass
+`useStageFiltering: true`. Verified by reading every call site: the parameter is effectively a
+constant and the `else` can never run. This is not residue in the usual sense; it is a parameter
+and a branch that could be removed outright. Left alone here because deleting production code is
+not a coverage edit, but it should not sit on a worklist as though a test could fix it.
+
+### Guards against inputs the generator constructs itself
+
+`849-850` — a bare `"Whizbang.Core.Dispatch.Routed<"` prefix check in `_unwrapRoutedTypeString`.
+Every `ResponseType` string it inspects is produced by `ToDisplayString` with a fully-qualified
+format, which always emits `global::` for a namespaced type. The branch is coded to detect a
+shape its own input format cannot produce.
+
+`1070` — an `IsNullOrEmpty` guard in `_addTupleElement`. A valid C# tuple has at least two
+elements and Roslyn never renders an empty element substring.
+
+`1224` — `parts.Length != 2` in `_reportLikelyNotInjectableReceptors`, where the string being
+split is always built as `name + "|" + type.ToDisplayString()`. Neither a C# identifier nor a
+type display string can contain `|`.
+
+`1972`, `2001`, `2016` — null fallbacks in `_generateReceptorInfoEntry` /
+`_extractReceptorInfoFromSnippet`. All four embedded snippet templates in
+`Templates/Snippets/DispatcherSnippets.cs` carry a well-formed `ReceptorInfo(` marker with
+balanced parentheses; only editing that shipped template could trip these. This is the same
+argument already recorded for the sibling `_generateReceptorInfoEntryManually`.
+
+### Roslyn-contract guards (residue M shape)
+
+`170` — `context.Attributes.FirstOrDefault()` null guard inside a `ForAttributeWithMetadataName`
+transform, where the API guarantees a non-empty collection for any node that reaches it.
+`RawReceptorDiscoveryGenerator.cs:50` — `GetDeclaredSymbol(...) is not INamedTypeSymbol`,
+structurally identical to `RoslynGuards.GetClassSymbolOrThrow`, which this codebase already
+documents as indicating a compiler bug and not worth a test.
+
+### Reachable in principle, declined for a harness reason worth recording
+
+`428`, `653`, `672` need an attribute whose bound constructor argument is int-valued while the
+constructor parameter symbol being inspected is not an `INamedTypeSymbol`. The real
+`FireAtAttribute` and `DefaultRoutingAttribute` each declare exactly one constructor taking a
+proper enum, so this cannot arise from legitimate use. Producing it means shadow-declaring a
+second, differently-shaped constructor on a type with the same fully-qualified name — which
+collides (CS0433) because the test harness references the real `Whizbang.Core` assembly. A
+fully self-hosted compilation could do it, but the result would also depend on Roslyn's
+`GetMembers()` declaration order, which is not a contract worth building a test on.
