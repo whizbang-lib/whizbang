@@ -14,21 +14,27 @@
 --   the window of unrelated prior work had its only prompt doorbell suppressed and was stranded
 --   on the drainer's adaptive poll cap — the #677 class (parts 2/3 fixed the stamping honesty;
 --   this is the same stranding reached by a different door: recent-activity != flood). Observed
---   at 9-16 s on chat. Requiring a FLOOD (not mere recent activity) to suppress removes the
---   stranding for interactive traffic while keeping the #665 churn win under real fan-out load.
+--   at 9-16 s on an interactive command path. Requiring a FLOOD (not mere recent activity) to
+--   suppress removes the stranding for interactive traffic while keeping the #665 churn win.
 --
 --   INVARIANTS preserved (all of #677):
 --     * Suppression still requires a LIVE target (a corpse's watermark must fire so the
 --       deterministic re-target path engages, 130).
 --     * Suppression still requires a fresh found-work watermark (last_work_at, armed ONLY by
---       claim_work on drainable work, 131/133) — the same condition that arms the C# drain
---       linger that makes suppression safe.
---     * A fire NEVER arms suppression: rate-tracking rows the controller creates on a fire
---       carry last_work_at = NULL ("claim_work never found work here"), which fails the
---       freshness predicate and so cannot self-suppress (131's #677 part-1, now enforced by
---       the type system instead of the old predicted-awake stamp).
+--       claim_work on drainable work, 131/133) — the same condition that arms the C# drain linger.
+--     * A fire NEVER arms suppression: rate-tracking rows the controller creates on a fire carry
+--       last_work_at = NULL ("claim_work never found work here"), which fails the freshness
+--       predicate and so cannot self-suppress (131's #677 part-1, type-enforced).
 --     * The slide-on-suppress is retained (a suppressed store IS work the linger poll finds).
 --     * ceiling <= 0 (notify_debounce_seconds) remains the global OFF switch: no suppression.
+--
+--   SIGNATURE UNCHANGED (deliberate): _notify_debounced keeps its 130 signature
+--   (p_instance_id, p_payload, p_window) — a pure CREATE OR REPLACE, no DROP, no new overload.
+--   p_window is reinterpreted as the CEILING seconds (notify_instance_owners already passes
+--   notify_debounce_seconds there, so that caller is UNCHANGED); the floor/rapid-gap/churn knobs
+--   are read inside from wh_settings. This avoids an arg-list change, whose signature-qualified
+--   DROP silently no-ops under the schema-generator's inlined runner (pooled EF connections strip
+--   search_path) and left both overloads, making a later no-arg reference ambiguous (42725).
 --
 --   OBSERVABILITY (a controller nobody can see is one nobody can debug): each
 --   (instance, payload_kind) row now carries rapid_run, effective_window_ms, fired_count and
@@ -37,8 +43,8 @@
 --
 -- Dependencies: 130 (wh_notify_state, notify_instance_owners, _notify_debounced),
 --   131 (arms-on-found-work), 132/133 (claim_work honest arming), 028 (wh_settings)
--- Objects: wh_notify_state (+cols), _notify_debounced (new signature), notify_instance_owners,
---   wh_settings seed
+-- Objects: wh_notify_state (+cols), _notify_debounced (CREATE OR REPLACE, same signature),
+--   wh_settings seed. notify_instance_owners is intentionally NOT touched.
 
 -- ============================================================================
 -- Schema: rate-tracking + observability state on the per-target watermark row
@@ -72,19 +78,14 @@ ON CONFLICT (setting_key) DO NOTHING;
 
 -- ============================================================================
 -- _notify_debounced — adaptive suppress-or-fire for one target instance.
--- New signature: the caller reads all four knobs once and passes them, preserving 130's
--- "settings read once per notify_instance_owners call" property. notify_instance_owners is the
--- sole caller (verified across all migrations).
+-- SAME 130 signature (p_instance_id, p_payload, p_window): a pure CREATE OR REPLACE. p_window is
+-- the CEILING seconds (notify_instance_owners passes notify_debounce_seconds, unchanged); the
+-- floor/rapid-gap/churn knobs are read here from wh_settings. No DROP, no new overload.
 -- ============================================================================
-DROP FUNCTION IF EXISTS __SCHEMA__._notify_debounced(UUID, TEXT, INTEGER);
-
 CREATE OR REPLACE FUNCTION __SCHEMA__._notify_debounced(
   p_instance_id UUID,
   p_payload TEXT,
-  p_ceiling_seconds INTEGER,
-  p_floor_ms INTEGER,
-  p_rapid_gap_ms INTEGER,
-  p_churn_run INTEGER
+  p_window INTEGER
 ) RETURNS VOID AS $$
 DECLARE
   v_now TIMESTAMPTZ := NOW();
@@ -92,10 +93,22 @@ DECLARE
   v_last_attempt TIMESTAMPTZ;
   v_last_work TIMESTAMPTZ;
   v_rapid_run INTEGER;
+  v_floor_ms INTEGER;
+  v_rapid_gap_ms INTEGER;
+  v_churn_run INTEGER;
   v_gap_ms DOUBLE PRECISION;
   v_effective_ms INTEGER;
   v_suppress BOOLEAN := FALSE;
 BEGIN
+  -- Adaptive knobs (the ceiling arrives as p_window; read the floor/rapid-gap/churn once).
+  SELECT COALESCE((SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings
+                   WHERE setting_key = 'notify_debounce_floor_ms'), 50),
+         COALESCE((SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings
+                   WHERE setting_key = 'notify_rapid_gap_ms'), 100),
+         COALESCE((SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings
+                   WHERE setting_key = 'notify_churn_run'), 5)
+  INTO v_floor_ms, v_rapid_gap_ms, v_churn_run;
+
   -- Only a LIVE target may ever be suppressed: a corpse's fresh watermark must not strand work
   -- — its doorbell must fire so the deterministic re-target path engages (130).
   SELECT EXISTS (
@@ -114,20 +127,20 @@ BEGIN
   -- on the first calm gap. No prior attempt = calm (a lone doorbell after idle).
   v_gap_ms := CASE WHEN v_last_attempt IS NULL THEN NULL
                    ELSE EXTRACT(EPOCH FROM (v_now - v_last_attempt)) * 1000 END;
-  IF v_gap_ms IS NOT NULL AND v_gap_ms < p_rapid_gap_ms THEN
+  IF v_gap_ms IS NOT NULL AND v_gap_ms < v_rapid_gap_ms THEN
     v_rapid_run := COALESCE(v_rapid_run, 0) + 1;
   ELSE
     v_rapid_run := 0;
   END IF;
 
-  -- TIME axis: floor window normally; escalate to the ceiling once the run trips churn.
-  -- ceiling <= 0 is the global OFF switch — suppression disabled entirely (floor ignored).
-  IF p_ceiling_seconds <= 0 THEN
+  -- TIME axis: floor window normally; escalate to the ceiling (p_window seconds) once the run
+  -- trips churn. p_window <= 0 is the global OFF switch — suppression disabled (floor ignored).
+  IF p_window <= 0 THEN
     v_effective_ms := 0;
-  ELSIF v_rapid_run >= p_churn_run THEN
-    v_effective_ms := p_ceiling_seconds * 1000;
+  ELSIF v_rapid_run >= v_churn_run THEN
+    v_effective_ms := p_window * 1000;
   ELSE
-    v_effective_ms := GREATEST(p_floor_ms, 0);
+    v_effective_ms := GREATEST(v_floor_ms, 0);
   END IF;
 
   -- Suppress iff: live AND the drainer is genuinely draining this kind (found-work watermark
@@ -170,131 +183,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__._notify_debounced IS
-'Adaptive debounced doorbell for one target (137): floor window when calm (a lone doorbell fires in real time), ceiling window (notify_debounce_seconds) once rapid_run reaches notify_churn_run. Suppression requires a live target AND a fresh found-work watermark (last_work_at, armed only by claim_work) — a fire never arms it (last_work_at NULL). p_ceiling_seconds <= 0 fires always (off switch). Records rapid_run/effective_window_ms/fired_count/suppressed_count for observability.';
-
--- ============================================================================
--- notify_instance_owners — targeting UNCHANGED from 130; reads all four adaptive knobs once
--- and passes them through. (drop_all_overloads keeps the signature clean across replays.)
--- ============================================================================
-SELECT __SCHEMA__.drop_all_overloads('notify_instance_owners');
-
-CREATE OR REPLACE FUNCTION __SCHEMA__.notify_instance_owners(
-  p_payload TEXT,
-  p_stream_ids UUID[]
-) RETURNS VOID AS $$
-DECLARE
-  v_unclaimed_streams UUID[];
-  v_active_count INTEGER;
-  v_ceiling INTEGER;
-  v_floor_ms INTEGER;
-  v_rapid_gap_ms INTEGER;
-  v_churn_run INTEGER;
-BEGIN
-  -- Read the four adaptive knobs ONCE per call (130's property), with the historical defaults.
-  SELECT COALESCE((SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings
-                   WHERE setting_key = 'notify_debounce_seconds'), 7) INTO v_ceiling;
-  SELECT COALESCE((SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings
-                   WHERE setting_key = 'notify_debounce_floor_ms'), 50) INTO v_floor_ms;
-  SELECT COALESCE((SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings
-                   WHERE setting_key = 'notify_rapid_gap_ms'), 100) INTO v_rapid_gap_ms;
-  SELECT COALESCE((SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings
-                   WHERE setting_key = 'notify_churn_run'), 5) INTO v_churn_run;
-
-  -- Step 1 (unchanged targeting): per-owner notify for streams in wh_active_streams.
-  PERFORM __SCHEMA__._notify_debounced(a.assigned_instance_id, p_payload,
-                                       v_ceiling, v_floor_ms, v_rapid_gap_ms, v_churn_run)
-  FROM (
-    SELECT DISTINCT assigned_instance_id
-    FROM __SCHEMA__.wh_active_streams
-    WHERE stream_id = ANY(p_stream_ids)
-      AND assigned_instance_id IS NOT NULL
-  ) a;
-
-  -- Step 2 (unchanged targeting): deterministic-target notify for unclaimed streams.
-  SELECT ARRAY_AGG(s) INTO v_unclaimed_streams
-  FROM unnest(p_stream_ids) AS s
-  WHERE NOT EXISTS (
-    SELECT 1 FROM __SCHEMA__.wh_active_streams a
-    WHERE a.stream_id = s
-      AND a.assigned_instance_id IS NOT NULL
-  );
-
-  IF v_unclaimed_streams IS NULL OR cardinality(v_unclaimed_streams) = 0 THEN
-    RETURN;
-  END IF;
-
-  SELECT COUNT(*)::INTEGER INTO v_active_count
-  FROM __SCHEMA__.wh_service_instances
-  WHERE last_heartbeat_at > NOW() - INTERVAL '30 seconds';
-
-  IF v_active_count = 0 THEN
-    RETURN;
-  END IF;
-
-  IF p_payload = 'outbox' THEN
-    PERFORM __SCHEMA__._notify_debounced(targets.target_instance_id, p_payload,
-                                         v_ceiling, v_floor_ms, v_rapid_gap_ms, v_churn_run)
-    FROM (
-      WITH src AS (
-        SELECT partition_number
-        FROM __SCHEMA__.wh_outbox
-        WHERE stream_id = ANY(v_unclaimed_streams)
-      ),
-      live AS (
-        SELECT instance_id,
-               (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)::INTEGER AS rank
-        FROM __SCHEMA__.wh_service_instances
-        WHERE last_heartbeat_at > NOW() - INTERVAL '30 seconds'
-      )
-      SELECT DISTINCT live.instance_id AS target_instance_id
-      FROM src
-      JOIN live ON live.rank = (src.partition_number % v_active_count)
-      WHERE src.partition_number IS NOT NULL
-    ) AS targets;
-  ELSIF p_payload = 'inbox' THEN
-    PERFORM __SCHEMA__._notify_debounced(targets.target_instance_id, p_payload,
-                                         v_ceiling, v_floor_ms, v_rapid_gap_ms, v_churn_run)
-    FROM (
-      WITH src AS (
-        SELECT partition_number
-        FROM __SCHEMA__.wh_inbox
-        WHERE stream_id = ANY(v_unclaimed_streams)
-      ),
-      live AS (
-        SELECT instance_id,
-               (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)::INTEGER AS rank
-        FROM __SCHEMA__.wh_service_instances
-        WHERE last_heartbeat_at > NOW() - INTERVAL '30 seconds'
-      )
-      SELECT DISTINCT live.instance_id AS target_instance_id
-      FROM src
-      JOIN live ON live.rank = (src.partition_number % v_active_count)
-      WHERE src.partition_number IS NOT NULL
-    ) AS targets;
-  ELSIF p_payload = 'perspective' THEN
-    PERFORM __SCHEMA__._notify_debounced(targets.target_instance_id, p_payload,
-                                         v_ceiling, v_floor_ms, v_rapid_gap_ms, v_churn_run)
-    FROM (
-      WITH src AS (
-        SELECT partition_number
-        FROM __SCHEMA__.wh_perspective_events
-        WHERE stream_id = ANY(v_unclaimed_streams)
-      ),
-      live AS (
-        SELECT instance_id,
-               (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)::INTEGER AS rank
-        FROM __SCHEMA__.wh_service_instances
-        WHERE last_heartbeat_at > NOW() - INTERVAL '30 seconds'
-      )
-      SELECT DISTINCT live.instance_id AS target_instance_id
-      FROM src
-      JOIN live ON live.rank = (src.partition_number % v_active_count)
-      WHERE src.partition_number IS NOT NULL
-    ) AS targets;
-  END IF;
-END;
-$$ LANGUAGE plpgsql;
-
-COMMENT ON FUNCTION __SCHEMA__.notify_instance_owners IS
-'Slice 27 + v0.685 + 130 + 137 — instance-routed NOTIFY emission with ADAPTIVE doorbell debounce. Targeting is unchanged (per-owner for pinned streams, rank-deterministic for unclaimed); every emission goes through _notify_debounced, which fires a lone doorbell in real time (floor) and only debounces a sustained rapid run toward a draining live target (ceiling = notify_debounce_seconds). The four knobs are read once per call.';
+COMMENT ON FUNCTION __SCHEMA__._notify_debounced(UUID, TEXT, INTEGER) IS
+'Adaptive debounced doorbell for one target (137): p_window is the CEILING seconds. Floor window when calm (a lone doorbell fires in real time), ceiling window once rapid_run reaches notify_churn_run. Suppression requires a live target AND a fresh found-work watermark (last_work_at, armed only by claim_work) — a fire never arms it (last_work_at NULL). p_window <= 0 fires always (off switch). Records rapid_run/effective_window_ms/fired_count/suppressed_count for observability. floor/rapid-gap/churn read from wh_settings.';
