@@ -6,9 +6,11 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Data.Dapper.Postgres.Collective;
@@ -395,6 +397,106 @@ public class DapperCollectiveUnitTests {
   public async Task AddCollectiveExecutorDapper_NullTableName_ThrowsAsync() {
     await Assert.That(() => new ServiceCollection().AddCollectiveExecutorDapper<_jobModel>(""))
       .Throws<ArgumentException>();
+  }
+
+  /// <summary>Inert event store: the replay-applier factory below only needs IEventStore to resolve, never
+  /// to be read from.</summary>
+  private sealed class _noOpEventStore : IEventStore {
+    public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope,
+      CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task AppendAsync<TMessage>(Guid streamId, TMessage message,
+      CancellationToken cancellationToken = default) where TMessage : notnull => Task.CompletedTask;
+
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+      Guid streamId, long fromSequence, CancellationToken cancellationToken = default) =>
+      System.Linq.AsyncEnumerable.Empty<MessageEnvelope<TMessage>>();
+
+    public IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+      Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default) =>
+      System.Linq.AsyncEnumerable.Empty<MessageEnvelope<TMessage>>();
+
+    public IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+      Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) =>
+      System.Linq.AsyncEnumerable.Empty<MessageEnvelope<IEvent>>();
+
+    public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
+      Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(new List<MessageEnvelope<TMessage>>());
+
+    public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+      Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) =>
+      Task.FromResult(new List<MessageEnvelope<IEvent>>());
+
+    public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(0L);
+
+    public List<MessageEnvelope<IEvent>> DeserializeStreamEvents(
+      IReadOnlyList<StreamEventData> streamEvents, IReadOnlyList<Type> eventTypes) => [];
+  }
+
+  /// <summary>Inert event-store query over an empty set: the replay-applier factory below only needs
+  /// IEventStoreQuery to resolve.</summary>
+  private sealed class _noOpEventStoreQuery : IEventStoreQuery {
+    public IQueryable<EventStoreRecord> Query => Array.Empty<EventStoreRecord>().AsQueryable();
+    public IQueryable<EventStoreRecord> GetStreamEvents(Guid streamId) => Query;
+    public IQueryable<EventStoreRecord> GetEventsByType(string eventType) => Query;
+  }
+
+  [Test]
+  public async Task AddCollectiveEventsDapper_ResolvingReplayApplier_ConstructsWithoutADatabaseAsync() {
+    // ICollectiveReplayApplier is TryAddScoped, so its factory body only runs once something actually
+    // resolves it — a perspective rebuild, not registration time. If IEventStore/IEventStoreQuery weren't
+    // both resolvable, or the factory captured the wrong collaborators, a rebuild would fail deep inside
+    // DI at rebuild time instead of at startup, which is far harder to diagnose.
+    var services = new ServiceCollection();
+    services.AddSingleton<IEventStore>(new _noOpEventStore());
+    services.AddSingleton<IEventStoreQuery>(new _noOpEventStoreQuery());
+    services.AddCollectiveEventsDapper(System.Array.Empty<CollectiveApplyEntry>());
+    var sp = services.BuildServiceProvider();
+
+    var applier = sp.GetService<ICollectiveReplayApplier>();
+
+    await Assert.That(applier).IsTypeOf<CollectiveReplayApplier>();
+  }
+
+  [Test]
+  public async Task AddCollectiveTableDapper_RegistersTableForQueryOnlySiblingAsync() {
+    // A query-only sibling has no executor, so this call is the only place its table name gets recorded.
+    // Without it a handler's q.Of<TModel>() cohort filter can't resolve the sibling's table, and the
+    // apply SQL fails at runtime instead of compiling correctly.
+    var services = new ServiceCollection();
+    services.AddCollectiveTableDapper<_jobModel>("wh_per_job");
+    var sp = services.BuildServiceProvider();
+
+    var registry = sp.GetRequiredService<DapperCollectiveTableRegistry>();
+
+    await Assert.That(registry.Tables[typeof(_jobModel)]).IsEqualTo("wh_per_job");
+  }
+
+  [Test]
+  public async Task AddCollectiveTableDapper_NullTableName_ThrowsAsync() {
+    await Assert.That(() => new ServiceCollection().AddCollectiveTableDapper<_jobModel>(""))
+      .Throws<ArgumentException>();
+  }
+
+  [Test]
+  public async Task AddCollectiveExecutorDapper_ThenAddCollectiveTableDapper_ShareOneTableRegistryAsync() {
+    // The table registry must be the SAME shared instance across every AddCollective*Dapper call on one
+    // IServiceCollection, whatever the order or mix of executor/table-only registrations — each SQL
+    // executor closes over its live Tables map at construction time, so a second registry here would
+    // leave the first executor blind to tables registered afterward.
+    var services = new ServiceCollection();
+    services.AddCollectiveExecutorDapper<_jobModel>("wh_per_job");
+    services.AddCollectiveTableDapper<_statusModel>("wh_per_status");
+    var sp = services.BuildServiceProvider();
+
+    var registry = sp.GetRequiredService<DapperCollectiveTableRegistry>();
+
+    await Assert.That(registry.Tables[typeof(_jobModel)]).IsEqualTo("wh_per_job");
+    await Assert.That(registry.Tables[typeof(_statusModel)]).IsEqualTo("wh_per_status");
   }
 
   // ============================================================
