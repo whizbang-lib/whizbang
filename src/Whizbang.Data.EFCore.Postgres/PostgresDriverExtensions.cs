@@ -238,6 +238,20 @@ public static class PostgresDriverExtensions {
             new Whizbang.Core.Messaging.IntegrityRepairPolicy.Settings()));
         selector.Services.AddHostedService<TableStatisticsCollector>();
 
+        // TURNKEY: adaptive notify-debounce (137) observability — the provider reads the regime and
+        // fired/suppressed volumes from wh_notify_state, the collector refreshes the gauges. Schema-
+        // qualified the same way as the table-stats provider so multi-schema services report THEIR
+        // controller, not a bare public schema.
+        selector.Services.TryAddSingleton<INotifyDebounceStatsProvider>(sp => {
+          var ds = sp.GetRequiredService<NpgsqlDataSource>();
+          using var scope = sp.GetRequiredService<IServiceScopeFactory>().CreateScope();
+          var dbContext = (Microsoft.EntityFrameworkCore.DbContext)scope.ServiceProvider.GetRequiredService(dbContextType);
+          var schema = dbContext.Model.GetDefaultSchema() ?? "public";
+          return new PostgresNotifyDebounceStatsProvider(ds, schema);
+        });
+        selector.Services.TryAddSingleton<NotifyDebounceMetrics>();
+        selector.Services.AddHostedService<NotifyDebounceStatsCollector>();
+
         // v0.502 DLQ — register IDeadLetterStore + IDeadLetterRecoveryService so the
         // dispatch worker can move failed inbox rows into wh_dead_letters and the
         // recovery worker can drain them back out. Without these the dispatch path's
