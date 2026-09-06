@@ -2292,3 +2292,32 @@ shared `GeneratorTestHelper.RunGenerator` always adds that reference and hardcod
 name. A local isolated-compilation helper was added in the test file. The same helper made
 `697-698` reachable by controlling the compiling assembly's name, which is what the identifier
 sanitizer operates on.
+
+## BM. Four more generators: 35 uncovered down to 13
+
+`ServiceRegistrationGenerator` 9 -> 1, `TopicFilterGenerator` 9 -> 3,
+`GuidInterceptorGenerator` 9 -> 5, `WhizbangIdGenerator` 8 -> 4.
+
+**Roslyn-contract guards** (the by-now-familiar category): `TopicFilterGenerator:80`,
+`GuidInterceptorGenerator:105`, `WhizbangIdGenerator:112, 175, 236`.
+
+**Dead by construction, traced to the producer:**
+- `ServiceRegistrationGenerator:206` — the default-to-Lens arm of `_getServiceCategory`, only ever
+  called after `_isUserInterfaceExtendingWhizbang` confirmed a match using the same two prefix
+  checks over the same `AllInterfaces` set.
+- `GuidInterceptorGenerator:280, 318, 323` — guards for `trivia.GetStructure() is not
+  PragmaWarningDirectiveTriviaSyntax`, where both call sites pre-filter with
+  `IsKind(SyntaxKind.PragmaWarningDirectiveTrivia)`, which Roslyn guarantees structures to exactly
+  that type.
+- `GuidInterceptorGenerator:417` and `WhizbangIdGenerator:354` — a switch default over a closed set
+  the generator produced, and a null check on an array already filtered by
+  `.Where(static info => info is not null)` upstream.
+
+**Two lines a test was written for and did not move:** `TopicFilterGenerator:98` and `:155`. The
+agent reported tests targeting both; the scoped coverage run shows neither hit. Not investigated
+further this round — recorded so a later cycle knows the fixtures exist but miss, rather than
+assuming the lines are untouched and writing them again.
+
+That last point is the reason step 3 of the loop exists. Three separate agents this session have
+reported "all target lines covered" while the scoped run showed otherwise, and in every case the
+report was written in good faith from careful reading. Reading cannot substitute for measuring.
