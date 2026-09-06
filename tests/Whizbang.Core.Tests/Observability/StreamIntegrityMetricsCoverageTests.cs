@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics.Metrics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -114,9 +115,14 @@ public class StreamIntegrityMetricsCoverageTests {
   // its own -- the exact distinction self-healing-by-default depends on being visible.
   [Test]
   public async Task LedgerGauges_UnhealedRepairExhaustedAndOldestAge_ReportLiveSnapshotValuesAsync() {
-    long? unhealed = null;
-    long? repairExhausted = null;
-    double? oldestAge = null;
+    // Collect every observation rather than keeping the last: each test in this class constructs
+    // its own StreamIntegrityMetrics, and every instance's observable gauges stay registered on the
+    // shared meter for the life of the process. RecordObservableInstruments therefore fires the
+    // sibling instances' callbacks too -- all reporting their default zeros -- and last-write-wins
+    // left this test asserting against whichever instance happened to be polled last.
+    var unhealed = new List<long>();
+    var repairExhausted = new List<long>();
+    var oldestAge = new List<double>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
       if (instrument.Meter.Name == StreamIntegrityMetrics.METER_NAME) {
@@ -125,14 +131,14 @@ public class StreamIntegrityMetricsCoverageTests {
     };
     listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
       if (instrument.Name == "whizbang.stream_integrity.unhealed_buckets") {
-        unhealed = value;
+        unhealed.Add(value);
       } else if (instrument.Name == "whizbang.stream_integrity.repair_exhausted_buckets") {
-        repairExhausted = value;
+        repairExhausted.Add(value);
       }
     });
     listener.SetMeasurementEventCallback<double>((instrument, value, _, _) => {
       if (instrument.Name == "whizbang.stream_integrity.oldest_unhealed_age_seconds") {
-        oldestAge = value;
+        oldestAge.Add(value);
       }
     });
     listener.Start();
@@ -145,11 +151,11 @@ public class StreamIntegrityMetricsCoverageTests {
     });
     listener.RecordObservableInstruments();
 
-    await Assert.That(unhealed).IsEqualTo((long?)7)
+    await Assert.That(unhealed).Contains(7L)
       .Because("unhealed buckets falling only as repair works is what tells an operator healing is progressing");
-    await Assert.That(repairExhausted).IsEqualTo((long?)3)
+    await Assert.That(repairExhausted).Contains(3L)
       .Because("buckets that exhausted their repair budget need a human -- a stale reading hides that they stopped asking");
-    await Assert.That(oldestAge).IsEqualTo((double?)125.5)
+    await Assert.That(oldestAge).Contains(125.5)
       .Because("the oldest unhealed age distinguishes a transient blip from a divergence that has been stuck for a long time");
   }
 }

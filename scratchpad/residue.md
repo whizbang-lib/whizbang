@@ -2226,3 +2226,30 @@ does not — and the second possibility is a bug the property hides.
 
 Left in place here because removing public-ish members is not a coverage edit. Flagged together so
 the owner can decide the three at once.
+
+## BK. A MeterListener test I wrote that broke when its own siblings ran
+
+`LedgerGauges_...` passed alone and in its class before commit, then began failing once more tests
+existed in the same class. Worth recording because the mechanism is not obvious.
+
+Every test in `StreamIntegrityMetricsCoverageTests` constructs its own `StreamIntegrityMetrics`,
+and each instance registers its observable gauges on the **shared meter**, where they stay for the
+life of the process. `listener.RecordObservableInstruments()` therefore fires every instance's
+callback, not just this test's — the siblings all reporting their default zeros. The callback
+assigned `unhealed = value`, so last-write-wins left the assertion comparing against whichever
+instance happened to be polled last.
+
+Fixed by collecting every observation into a list and asserting the expected value is **among**
+them. That is sound rather than weaker: only this test's instance is set to 7/3/125.5, so
+`Contains(7)` still proves this instance reported correctly, and it is immune to how many other
+instances exist or what order they are polled in.
+
+**The general rule:** an observable instrument's callback is registered per *instance* but polled
+per *meter*. Any test that asserts on a single observed value is asserting on whichever instance
+was polled last — which changes as soon as another test in the assembly constructs the same
+metrics type. Collect and match, never overwrite.
+
+Also note `TransportSubscriptionBuilder.cs:108` — `return [];` guarding a null `inboxStrategy`.
+`RoutingOptions.InboxStrategy` is non-nullable with exactly two assignment sites, the constructor
+(which always assigns) and a setter that throws on null, and `RoutingOptions` is sealed. Reaching
+the branch needs an object graph no composition root can produce.
