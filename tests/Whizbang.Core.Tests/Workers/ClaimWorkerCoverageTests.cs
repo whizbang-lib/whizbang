@@ -209,7 +209,15 @@ public class ClaimWorkerCoverageTests {
 
     // ExecuteTask completing on its own is the signal that the early return fired, rather than the
     // loop trying to run against a schema nobody confirmed was ready.
-    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    // SuppressThrowing because the task may end RanToCompletion (the catch swallowed the
+    // cancellation) or Canceled (the token was already canceled when ExecuteAsync first ran),
+    // depending on how quickly the thread pool picks it up. Both are graceful exits; rethrowing
+    // one of them makes this test fail only under a loaded suite, which is what it did.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
+      .Because("a host shutting down mid-migration must not leave the claim loop parked on the gate");
 
     await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
       .Because("canceling the schema-ready wait is an ordinary shutdown path, not an error — it "

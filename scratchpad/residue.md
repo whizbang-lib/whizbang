@@ -2059,3 +2059,53 @@ membership is **silently dropped with no diagnostic**. The test pins current beh
 The generator validates neither the key nor the encoding, so a perspective whose group key happens
 to contain a pipe simply never joins its group — at runtime, with nothing to explain it. Worth an
 owner's decision: reject the key with a diagnostic, or escape the delimiter.
+
+## BF. A load-sensitive test shape I introduced twice, and what is left in the transport strategy
+
+### The bug I shipped and then repeated
+
+`await worker.ExecuteTask!.WaitAsync(...)` on a `BackgroundService` whose `ExecuteAsync` exits via
+a cancellation catch is **load-sensitive**. The task can end in either terminal state:
+
+- **RanToCompletion** — the thread pool ran `ExecuteAsync`, it awaited the gate, the token fired,
+  the `catch (OperationCanceledException) { return; }` swallowed it.
+- **Canceled** — the token was already canceled by the time the thread pool first ran the method,
+  so cancellation surfaces as the task's own state rather than through the catch.
+
+Awaiting the task rethrows in the second case. Isolated, the first always happens; under a loaded
+suite the second does, so the test passes alone and fails in a full run — the worst failure shape
+to debug, and I wrote it twice (`ClaimWorkerCoverageTests` in an earlier cycle, then
+`TransportConsumerWorkerCoverageTests` in this one) before noticing.
+
+**The fix, for any future test of this shape:**
+
+```csharp
+await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
+  .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue();
+await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse();
+```
+
+That asserts the real invariant — the worker exited promptly and did not fault — without caring
+which of two equally graceful terminal states it reached.
+
+### TransportPublishStrategy 13 -> 5
+
+`519-522` — `_resolveEntityDestination`'s null/empty-destination branch. Both public entry points
+filter `OutboxWork` with no `Destination` into the event-store-only success path *before* calling
+the resolver, and `Destination` is an `init`-only property on a record, so it cannot change in
+between. Unreachable without a production seam.
+
+`261` — the closing brace of the retry `while` loop. Every path inside the body returns or
+continues, so there is no fall-off-the-end case for the brace to represent. Same synthetic-sequence
+-point family as AO/AT: a `}` after an unconditional transfer, now the fifth instance recorded.
+
+### A finding the transport work turned up
+
+`TransportConsumerWorker.ExecuteAsync`'s schema-gate cancellation path does a bare `return;`
+without settling `_subscriptionsReadyTcs` — unlike `ServiceBusConsumerWorker`'s equivalent, which
+calls `TrySetCanceled`, and unlike this same method's other early return, which calls
+`TrySetResult`. Anything awaiting `SubscriptionsReady` (a startup health probe, an
+`IStartupReadinessContributor`) is left parked forever even though the worker has already stopped.
+During a shutdown that races migrations, the host then never reports ready and the waiter never
+exits. The test pins today's behaviour and says so, so a fix has to consciously update it.
