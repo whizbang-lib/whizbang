@@ -54,6 +54,7 @@ public static class WhizbangMeters {
     StreamIntegrityMetrics.METER_NAME,
     BacklogAgeMetrics.METER_NAME,
     TableStatisticsMetrics.METER_NAME,
+    NotifyDebounceMetrics.METER_NAME,
     TransportDeadLetterDrainWorker.METER_NAME,
     TransportMetrics.METER_NAME,
     TypeRegistryMetrics.METER_NAME,
