@@ -1821,3 +1821,33 @@ second, differently-shaped constructor on a type with the same fully-qualified n
 collides (CS0433) because the test harness references the real `Whizbang.Core` assembly. A
 fully self-hosted compilation could do it, but the result would also depend on Roslyn's
 `GetMembers()` declaration order, which is not a contract worth building a test on.
+
+## AZ. EventEnvelopeJsonbAdapter: 11 down to 1, and one defence that stops halfway
+
+`EventEnvelopeJsonbAdapter.cs:182` — the `perspectiveScopeTypeInfo == null` early return in
+`_tryParsePerspectiveScope`. Reaching it needs `_jsonOptions.GetTypeInfo(typeof(PerspectiveScope))`
+to return null, but `JsonSerializerOptions.GetTypeInfo(Type)` throws rather than returning null when
+no resolver can supply the type, so the only way to produce a null there is a custom resolver that
+deliberately answers null for this one type — a shape no real composition builds. Note the sibling
+lookups in the same class do not even have this guard: they use `?? throw`.
+
+### The finding: the scope-column defence is asymmetric
+
+`_parseScopeValues` tries `_tryParsePerspectiveScope` first and falls back to `_tryParseLegacyScope`.
+The first wraps its deserialize in `try { ... } catch (JsonException) { }`. **The second does not**,
+and neither does any caller up to `FromJsonb`.
+
+So a scope column whose contents are *wrong-shaped but valid* JSON degrades gracefully — the new
+parser throws, is caught, and the legacy parser returns no values (now covered). But a column whose
+contents are *malformed* JSON propagates a raw `JsonException` out of `FromJsonb`, killing the read
+of an otherwise intact event. The event's own data and metadata are untouched; only an auxiliary
+column is unreadable, and the row never changes, so every retry fails identically.
+
+Deliberately not asserted as a test. Writing one would cement the behaviour, and the catch is
+plainly meant to cover both parsers — the fix is a `catch (JsonException)` on the legacy path too,
+which is a production change and the owner's call.
+
+Everything else in the class is covered, including the paths that matter for reading old rows: a
+metadata document written before hops existed (no `hops` key at all, not an empty array), a scope
+column holding the literal `null`, and the non-generic `FromJsonb` refusing with a message that
+names the generic overload to call instead.
