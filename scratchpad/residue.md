@@ -1705,3 +1705,36 @@ works — not producible against a bogus host, which fails every time.
 Tractable in the live-Postgres suite: point the first attempt at a closed port, then at the real
 fixture connection string. Left for a round that is working in that project, rather than standing
 up a database fixture in the Dapper unit suite for it.
+
+## AW. SerialExecutor: two defensive catches the source itself labels "should never happen" — verified
+
+Both remaining blocks in `src/Whizbang.Core/Execution/SerialExecutor.cs` carry a `DEFENSIVE:
+Should never happen` comment. The rule here is to prove that rather than believe it, so both were
+traced to their call graphs.
+
+**`217-223`** — `catch (Exception ex)` around `workItem.ExecuteAsync(workItem.State)` in
+`_processWorkItemsAsync`. That delegate is never supplied by a caller: `WorkItem` is a
+`private readonly struct` with no public constructor or enqueue path, and the only entry point,
+`ExecuteAsync<TResult>`, always installs `_executeWithPooledStateAsync<TResult>`. That method
+wraps the handler in `try { ... } catch (Exception ex) { state.Source.SetException(ex); }
+finally { state.Reset(); ExecutionStatePool<TResult>.Return(state); }` — a throwing handler is
+captured and handed to the caller's value task, never propagated to the worker. The only way to
+reach the outer catch is for `SetException`, `Reset` or the pool return to throw, which are
+internal-state failures with no route from the public surface.
+
+**`185-190`** — `catch (OperationCanceledException)` around `await _workerTask` in `DrainAsync`.
+Reaching it needs the worker's `ReadAllAsync(ct)` to observe cancellation *after*
+`Writer.Complete()` has already run, and after completion the reader drains what remains and
+finishes normally. Producing it means racing `DrainAsync` against whatever cancels the internal
+token — a scheduler-dependent interleaving, which is precisely the flaky-test shape declined
+elsewhere in this file (see AO on `PerStreamSerializer`).
+
+Both are correct code, and both already do the right thing when they do fire: they record to
+`WhizbangActivitySource` rather than swallowing silently, so the condition is observable in
+production even though it is unreachable from a test. Category A — reports rather than strands.
+
+The rest of this class is covered, including the neighbouring branch that looks identical and is
+not defensive at all: a work item whose token is canceled after queueing but before execution.
+Its comment says so explicitly, and the reason it matters is worth keeping — only the execute
+path completes the value-task source, so skipping such an item without finishing it would hang
+the caller's `await` with no exception and nothing logged.
