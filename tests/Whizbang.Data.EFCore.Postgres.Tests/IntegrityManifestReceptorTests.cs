@@ -1763,6 +1763,315 @@ public class IntegrityManifestReceptorTests {
       .Because("the second sighting inside the backoff re-ships nothing — the first backfill is in flight");
   }
 
+  // ── coverage round 23: fail-closed paths when required infrastructure is absent ────
+
+  // If the origin cannot resolve its own coordinator, transport, or serializer, answering a
+  // request anyway would either throw mid-pipeline or fabricate an answer nobody can trust. The
+  // origin must drop the request AND say why — a silent drop here would look identical to "we
+  // have nothing to report," burying a broken deployment instead of surfacing it.
+  [Test]
+  public async Task RequestReceptor_MissingInfrastructure_LogsAndDropsTheRequestAsync() {
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("origin-svc"));
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions()));
+    var sp = services.BuildServiceProvider();
+    var logger = new _capturingLogger<IntegrityManifestRequestReceptor>();
+    var receptor = new IntegrityManifestRequestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(new RequestIntegrityManifest { RequesterService = "auditor-svc", Topic = "inbox" });
+
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("required infrastructure is missing")))
+      .IsTrue().Because("a request the origin cannot answer must be visibly dropped, not silently ignored");
+  }
+
+  // A manifest that arrives after an operator explicitly disabled the deep audit must not be
+  // compared anyway — resurrecting reports and repairs behind a switch the operator turned off
+  // is exactly the "half-obeyed kill switch" that makes an incident worse mid-rollback.
+  [Test]
+  public async Task ManifestReceptor_AuditDisabled_IgnoresIncomingManifestAsync() {
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [];   // would otherwise report a deficit for the bucket
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { AuditEnabled = false, PublishReportEvents = true }, dispatcher);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("AuditEnabled=false must fully disable comparison — not just new audits, incoming manifests too");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  // A manifest a service somehow receives FROM ITSELF (topology misconfiguration, a broadcast
+  // that fans back to the sender) must never be compared — a self-loop would otherwise read as a
+  // total deficit against buckets that were never actually foreign, manufacturing an alarm and a
+  // repair request the service would send to itself.
+  [Test]
+  public async Task ManifestReceptor_OwnManifestLoopedBack_IgnoresItAsync() {
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    // OriginServiceId is the CONSUMER's own LocalServiceId, not coordinator.OriginId — a looped
+    // manifest. Without the self-check this compares as a total deficit (nothing local is ever
+    // recorded under an origin id nobody actually tracks) and alarms/repairs against itself.
+    var selfManifest = new IntegrityManifest {
+      ManifestStreamId = coordinator.LocalServiceId,
+      OriginServiceId = coordinator.LocalServiceId,
+      OriginServiceName = "self-svc",
+      Digests = [_digest(stream, 11, 21, 2)],
+    };
+    await receptor.HandleAsync(selfManifest);
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("a self-looped manifest has nothing foreign to compare against — it must be ignored, not alarmed on");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  // If this engine cannot fold the manifest's exact stream-level window, comparing against a
+  // differently-scoped local fold would fabricate mismatches on any stream with prior history —
+  // a false-alarm storm rather than an honest "cannot verify this cycle."
+  [Test]
+  public async Task ManifestReceptor_WindowedStreamCompare_EngineCannotFold_SkipsInsteadOfAlarmingAsync() {
+    var coordinator = new _auditCoordinator { ForChunkReturnsNull = true };
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var logger = new _capturingLogger<IntegrityManifestReceptor>();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("an unfoldable window must never alarm on incomparable ranges");
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no repair may go out for a comparison that never actually ran");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("cannot fold the manifest's window"))).IsTrue()
+      .Because("a skipped audit must be visible in logs — silence here reads identical to 'no problems found'");
+  }
+
+  // A stream that simply has not settled locally yet must never read as divergence — otherwise
+  // every in-flight delivery falsely alarms and can drive a needless redelivery request for a
+  // stream that is actually fine and just landed moments ago.
+  [Test]
+  public async Task ManifestReceptor_StreamLevel_SettleSkipsFreshBucketsAsync() {
+    var coordinator = new _auditCoordinator();
+    var stream = TrackedGuid.NewMedo().Value;
+    // ReceivedDigests / ReceivedTableDigests both default empty — nothing locally for this bucket yet.
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher);
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    // ...but the origin's bucket changed moments ago — in-flight, not divergence.
+    await receptor.HandleAsync(_manifest(coordinator, [
+      _digest(stream, 11, 21, 2) with { UpdatedAt = DateTimeOffset.UtcNow },
+    ]));
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("a bucket updated inside the settle window must never alarm — the stream-level twin of the type-level settle skip");
+    await Assert.That(transport.Published).IsEmpty();
+  }
+
+  // Without a resolvable requester identity, a resume-cursor follow-up cannot be addressed at
+  // all. The rest of a wide lane's window must simply wait for the next audit cycle — it must
+  // not be dropped in a way indistinguishable from "the window answered completely."
+  [Test]
+  public async Task ManifestReceptor_ResumeCursor_MissingRequesterIdentity_CannotFollowAsync() {
+    var stream = TrackedGuid.NewMedo().Value;
+    var cursor = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator {
+      ReceivedDigests = [_digest(stream, 41, 42, 5)],
+    };
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    // No IServiceInstanceProvider registered — the follow-up cannot name a requester.
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions()));
+    services.AddSingleton(tracker);
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    var manifest = _manifest(coordinator, [_digest(stream, 41, 42, 5)]) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+      ResumeAfterStreamId = cursor,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Any(r => r is not null)).IsFalse()
+      .Because("the follow-up cannot be addressed without a requester identity and must not be silently abandoned");
+  }
+
+  // Same hazard as the stream-level windowed skip, one level up: comparing a type-level window
+  // this engine cannot actually fold would alarm on ranges that were never truly compared.
+  [Test]
+  public async Task ManifestReceptor_TypeLevelWindowedCompare_EngineCannotFold_SkipsInsteadOfAlarmingAsync() {
+    var coordinator = new _auditCoordinator();   // WindowedTypeResult stays null — "cannot window"
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var logger = new _capturingLogger<IntegrityManifestReceptor>();
+    var sp = _provider(coordinator, transport, dispatcher: dispatcher, tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    var manifest = _manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types) with {
+      SinceSequence = 100,
+      ComputedThrough = 300,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(dispatcher.Published).IsEmpty();
+    await Assert.That(transport.Published).IsEmpty();
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("cannot fold the manifest's window"))).IsTrue()
+      .Because("a skipped type-level audit must be visible — a silent return here would report a false all-clear");
+  }
+
+  // Without a resolvable requester identity, a type-level mismatch cannot be escalated to a
+  // stream-level drill-down at all. The mismatch must stay live for the next audit cycle rather
+  // than being silently dropped in a way indistinguishable from "everything matched."
+  [Test]
+  public async Task ManifestReceptor_TypeLevelMismatch_NoRequesterIdentity_SkipsDrillDownAsync() {
+    var coordinator = new _auditCoordinator();
+    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];   // differs
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    // No IServiceInstanceProvider registered — the drill-down cannot name a requester.
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions()));
+    services.AddSingleton(new IntegrityGapTracker());
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no drill-down can be addressed without a requester identity");
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("type-level mismatches only ever escalate; they never report directly");
+  }
+
+  // An unpopulated type-digest table must never read as "nothing to compare" — the honest
+  // fallback is the store recompute. Treating an empty table as a clean match would mean a
+  // broken digest-maintenance path audits identical to a genuinely quiet type.
+  [Test]
+  public async Task ManifestReceptor_TypeLevel_UnpopulatedTable_FallsBackToRecomputeAsync() {
+    var coordinator = new _auditCoordinator();
+    // OwnTypeDigests / ReceivedTypeDigests both default empty — the table lane is unpopulated.
+    var s1 = TrackedGuid.NewMedo().Value;
+    coordinator.ReceivedDigests = [_digest(s1, 99, 98, 3)];   // recompute source; folds differently than origin
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 5 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5)], ManifestLevel.Types));
+
+    await Assert.That(coordinator.TypeComputeCalls).IsEqualTo(1)
+      .Because("an unpopulated type-digest table must fall back to the store recompute, never a pre-verified empty match");
+    await Assert.That(transport.Published.Count).IsEqualTo(1)
+      .Because("the recompute fallback still finds and escalates the mismatch — an unpopulated table must not audit as clean");
+  }
+
+  // Directed-or-not-at-all applies to the bulk path exactly as it does to the per-stream repair
+  // and the drill-down: without the origin's carried request address, broadcasting anywhere else
+  // risks flooding every other service on that topic. The deficit waits for the next checkpoint.
+  [Test]
+  public async Task ManifestReceptor_BulkBackfillDeficit_UnknownOriginTopic_WithholdsTheBackfillAsync() {
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [],   // the consumer holds nothing for this type — a pure, huge deficit
+        ComputedThrough = 5000,
+      },
+    };
+    var transport = new _captureTransport();
+    var logger = new _capturingLogger<IntegrityManifestReceptor>();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 },
+      tracker: new IntegrityGapTracker());   // no checkpoint recorded — origin's address is unlearned
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    var manifest = _manifest(coordinator, [
+      _typeDigest("Contracts.BigType", 41, 42, 2500),
+    ], ManifestLevel.Types) with {
+      SinceSequence = 0,
+      ComputedThrough = 5000,
+      ChunkCount = 1,
+    };
+    await receptor.HandleAsync(manifest);
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("no bulk backfill may broadcast off any topic but the origin's own carried address");
+    await Assert.That(logger.Entries.Any(e => e.Message.Contains("no origin-carried request address"))).IsTrue()
+      .Because("the withheld backfill must be visible in logs, not a silent no-op");
+  }
+
+  // A stream-scoped deficit that cannot be addressed (no requester identity) must not silently
+  // look like "handled" — only the wire send is withheld; the deficit re-offers on the next
+  // comparison once the identity is fixed.
+  [Test]
+  public async Task ManifestReceptor_StreamDeficit_MissingRequesterIdentity_WithholdsTheRepairAsync() {
+    var coordinator = new _auditCoordinator();   // nothing local — every origin bucket diverges
+    var stream = TrackedGuid.NewMedo().Value;
+    var dispatcher = new _captureDispatcher();
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    // No IServiceInstanceProvider registered — the repair request cannot name a requester.
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = false }));
+    services.AddSingleton(tracker);
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("the repair cannot be addressed without a requester identity — sending nowhere would look identical to a healthy audit");
+  }
+
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
   private static StreamDigest _digest(Guid stream, long lo, long hi, int count) => new() {
@@ -1952,6 +2261,10 @@ public class IntegrityManifestReceptorTests {
     public TaskCompletionSource? BlockForChunk { get; set; }
     public TaskCompletionSource ForChunkEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>When true, simulates an engine that cannot fold the manifest's window — the
+    /// honest "I cannot answer this" signal, distinct from an empty-but-answerable fold.</summary>
+    public bool ForChunkReturnsNull { get; set; }
+
     public async Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
       Guid originServiceId, IReadOnlyList<Guid> streamIds,
       long? sinceSequence, long? untilSequence, TimeSpan settleWindow,
@@ -1963,6 +2276,9 @@ public class IntegrityManifestReceptorTests {
       ForChunkEntered.TrySetResult();
       if (BlockForChunk is { } gate) {
         await gate.Task;
+      }
+      if (ForChunkReturnsNull) {
+        return null;
       }
       return ReceivedDigests.Where(d => streamIds.Contains(d.StreamId)).ToList();
     }
