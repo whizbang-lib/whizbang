@@ -1403,3 +1403,57 @@ Note this does NOT generalise to `tools/Whizbang.Migrate/Program.cs`, which also
 uncovered lines. That one has real command parsing with covered lines in the same members, so
 a member-level attribute there would suppress genuinely tested code — the exact thing the
 policy's one hard constraint forbids. It stays on the worklist as ordinary untested code.
+
+## AO. DeadLetterRecoveryWorker and PerStreamSerializer: what is left, and one measurement trap
+
+DeadLetterRecoveryWorker went 23 uncovered -> 6; PerStreamSerializer 14 -> 6. What remains
+splits three ways, and the first is a warning about the worklist itself.
+
+### Line 154 is covered. The report is wrong about it.
+
+`DeadLetterRecoveryWorker.cs:154` is the `return;` inside
+`catch (OperationCanceledException)` around `_schemaReadyGate.WaitForReadyAsync`. Run
+`ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync` **alone** under coverage and line 154 records
+a hit. Run its whole test class and line 153 -- the catch clause itself -- records a hit while
+154 records zero. The handler demonstrably executes either way; only the attribution of the
+`return` changes.
+
+That is an async state machine artifact: a `return` inside a `catch` compiles to a jump to the
+method's shared exit, and which sequence point that jump is attributed to depends on which other
+paths ran. Do not spend another cycle writing a test for this line. More usefully: **a line in
+the worklist that sits on an early `return` inside a `catch` in an `async` method may already be
+covered**, and the way to tell is to run its one test in isolation and compare.
+
+### Genuinely unreachable
+
+`DeadLetterRecoveryWorker.cs:227` -- `catch (OperationCanceledException) { break; }` around
+`await Task.WhenAny(pollDelay, wakeTask)`. `Task.WhenAny` completes successfully as soon as any
+constituent reaches a terminal state, whatever that state is, and the result is never unwrapped
+here. `Task.Delay` and `SemaphoreSlim.WaitAsync` both return an already-cancelled task rather
+than throwing synchronously on a pre-cancelled token. So nothing on that line can throw
+`OperationCanceledException`; cancellation is observed on the next iteration of the enclosing
+`while (!stoppingToken.IsCancellationRequested)`. Defensive code, not a gap.
+
+`PerStreamSerializer.cs:166` -- `if (!stream.Reader.TryRead(out var first)) { continue; }`. The
+channel is created `SingleReader = true` and this worker is its only reader, calling
+`WaitToReadAsync` and then `TryRead` on the same task with nothing in between. The single-reader
+contract already excludes the state.
+
+### Needs a decision, not a test
+
+`DeadLetterRecoveryWorker.cs:244-247` -- the loop breaker's close path. `_isBreakerOpen` reads
+`DateTimeOffset.UtcNow` directly and the class takes no `TimeProvider`. `LoopBreakerCooldownMinutes`
+is an `int` whose smallest useful value is 1, so closing the breaker needs a real sixty-second
+wait. Covering it means adding a clock seam to production, which is the owner's call, not this
+loop's. Everything else about the breaker -- opening it, and not opening it on a genuine backlog
+-- is covered.
+
+`PerStreamSerializer.cs:197-198, 200, 225` -- these need a pending channel read to observe
+cancellation by *throwing*, rather than being resolved gracefully by the `TryComplete()` that
+`FlushAndStopAsync` always performs first. Whether it throws is a race inside `Channel<T>`.
+Measured evidence that it really is a race: two consecutive full runs of the same suite in this
+session reported different subsets of these lines as covered (one run hit 197 and 200, the next
+did not). Any test written for them would be exactly that flaky.
+
+`PerStreamSerializer.cs:239` -- `TryRemove(KeyValuePair)` losing its race, reachable only by two
+concurrent sweeps hitting one entry. Scheduler-dependent; not worth a flaky test for one line.
