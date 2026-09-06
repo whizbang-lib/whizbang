@@ -1851,3 +1851,39 @@ Everything else in the class is covered, including the paths that matter for rea
 metadata document written before hops existed (no `hops` key at all, not an empty array), a scope
 column holding the literal `null`, and the non-generic `FromJsonb` refusing with a message that
 names the generic overload to call instead.
+
+## BA. MessageJsonContextGenerator: 28 down to 11, and one adjacent gap worth an owner's look
+
+Eleven lines remain, none of them the internal-fault shape residue M describes. They fall into
+three groups, each traced to a call graph or an API contract rather than assumed.
+
+**Guaranteed by an API contract:**
+`206` — `attribute is null` inside a `ForAttributeWithMetadataName` transform, which the framework
+only invokes when the attribute is present. `3003` — `containingNamespace == null`; Roslyn returns
+the global namespace, never null.
+
+**Guaranteed by the shape of a string this generator itself produced:**
+`2195`, `2220-2221` — a matched collection prefix with no closing `>`, impossible for any name
+Roslyn's fully-qualified format emits for a closed generic. `2248` — a `Dictionary<K,V>`-shaped
+string with no top-level comma. `3131` — fewer than one type argument after a predicate that
+already matched a `"TModel, TEvent"` prefix, where every matching arity has at least two.
+
+**Provably dead:**
+`2292`, `2297` — collection and array checks inside `_extractDirectPropertyType`, which only runs
+after `_extractElementType` returned null on the *same* string, having applied the identical prefix
+and `EndsWith("[]")` tests. The condition cannot be true by the time control arrives.
+
+**Blocked by "never guess":**
+`3212` — `ConstructorArguments.Length == 0` for a `[JsonDerivedType]`. The attribute has no
+parameterless constructor, so zero arguments is CS7036 in valid source; reaching it needs a
+deliberately broken compilation whose `AttributeData` shape under Roslyn's error recovery was not
+verifiable without running one.
+
+### Adjacent gap found while working (not a coverage item)
+
+`3614` — `_buildPolymorphicRegistry` handling zero concrete derived types after filtering — is
+reachable, via an abstract type that arrives through perspective `TModel`/`TEvent` discovery. That
+path is the one message-discovery route that does **not** filter `IsAbstract`, unlike every other.
+The same omission means the generator will also emit a factory for that abstract type, which is
+CS0144 in the generated code. Worth an owner's look: the fix is an `IsAbstract` filter on the
+perspective discovery path, which would make 3614 unreachable rather than merely untested.
