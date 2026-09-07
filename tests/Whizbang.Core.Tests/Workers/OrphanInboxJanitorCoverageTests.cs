@@ -33,11 +33,16 @@ public class OrphanInboxJanitorCoverageTests {
     await cts.CancelAsync();
 
     await janitor.StartAsync(cts.Token);
-    await janitor.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
+    // SuppressThrowing, and assert IsCompleted/!IsFaulted rather than an exact TaskStatus: a task
+    // that exits through a cancellation catch settles as RanToCompletion OR Canceled depending on
+    // thread-pool timing, and a bare WaitAsync rethrows the cancellation into the test itself.
+    await janitor.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(janitor.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
-      .Because("a canceled schema-gate wait during shutdown must return cleanly rather than leave "
-             + "the hosted service reporting faulted");
+    await Assert.That(janitor.ExecuteTask!.IsCompleted).IsTrue()
+      .Because("a canceled schema-gate wait during shutdown must settle rather than hang");
+    await Assert.That(janitor.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("it must return cleanly rather than leave the hosted service reporting faulted");
 
     await janitor.StopAsync(CancellationToken.None);
   }

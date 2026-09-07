@@ -384,7 +384,11 @@ public class ClaimWorkerCoverageTests {
   [Test]
   public async Task ChurnFeedback_NarrowsTheClaimWindowOnTheStreamIdPathAsync() {
     var churnFeedback = new ClaimChurnFeedback();
-    var cleanRowIds = Enumerable.Range(0, 5)
+    // Floor-wide, not merely non-empty: develop's adaptive-window rule is that a claim NARROWER
+    // than MinStreamsPerBatch does not move the window at all, and only a floor-wide clean claim
+    // grows it. Five rows against a floor of 25 leaves the window pinned at its floor, so the
+    // later narrowing would be indistinguishable from the window never having moved.
+    var cleanRowIds = Enumerable.Range(0, 30)
       .Select(_ => TrackedGuid.NewMedo().Value)
       .ToList();
     var coord = new RecordingCoordinator {
@@ -419,12 +423,20 @@ public class ClaimWorkerCoverageTests {
     // Phase 2: switch to the stream-id-only shape (no materialized attempts) and report heavy
     // re-claim churn through the SAME path the drain worker uses — the claim response alone cannot
     // see this churn on this shape.
-    churnFeedback.Report([.. Enumerable.Repeat(2, 9), 1]); // 9 of 10 rows re-claimed
+    // Floor-wide sample: AdaptiveClaimWindow now ignores any sample narrower than the floor, in
+    // BOTH directions. That rule exists because one re-offered row reads as 100% churn on paper,
+    // and a loop that halved on it walked a 1000-stream window down to the floor in under a second
+    // while the queue held a single row. So the churn has to be reported over at least
+    // MinStreamsPerBatch rows to be considered at all.
+    churnFeedback.Report([.. Enumerable.Repeat(2, 27), .. Enumerable.Repeat(1, 3)]); // 27 of 30 re-claimed
     coord.BatchToReturn = new WorkBatch {
       OutboxWork = [],
       PerspectiveWork = [],
       InboxWork = [],
-      InboxStreamIds = Enumerable.Range(0, 4).Select(_ => TrackedGuid.NewMedo().Value).ToList(),
+      // Floor-wide here too: under the new rule a claim narrower than MinStreamsPerBatch does not
+      // move the window in EITHER direction, so a 4-id batch would leave the window pinned and the
+      // narrowing this test exists to prove could never be observed.
+      InboxStreamIds = Enumerable.Range(0, 30).Select(_ => TrackedGuid.NewMedo().Value).ToList(),
     };
 
     // A generous buffer of cycles past the swap: however many polls it takes the swapped batch and

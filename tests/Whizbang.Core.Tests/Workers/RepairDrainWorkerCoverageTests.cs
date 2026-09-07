@@ -85,7 +85,7 @@ public class RepairDrainWorkerCoverageTests {
     var origin = TrackedGuid.NewMedo().Value;
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator, _) = _buildLoop(
-      new StreamIntegrityOptions { RepairDrainEnabled = true, RepairDrainRatePerSecond = 10 },
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 10 },
       clock, SchemaReadyGate.AlreadyReady(), origin);
     coordinator.ThrowOnClaim.Enqueue(new OperationCanceledException("simulated"));
     coordinator.Eligible.Add(
@@ -118,7 +118,7 @@ public class RepairDrainWorkerCoverageTests {
     var origin = TrackedGuid.NewMedo().Value;
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator, transport) = _buildLoop(
-      new StreamIntegrityOptions { RepairDrainEnabled = true, RepairDrainRatePerSecond = 10 },
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 10 },
       clock, SchemaReadyGate.AlreadyReady(), origin);
     coordinator.ThrowOnClaim.Enqueue(new InvalidOperationException("simulated transient failure"));
     coordinator.Eligible.Add(
@@ -174,7 +174,9 @@ public class RepairDrainWorkerCoverageTests {
     var learnedOrigin = TrackedGuid.NewMedo().Value;
     var staleOrigin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, transport, tracker) = _buildTick(
-      new StreamIntegrityOptions { RepairDrainRatePerSecond = 10 });
+      // RepairMode is explicit: safe-by-default no longer leaves auto-repair on, and
+      // DrainTickAsync returns immediately unless the mode is AutoRepairCapped.
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainRatePerSecond = 10 });
     tracker.RecordCheckpoint(learnedOrigin, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     // staleOrigin is deliberately never recorded on the tracker -- it models an origin the
     // in-memory snapshot no longer recognizes by the time the claim comes back.
