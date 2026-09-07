@@ -3623,7 +3623,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = (NpgsqlCommand)__scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
     // Served by idx_outbox_coalesce_pending (coalesce_group, created_at) — only pending
     // singles ever live in that partial index.
@@ -3662,7 +3662,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-    await using var cmd = (NpgsqlCommand)__scope.Connection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = __scope.Connection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
     // FOR UPDATE SKIP LOCKED: two shippers folding the same group at the same instant
     // partition the rows instead of colliding (the residual fetch→complete race dedups at the
@@ -4101,7 +4101,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var dbConnection = __scope.Connection;
     var eventStoreTable = BuildSchemaQualifiedName(schema, "wh_event_store");
 
-    await using var cmd = (Npgsql.NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified table names built from validated schema constant
     // Slice 26.13: LEFT JOIN wh_event_store so cold-cache cursor prefetch can warm the
     // commit_sequence half of PerspectiveCursorCache. Without it, the inversion detector
@@ -4481,7 +4481,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
-    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     cmd.CommandText = $"SELECT {functionName}(@p_event_work_ids, @p_debug_mode)";
 #pragma warning restore S2077
@@ -4520,7 +4520,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
-    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     cmd.CommandText = $"SELECT {functionName}(@p_instance_id, @p_stream_ids, @p_max_attempts)";
 #pragma warning restore S2077
@@ -4552,7 +4552,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
-    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_instance_id, @p_stream_ids)";
 #pragma warning restore S2077
@@ -4680,7 +4680,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
-    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
@@ -4778,7 +4778,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
-    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_ids, @p_instance_id, @p_max_per_stream, @p_max_bytes)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = streamArr });
     cmd.Parameters.Add(new NpgsqlParameter(PARAM_INSTANCE_ID, instanceId));
@@ -4840,7 +4840,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
-    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id, @p_perspective_name, @p_instance_id)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", streamId));
     cmd.Parameters.Add(new NpgsqlParameter("p_perspective_name", perspectiveName));
@@ -4878,7 +4878,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var now = DateTime.UtcNow;
     var leaseExpiry = now + leaseDuration;
 
-    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_stream_id, @p_perspective_name, @p_instance_id, @p_lease_expiry, @p_now)";
     cmd.Parameters.Add(new NpgsqlParameter("p_stream_id", streamId));
     cmd.Parameters.Add(new NpgsqlParameter("p_perspective_name", perspectiveName));
@@ -4916,7 +4916,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var dbConnection = __scope.Connection;
-    await using var cmd = (NpgsqlCommand)dbConnection.CreateCommand().WithCoordinatorTimeout();
+    await using var cmd = dbConnection.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT * FROM {functionName}(@p_event_ids)";
     cmd.Parameters.Add(new NpgsqlParameter("p_event_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArr });
 

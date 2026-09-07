@@ -71,7 +71,7 @@ public static class IntegrityTraffic {
     if (options is { AuditEnabled: false }) {
       list.Add(_manifestRequest);
     }
-    if (options is null || !options.PublishReportEvents) {
+    if (options is not { PublishReportEvents: true }) {
       list.AddRange(_reports);
     }
     return list;

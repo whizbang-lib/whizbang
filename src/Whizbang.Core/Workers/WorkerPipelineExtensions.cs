@@ -535,31 +535,7 @@ public static class WorkerPipelineExtensions {
     // (e.g., AddWhizbangPostgresNotifications) replace it with the real listener.
     services.TryAddSingleton<IWorkNotificationListener, NoOpWorkNotificationListener>();
 
-    // Defense-in-depth concurrency cap on IWorkCoordinator calls. Default 50 (matches
-    // recommended Npgsql Maximum Pool Size). v0.654 adds a 30 s deadline on the internal
-    // semaphore wait so a saturated gate logs + degrades gracefully instead of hanging
-    // every caller silently. Users can register their own gate before calling
-    // AddWhizbang to override either the cap or the deadline.
-    services.AddOptions<WorkCoordinatorGateOptions>();
-    services.AddSingleton<IConfigureOptions<WorkCoordinatorGateOptions>>(sp => {
-      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
-      return new ConfigureOptions<WorkCoordinatorGateOptions>(options => {
-        if (configuration is not null) {
-#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs)
-          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
-            configuration.GetSection("Whizbang:WorkCoordinatorGate"), options);
-#pragma warning restore IL2026
-        }
-      });
-    });
-    services.TryAddSingleton(sp => {
-      var gateOptions = sp.GetRequiredService<IOptions<WorkCoordinatorGateOptions>>().Value;
-      return new WorkCoordinatorGate(
-        maxConcurrent: gateOptions.MaxConcurrent ?? WorkCoordinatorGateOptions.DefaultMaxConcurrent,
-        acquireTimeoutMilliseconds: gateOptions.AcquireTimeoutMilliseconds,
-        logger: sp.GetService<ILogger<WorkCoordinatorGate>>(),
-        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>());
-    });
+    _addWorkCoordinatorGate(services);
 
     // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();
@@ -1109,5 +1085,35 @@ public static class WorkerPipelineExtensions {
       var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
       await coordinator.StoreInboxMessagesAsync(messages, coordinatorOptions.Value.PartitionCount, ct).ConfigureAwait(false);
     };
+  }
+
+  /// <summary>
+  /// The process-wide cap on concurrent <see cref="IWorkCoordinator"/> calls. Built from
+  /// <see cref="WorkCoordinatorGateOptions"/> (bound from <c>Whizbang:WorkCoordinatorGate</c>, filled by a
+  /// Postgres driver's <c>MaxInFlightCommands</c> when the section is silent, 50 otherwise) with a 30 s
+  /// acquire deadline so a saturated gate logs and degrades instead of hanging every caller. A gate the
+  /// consumer registered before the pipeline is kept.
+  /// </summary>
+  private static void _addWorkCoordinatorGate(IServiceCollection services) {
+    services.AddOptions<WorkCoordinatorGateOptions>();
+    services.AddSingleton<IConfigureOptions<WorkCoordinatorGateOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new ConfigureOptions<WorkCoordinatorGateOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs)
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:WorkCoordinatorGate"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.TryAddSingleton(sp => {
+      var gateOptions = sp.GetRequiredService<IOptions<WorkCoordinatorGateOptions>>().Value;
+      return new WorkCoordinatorGate(
+        maxConcurrent: gateOptions.MaxConcurrent ?? WorkCoordinatorGateOptions.DefaultMaxConcurrent,
+        acquireTimeoutMilliseconds: gateOptions.AcquireTimeoutMilliseconds,
+        logger: sp.GetService<ILogger<WorkCoordinatorGate>>(),
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>());
+    });
   }
 }

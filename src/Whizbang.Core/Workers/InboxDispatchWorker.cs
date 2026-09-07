@@ -529,7 +529,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     scopeProvider.GetService<StreamIntegrityMetrics>()?.RepairTrafficDiscarded.Add(
       1, new KeyValuePair<string, object?>("role", "consumer_bundle"));
     var commitRequest = _buildCommitRequest(
-      work, status: (int)MessageProcessingStatus.EventStored, newInboxMessages: Array.Empty<InboxMessage>());
+      work, status: (int)MessageProcessingStatus.EventStored, newInboxMessages: []);
     await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
   }
 

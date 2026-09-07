@@ -79,9 +79,9 @@ public sealed class PoisonAdmissionPolicy {
   /// casualty, not poison, and must not count toward the high-attempt share.
   /// </summary>
   public static bool IsLeaseExpiryCasualty(string? error) =>
-    error is not null
-    && error.StartsWith("Attempt ", StringComparison.Ordinal)
-    && error.Contains(LEASE_EXPIRY_STAMP_MARKER, StringComparison.Ordinal);
+    error is { } stamp
+    && stamp.StartsWith("Attempt ", StringComparison.Ordinal)
+    && stamp.Contains(LEASE_EXPIRY_STAMP_MARKER, StringComparison.Ordinal);
 
   private readonly Settings _settings;
 

@@ -121,6 +121,50 @@ public sealed partial class MaintenanceWorker(
   private static string _shortTypeNames(IReadOnlyList<string> normalizedNames)
     => string.Join(", ", normalizedNames.Select(n => n.Split(',')[0].Split('.')[^1]));
 
+  /// <summary>
+  /// A stream-integrity feature that is off leaves nothing behind. The dispatch seams enforce that for
+  /// the rows they reach; rows parked by retry backoff, minted before the operator opted out, or delivered
+  /// by a peer that does not know would otherwise wait out their schedule (or sit unpublished for as long
+  /// as the feature is off), so the sweep drops them here. A feature that is on is never touched.
+  /// Best-effort: a failing sweep is logged with its consequence and the cycle continues; cancellation
+  /// is shutdown and propagates.
+  /// </summary>
+  private async Task _sweepIntegrityTrafficAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp,
+      Whizbang.Core.Messaging.StreamIntegrityOptions? integrity, CancellationToken ct) {
+    var inboxTypes = IntegrityTraffic.InboxTypesToDiscard(integrity);
+    var outboxTypes = IntegrityTraffic.OutboxTypesToDiscard(integrity);
+    if (inboxTypes.Count == 0 && outboxTypes.Count == 0) {
+      return;
+    }
+    try {
+      var inboxDiscarded = inboxTypes.Count == 0 ? 0
+        : await coordinator.DiscardPendingInboxMessagesAsync(inboxTypes, ct).ConfigureAwait(false);
+      var outboxDiscarded = outboxTypes.Count == 0 ? 0
+        : await coordinator.DiscardPendingOutboxMessagesAsync(outboxTypes, ct).ConfigureAwait(false);
+      var sweepMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+      _recordIntegrityDiscard(sweepMetrics, inboxDiscarded, "inbox", inboxTypes);
+      _recordIntegrityDiscard(sweepMetrics, outboxDiscarded, "outbox", outboxTypes);
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      LogIntegritySweepFailed(_logger, ex);
+    }
+  }
+
+  private void _recordIntegrityDiscard(
+      Whizbang.Core.Observability.StreamIntegrityMetrics? metrics, long discarded, string table, IReadOnlyList<string> types) {
+    if (discarded <= 0) {
+      return;
+    }
+    if (_logger.IsEnabled(LogLevel.Information)) {
+      var typeNames = _shortTypeNames(types);
+      LogIntegrityRowsDiscarded(_logger, discarded, table, typeNames);
+    }
+    metrics?.RepairTrafficDiscarded.Add(discarded,
+      new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", table));
+  }
+
   private async Task _runMaintenanceCycleAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     // Publish debug retention BEFORE the sweep reads it. The sweep decides from a stored setting,
@@ -186,41 +230,7 @@ public sealed partial class MaintenanceWorker(
       }
     }
 
-    // A stream-integrity feature that is off leaves nothing behind. The dispatch seams enforce that for
-    // the rows they reach; rows parked by retry backoff, minted before the operator opted out, or delivered
-    // by a peer that does not know would otherwise wait out their schedule (or sit unpublished for as long
-    // as the feature is off), so the sweep drops them here. A feature that is on is never touched.
-    var inboxTypes = IntegrityTraffic.InboxTypesToDiscard(integrity);
-    var outboxTypes = IntegrityTraffic.OutboxTypesToDiscard(integrity);
-    if (inboxTypes.Count > 0 || outboxTypes.Count > 0) {
-      try {
-        var inboxDiscarded = inboxTypes.Count == 0 ? 0
-          : await coordinator.DiscardPendingInboxMessagesAsync(inboxTypes, ct).ConfigureAwait(false);
-        var outboxDiscarded = outboxTypes.Count == 0 ? 0
-          : await coordinator.DiscardPendingOutboxMessagesAsync(outboxTypes, ct).ConfigureAwait(false);
-        var sweepMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
-        if (inboxDiscarded > 0) {
-          if (_logger.IsEnabled(LogLevel.Information)) {
-            var inboxTypeNames = _shortTypeNames(inboxTypes);
-            LogIntegrityRowsDiscarded(_logger, inboxDiscarded, "inbox", inboxTypeNames);
-          }
-          sweepMetrics?.RepairTrafficDiscarded.Add(inboxDiscarded,
-            new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", "inbox"));
-        }
-        if (outboxDiscarded > 0) {
-          if (_logger.IsEnabled(LogLevel.Information)) {
-            var outboxTypeNames = _shortTypeNames(outboxTypes);
-            LogIntegrityRowsDiscarded(_logger, outboxDiscarded, "outbox", outboxTypeNames);
-          }
-          sweepMetrics?.RepairTrafficDiscarded.Add(outboxDiscarded,
-            new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", "outbox"));
-        }
-      } catch (OperationCanceledException) {
-        throw;
-      } catch (Exception ex) {
-        LogIntegritySweepFailed(_logger, ex);
-      }
-    }
+    await _sweepIntegrityTrafficAsync(coordinator, sp, integrity, ct).ConfigureAwait(false);
     var results = await coordinator.PerformMaintenanceAsync(ct);
     var sweptRows = 0L;
     foreach (var r in results) {
