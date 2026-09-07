@@ -443,6 +443,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // process_inbox_completions DELETEs it). The composite is never event-stored, only its children.
       // Returning early skips the composite's own lifecycle stages — those fire per-child instead.
       if (typedEnvelope?.Payload is ICompositeEvent composite) {
+        if (composite is RedeliveryComposite && !RepairTraffic.IsRepairEnabled(_integrityOptions)) {
+          await _discardRepairBundleAsync(work, composite, scope.ServiceProvider, ct);
+          return;
+        }
         await _fanoutCompositeAsync(work, composite, typedEnvelope, scope.ServiceProvider, receptorInvoker, ct);
         return;
       }
@@ -510,6 +514,23 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       LogLifecycleError(_logger, work.MessageId, "Deserialize", ex);
       return null;
     }
+  }
+
+  /// <summary>
+  /// Report-only is bilateral. A re-delivery bundle reaching a consumer that opted down from repair is
+  /// unasked-for state mutation (a peer on the same topic may have requested it, or this service did before
+  /// the operator opted down), so the row completes with no children and no pre-fanout receptors: the same
+  /// terminal shape as a <see cref="FanoutDirectiveKind.Skip"/> directive, which deletes the composite row
+  /// without event-storing anything. Detection traffic is unaffected.
+  /// </summary>
+  private async Task _discardRepairBundleAsync(
+      InboxWork work, ICompositeEvent composite, IServiceProvider scopeProvider, CancellationToken ct) {
+    LogRepairBundleDiscarded(_logger, work.MessageId, composite.GetType().Name);
+    scopeProvider.GetService<StreamIntegrityMetrics>()?.RepairTrafficDiscarded.Add(
+      1, new KeyValuePair<string, object?>("role", "consumer_bundle"));
+    var commitRequest = _buildCommitRequest(
+      work, status: (int)MessageProcessingStatus.EventStored, newInboxMessages: Array.Empty<InboxMessage>());
+    await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
   }
 
   /// <summary>
@@ -993,6 +1014,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 26, Level = LogLevel.Warning, Message = "InboxDispatchWorker composite fan-out failed for message {MessageId}: {Reason} — {Detail}; dead-lettering composite row")]
   static partial void LogCompositeFanoutFailed(ILogger logger, Guid messageId, string reason, string detail);
+
+  [LoggerMessage(EventId = 30, Level = LogLevel.Information,
+    Message = "InboxDispatchWorker discarded re-delivery bundle {MessageId} ({CompositeType}) without fan-out: RepairMode is ReportOnly, so this consumer folds in no repair")]
+  static partial void LogRepairBundleDiscarded(ILogger logger, Guid messageId, string compositeType);
 
   // Dispatch-checkpoint diagnostics for the "inbox rows never advance past
   // status=Stored with zero exception logs" failure class. At Debug so

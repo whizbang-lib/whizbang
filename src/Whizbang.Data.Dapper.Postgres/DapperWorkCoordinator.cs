@@ -616,6 +616,33 @@ public partial class DapperWorkCoordinator(
     return rows;
   }
 
+  /// <inheritdoc />
+  public async Task<long> DiscardPendingInboxMessagesAsync(
+      IReadOnlyList<string> messageTypeNames,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messageTypeNames);
+    if (messageTypeNames.Count == 0) {
+      return 0;
+    }
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    await using var command = connection.CreateCommand();
+    // Containment, not equality: a stored message_type may carry assembly version metadata or an envelope
+    // wrapper around the normalized name. Unleased only: a leased row is mid-dispatch and the dispatch seam
+    // applies the same mode check.
+    command.CommandText =
+      "DELETE FROM public.wh_inbox i " +
+      "WHERE i.processed_at IS NULL AND i.instance_id IS NULL " +
+      "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(i.message_type, t.name) > 0)";
+    command.CommandTimeout = 30;
+    var param = (NpgsqlParameter)command.CreateParameter();
+    param.ParameterName = "type_names";
+    param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
+    param.Value = messageTypeNames is string[] arr ? arr : System.Linq.Enumerable.ToArray(messageTypeNames);
+    command.Parameters.Add(param);
+    return await command.ExecuteNonQueryAsync(cancellationToken);
+  }
+
   #region LoggerMessage Declarations
 
   [LoggerMessage(

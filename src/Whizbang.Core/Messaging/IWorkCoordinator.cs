@@ -2109,6 +2109,30 @@ public interface IWorkCoordinator {
     => Task.FromResult<IReadOnlyList<PurgedOrphanInboxRow>>([]);
 
   /// <summary>
+  /// Deletes pending, unleased <c>wh_inbox</c> rows whose <c>message_type</c> names one of
+  /// <paramref name="messageTypeNames"/>: the maintenance sweep's way to drop work this service has decided
+  /// not to perform. The maintenance worker passes <see cref="RepairTraffic.InboxMessageTypeNames"/> while
+  /// <see cref="StreamIntegrityOptions.RepairMode"/> is <see cref="IntegrityRepairMode.ReportOnly"/>; without
+  /// the sweep, a repair row that failed and backed off waits out its schedule and is only then discarded,
+  /// one row per dispatch, long after the operator opted down.
+  /// </summary>
+  /// <remarks>
+  /// A stored <c>message_type</c> may carry assembly version metadata or an envelope wrapper around the
+  /// normalized name, so implementations match by containment of each normalized name. Leased rows are
+  /// skipped: a row mid-dispatch is discarded by the dispatch seam, which applies the same mode check, and
+  /// deleting under a live lease could race its completion. Empty list = no-op. Default impl returns 0 so
+  /// non-Postgres backends and test fakes need not override.
+  /// </remarks>
+  /// <param name="messageTypeNames">Normalized assembly-qualified type names (see
+  /// <see cref="EventTypeMatchingHelper.NormalizeTypeName"/>).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows deleted.</returns>
+  Task<long> DiscardPendingInboxMessagesAsync(
+    IReadOnlyList<string> messageTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0L);
+
+  /// <summary>
   /// v0.657 slice 5: structural canary for the "row claimed but never drained"
   /// bug class. Returns <c>wh_outbox</c> rows whose <c>attempts</c> exceeds
   /// <paramref name="maxAttempts"/> AND have not been processed.

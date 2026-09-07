@@ -153,7 +153,13 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
       // E2E lands with the drain's AIMD increment.
       RepairDrainEnabled = false,
     };
-    var originOptions = new StreamIntegrityOptions { AuditSettleWindowMinutes = 0, MaxDigestsPerManifest = 2 };
+    // Report-only is bilateral: an origin that has not opted in declines re-delivery requests, so the
+    // origin under test opts in as well; ReportOnly is the default.
+    var originOptions = new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      AuditSettleWindowMinutes = 0,
+      MaxDigestsPerManifest = 2
+    };
 
     var originProvider = _buildProvider(DbContextOptions, jsonOptions, originTransport, ORIGIN_NAME, originOptions, tracker: null);
     var consumerTracker = new IntegrityGapTracker();
