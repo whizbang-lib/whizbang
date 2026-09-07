@@ -181,6 +181,10 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
   connection it opened when the call ends (EF Core only closes what it opened itself; a scope that left it
   open held one pooled connection per DI scope for the scope's whole life). A connection the caller had
   open, or a transaction in progress, is left as found.
+* Affinity-hold watchdog (cycle 7b): every held (stream, perspective) gate records its path, phase and
+  start; `SnapshotAffinityHolds` lists them and a periodic check names, at Warning, holds older than
+  `PerspectiveStreamAffinityOptions.LongHoldWarning` (60 s; once per threshold while they persist). The
+  next stall names its stream, perspective and step instead of an idle process.
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
@@ -250,24 +254,23 @@ Mapped from source (file:line in the worktree at the time of writing):
   gate wait is outstanding under S (hook `OnStreamAffinityGateContended`, `1263`). GREEN: the cursor
   completes with the gate at 1 because nothing gated runs under S.
 
-### Corrected diagnosis (design pass on the source, after the run-3 snapshot)
+### Corrected diagnosis (run-3 snapshot re-read against the log)
 
-No gated coordinator call runs under the affinity semaphore: the perspective hot path
-(`ReportPerspectiveCompletionAsync`, `GetPerspectiveCursorAsync`, `CompletePerspectiveEventsAsync`,
-`GetStreamEventsAsync`) is ungated, and the only bounded-channel write under S is the collective sink's
-lease-renewal enqueue (`_processCollectiveSinkAsync`, `__collective__` only). The edge that fits the
-snapshot is the CONNECTION POOL: `CoordinatorConnectionScope.AcquireForEfCoreAsync` opens the scoped
-DbContext's connection when it finds it closed and never closes it (`ownsConnection: false`, dispose is a
-no-op), and EF Core only auto-closes connections it opened itself, so every DI scope that made one
-coordinator call holds a pooled Npgsql connection for the scope's whole life. The perspective group scope
-spans the runner apply and the receptors, the drain scope spans a whole perspective, so ~30-wide bodies
-per pod hold the 50-connection pool with idle connections while the gated workers (claim, commit, the
-flushers) hold gate slots parked in `OpenAsync` waiting for the pool. Gate 50/50, database idle, pods
-idle, one consumer sufficient, pinned pool irrelevant. The S -> gate restructure is therefore NOT the
-fix; the fix is (1) the scope returns the connection it opened to the pool when the coordinator call
-ends, unless the caller had it open already or a transaction is active on it, and (2) the collective
-sink runs outside S. The gate-holder diagnostics (cycle 7a) will confirm the holders are parked in the
-pool wait.
+`WorkCoordinatorGate` logs `currentCount`, which is the number of FREE slots. The snapshot's "gate 50/50"
+was therefore an idle gate (56 of 57 samples at 50/50, zero acquire timeouts), not a saturated one, and
+the same log holds no pool-exhaustion errors. What the evidence supports: one drain consumer holding a
+(stream, perspective) affinity gate inside an apply that does not return, with the gate, the database and
+the pool all idle. The claim loop keeps re-offering the leased rows every poll (by design) and, with the
+outstanding budget off, keeps leasing new ones into the UNBOUNDED drain channel, which is how one stuck
+consumer became tens of thousands of leased rows and a lease-expiry loop. The same log shows the claim
+window halving five times in one second on a one-row sample ("re-claimed 1 of 1"). Nothing in the logs
+named the stuck stream, perspective or step, so the cause of the hang itself is still open. This PR ships
+what the evidence supports: the affinity-hold watchdog (cycle 7b) that names stream, perspective, phase
+and age once a hold exceeds `PerspectiveStreamAffinityOptions.LongHoldWarning`, so the next run tells us
+the step; the claim-window sample guard; and the connection-scope close (a real leak on the EF path,
+whether or not it contributed here). Bounded drain acquisition (do not claim perspective work while the
+drain channel backlog exceeds a cap; needs a per-category claim cap in the SQL) is cycle 11, next PR. The
+earlier readings of this section (S -> gate -> channel, then pool exhaustion) are superseded.
 
 ### Load-sensitive test (to make deterministic)
 

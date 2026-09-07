@@ -43,4 +43,13 @@ public class PerspectiveStreamAffinityOptions {
   /// per-event overhead.
   /// </summary>
   public TimeSpan SweepInterval { get; set; } = TimeSpan.FromMinutes(1);
+
+  /// <summary>
+  /// How long one apply may hold a (stream, perspective) affinity gate before the worker names it at
+  /// Warning: the stream, the perspective, the step it is in and how long it has been there, repeated
+  /// once per threshold while the hold persists. A consumer stuck inside an apply otherwise shows only
+  /// as an idle process whose leased rows keep lapsing and being re-offered. Default: 60 seconds.
+  /// <see cref="TimeSpan.Zero"/> turns the watchdog off.
+  /// </summary>
+  public TimeSpan LongHoldWarning { get; set; } = TimeSpan.FromSeconds(60);
 }
