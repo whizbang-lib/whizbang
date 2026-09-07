@@ -87,6 +87,46 @@ public class EFCoreDeadLetterRecoveryServiceCoverageTests : EFCoreTestBase {
 
   // ===== Helpers =====
 
+  // The shipped evaluate_canary_campaign always returns exactly one row -- the unknown-campaign
+  // branch answers 0,0,0,0 rather than returning empty -- so the reader guard is defensive. It is
+  // still worth pinning, because the value it must produce is PENDING and not a terminal verdict.
+  // Pending means "evaluate again next scan"; Pass would release a held cohort on evidence that
+  // was never read, and Fail would hold a healthy one forever. Without the guard the call throws
+  // out of the recovery scan instead, from a reader that was never positioned.
+  [Test]
+  public async Task EvaluateCampaignAsync_WhenTheFunctionYieldsNoRow_ReadsAsPendingAsync(
+      CancellationToken cancellationToken) {
+    await using var ctx = CreateDbContext();
+    var conn = (NpgsqlConnection)ctx.Database.GetDbConnection();
+    if (conn.State != System.Data.ConnectionState.Open) {
+      await conn.OpenAsync(cancellationToken);
+    }
+
+    // Same declared signature, no rows. EFCoreTestBase gives this test its own database, so the
+    // crippled function is invisible to every other test.
+    await using (var replace = conn.CreateCommand()) {
+      replace.CommandText = """
+        CREATE OR REPLACE FUNCTION evaluate_canary_campaign(
+          p_fingerprint VARCHAR(16), p_generation TEXT)
+        RETURNS TABLE(verdict INTEGER, probes_succeeded INTEGER, probes_failed INTEGER, probes_outstanding INTEGER)
+        AS $$ BEGIN RETURN; END; $$ LANGUAGE plpgsql;
+        """;
+      await replace.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var verdict = await _newService(ctx).EvaluateCampaignAsync(
+      "abcdef0123456789", "v0.no-row", cancellationToken);
+
+    await Assert.That(verdict.Kind).IsEqualTo(CanaryVerdictKind.Pending)
+      .Because("a campaign that answered nothing has produced no evidence either way; Pass would "
+             + "release a held cohort and Fail would hold a healthy one, both off a reading that "
+             + "was never taken");
+    await Assert.That(verdict.ProbesSucceeded).IsEqualTo(0);
+    await Assert.That(verdict.ProbesFailed).IsEqualTo(0);
+    await Assert.That(verdict.ProbesOutstanding).IsEqualTo(0)
+      .Because("no probe arithmetic was read, so none may be reported as fact");
+  }
+
   private static EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext> _newService(WorkCoordinationDbContext ctx) =>
     new(ctx, NullLogger<EFCoreDeadLetterRecoveryService<WorkCoordinationDbContext>>.Instance);
 

@@ -11,6 +11,7 @@ namespace Whizbang.Core.Tests.Signals;
 /// The wire-names must match the SQL payload strings ("outbox"/"inbox"/"perspective") that
 /// <c>notify_instance_owners</c> already emits — a rename would break the unify-now migration.
 /// </summary>
+[NotInParallel("SignalTypeRegistryStatic")]
 public class WorkAvailableSignalsTests {
   [Test]
   public async Task WorkOutbox_MetadataAsync() {

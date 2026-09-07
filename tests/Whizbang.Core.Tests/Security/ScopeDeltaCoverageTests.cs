@@ -1380,4 +1380,76 @@ public class ScopeDeltaCoverageTests {
     };
 
   #endregion
+
+  #region PerspectiveScope extension serialization
+
+  private static ScopeContext _contextWith(PerspectiveScope scope) => new() {
+    Scope = scope,
+    Roles = new HashSet<string>(),
+    Permissions = new HashSet<Permission>(),
+    SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+    Claims = new Dictionary<string, string>(),
+  };
+
+  /// <summary>
+  /// The scope is serialized by hand-writing JSON (AOT), so the separators are the code's own
+  /// responsibility. A missing comma between two extensions produces
+  /// <c>{"k":"a","v":"1"}{"k":"b"...</c>, which <see cref="JsonDocument.Parse"/> rejects — every
+  /// scope carrying two custom fields would then fail to propagate across a hop with a JsonException
+  /// instead of arriving. Round-tripping through <c>ApplyTo</c> is the assertion that the emitted
+  /// text is both parseable and faithful.
+  /// </summary>
+  [Test]
+  public async Task CreateDelta_ScopeWithSeveralExtensions_SerializesThemAsAParseableArrayAsync() {
+    var scope = new PerspectiveScope { TenantId = "tenant-a" };
+    scope.Extensions.Add(new ScopeExtension("region", "eu-west"));
+    scope.Extensions.Add(new ScopeExtension("channel", "batch"));
+    scope.Extensions.Add(new ScopeExtension("tier", "gold"));
+
+    var delta = ScopeDelta.CreateDelta(previous: null, current: _contextWith(scope));
+
+    await Assert.That(delta).IsNotNull();
+    var rebuilt = delta!.ApplyTo(null).Scope;
+    await Assert.That(rebuilt.Extensions).Count().IsEqualTo(3)
+      .Because("all three extensions must survive the hand-written JSON, in order");
+    await Assert.That(rebuilt.Extensions[0].Key).IsEqualTo("region");
+    await Assert.That(rebuilt.Extensions[0].Value).IsEqualTo("eu-west");
+    await Assert.That(rebuilt.Extensions[1].Key).IsEqualTo("channel");
+    await Assert.That(rebuilt.Extensions[1].Value).IsEqualTo("batch");
+    await Assert.That(rebuilt.Extensions[2].Key).IsEqualTo("tier");
+    await Assert.That(rebuilt.Extensions[2].Value).IsEqualTo("gold");
+    await Assert.That(rebuilt.TenantId).IsEqualTo("tenant-a")
+      .Because("the extension array must not disturb the properties written before it");
+  }
+
+  /// <summary>
+  /// A key-only extension is a real shape — a flag whose presence is the whole signal. Without the
+  /// explicit <c>null</c> literal the writer would emit <c>"v":</c> with nothing after it and the
+  /// whole scope would fail to parse, taking the tenant and every other extension down with it.
+  /// </summary>
+  [Test]
+  public async Task CreateDelta_ExtensionWithNullValue_SerializesAnExplicitJsonNullAsync() {
+    var scope = new PerspectiveScope { TenantId = "tenant-b" };
+    scope.Extensions.Add(new ScopeExtension("flagged", null));
+    scope.Extensions.Add(new ScopeExtension("region", "us-east"));
+
+    var delta = ScopeDelta.CreateDelta(previous: null, current: _contextWith(scope));
+
+    await Assert.That(delta).IsNotNull();
+    var element = delta!.Values![ScopeProp.Scope];
+    await Assert.That(element.GetProperty("ex")[0].GetProperty("v").ValueKind)
+      .IsEqualTo(JsonValueKind.Null)
+      .Because("the value has to be written as a JSON null literal, not omitted or left empty");
+
+    var rebuilt = delta.ApplyTo(null).Scope;
+    await Assert.That(rebuilt.Extensions).Count().IsEqualTo(2);
+    await Assert.That(rebuilt.Extensions[0].Key).IsEqualTo("flagged");
+    await Assert.That(rebuilt.Extensions[0].Value).IsNull()
+      .Because("a key-only extension round-trips as a key with no value, not as an empty string");
+    await Assert.That(rebuilt.Extensions[1].Value).IsEqualTo("us-east")
+      .Because("the extension after the null-valued one must still be reachable");
+    await Assert.That(rebuilt.TenantId).IsEqualTo("tenant-b");
+  }
+
+  #endregion
 }

@@ -218,6 +218,65 @@ public class IntegrityCheckpointWorkerCoverageTests {
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }
 
+  // Target: src/Whizbang.Core/Workers/IntegrityCheckpointWorker.cs:47 — the `return;` inside the
+  // `catch (OperationCanceledException)` around the schema-gate wait.
+  //
+  // The older test above cancels via StopAsync without ever confirming the worker had reached the
+  // gate, so it settles whether or not the wait was entered — and measurement showed line 47 never
+  // running under it. This one blocks in the gate and publishes a signal from inside
+  // WaitForReadyAsync, so the cancellation provably lands ON the wait.
+  //
+  // What breaks if the catch regresses: this worker reads and writes wh_integrity_* tables that do
+  // not exist until migrations finish. A pod stopped mid-migration would fault its BackgroundService
+  // (the generic host reports that as a startup failure) instead of exiting quietly, so every fast
+  // restart in a rolling deploy would log a crash for a routine stop. The second assertion is the
+  // load-bearing half: the worker must return, not fall through into the checkpoint loop against a
+  // schema that is not there.
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CanceledWhileParkedOnTheSchemaGate_ReturnsBeforeAnyCheckpointCycleAsync(
+      CancellationToken testToken) {
+    var coordinator = new _throwingCoordinator();
+    var gate = new _parkedGate();
+    var worker = _loopWorker(coordinator, gate, new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Without this the cancellation could beat the worker to the gate and the assertions below
+    // would be answered by a worker that never waited on anything.
+    await gate.Entered.WaitAsync(testToken);
+    var executeTask = worker.ExecuteTask!;
+
+    await cts.CancelAsync();
+    // A task exiting through a cancellation catch settles RanToCompletion or Canceled depending on
+    // thread-pool timing, so suppress and assert completion rather than success.
+    await executeTask.WaitAsync(TimeSpan.FromSeconds(20), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(executeTask.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsFaulted).IsFalse()
+      .Because("a shutdown arriving while the worker waits for migrations is an ordinary stop; "
+             + "faulting here reports a crash for something that is not one");
+    await Assert.That(coordinator.Calls).IsEqualTo(0)
+      .Because("the worker must RETURN at the gate — running even one checkpoint cycle would issue "
+             + "SQL against wh_integrity_* tables the migrations had not yet created");
+  }
+
+  /// <summary>A gate that never opens and announces the moment a worker begins waiting on it.</summary>
+  private sealed class _parkedGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
   private static IntegrityCheckpointWorker _loopWorker(
       _throwingCoordinator coordinator, ISchemaReadyGate gate, StreamIntegrityOptions options) {
     var services = new ServiceCollection();

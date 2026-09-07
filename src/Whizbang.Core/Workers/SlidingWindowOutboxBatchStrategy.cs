@@ -104,6 +104,14 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
     await FlushAndStopAsync(CancellationToken.None).ConfigureAwait(false);
   }
 
+  /// <summary>
+  /// Test seam: runs one idle-sweep pass synchronously and awaits it. Production relies on the
+  /// periodic timer, whose callback is fire-and-forget — so the only way to observe what a sweep
+  /// did (or refused to do after shutdown) is to drive one directly. Mirrors
+  /// <see cref="PerStreamSerializer{T}.RunIdleSweepNowAsync"/>.
+  /// </summary>
+  internal Task RunIdleSweepNowForTestAsync() => _runIdleSweepAsync();
+
   private StreamBuffer _createStreamBuffer(Guid key) {
     var channel = Channel.CreateBounded<OutboxMessage>(new BoundedChannelOptions(_options.MaxSize * 4) {
       SingleReader = true,

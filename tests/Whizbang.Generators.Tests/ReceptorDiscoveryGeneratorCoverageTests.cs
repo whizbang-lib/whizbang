@@ -775,6 +775,110 @@ public class ReceptorDiscoveryGeneratorCoverageTests {
     driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
     return driver.GetRunResult();
   }
+
+  // ==================== Attribute shapes the enum resolvers cannot read ====================
+
+  /// <summary>
+  /// Both stage resolution (<c>[FireAt]</c>) and routing resolution (<c>[DefaultRouting]</c>) recover
+  /// the enum TYPE from the attribute class's first constructor parameter. When the first constructor
+  /// declared on the attribute takes no parameters at all there is no such type, and the resolver has
+  /// to decline.
+  /// </summary>
+  /// <remarks>
+  /// <para>The consuming assembly's own declaration of the attribute is what the generator binds to —
+  /// it matches purely on the fully-qualified name — so the shape it reads is not under the
+  /// framework's control. These two tests declare that shape directly.</para>
+  /// <para>What the guard buys is not a nicer message: without it the resolver casts a null parameter
+  /// type, the transform throws inside the incremental pipeline, and the ENTIRE receptor registry for
+  /// the assembly disappears — every receptor, not just the one carrying the odd attribute. So the
+  /// assertion that matters is that the registry still exists and still routes the receptor, at its
+  /// default stages, with nothing from the unreadable attribute leaking into the generated code.</para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithFireAtAttributeWhoseFirstConstructorTakesNoParameters_KeepsDefaultStagesAsync() {
+    const string source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Whizbang.Core;
+
+      namespace Whizbang.Core.Messaging {
+        // First-declared constructor is parameterless, so there is no first-parameter type for the
+        // stage resolver to read the enum off.
+        [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true)]
+        public sealed class FireAtAttribute : System.Attribute {
+          public FireAtAttribute() { }
+          public FireAtAttribute(int stage) { }
+        }
+      }
+
+      namespace MyApp.Receptors {
+        public sealed class ItemArchived : IEvent { }
+
+        [global::Whizbang.Core.Messaging.FireAt(3)]
+        public class AuditReceptor : IReceptor<ItemArchived> {
+          public ValueTask HandleAsync(ItemArchived message, CancellationToken ct = default) => ValueTask.CompletedTask;
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error)
+      .Because("an attribute shape the stage resolver cannot read must be declined, not thrown on");
+
+    var registry = GeneratorTestHelper.GetGeneratedSource(result, REGISTRY_FILE);
+    await Assert.That(registry).IsNotNull()
+      .Because("a throw inside the transform would take the whole assembly's receptor registry with it");
+    await Assert.That(registry).Contains("global::MyApp.Receptors.AuditReceptor")
+      .Because("the receptor is still discovered — only its unreadable stage declaration is dropped");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.LocalImmediateDetached")
+      .Because("with no resolvable stage the receptor falls back to the default stages");
+    await Assert.That(registry).Contains("global::Whizbang.Core.Messaging.LifecycleStage.PostInboxDetached");
+    await Assert.That(registry).DoesNotContain("LifecycleStage.3")
+      .Because("the raw constructor argument must never be pasted into generated code as a stage name");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithDefaultRoutingAttributeWhoseFirstConstructorTakesNoParameters_SkipsRoutingOverrideAsync() {
+    const string source = """
+      using Whizbang.Core;
+
+      namespace Whizbang.Core.Dispatch {
+        [System.AttributeUsage(System.AttributeTargets.Class)]
+        public sealed class DefaultRoutingAttribute : System.Attribute {
+          public DefaultRoutingAttribute() { }
+          public DefaultRoutingAttribute(int mode) { }
+        }
+      }
+
+      namespace MyApp.Receptors {
+        public sealed class CacheInvalidated : ICommand { }
+
+        [global::Whizbang.Core.Dispatch.DefaultRouting(0)]
+        public class CacheSyncReceptor : ISyncReceptor<CacheInvalidated> {
+          public void Handle(CacheInvalidated message) { }
+        }
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, DISPATCHER_FILE);
+    await Assert.That(dispatcher).IsNotNull();
+
+    // Scope to GetReceptorDefaultRouting for the same reason the undefined-enum-value test does:
+    // the generic dispatch sections legitimately name the message type elsewhere in the file.
+    var routingMethodStart = dispatcher!.IndexOf("GetReceptorDefaultRouting(Type messageType)", StringComparison.Ordinal);
+    var routingMethodEnd = dispatcher.IndexOf("LookupReceptorInvoker<TResult>", routingMethodStart, StringComparison.Ordinal);
+    var routingMethodSection = dispatcher[routingMethodStart..routingMethodEnd];
+
+    await Assert.That(routingMethodSection).DoesNotContain("global::MyApp.Receptors.CacheInvalidated")
+      .Because("an attribute whose enum type cannot be recovered must produce no routing override at all");
+  }
 }
 
 /// <summary>
@@ -825,4 +929,5 @@ public class RawReceptorDiscoveryGeneratorCoverageTests {
     await Assert.That(code!).Contains("services.AddSingleton<IRawReceptor, global::MyApp.FooRawReceptor>();");
     await Assert.That(code!).DoesNotContain("NotARawReceptor");
   }
+
 }

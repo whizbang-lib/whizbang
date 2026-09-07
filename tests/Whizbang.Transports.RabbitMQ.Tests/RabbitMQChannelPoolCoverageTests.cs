@@ -167,6 +167,42 @@ public class RabbitMQChannelPoolCoverageTests {
     pool.Dispose();
   }
 
+  // Reset() runs on connection recovery, which is exactly when rentals are in flight -- and a
+  // channel whose connection was just torn down is the likeliest of all to fail its own
+  // Dispose(). Return() discards such a channel rather than pooling it, so it disposes it; if
+  // that disposal failure escaped, it would come out of the caller's `using` block and land on
+  // top of whatever failure triggered the recovery in the first place, hiding the real cause.
+  [Test]
+  public async Task Return_StaleChannelAfterReset_SwallowsItsDisposalFailureAsync() {
+    var stale = new FakeChannel {
+      ExceptionToThrowOnDispose = new InvalidOperationException("connection already torn down")
+    };
+    var healthy = new FakeChannel();
+    IChannel[] channels = [stale, healthy];
+    var channelIndex = 0;
+    var connection = new FakeConnection(() => Task.FromResult(channels[channelIndex++]));
+    var pool = new RabbitMQChannelPool(connection, maxChannels: 1);
+    var outstanding = await pool.RentAsync(CancellationToken.None);
+
+    pool.Reset(); // connection recovery: the outstanding rental is now a generation behind
+
+    await Assert.That(_record(outstanding.Dispose)).IsNull()
+      .Because("a stale channel that cannot dispose is already beyond saving; throwing here "
+             + "would replace the recovery's real failure with a disposal error raised from "
+             + "the caller's using block");
+
+    // The stale channel must also be gone rather than pooled -- handing it to the next caller
+    // would produce a CHANNEL_ERROR on the recovered connection.
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var rentedAfterReset = await pool.RentAsync(cts.Token);
+    await Assert.That(rentedAfterReset.Channel).IsSameReferenceAs(healthy)
+      .Because("a channel that failed to dispose must still be discarded, not recycled onto a "
+             + "connection it no longer belongs to");
+
+    rentedAfterReset.Dispose();
+    pool.Dispose();
+  }
+
   /// <summary>Runs an action and hands back whatever it threw, or null.</summary>
   private static Exception? _record(Action action) {
     try {

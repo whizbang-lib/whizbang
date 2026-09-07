@@ -573,4 +573,124 @@ public class InboxDispatchWorkerCoverageTests {
     await Assert.That(invoker.Invoked.Contains(LifecycleStage.PostLifecycleInline)).IsTrue()
       .Because("PostLifecycle rides the same no-local-perspective gate as PostAllPerspectives");
   }
+
+  // Target: src/Whizbang.Core/Workers/InboxDispatchWorker.cs:244 - the catch around
+  // `await Task.WhenAll(consumers)` in ExecuteAsync's finally block.
+  //
+  // The partition consumers are started with Task.Run(..., stoppingToken). If shutdown wins the
+  // race to that line, Task.Run never schedules the delegate and hands back an already-canceled
+  // task - so the consumers' own internal OperationCanceledException handling, which every other
+  // shutdown path relies on, never gets to run. Task.WhenAll then throws from inside a FINALLY
+  // block, where nothing downstream can catch it: the worker faults and the generic host reports a
+  // crashed hosted service, on an ORDINARY stop.
+  //
+  // Getting the token dead by that line without leaving through an earlier return is the whole
+  // trick, and one obvious route does NOT work: starting the worker with an already-cancelled
+  // token means BackgroundService settles ExecuteTask as Canceled WITHOUT EVER RUNNING
+  // ExecuteAsync (measured: Status == Canceled and not one log line emitted). Any test built that
+  // way asserts on a worker that never ran.
+  //
+  // What does work is the gate. ISchemaReadyGate's contract is "blocks until MarkReady is called
+  // OR the token fires", and an implementation is free to observe readiness and RETURN when both
+  // happen together rather than throwing. This gate does exactly that: it parks, the test cancels
+  // while it is parked, and it then returns normally - so the schema-gate catch is bypassed and
+  // execution reaches the consumer spawn with a dead token, which is the real shape of a stop
+  // landing between the barrier and the fan-out.
+  //
+  // "Stopped" is the load-bearing assertion: it is logged AFTER the finally, so seeing it proves
+  // the catch absorbed the cancellation instead of letting it escape.
+  [Test]
+  [Timeout(30000)]
+  public async Task ShutdownBetweenTheSchemaGateAndTheConsumerSpawn_AbsorbsTheCanceledConsumersAsync(
+      CancellationToken testToken) {
+    var instance = new FakeInstanceProvider();
+    var inbox = new FakeInboxChannelWriter();
+    var handlerCommit = new FakeHandlerCommitChannel();
+    var failure = new FakeFailureChannel();
+    var gate = new _parkThenReturnGate();
+    var logger = new _eventIdCapturingLogger();
+
+    var sp = new ServiceCollection().BuildServiceProvider();
+    var worker = new InboxDispatchWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, inbox, handlerCommit, failure, gate,
+      Options.Create(new InboxDispatchWorkerOptions()),
+      Options.Create(new WorkCoordinatorOptions()),
+      logger,
+      integrityOptions: Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()));
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Without this the cancellation could beat the worker to the gate, and the worker would
+    // exit through the schema-gate return having never reached the code under test.
+    await gate.Entered.WaitAsync(testToken);
+
+    await cts.CancelAsync();
+    gate.Release();
+
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(20), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue();
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("consumer tasks canceled before they ever started are a shutdown detail, not a "
+             + "failure - letting Task.WhenAll throw out of the finally faults the hosted service "
+             + "on an ordinary stop, and from a finally nothing downstream can catch it");
+    await Assert.That(logger.EventIds.Contains(2)).IsTrue()
+      .Because("the 'stopped' line is logged after the finally block, so its presence is what "
+             + "proves the cancellation was absorbed rather than having escaped past it");
+    await Assert.That(handlerCommit.All).IsEmpty()
+      .Because("nothing may be dispatched by a worker whose token died at the barrier");
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// A gate that announces when a waiter arrives, then returns NORMALLY when released - even if
+  /// the token has been canceled meanwhile. That is within its contract ("blocks until MarkReady
+  /// is called or the token fires") and it is what lets a test put the worker past the barrier
+  /// with a dead stopping token.
+  /// </summary>
+  private sealed class _parkThenReturnGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public void Release() => _release.TrySetResult();
+    public bool IsReady => _release.Task.IsCompleted;
+    public void MarkReady() => _release.TrySetResult();
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await _release.Task.ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>Records the event id of every log entry, so a test can assert which lines were reached.</summary>
+  private sealed class _eventIdCapturingLogger : ILogger<InboxDispatchWorker> {
+    private readonly List<int> _eventIds = [];
+    private readonly Lock _gate = new();
+
+    public IReadOnlyList<int> EventIds {
+      get {
+        lock (_gate) {
+          return [.. _eventIds];
+        }
+      }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_gate) {
+        _eventIds.Add(eventId.Id);
+      }
+    }
+  }
 }

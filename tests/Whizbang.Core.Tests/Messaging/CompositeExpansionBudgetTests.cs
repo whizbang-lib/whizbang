@@ -125,4 +125,29 @@ public class CompositeExpansionBudgetTests {
       .Because("a negative count means the caller miscounted; treating it as empty would silently "
              + "discard a composite instead of surfacing the bug");
   }
+
+  // The reported cap is the operator-facing number: it is what a runbook, a log line or a
+  // capacity calculation quotes when explaining why a composite was split. If it drifted from
+  // the value the planner actually enforces, every one of those would name a limit that is not
+  // the limit — so this asserts the property against the OBSERVED chunking boundary rather than
+  // against the constructor argument alone.
+  [Test]
+  public async Task TheReportedCapIsTheBoundaryThePlannerActuallyEnforcesAsync() {
+    const int cap = 37;
+    var budget = new CompositeExpansionBudget(maxChildrenPerExpansion: cap);
+
+    await Assert.That(budget.MaxChildrenPerExpansion).IsEqualTo(cap);
+
+    var atTheCap = budget.Plan(innerEventCount: budget.MaxChildrenPerExpansion);
+    var oneOver = budget.Plan(innerEventCount: budget.MaxChildrenPerExpansion + 1);
+
+    await Assert.That(atTheCap.ExceedsBudget).IsFalse()
+      .Because("a composite sized exactly to the reported cap is within it — a cap that reads one "
+             + "lower than it enforces would have operators sizing producers to avoid a split "
+             + "that was never going to happen");
+    await Assert.That(oneOver.ExceedsBudget).IsTrue();
+    await Assert.That(oneOver.ChunkSize).IsEqualTo(budget.MaxChildrenPerExpansion)
+      .Because("the chunk size a split produces IS the reported cap; if the two could differ, the "
+             + "row growth per expansion step would no longer be the number operators budgeted for");
+  }
 }

@@ -129,6 +129,14 @@ public sealed class SlidingWindowApplyBatchStrategy : IApplyBatchStrategy {
     _stopCts.Dispose();
   }
 
+  /// <summary>
+  /// Test seam: runs one idle-sweep pass synchronously and awaits it. Production relies on the
+  /// periodic timer, whose callback is fire-and-forget — so the only way to observe what a sweep
+  /// did (or refused to do after shutdown) is to drive one directly. Mirrors
+  /// <see cref="PerStreamSerializer{T}.RunIdleSweepNowAsync"/>.
+  /// </summary>
+  internal Task RunIdleSweepNowForTestAsync() => _runIdleSweepAsync();
+
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S1854:Unused assignments should be removed", Justification = "Discard pattern is the canonical fire-and-forget idiom for the timer callback; the returned Task is observed via the worker's internal error handling.")]
   private void _fireAndForgetIdleSweep() {
     _ = _runIdleSweepAsync();

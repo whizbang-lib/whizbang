@@ -420,4 +420,50 @@ public class GraphQLMutationTypeGeneratorTests {
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
     await Assert.That(code).IsNull();
   }
+
+  // --- Attribute arity guard ------------------------------------------------
+  // The attribute is matched by a PREFIX on its display string, so anything in
+  // Whizbang.Transports.Mutations whose name starts with "CommandEndpointAttribute" reaches the
+  // type-argument extraction. Only the two-argument generic form carries TCommand and TResult;
+  // reading the type arguments off any other shape would throw inside the generator, and a
+  // generator that throws takes the consumer's whole build down with it.
+
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Generator_WithCommandEndpointAttributeCarryingNoTypeArguments_SkipsItAsync() {
+    // Arrange - a non-generic attribute of the same name alongside a valid two-argument use
+    const string source = """
+      namespace Whizbang.Transports.Mutations {
+        [System.AttributeUsage(System.AttributeTargets.Class)]
+        public sealed class CommandEndpointAttribute : System.Attribute {
+          public string? GraphQLMutation { get; set; }
+        }
+      }
+
+      namespace TestApp {
+        using Whizbang.Core;
+        using Whizbang.Transports.Mutations;
+
+        public class ShipOrderResult { }
+
+        [CommandEndpoint<ShipOrderCommand, ShipOrderResult>(GraphQLMutation = "shipOrder")]
+        public class ShipOrderCommand : ICommand { }
+
+        [CommandEndpoint(GraphQLMutation = "legacyOrder")]
+        public class LegacyOrderCommand : ICommand { }
+      }
+      """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<GraphQLMutationTypeGenerator>(source);
+
+    // Assert
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangGraphQLMutations.g.cs");
+    await Assert.That(code).IsNotNull()
+      .Because("the valid endpoint alongside it must still be generated");
+    await Assert.That(code).Contains("ShipOrderCommandMutation")
+      .Because("without this the file could be empty for an unrelated reason");
+    await Assert.That(code).DoesNotContain("LegacyOrderCommandMutation")
+      .Because("an attribute with no TCommand/TResult has no mutation to emit and must be skipped, not read positionally");
+  }
 }

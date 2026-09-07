@@ -34,6 +34,10 @@ public class ServiceCollectionExtensionsTests {
     "Endpoint=sb://fake.servicebus.windows.net/;SharedAccessKeyName=x;SharedAccessKey=Zm9v";
   private const string EMULATOR_CONNECTION_STRING =
     "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true";
+  // Non-blank, so registration accepts it, but rejected by the ServiceBusClient constructor — so
+  // the client factory fails deterministically and offline at the moment it is first resolved,
+  // with no DNS lookup and no retry sleep.
+  private const string UNUSABLE_CONNECTION_STRING = "not-a-service-bus-connection-string";
 
   // --- argument validation ---
 
@@ -119,6 +123,61 @@ public class ServiceCollectionExtensionsTests {
     var provider = services.BuildServiceProvider();
     var resolvedClient = provider.GetRequiredService<ServiceBusClient>();
     await Assert.That(ReferenceEquals(resolvedClient, existingClient)).IsTrue();
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_ClientIsBuiltOnFirstResolveFromPipelineOptionsAsync() {
+    // Two things this registration must get right, and both are invisible until something
+    // resolves the client:
+    //
+    // 1. Registration itself must not build a client. The container is composed long before the
+    //    broker is necessarily reachable, so an eager connect would turn a transient broker
+    //    outage into a host that cannot even construct its service provider.
+    // 2. When the factory does run, it must take its retry policy from the OPTIONS PIPELINE,
+    //    not from the values the code callback happened to leave behind at registration time.
+    //    That is the difference between an operator being able to correct a baked-in retry
+    //    policy from configuration and having to ship a new build to do it.
+    //
+    // The callback and configuration deliberately disagree, so only options read through the
+    // pipeline can produce the logged values.
+    var logger = new RecordingConnectionRetryLogger();
+    var services = new ServiceCollection();
+    services.AddSingleton<ILogger<AzureServiceBusConnectionRetry>>(logger);
+    services.AddSingleton(_configWith(
+      ("InitialRetryAttempts", "0"),
+      ("RetryIndefinitely", "false")));
+
+    services.AddAzureServiceBusTransport(UNUSABLE_CONNECTION_STRING, o => {
+      o.AutoProvisionInfrastructure = false;
+      o.InitialRetryAttempts = 99;
+      o.RetryIndefinitely = true;
+    });
+
+    await Assert.That(logger.Messages).IsEmpty()
+      .Because("registering the transport must not build a client — a broker that is down at "
+             + "startup must not stop the container from being composed");
+
+    await using var provider = services.BuildServiceProvider();
+
+    Exception? resolveFailure = null;
+    try {
+      _ = provider.GetRequiredService<ServiceBusClient>();
+    } catch (Exception ex) {
+      resolveFailure = ex;
+    }
+
+    await Assert.That(resolveFailure).IsNotNull()
+      .Because("the factory runs on first resolve, and a client it cannot build must surface as "
+             + "a failure there rather than as a null client handed to the transport");
+
+    await Assert.That(logger.Messages.Any(m =>
+        m.Contains("initial 0 attempts", StringComparison.Ordinal)
+        && m.Contains("indefinitely=False", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the retry policy must come from IOptions, where configuration post-configures "
+             + "over the code callback; the registration-time snapshot still says 99 attempts "
+             + "and retry-forever, so those values appearing here would mean an operator's "
+             + "configuration override never reached the connection logic");
   }
 
   // --- AutoProvisionInfrastructure admin client branches ---
@@ -804,6 +863,31 @@ public class ServiceCollectionExtensionsTests {
         "_namespaceRouting field not found on TransportPublishStrategy - was it renamed?");
 
     return (Whizbang.Core.Routing.ICommandInboxAddressResolver?)field.GetValue(strategy);
+  }
+
+  /// <summary>
+  /// Captures what the ServiceBusClient factory logs, so a test can assert WHICH retry options
+  /// the factory actually resolved. Always enabled: the factory only logs when the logger says
+  /// Information is on, and this test is about the values, not the level filter.
+  /// </summary>
+  private sealed class RecordingConnectionRetryLogger : ILogger<AzureServiceBusConnectionRetry> {
+    public List<string> Messages { get; } = [];
+
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+
+    private sealed class NullScope : IDisposable {
+      public static readonly NullScope Instance = new();
+      public void Dispose() { }
+    }
   }
 
   /// <summary>

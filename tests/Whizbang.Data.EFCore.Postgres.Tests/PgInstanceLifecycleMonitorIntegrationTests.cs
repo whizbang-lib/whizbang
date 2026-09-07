@@ -156,4 +156,42 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
       .Because("the tick stops at the first canceled publish rather than walking the rest of "
              + "the dead list on a stopping host");
   }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task ExecuteAsync_PublishCanceledByShutdown_EndsTheTickLoopAsync(
+      CancellationToken cancellationToken) {
+    // Same cancellation as the tick-level test above, but observed through the hosted loop, which
+    // is where it decides the monitor's fate. Note what is NOT done here: the monitor's own
+    // stopping token is never cancelled. The loop condition therefore stays true forever, and the
+    // five-second inter-tick delay never faults — so the ONLY way this loop can end is the tick's
+    // cancellation being read as "the host is stopping" rather than as "this tick failed, try
+    // again". Absorb it as a tick failure and the monitor scans on a dying bus indefinitely; the
+    // task below would simply never complete.
+    var bus = new ThrowingBus(new OperationCanceledException());
+    await _insertHeartbeatAsync(Guid.CreateVersion7(), DateTimeOffset.UtcNow.AddMinutes(-30));
+    var monitor = _createMonitor(bus);
+
+    await monitor.StartAsync(cancellationToken);
+    try {
+      var loop = monitor.ExecuteTask;
+      await Assert.That(loop is null).IsFalse()
+        .Because("BackgroundService publishes its loop task from StartAsync — without it there is nothing to observe");
+
+      await loop!.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken)
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+      await Assert.That(loop.IsCompleted).IsTrue()
+        .Because("a canceled publish must end the monitor loop; with the stopping token still uncanceled, nothing else could have ended it");
+      await Assert.That(loop.IsFaulted).IsFalse()
+        .Because("shutdown is an orderly exit, not a crash — the cancellation must not escape the loop as a fault the host reports");
+      await Assert.That(bus.Attempts).IsEqualTo(1)
+        .Because("the loop stops at the first canceled publish instead of coming back around for another scan");
+    } finally {
+      // Bounded so a regression that leaves the loop running fails on the assertions above
+      // rather than hanging the suite in StopAsync's wait on the loop task.
+      using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+      await monitor.StopAsync(stopCts.Token);
+    }
+  }
 }

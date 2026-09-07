@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -78,15 +79,19 @@ public class SubscriptionExpansionWorkerCoverageTests {
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope requestEnvelope, TransportDestination destination, CancellationToken cancellationToken = default) where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
   }
 
-  private static SubscriptionExpansionWorker _build(IServiceCollection services) {
+  private static SubscriptionExpansionWorker _build(IServiceCollection services) =>
+    _build(services, new StreamIntegrityOptions(), NullLogger<SubscriptionExpansionWorker>.Instance);
+
+  private static SubscriptionExpansionWorker _build(
+      IServiceCollection services, StreamIntegrityOptions options, ILogger<SubscriptionExpansionWorker> logger) {
     var sp = services.BuildServiceProvider();
     var gate = new Whizbang.Core.Workers.SchemaReadyGate();
     gate.MarkReady();
     return new SubscriptionExpansionWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       gate,
-      Options.Create(new StreamIntegrityOptions()),
-      NullLogger<SubscriptionExpansionWorker>.Instance);
+      Options.Create(options),
+      logger);
   }
 
   /// <summary>What breaks: a schema-only/diagnostic host has no work coordinator or event-type
@@ -142,5 +147,65 @@ public class SubscriptionExpansionWorkerCoverageTests {
       .Because("nothing is Pending, so there is nothing to request — a broadcast here would be a redelivery storm on every ordinary restart of a healthy fleet");
     await Assert.That(coordinator.Registry[_probeType]).IsEqualTo(ConsumedTypeBackfillStatus.Requested)
       .Because("the early return must leave the already-settled registration untouched");
+  }
+
+  // Target: src/Whizbang.Core/Workers/SubscriptionExpansionWorker.cs:134-136 — the
+  // "missing infrastructure" arm of _sendBackfillRequestAsync.
+  //
+  // Repair is ENABLED here (BackfillOnSubscriptionGrowth default true AND
+  // RepairMode = AutoRepairCapped), so the reconciler genuinely tries to send. What is absent is
+  // the transport and serializer — the shape of a host composed without a broker (a migration
+  // runner, a diagnostics sidecar, a misconfigured deployment).
+  //
+  // The distinguishing evidence is the LOG EVENT, not the registry status: "backfill disabled"
+  // (event 73) and "request skipped" (event 74) BOTH leave the type Pending, so asserting Pending
+  // alone is satisfied by either path and proves neither. Asserting event 74 — and the absence of
+  // 73 — pins it to the send attempt.
+  //
+  // What breaks if this regressed to throwing or to marking Requested anyway: throwing takes down
+  // a boot that had nothing wrong with it beyond having no broker; marking Requested burns the
+  // one-shot retry, so the expansion is recorded as repaired, never re-detected, and the missing
+  // history stays missing forever.
+  [Test]
+  public async Task RunOnceAsync_RepairEnabledButNoTransport_SkipsTheRequestAndLeavesTypesPendingAsync() {
+    var coordinator = new _registryCoordinator();
+    // A prior boot's baseline: this is NOT first boot, so the new type reads as an expansion.
+    coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;
+    var logger = new _capturingLogger();
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddSingleton<IEventTypeProvider>(new _oneTypeProvider());
+    // No ITransport, no IEnvelopeSerializer, no IServiceInstanceProvider — nothing to send with.
+    var worker = _build(services,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger);
+
+    await worker.RunOnceAsync(CancellationToken.None);
+
+    await Assert.That(logger.Entries.Any(e => e.EventId == 74)).IsTrue()
+      .Because("the reconciler must report that it TRIED and could not — missing infrastructure "
+             + "and a disabled repair leave the same registry state, and only this log tells an "
+             + "operator which one they are looking at");
+    await Assert.That(logger.Entries.Any(e => e.EventId == 73)).IsFalse()
+      .Because("repair is enabled in this composition; reporting 'backfill disabled' would send an "
+             + "operator to a setting that is already correct");
+    await Assert.That(coordinator.Registry[_probeType]).IsEqualTo(ConsumedTypeBackfillStatus.Pending)
+      .Because("a request that was never sent must not be recorded as Requested — that would burn "
+             + "the retry and leave the missing history missing for good");
+  }
+
+  private sealed class _capturingLogger : ILogger<SubscriptionExpansionWorker> {
+    public List<(int EventId, string Message)> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        Microsoft.Extensions.Logging.EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter)
+      => Entries.Add((eventId.Id, formatter(state, exception)));
   }
 }

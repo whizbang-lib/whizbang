@@ -355,4 +355,103 @@ public class MetadataConverterTests {
     var canConvert = _converter.CanConvert(typeof(IReadOnlyDictionary<string, JsonElement>));
     await Assert.That(canConvert).IsTrue();
   }
+
+  // ===========================
+  // Malformed / partial token streams
+  // ===========================
+
+  /// <summary>
+  /// A metadata blob that ends inside the object — the shape a truncated transport frame or a
+  /// half-written envelope column produces. The reader itself reports "no more data" rather than
+  /// throwing, so without this guard the converter would fall out of its loop and hand back the
+  /// keys it happened to have read: a dictionary that looks complete and silently drops whatever
+  /// followed the truncation point.
+  /// </summary>
+  [Test]
+  public async Task Read_ObjectEndsBeforeItsClosingBrace_ThrowsInsteadOfReturningAPartialDictionaryAsync() {
+    // isFinalBlock:false is what makes Read() report "out of data" instead of throwing on its own,
+    // which is precisely the condition the converter's own end-of-loop throw exists to handle.
+    var json = Encoding.UTF8.GetBytes("{\"kept\":\"a\",\"cut\":\"b\"");
+    var reader = new Utf8JsonReader(json, isFinalBlock: false, state: default);
+    reader.Read();
+
+    IReadOnlyDictionary<string, JsonElement>? result = null;
+    Exception? caught = null;
+    try {
+      result = _converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+    } catch (JsonException ex) {
+      caught = ex;
+    }
+
+    await Assert.That(caught).IsNotNull()
+      .Because("running out of input mid-object must be reported, not treated as a well-formed end");
+    await Assert.That(result).IsNull()
+      .Because("a truncated blob must never yield a dictionary — a caller handed the two keys that "
+             + "did arrive has no way to tell the metadata was cut short");
+  }
+
+  /// <summary>
+  /// The same buffer with its closing brace present parses cleanly, which is what makes the test
+  /// above about the truncation rather than about the fixture.
+  /// </summary>
+  [Test]
+  public async Task Read_SameObjectWithItsClosingBrace_ParsesBothKeysAsync() {
+    var json = Encoding.UTF8.GetBytes("{\"kept\":\"a\",\"cut\":\"b\"}");
+    var reader = new Utf8JsonReader(json, isFinalBlock: false, state: default);
+    reader.Read();
+
+    var result = _converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Count).IsEqualTo(2)
+      .Because("the truncation test's input differs from this one only in the closing brace");
+    await Assert.That(result["cut"].GetString()).IsEqualTo("b");
+  }
+
+  /// <summary>
+  /// A reader configured to surface comments hands the converter a Comment token where a property
+  /// name belongs. The converter must reject the whole blob: the alternative — treating an
+  /// unexpected token as if it were the property name — would read the following value under a
+  /// garbage key and put it in the dictionary the pipeline then routes on.
+  /// </summary>
+  [Test]
+  public async Task Read_TokenWhereAPropertyNameBelongs_ThrowsNamingTheTokenAsync() {
+    var json = Encoding.UTF8.GetBytes("{/*note*/\"key\":\"value\"}");
+    var reader = new Utf8JsonReader(json, new JsonReaderOptions { CommentHandling = JsonCommentHandling.Allow });
+    reader.Read();
+
+    IReadOnlyDictionary<string, JsonElement>? result = null;
+    Exception? caught = null;
+    try {
+      result = _converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+    } catch (JsonException ex) {
+      caught = ex;
+    }
+
+    await Assert.That(caught).IsNotNull()
+      .Because("a token that is neither a property name nor the end of the object must abort the read");
+    await Assert.That(caught!.Message).Contains("Comment")
+      .Because("the message has to name the token actually seen, or a malformed-metadata report "
+             + "gives an operator nothing to act on");
+    await Assert.That(result).IsNull()
+      .Because("no dictionary may escape a rejected read");
+  }
+
+  /// <summary>
+  /// The same bytes with the reader set to skip comments parse normally — so the rejection above
+  /// is about the token the converter was handed, not about the JSON being invalid.
+  /// </summary>
+  [Test]
+  public async Task Read_SameBytesWithCommentsSkipped_ParsesTheKeyAsync() {
+    var json = Encoding.UTF8.GetBytes("{/*note*/\"key\":\"value\"}");
+    var reader = new Utf8JsonReader(json, new JsonReaderOptions { CommentHandling = JsonCommentHandling.Skip });
+    reader.Read();
+
+    var result = _converter.Read(ref reader, typeof(IReadOnlyDictionary<string, JsonElement>), JsonSerializerOptions.Default);
+
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!["key"].GetString()).IsEqualTo("value")
+      .Because("with the comment token filtered out before the converter sees it, the very same "
+             + "bytes must parse — which is what isolates the rejection to the token itself");
+  }
 }
