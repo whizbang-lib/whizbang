@@ -13,8 +13,10 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateRegistrationTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGatePrecedenceTests.cs</tests>
 public sealed class WorkCoordinatorGateOptions {
+  private const int DEFAULT_MAX_CONCURRENT = 50;
+
   /// <summary>The cap when neither the section nor a driver sets one.</summary>
-  public const int DefaultMaxConcurrent = 50;
+  public static int DefaultMaxConcurrent => DEFAULT_MAX_CONCURRENT;
 
   /// <summary>
   /// Cap on concurrent coordinator calls per process. Each slot holds at most one pooled
