@@ -1289,9 +1289,9 @@ public partial class PerspectiveWorker(
     var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
     Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
     // Fast path: take the gate synchronously when it's free (the common case — different streams, or
-    // one applier per stream). Only when it's already HELD do we surface contention + park. Wait(0)
-    // never blocks; it just reports whether the slot was free.
-    if (!gateEntry.Semaphore.Wait(0, CancellationToken.None)) {
+    // one applier per stream). Only when it's already HELD do we surface contention + park. A zero
+    // timeout completes at once; it just reports whether the slot was free.
+    if (!await gateEntry.Semaphore.WaitAsync(0, CancellationToken.None).ConfigureAwait(false)) {
       OnStreamAffinityGateContended?.Invoke((streamId, perspectiveName));
       await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
     }

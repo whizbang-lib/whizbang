@@ -169,6 +169,9 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
 * Reliability (cycle 8a): `InMemoryRequestResponseStore` observed a waiter's token by canceling the shared
   completion source, so one waiter giving up canceled every waiter on the correlation and the response that
   followed was dropped; the token now governs the wait (`Task.WaitAsync`).
+* Reliability (cycle 8b): the sliding-window batch strategies and the per-stream serializer cancel their
+  stop token with `CancelAsync`; the affinity fast path probes with a zero-timeout `WaitAsync`. No behavior
+  change.
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
