@@ -366,4 +366,281 @@ public class PerStreamSerializerTests {
 
     await Assert.That(sut.ActiveStreamCount).IsEqualTo(1);
   }
+
+  // ===== Idle sweep guards and races =====
+
+  [Test]
+  public async Task RunIdleSweepNowAsync_AfterDispose_DoesNotEvictStaleEntriesAsync() {
+    // A sweep that races a completed shutdown must be inert. Without the disposed guard, a timer
+    // callback firing after DisposeAsync would still walk _streams and tear down "idle" channels —
+    // touching state that shutdown already finished with, right when nothing else is watching it.
+    var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var streamId = _idProvider.NewGuid();
+
+    var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (_, _) => Task.CompletedTask,
+      options: new PerStreamSerializerOptions {
+        IdleEvictionWindow = TimeSpan.FromSeconds(1),
+        IdleSweepInterval = TimeSpan.FromSeconds(1),
+      },
+      timeProvider: fakeTime);
+
+    await sut.EnqueueAsync(new StreamItem(streamId, _idProvider.NewGuid()));
+    await sut.DisposeAsync();
+
+    fakeTime.Advance(TimeSpan.FromSeconds(10));   // well past the eviction window
+    await sut.RunIdleSweepNowAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the disposed guard must return before touching _streams — a post-dispose sweep " +
+               "must leave an already-torn-down channel alone rather than reprocessing it");
+  }
+
+  [Test]
+  public async Task ActiveStream_WithinEvictionWindow_SurvivesSweepAsync() {
+    // Mirror of IdleStream_PastEvictionWindow_DisposesChannelOnSweepAsync: a stream that's merely
+    // quiet for a moment, not idle past the window, must not be torn down by a sweep — evicting a
+    // live stream forces the very next item to pay for a fresh channel + worker for no reason.
+    var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var streamId = _idProvider.NewGuid();
+
+    await using var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: async (item, ct) => { await Task.Yield(); },
+      options: new PerStreamSerializerOptions {
+        IdleEvictionWindow = TimeSpan.FromSeconds(5),
+        IdleSweepInterval = TimeSpan.FromSeconds(1),
+      },
+      timeProvider: fakeTime);
+
+    await sut.EnqueueAsync(new StreamItem(streamId, _idProvider.NewGuid()));
+    await sut.WaitForIdleAsync(TimeSpan.FromSeconds(2));
+
+    fakeTime.Advance(TimeSpan.FromSeconds(2));   // still short of the 5s eviction window
+    await sut.RunIdleSweepNowAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("a stream inside its eviction window is merely quiet, not idle — sweeping it away " +
+               "would cost a channel rebuild on the very next item for no reason");
+  }
+
+  [Test]
+  public async Task IdleSweep_OneStreamsWorkerFaults_OtherStreamsStillEvictAsync() {
+    // The sweep awaits each evicted stream's worker so it can finish draining. A worker that
+    // faults outside its per-item guard (e.g. a throwing sort comparer) must not abort the sweep
+    // loop, or one bad stream would leave every other idle stream's channel dangling forever.
+    var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var throwingStreamId = _idProvider.NewGuid();
+    var healthyStreamId = _idProvider.NewGuid();
+    var healthyProcessed = 0;
+    // The sweep completes the healthy stream's channel and its worker drains on the thread pool,
+    // so "the sweep returned" is not the same as "the item was processed". Wait on the processor
+    // itself rather than on the sweep call.
+    var healthyDrained = new TaskCompletionSource();
+
+    var throwingComparer = Comparer<StreamItem>.Create((_, _) =>
+      throw new InvalidOperationException("sort comparer boom"));
+
+    await using var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (item, ct) => {
+        if (item.Tag == "healthy") {
+          Interlocked.Increment(ref healthyProcessed);
+          healthyDrained.TrySetResult();
+        }
+        return Task.CompletedTask;
+      },
+      options: new PerStreamSerializerOptions {
+        DrainBatchWindow = TimeSpan.FromSeconds(30),
+        StreamChannelCapacity = 2,
+        IdleEvictionWindow = TimeSpan.FromSeconds(5),
+        IdleSweepInterval = TimeSpan.FromSeconds(1),
+      },
+      sortComparer: throwingComparer,
+      timeProvider: fakeTime);
+
+    // Two same-stream items so batch.Count > 1 and Sort actually runs (and throws).
+    await sut.EnqueueAsync(new StreamItem(throwingStreamId, _idProvider.NewGuid()));
+    await sut.EnqueueAsync(new StreamItem(throwingStreamId, _idProvider.NewGuid()));
+    await sut.EnqueueAsync(new StreamItem(healthyStreamId, _idProvider.NewGuid(), "healthy"));
+
+    fakeTime.Advance(TimeSpan.FromSeconds(10));   // both streams now past the eviction window
+    await sut.RunIdleSweepNowAsync();
+    await healthyDrained.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0)
+      .Because("the faulting stream's worker throwing out of the sweep's await must not stop the " +
+               "loop from reaching and evicting the still-idle healthy stream");
+    await Assert.That(healthyProcessed).IsEqualTo(1)
+      .Because("the healthy stream must still have drained its item despite the other stream's " +
+               "worker faulting during eviction");
+  }
+
+  // ===== WaitForIdleAsync waits for in-flight work =====
+
+  [Test]
+  public async Task WaitForIdleAsync_ItemsStillQueuedBehindInFlightWork_WaitsUntilDrainedAsync() {
+    // Every existing caller happens to find the channel already empty on the first check. If the
+    // poll loop's "still busy, wait and recheck" tail ever stopped looping, WaitForIdleAsync would
+    // return early while real work is still queued — callers would then read state that has not
+    // been written yet.
+    var streamId = _idProvider.NewGuid();
+    var processorStarted = new TaskCompletionSource();
+    var releaseProcessor = new TaskCompletionSource();
+    var processedOrder = new List<Guid>();
+
+    await using var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: async (item, ct) => {
+        if (processedOrder.Count == 0) {
+          processorStarted.TrySetResult();
+          await releaseProcessor.Task;
+        }
+        processedOrder.Add(item.MessageId);
+      },
+      options: new PerStreamSerializerOptions {
+        DrainBatchWindow = TimeSpan.Zero,
+      });
+
+    var i1 = new StreamItem(streamId, _idProvider.NewGuid());
+    var i2 = new StreamItem(streamId, _idProvider.NewGuid());
+    await sut.EnqueueAsync(i1);
+    await processorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await sut.EnqueueAsync(i2);   // sits in the channel — the worker is blocked processing i1
+
+    var waitTask = sut.WaitForIdleAsync(TimeSpan.FromSeconds(5));
+    releaseProcessor.TrySetResult();
+
+    await waitTask;
+
+    await Assert.That(processedOrder).IsEquivalentTo([i1.MessageId, i2.MessageId])
+      .Because("WaitForIdleAsync must not return while an item is still queued behind in-flight " +
+               "work — it has to loop and recheck, not just sample the queue once");
+  }
+
+  // ===== Drain batch window bounded by capacity =====
+
+  [Test]
+  public async Task DrainBatch_ReachesStreamCapacity_ProcessesWithoutWaitingOutTheWindowAsync() {
+    // The drain-window loop keeps buffering same-stream arrivals until the window elapses.
+    // Without the capacity break, a hot stream producing faster than the window closes could grow
+    // an unbounded batch while the window is still open — this bounds it at StreamChannelCapacity.
+    var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+    var streamId = _idProvider.NewGuid();
+    var seen = new List<Guid>();
+    var lockObj = new object();
+
+    await using var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: (item, ct) => {
+        lock (lockObj) { seen.Add(item.MessageId); }
+        return Task.CompletedTask;
+      },
+      options: new PerStreamSerializerOptions {
+        DrainBatchWindow = TimeSpan.FromSeconds(30),   // the fake clock never advances this far
+        StreamChannelCapacity = 2,
+      },
+      timeProvider: fakeTime);
+
+    var i1 = new StreamItem(streamId, _idProvider.NewGuid());
+    var i2 = new StreamItem(streamId, _idProvider.NewGuid());
+    await sut.EnqueueAsync(i1);
+    await sut.EnqueueAsync(i2);
+
+    using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    await sut.FlushAndStopAsync(stopCts.Token);
+
+    await Assert.That(seen).IsEquivalentTo([i1.MessageId, i2.MessageId])
+      .Because("hitting StreamChannelCapacity must end the drain window immediately — if it instead "
+             + "waited out the full 30s window (which the fake clock never reaches), shutdown would "
+             + "hang until this safety-net timeout aborted it");
+  }
+
+  // ===== Mid-drain cancellation observed by the processor =====
+
+  [Test]
+  public async Task FlushAndStopAsync_WithPreCanceledToken_StopsProcessorMidItemAsync() {
+    // FlushAndStopAsync's WaitAsync(cancellationToken) throwing immediately on an already-canceled
+    // token cancels _stopCts right away, without waiting on the still-running worker. A processor
+    // that checks its own ct parameter must observe that cancellation and stop cleanly instead of
+    // running to completion unchecked after shutdown was requested.
+    var streamId = _idProvider.NewGuid();
+    var processorStarted = new TaskCompletionSource();
+    var releaseProcessor = new TaskCompletionSource();
+    var processorObserved = new TaskCompletionSource();
+    var observedCanceled = false;
+
+    var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: i => i.StreamId,
+      processor: async (item, ct) => {
+        processorStarted.TrySetResult();
+        await releaseProcessor.Task;
+        try {
+          ct.ThrowIfCancellationRequested();
+        } catch (OperationCanceledException) {
+          observedCanceled = true;
+          throw;
+        } finally {
+          processorObserved.TrySetResult();
+        }
+      });
+
+    await sut.EnqueueAsync(new StreamItem(streamId, _idProvider.NewGuid()));
+    await processorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    using var preCanceled = new CancellationTokenSource();
+    await preCanceled.CancelAsync();
+    await sut.FlushAndStopAsync(preCanceled.Token);
+
+    releaseProcessor.TrySetResult();
+    await processorObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(observedCanceled).IsTrue()
+      .Because("mid-item cancellation must reach the processor's own ct parameter, not just "
+             + "abandon the drain silently at the FlushAndStopAsync boundary");
+  }
+
+  [Test]
+  public async Task FlushAndStopAsync_WithPreCanceledToken_SkipsRemainingBatchedItemsAsync() {
+    // Once shutdown observes a pre-canceled token, _stopCts is canceled immediately without
+    // waiting for the running worker. The per-item loop must still check that before invoking the
+    // next batched item — otherwise a "stopped" serializer would keep starting brand-new work
+    // after the operator asked it to stop.
+    var streamId = _idProvider.NewGuid();
+    var processorStarted = new TaskCompletionSource();
+    var releaseProcessor = new TaskCompletionSource();
+    var secondItemRan = false;
+
+    var i1 = new StreamItem(streamId, _idProvider.NewGuid());
+    var i2 = new StreamItem(streamId, _idProvider.NewGuid());
+
+    var sut = new PerStreamSerializer<StreamItem>(
+      streamIdSelector: x => x.StreamId,
+      processor: async (item, ct) => {
+        if (item.MessageId == i1.MessageId) {
+          processorStarted.TrySetResult();
+          await releaseProcessor.Task;
+          return;
+        }
+        secondItemRan = true;
+      },
+      options: new PerStreamSerializerOptions {
+        StreamChannelCapacity = 2,
+      });
+
+    await sut.EnqueueAsync(i1);
+    await sut.EnqueueAsync(i2);   // batched with i1 — capacity 2 ends the drain window immediately
+    await processorStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    using var preCanceled = new CancellationTokenSource();
+    await preCanceled.CancelAsync();
+    await sut.FlushAndStopAsync(preCanceled.Token);
+
+    releaseProcessor.TrySetResult();
+
+    await Assert.That(secondItemRan).IsFalse()
+      .Because("item 2 was already pulled into the same batch as item 1; once _stopCts is "
+             + "canceled the loop must skip it rather than starting new work after shutdown");
+  }
 }

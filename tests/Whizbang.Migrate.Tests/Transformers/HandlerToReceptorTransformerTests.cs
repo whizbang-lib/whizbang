@@ -569,7 +569,7 @@ public class HandlerToReceptorTransformerTests {
 
 
   [Test]
-  public async Task TransformAsync_LocalMessageWithoutMessageBus_IsStillRecognisedAsync() {
+  public async Task TransformAsync_LocalMessageWithoutMessageBus_IsRecognizedAndReportedAsync() {
     // Detection checks IMessageBus first and returns early when it finds one, so every file that
     // mentions both takes the first branch. A file that uses LocalMessage<T> and never names
     // IMessageBus reaches the second, and that is the one nothing exercised. If detection missed
@@ -590,11 +590,17 @@ public class HandlerToReceptorTransformerTests {
 
     var result = await transformer.TransformAsync(sourceCode, "OrderNotifier.cs");
 
-    await Assert.That(result.TransformedCode).Contains("LocalInvokeAsync<")
-      .Because("LocalMessage<T> has no Whizbang equivalent under that name; leaving it renames "
-             + "nothing and the migrated project fails to build");
-    await Assert.That(result.TransformedCode).DoesNotContain("LocalMessage<")
-      .Because("a half-renamed file is worse than an untouched one");
+    // LocalMessage<T> here is a parameter TYPE, and there is no type to rename it to --
+    // LocalInvokeAsync is a method on the dispatcher. Renaming it in place would produce a
+    // signature that does not compile while looking migrated, so the transform leaves it and
+    // says so instead.
+    await Assert.That(result.TransformedCode).Contains("LocalMessage<OrderPlaced>")
+      .Because("there is no type-level equivalent, so the signature is left as the developer wrote it");
+    await Assert.That(result.TransformedCode).DoesNotContain("LocalInvokeAsync<OrderPlaced> message")
+      .Because("LocalInvokeAsync is a method; putting it in a parameter position is not a migration, it is a break");
+    await Assert.That(result.Warnings.Any(w => w.Contains("LocalMessage<T>", StringComparison.Ordinal))).IsTrue()
+      .Because("silence here is the real failure -- the project will not build against Whizbang, and "
+             + "a report with no warning says nothing was needed");
   }
 
   [Test]
@@ -668,6 +674,199 @@ public class HandlerToReceptorTransformerTests {
       .Because("only an IHandle<T> base makes a class a handler");
     await Assert.That(result.TransformedCode).Contains("ReportBuilderBase")
       .Because("the unrelated base class survives untouched");
+  }
+
+  [Test]
+  public async Task TransformAsync_HandlerMethodNamedDifferently_SkipsSyncReceptorWarningWithoutFlaggingItAsync() {
+    // If a class implements IHandle<T> but its handling method isn't literally named Handle or
+    // HandleAsync, the base-list rewrite still converts it to IReceptor<T> -- but there is no
+    // method named ReceiveAsync to show for it, and (the point of this test) nothing warns about
+    // it either. A migrated class can silently stop implementing the interface it just gained.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class ArchiveOrderHandler : IHandle<ArchiveOrderCommand> {
+        public Task Archive(ArchiveOrderCommand command) {
+          return Task.CompletedTask;
+        }
+      }
+
+      public record ArchiveOrderCommand(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IReceptor<ArchiveOrderCommand>")
+      .Because("the base-type rewrite runs independently of the method name");
+    await Assert.That(result.TransformedCode).Contains("public Task Archive(ArchiveOrderCommand command)")
+      .Because("only methods literally named Handle or HandleAsync are renamed");
+    await Assert.That(result.Warnings).IsEmpty()
+      .Because("no warning exists for a handler whose method the renamer can't find -- the gap is silent");
+  }
+
+  [Test]
+  public async Task TransformAsync_WolverineHandlerAttributeWithoutWolverineUsing_LeavesUsingsUntouchedAsync() {
+    // Detection can trigger purely off the [WolverineHandler] attribute with no "using Wolverine;"
+    // anywhere in the file (brought in globally, say). The using-rewrite step then has nothing to
+    // replace and must leave the (here, empty) using list alone rather than inserting an import the
+    // file never needed.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      [WolverineHandler]
+      public class NotifyOrderHandler {
+        public Task Handle(NotifyOrderCommand command) {
+          return Task.CompletedTask;
+        }
+      }
+
+      public record NotifyOrderCommand(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    await Assert.That(result.TransformedCode).DoesNotContain("using Whizbang.Core;")
+      .Because("nothing imported Wolverine, so nothing should be replaced with a Whizbang import");
+    await Assert.That(result.TransformedCode).DoesNotContain("[WolverineHandler]")
+      .Because("attribute removal is independent of the using-directive step and still runs");
+    await Assert.That(result.Changes.Any(c =>
+        c.ChangeType is ChangeType.UsingAdded or ChangeType.UsingRemoved or ChangeType.UsingReplaced))
+      .IsFalse()
+      .Because("no using-directive change should be recorded when there was no Wolverine using to touch");
+  }
+
+  [Test]
+  public async Task TransformAsync_HandleNamedMethodOnUnrelatedBaseClass_IsNotTreatedAsAHandlerAsync() {
+    // Both the base-type rewriter and the method renamer key off IHandle<T>/IReceptor<T> in the
+    // base list, never off the method name alone. A class with a method literally called Handle but
+    // some other base class must come through untouched -- renaming it would fabricate a receptor
+    // method on a class that never implemented the interface.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class CreateOrderHandler : IHandle<CreateOrderCommand> {
+        public Task Handle(CreateOrderCommand command) => Task.CompletedTask;
+      }
+
+      public class OrderReportBuilder : ReportBuilderBase {
+        public void Handle(string data) { }
+      }
+
+      public class ReportBuilderBase { }
+
+      public record CreateOrderCommand(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Handlers.cs");
+
+    await Assert.That(result.TransformedCode).Contains("IReceptor<CreateOrderCommand>")
+      .Because("the real handler in the same file still converts normally");
+    await Assert.That(result.TransformedCode).Contains("class OrderReportBuilder : ReportBuilderBase")
+      .Because("an unrelated base type must fall through the base-type rewriter unchanged");
+    await Assert.That(result.TransformedCode).Contains("public void Handle(string data)")
+      .Because("a Handle-named method outside an IHandle/IReceptor class must not be renamed");
+  }
+
+  [Test]
+  public async Task TransformAsync_AttributeListWithoutWolverineHandler_IsLeftCompletelyUntouchedAsync() {
+    // The attribute remover only special-cases [WolverineHandler]/[WolverineHandlerAttribute]. Any
+    // other attribute list in the same file -- here an [Obsolete] on the handler itself -- must
+    // come through byte-for-byte, and no AttributeRemoved change should be logged for it.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      [Obsolete("use CreateOrderHandler instead")]
+      public class LegacyOrderHandler : IHandle<LegacyOrderCommand> {
+        public Task Handle(LegacyOrderCommand command) => Task.CompletedTask;
+      }
+
+      public record LegacyOrderCommand(string OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    await Assert.That(result.TransformedCode).Contains("[Obsolete(\"use CreateOrderHandler instead\")]")
+      .Because("an unrelated attribute must survive verbatim");
+    await Assert.That(result.TransformedCode).Contains("IReceptor<LegacyOrderCommand>")
+      .Because("the interface conversion still happens for the class underneath");
+    await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.AttributeRemoved)).IsFalse()
+      .Because("nothing Wolverine-specific was in that attribute list, so nothing should be logged as removed");
+  }
+
+  [Test]
+  public async Task TransformAsync_WolverineHandlerAttributeSharesListWithAnotherAttribute_RemovesOnlyItAsync() {
+    // [WolverineHandler, Obsolete(...)] packs two attributes into one bracketed list. Removing the
+    // Wolverine one must rebuild the list around the survivor instead of dropping the whole
+    // bracket -- losing an unrelated attribute like [Obsolete] would silence a real deprecation
+    // warning for anyone still calling into the migrated type.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      [WolverineHandler, Obsolete("legacy handler shim")]
+      public class LegacyNotificationHandler {
+        public Task Handle(SendLegacyNotificationCommand command) => Task.CompletedTask;
+      }
+
+      public record SendLegacyNotificationCommand(string Message);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    await Assert.That(result.TransformedCode).DoesNotContain("WolverineHandler")
+      .Because("the Wolverine attribute is still removed");
+    await Assert.That(result.TransformedCode).Contains("[Obsolete(\"legacy handler shim\")]")
+      .Because("the sibling attribute must survive in its own rebuilt bracket");
+    await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.AttributeRemoved)).IsTrue()
+      .Because("the removal of WolverineHandler from the shared list is still tracked");
+  }
+
+  [Test]
+  public async Task TransformAsync_NullConditionalInvokeAsyncOnLocalMessage_IsLeftIntactRatherThanManglingItAsync() {
+    // The AST rewrite for _bus.InvokeAsync(new LocalMessage<T>(...)) only fires when the call's
+    // expression is a plain member access. Written with the null-conditional operator
+    // (_bus?.InvokeAsync(...)), the expression is a member-binding node instead, so the rewrite
+    // declines and the call comes back unchanged. That is the right call -- but it used to be
+    // undone downstream: a post-process step meant for comments text-replaced every
+    // "LocalMessage<" in the whole file, so the declined call was emitted as
+    // "new LocalInvokeAsync<T>(...)" -- a method name used as a constructed type. Source that
+    // does not compile, produced silently, with no warning and no recorded change.
+    //
+    // Leaving the original intact is what a partial migration should do: the developer's code
+    // still builds, and the un-migrated call is visible as itself.
+    var transformer = new HandlerToReceptorTransformer();
+    const string sourceCode = """
+      using Wolverine;
+
+      public class OrderRelay {
+        private readonly IMessageBus _bus;
+
+        public OrderRelay(IMessageBus bus) {
+          _bus = bus;
+        }
+
+        public void Relay(RelayOrderCommand command) {
+          _bus?.InvokeAsync(new LocalMessage<ValidateOrderCommand>(
+              new ValidateOrderCommand(command.OrderId)));
+        }
+      }
+
+      public record RelayOrderCommand(Guid OrderId);
+      public record ValidateOrderCommand(Guid OrderId);
+      """;
+
+    var result = await transformer.TransformAsync(sourceCode, "OrderRelay.cs");
+
+    await Assert.That(result.TransformedCode).Contains("new LocalMessage<ValidateOrderCommand>")
+      .Because("a call the rewrite declined must come back exactly as written, not half-renamed into source that will not compile");
+    await Assert.That(result.TransformedCode).DoesNotContain("new LocalInvokeAsync<")
+      .Because("LocalInvokeAsync is a method; emitting it as a constructed type is the corruption this guards against");
+    await Assert.That(result.TransformedCode).Contains("_bus?.InvokeAsync(")
+      .Because("the call site was not restructured, so it must be left whole rather than partly rewritten");
+    await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.MethodCallReplacement)).IsFalse()
+      .Because("nothing was replaced here, and a recorded change would misreport the file as migrated");
   }
 
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -1355,6 +1356,275 @@ public class PerspectiveWorkerCoverageTests {
 
   #endregion
 
+  #region Rewind Startup Scan — Blocking Mode Repoll Loop
+
+  // If the blocking-mode rewind scan stopped after the first repoll while cursors still
+  // needed rewind, the read-model startup barrier (StartupScanComplete) would release while
+  // wh_perspective_cursors still had genuinely stale rows in it — a lens reading right after
+  // startup would see reads that look "ready" but are still mid-repair. The loop must keep
+  // re-querying every round while the RewindRequired set stays non-empty, not just once.
+  [Test]
+  public async Task Worker_BlockingRewindScan_KeepsRepollingAcrossMultipleNonEmptyRoundsAsync() {
+    // Arrange
+    var coordinator = new _RewindLoopCoordinator();
+    const string perspectiveName = "Test.Perspectives.RewindPerspective";
+    coordinator.EnqueueResult([new RewindCursorInfo(Guid.NewGuid(), perspectiveName, null, Guid.NewGuid())]);
+    coordinator.EnqueueResult([new RewindCursorInfo(Guid.NewGuid(), perspectiveName, null, Guid.NewGuid())]);
+    coordinator.EnqueueResult([]);
+
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var registry = new FakePerspectiveRunnerRegistry();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 20 }),
+      tracingOptions: null,
+      completionStrategy: new InstantCompletionStrategy(),
+      rewindOptions: Options.Create(new Whizbang.Core.Perspectives.PerspectiveRewindOptions {
+        StartupRewindMode = Whizbang.Core.Perspectives.RewindStartupMode.Blocking
+      }),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await coordinator.WaitForQueriesAsync(3, TimeSpan.FromSeconds(10));
+
+    // Assert
+    await Assert.That(coordinator.QueryCount).IsEqualTo(3)
+      .Because("the blocking scan must keep re-querying across every non-empty round, not stop after the first repoll");
+
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+  }
+
+  #endregion
+
+  // NOTE: a test for the missing-IPerspectiveRunnerRegistry branch (PerspectiveWorker.cs:2660-2661)
+  // was attempted here and removed. Work enqueued through PerspectiveWorkerTestHarness never reaches
+  // _resolveDependenciesAndLoadEventsAsync, so LogPerspectiveRunnerRegistryNotRegistered (EventId 11)
+  // is never emitted -- verified by waiting on it for 10s, for one emission and for two, three runs
+  // each. The pre-existing Worker_RegistryNotRegistered_SkipsPerspectiveAndContinuesAsync does not
+  // contradict this: its only assertion is ConsecutiveEmptyPolls >= 0, which is true whether or not
+  // the branch is ever reached. See residue entry AT.
+
+  #region Processed-Event Loading — Missing Event Types
+
+  // A completed run with no configured event types must skip PostPerspective event loading
+  // cleanly instead of throwing on the dereference — and it must not stall the checkpoint: a
+  // consumer that never wired IEventTypeProvider should still see its cursor advance so it can
+  // add tracing/receptors later without replaying its whole backlog.
+  [Test]
+  public async Task Worker_ReceptorAndEventStorePresentButNoEventTypeProvider_LogsSkipAndStillReportsCompletionAsync() {
+    // Arrange
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var registry = new FakePerspectiveRunnerRegistry();
+    var eventStore = new FakeEventStore();
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork { StreamId = streamId, PerspectiveName = "Test.FakePerspective", LastProcessedEventId = null, PartitionNumber = 1 }
+    ];
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(eventStore);
+    services.AddScoped<IReceptorInvoker, NoOpReceptorInvoker>();
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var harness = new PerspectiveWorkerTestHarness();
+    var capturingLogger = new _CapturingLogger();
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      completionStrategy: new InstantCompletionStrategy(),
+      logger: capturingLogger,
+      // eventTypeProvider intentionally omitted — this is the branch under test.
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
+    await capturingLogger.WaitForEventIdCountAsync(eventId: 23, count: 1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(capturingLogger.Entries.Count(e => e.EventId == 23)).IsGreaterThanOrEqualTo(1)
+      .Because("with a receptor invoker and event store both present, a completed run with no event-type provider must hit the dedicated no-event-types guard");
+    await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("skipping PostPerspective event loading must not prevent the cursor completion from being reported");
+  }
+
+  // Same guard, reached via the OTHER trigger: a provider that resolves but reports zero
+  // known event types (a fresh host before any event type registers, or a misconfigured
+  // AOT event-type source). Must be indistinguishable in effect from a missing provider.
+  [Test]
+  public async Task Worker_ReceptorAndEventStorePresentButEventTypeProviderEmpty_LogsSkipAndStillReportsCompletionAsync() {
+    // Arrange
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var registry = new FakePerspectiveRunnerRegistry();
+    var eventStore = new FakeEventStore();
+    var streamId = Guid.NewGuid();
+    coordinator.PerspectiveWorkToReturn = [
+      new PerspectiveWork { StreamId = streamId, PerspectiveName = "Test.FakePerspective", LastProcessedEventId = null, PartitionNumber = 1 }
+    ];
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddSingleton<IEventStore>(eventStore);
+    services.AddScoped<IReceptorInvoker, NoOpReceptorInvoker>();
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var harness = new PerspectiveWorkerTestHarness();
+    var capturingLogger = new _CapturingLogger();
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      tracingOptions: null,
+      completionStrategy: new InstantCompletionStrategy(),
+      logger: capturingLogger,
+      eventTypeProvider: new FakeEventTypeProvider([]),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    // Act
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    foreach (var w in coordinator.PerspectiveWorkToReturn) {
+      await harness.EnqueueWorkAsync(w, cts.Token);
+    }
+    await capturingLogger.WaitForEventIdCountAsync(eventId: 23, count: 1, TimeSpan.FromSeconds(10));
+    await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(10));
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(capturingLogger.Entries.Count(e => e.EventId == 23)).IsGreaterThanOrEqualTo(1)
+      .Because("an event-type provider that resolves but reports zero types must hit the same guard as a missing provider");
+    await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1)
+      .Because("skipping PostPerspective event loading must not prevent the cursor completion from being reported");
+  }
+
+  #endregion
+
+  #region Cursor Inversion / Cooldown — Additional Branch Coverage
+  //
+  // CursorInversionDetectorTests.cs already locks the well-known _resolveInversionAnchor and
+  // _partitionByCooldown scenarios (read in full before adding these). Two inner-loop branches
+  // in those methods are not reached by any of its existing cases; the two tests below close
+  // exactly those, without duplicating scenarios already covered there.
+
+  private static StreamEventData _round23RawRow(Guid streamId, Guid eventId, Guid eventWorkId, string? perspectiveName, long? commitSequence) => new() {
+    StreamId = streamId,
+    EventId = eventId,
+    EventType = "Test.Event, Test",
+    EventData = "{}",
+    EventWorkId = eventWorkId,
+    PerspectiveName = perspectiveName,
+    CommitSequence = commitSequence,
+  };
+
+  private static MessageEnvelope<IEvent> _round23Envelope(Guid messageId) => new() {
+    MessageId = new MessageId(messageId),
+    Payload = new TestCoverageEvent("cooldown-inversion-test"),
+    Hops = [],
+    DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+  };
+
+  // If an unstamped-but-present raw row were treated the same as "no raw row found at all",
+  // the scan could exit without ever reaching the event_id fallback for a genuinely pending
+  // event — silently disabling the only rewind protection a legacy (pre-commit-sequence)
+  // perspective has.
+  [Test]
+  public async Task ResolveInversionAnchor_RawRowPresentButUnstamped_StillFallsBackToEventIdAsync() {
+    var older = Guid.CreateVersion7();
+    await Task.Delay(2);
+    var cursor = Guid.CreateVersion7();
+    var streamId = Guid.NewGuid();
+    var eventWorkId = Guid.NewGuid();
+
+    var rawLookup = new[] {
+      _round23RawRow(streamId, older, eventWorkId, perspectiveName: null, commitSequence: null)
+    }.ToLookup(r => r.EventId);
+
+    var anchor = PerspectiveWorker._resolveInversionAnchor(
+      filteredEvents: [_round23Envelope(older)],
+      rawByEventId: rawLookup,
+      lastProcessedEventId: cursor,
+      lastProcessedCommitSequence: null);
+
+    await Assert.That(anchor).IsEqualTo(older)
+      .Because("a raw row that exists but isn't stamped yet must not trip the skip-detection guard — only a STAMPED sibling does; the scan must walk past it and still reach the event_id fallback");
+  }
+
+  // If a sibling perspective's raw row for the SAME event leaked into this perspective's
+  // cooldown check, one perspective's already-applied status could make ANOTHER perspective's
+  // genuinely fresh event look cooled (silently dropped) or vice versa (double-applied).
+  [Test]
+  public async Task PartitionByCooldown_RawRowForDifferentPerspective_IsIgnoredAsync() {
+    var cache = new Whizbang.Core.Workers.RecentlyProcessedEventCache(
+      new Whizbang.Core.SystemTimeProvider(new Microsoft.Extensions.Time.Testing.FakeTimeProvider(
+        new DateTimeOffset(2026, 5, 24, 12, 0, 0, TimeSpan.Zero))));
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    var myWorkId = Guid.NewGuid();
+    var otherWorkId = Guid.NewGuid();
+
+    cache.MarkProcessed(myWorkId);
+    // otherWorkId is deliberately left un-marked: if the mismatched row were consulted, its
+    // "not recently processed" status would flip this event to fresh even though MY
+    // perspective's own row says cooled.
+
+    var rawLookup = new[] {
+      _round23RawRow(streamId, eventId, myWorkId, perspectiveName: "Mine", commitSequence: 1),
+      _round23RawRow(streamId, eventId, otherWorkId, perspectiveName: "Other", commitSequence: 1),
+    }.ToLookup(r => r.EventId);
+
+    var (cooled, fresh) = PerspectiveWorker._partitionByCooldown(
+      [_round23Envelope(eventId)],
+      rawLookup,
+      cache,
+      perspectiveName: "Mine");
+
+    await Assert.That(cooled.Count).IsEqualTo(1)
+      .Because("the sibling perspective's raw row must be skipped entirely, not consulted");
+    await Assert.That(fresh.Count).IsEqualTo(0);
+  }
+
+  #endregion
+
   #region Test Types
 
   private sealed record TestCoverageEvent(string Data) : IEvent;
@@ -1811,6 +2081,89 @@ public class PerspectiveWorkerCoverageTests {
       var count = Interlocked.Increment(ref _callCount);
       ObjectDisposedException.ThrowIf(count > throwAfterCalls, nameof(IServiceProvider));
       return inner.CreateScope();
+    }
+  }
+
+  #endregion
+
+  #region Round 23 Additional Coverage — Fakes
+
+  /// <summary>
+  /// Minimal <see cref="IWorkCoordinator"/> whose only real behavior is
+  /// <see cref="GetCursorsRequiringRewindAsync"/>, driven by a queue so a test can script
+  /// multiple successive startup-scan repoll rounds.
+  /// </summary>
+  private sealed class _RewindLoopCoordinator : IWorkCoordinator, IDisposable {
+    private readonly Queue<IReadOnlyList<RewindCursorInfo>> _results = new();
+    private readonly SemaphoreSlim _querySignal = new(0, int.MaxValue);
+
+    public void Dispose() => _querySignal.Dispose();
+    public int QueryCount { get; private set; }
+
+    public void EnqueueResult(IReadOnlyList<RewindCursorInfo> result) => _results.Enqueue(result);
+
+    public async Task WaitForQueriesAsync(int count, TimeSpan timeout) {
+      for (var i = 0; i < count; i++) {
+        if (!await _querySignal.WaitAsync(timeout)) {
+          throw new TimeoutException($"Only saw {i} of {count} rewind-scan queries within {timeout}");
+        }
+      }
+    }
+
+    public Task<IReadOnlyList<RewindCursorInfo>> GetCursorsRequiringRewindAsync(CancellationToken cancellationToken = default) {
+      QueryCount++;
+      _querySignal.Release();
+      IReadOnlyList<RewindCursorInfo> result = _results.Count > 0 ? _results.Dequeue() : [];
+      return Task.FromResult(result);
+    }
+
+    public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
+      Task.FromResult<PerspectiveCursorInfo?>(null);
+  }
+
+  /// <summary>
+  /// Captures every log call's numeric EventId. Used to prove a specific source-generated
+  /// LoggerMessage fired — a deterministic signal that a guarded branch inside a private
+  /// helper actually executed, rather than inferring it from side effects that can stay green
+  /// for the wrong reason (see the vacuity-trap note on the tests that use this).
+  /// </summary>
+  private sealed class _CapturingLogger : ILogger<PerspectiveWorker>, IDisposable {
+    private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
+
+    public void Dispose() => _signal.Dispose();
+    private readonly Lock _lock = new();
+    private readonly List<(int EventId, string Message)> _entries = [];
+
+    public IReadOnlyList<(int EventId, string Message)> Entries {
+      get { lock (_lock) { return [.. _entries]; } }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (_lock) { _entries.Add((eventId.Id, formatter(state, exception))); }
+      _signal.Release();
+    }
+
+    public async Task WaitForEventIdCountAsync(int eventId, int count, TimeSpan timeout) {
+      while (true) {
+        int seen;
+        lock (_lock) { seen = _entries.Count(e => e.EventId == eventId); }
+        if (seen >= count) {
+          return;
+        }
+        if (!await _signal.WaitAsync(timeout)) {
+          throw new TimeoutException($"Only saw {seen} of {count} logs with EventId {eventId} within {timeout}");
+        }
+      }
     }
   }
 

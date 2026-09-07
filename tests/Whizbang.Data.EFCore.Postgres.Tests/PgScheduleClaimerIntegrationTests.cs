@@ -98,4 +98,97 @@ public class PgScheduleClaimerIntegrationTests : EFCoreTestBase {
     await Assert.That(fired).IsEqualTo(0);
     await Assert.That(await _countOutboxAsync("ClaimerOccFuture")).IsEqualTo(0L);
   }
+
+  /// <summary>
+  /// The schedule's fire time as the database holds it, shaped exactly as the claimer returns it.
+  /// Read back rather than computed from the host clock: the rows are seeded with NOW() on the DB
+  /// clock, and a container VM under load can sit minutes behind the host.
+  /// </summary>
+  private async Task<DateTimeOffset?> _fireAtForStreamAsync(Guid streamId) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await using var cmd = new NpgsqlCommand(
+      "SELECT MIN(next_fire_at) FROM wh_schedules WHERE stream_id = @s AND status = 0", conn);
+    cmd.Parameters.AddWithValue("s", streamId);
+    var value = await cmd.ExecuteScalarAsync();
+    return value is null or DBNull
+      ? null
+      : new DateTimeOffset(DateTime.SpecifyKind((DateTime)value, DateTimeKind.Utc), TimeSpan.Zero);
+  }
+
+  [Test]
+  public async Task GetNextFireTime_ReturnsTheEarliestOwnedScheduleAsUtcAsync() {
+    // This is what arms the precise wake. The worker sleeps until the moment this returns, so a
+    // value that is late, or carries the wrong offset, does not fail — it just means the schedule
+    // fires whenever the backstop next comes round instead of when it was due.
+    var (claimer, instance) = _create();
+    var stream = Guid.NewGuid();
+    await _pinStreamAsync(stream, instance.InstanceId);
+    await _insertScheduleAsync(stream, "1 hour", "NextFireLate");
+    await _insertScheduleAsync(stream, "10 minutes", "NextFireSoon");
+
+    var next = await claimer.GetNextFireTimeAsync();
+
+    await Assert.That(next).IsNotNull();
+    await Assert.That(next!.Value).IsEqualTo((await _fireAtForStreamAsync(stream))!.Value)
+      .Because("arming to anything later than the earliest pending schedule leaves that one to be "
+             + "picked up by the backstop, which is the latency this path exists to avoid");
+    await Assert.That(next.Value.Offset).IsEqualTo(TimeSpan.Zero)
+      .Because("the column is timestamptz and the caller treats the result as an absolute instant; "
+             + "a local-kind value would arm the timer off by the host's offset");
+  }
+
+  [Test]
+  public async Task GetNextFireTime_IgnoresSchedulesOwnedByAnotherInstanceAsync() {
+    // Streams are assigned to instances, and a schedule on someone else's stream is not this pod's
+    // to fire. Arming for it wakes this pod for work it cannot claim, and it does so EARLIER than
+    // its own next schedule — so the wake it really needed gets replaced by one that does nothing.
+    var (claimer, instance) = _create();
+    var mine = Guid.NewGuid();
+    var theirs = Guid.NewGuid();
+    await _pinStreamAsync(mine, instance.InstanceId);
+    await _pinStreamAsync(theirs, Guid.NewGuid());
+    await _insertScheduleAsync(mine, "30 minutes", "NextFireMine");
+    await _insertScheduleAsync(theirs, "1 minute", "NextFireTheirs");
+
+    var next = await claimer.GetNextFireTimeAsync();
+
+    await Assert.That(next).IsNotNull();
+    await Assert.That(next!.Value).IsEqualTo((await _fireAtForStreamAsync(mine))!.Value)
+      .Because("the sooner schedule belongs to another instance; answering with it would arm a "
+             + "wake this pod cannot act on and drop the one it could");
+  }
+
+  [Test]
+  public async Task GetNextFireTime_WithNothingOwned_ReturnsNullAsync() {
+    // No owned schedules means no wake to arm, and the worker falls back to its backstop cadence.
+    // Returning a value here would arm a timer for a schedule that will never be claimed.
+    var (claimer, instance) = _create();
+    var theirs = Guid.NewGuid();
+    await _pinStreamAsync(theirs, Guid.NewGuid());
+    await _insertScheduleAsync(theirs, "5 minutes", "NextFireNotMine");
+
+    await Assert.That(await claimer.GetNextFireTimeAsync()).IsNull()
+      .Because("nothing is assigned to this instance, so there is no moment worth waking for");
+  }
+
+  [Test]
+  public async Task BeforeTheDatabaseIsReachable_BothEntryPointsReportNothingToDoAsync() {
+    // A pod can start before its database is resolvable — no connection string yet, no registered
+    // data source. Neither entry point may throw: the temporal engine is driven by the doorbell
+    // and the backstop, both of which come back on their own once the connection exists. Throwing
+    // here would take the host down over a condition that resolves itself.
+    var claimer = new PgScheduleClaimer(
+      Options.Create(new WhizbangNotificationOptions()),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
+      new ServiceInstanceProvider(Guid.NewGuid(), "unwired-svc", "unwired-host", processId: 1),
+      Options.Create(new ClaimWorkerOptions()),
+      Options.Create(new TemporalOptions()),
+      NullLogger<PgScheduleClaimer>.Instance);
+
+    await Assert.That(await claimer.ClaimDueSchedulesAsync(100)).IsEqualTo(0)
+      .Because("claiming nothing is the honest answer when there is nowhere to claim from");
+    await Assert.That(await claimer.GetNextFireTimeAsync()).IsNull()
+      .Because("there is no schedule table to read a fire time out of yet");
+  }
 }

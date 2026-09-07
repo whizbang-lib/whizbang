@@ -551,6 +551,60 @@ public class GuidToTrackedGuidTransformerTests {
   }
 
   [Test]
+  public async Task TransformAsync_G04_CollisionRetryPatternInWhileLoop_EmitsWarningAsync() {
+    // Arrange - G04: the `while`-loop variant of the collision-retry detector uses a narrower
+    // keyword set than the `for`-loop variant above ("duplicate key", "collision", "retry" only
+    // -- no "Retry", "attempt", or "Attempt"). A developer's hand-rolled while-based retry loop
+    // is exactly as pointless under TrackedGuid.NewMedo() as the for-loop kind, so leaving this
+    // branch unexercised risked it silently drifting apart from its sibling and going unwarned.
+    var transformer = new GuidToTrackedGuidTransformer();
+    const string sourceCode = """
+      using System;
+
+      public class OrderHandler {
+        private const int MaxTries = 5;
+
+        public async Task<Guid> HandleAsync(CreateOrderCommand command, CancellationToken ct) {
+          var succeeded = false;
+          var orderId = Guid.Empty;
+          var tries = 0;
+          while (!succeeded && tries < MaxTries) {
+            orderId = Guid.NewGuid();
+            tries++;
+            try {
+              await CreateOrderAsync(orderId);
+              succeeded = true;
+            }
+            catch (Exception ex) when (ex.Message.Contains("collision")) {
+              // loop again on collision
+            }
+          }
+          return orderId;
+        }
+
+        private Task CreateOrderAsync(Guid id) => Task.CompletedTask;
+      }
+
+      public record CreateOrderCommand(string Data);
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("TrackedGuid.NewMedo()");
+    // The warning must name the line of the developer's loop and spell out *why* the retry logic
+    // is now pointless -- a bare "found something" warning would not tell the developer which
+    // loop to look at or what to do about it.
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("Line 10:") &&
+        w.Contains("collision-free") &&
+        w.Contains("retry logic typically unnecessary")))
+      .IsTrue()
+      .Because("the warning has to point at the specific while loop and explain that TrackedGuid.NewMedo() already makes its retry logic unnecessary, not merely announce that some warning fired");
+  }
+
+  [Test]
   public async Task TransformAsync_G02_MultipleCombGuidCalls_TransformsAllAsync() {
     // Arrange - G02: Multiple CombGuid calls in same file
     var transformer = new GuidToTrackedGuidTransformer();

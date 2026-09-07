@@ -63,6 +63,18 @@ public class IntegritySweepSchedulingTests {
     };
   }
 
+  /// <summary>Records what <see cref="ScheduledIntegritySweepReceptorRegistrar"/> registered and
+  /// where — the whole contract of a runtime-registered receptor is which stages it reaches.</summary>
+  private sealed class _recordingRegistry : IReceptorRegistry {
+    public List<(Type Msg, LifecycleStage Stage)> Registered { get; } = [];
+    public void Register<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage =>
+      Registered.Add((typeof(TMessage), stage));
+    public void Register<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage { }
+    public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage) => [];
+    public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+    public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage) where TMessage : IMessage => false;
+  }
+
   private static (IntegritySweepScheduler Scheduler, IntegritySweepScheduleState State, _captureScheduleManager Manager)
       _build(string? cron, bool withManager = true, string serviceName = "auditor-svc") {
     var services = new ServiceCollection();
@@ -172,5 +184,55 @@ public class IntegritySweepSchedulingTests {
 
     await receptor.HandleAsync(new ScheduledIntegritySweep());
     // Reaching here without throwing is the assertion — schema-only hosts still boot and dispatch.
+  }
+
+  [Test]
+  public async Task Registrar_RegistersReceptorAtThreeDefaultStagesAsync() {
+    var registry = new _recordingRegistry();
+    var services = new ServiceCollection();
+    services.AddSingleton<IReceptorRegistry>(registry);
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new ScheduledIntegritySweepReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+
+    await registrar.StartAsync(CancellationToken.None);
+
+    await Assert.That(registry.Registered.Count).IsEqualTo(3);
+    var stages = new HashSet<LifecycleStage>();
+    foreach (var (msg, stage) in registry.Registered) {
+      await Assert.That(msg).IsEqualTo(typeof(ScheduledIntegritySweep));
+      stages.Add(stage);
+    }
+    await Assert.That(stages.Contains(LifecycleStage.LocalImmediateInline)).IsTrue();
+    await Assert.That(stages.Contains(LifecycleStage.PreOutboxInline)).IsTrue();
+    await Assert.That(stages.Contains(LifecycleStage.PostInboxInline)).IsTrue()
+      .Because("a scheduled integrity sweep arriving down any of the three inline stages must be handled — "
+             + "registering at only some of them would let sweeps dispatched through the others be silently dropped.");
+  }
+
+  [Test]
+  public async Task Registrar_NoRegistry_IsInertAsync() {
+    var services = new ServiceCollection();   // no IReceptorRegistry
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new ScheduledIntegritySweepReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+
+    await Assert.That(async () => await registrar.StartAsync(CancellationToken.None))
+      .ThrowsNothing()
+      .Because("the registrar is a hosted service — a host that never wired the messaging registry is a normal "
+             + "configuration, not a startup failure, so throwing here would take down the whole process over it.");
+  }
+
+  [Test]
+  public async Task Registrar_StopAsync_CompletesWithoutThrowingAsync() {
+    var services = new ServiceCollection();
+    await using var sp = services.BuildServiceProvider();
+    var registrar = new ScheduledIntegritySweepReceptorRegistrar(
+      sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+
+    await Assert.That(async () => await registrar.StopAsync(CancellationToken.None))
+      .ThrowsNothing()
+      .Because("StopAsync is deliberately a no-op — the registration lives for the process lifetime, not the "
+             + "registrar's, so there is nothing to unwind on shutdown.");
   }
 }

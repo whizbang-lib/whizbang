@@ -131,7 +131,14 @@ public sealed class RecentlyProcessedEventCache {
       }
       // Evict the oldest 10% so we don't hit the cap again on the very next insert.
       var batch = Math.Max(overflow, _maxEntries / 10);
-      var toEvict = _entries
+      // Snapshot through ConcurrentDictionary's OWN ToArray, which takes all bucket locks and
+      // returns an atomic copy. Ordering the dictionary directly is not safe here: LINQ buffers
+      // the source for OrderBy via Enumerable.ToArray, which sees ICollection<KeyValuePair<,>>
+      // and takes the CopyTo fast path -- and CopyTo sizes the destination from Count and then
+      // copies, so a concurrent MarkProcessed adding an entry in between throws
+      // ArgumentException straight out of this method. The eviction lock does not prevent that;
+      // it serializes evictions against each other, not against inserts.
+      var toEvict = _entries.ToArray()
         .OrderBy(static p => p.Value)
         .Take(batch)
         .Select(static p => p.Key)

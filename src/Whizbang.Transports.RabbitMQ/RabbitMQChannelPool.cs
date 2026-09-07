@@ -19,6 +19,12 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
   private bool _disposed;
 
   /// <summary>
+  /// Bumped by <see cref="Reset"/>. A <see cref="PooledChannel"/> carries the value it was rented
+  /// under, so <see cref="Return"/> can tell a live rental from one that outlived a reset.
+  /// </summary>
+  private int _generation;
+
+  /// <summary>
   /// Rents a channel from the pool.
   /// If no channels are available and the pool is not exhausted, creates a new channel.
   /// If the pool is exhausted, blocks until a channel is returned.
@@ -32,9 +38,13 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
     await _semaphore.WaitAsync(cancellationToken);
 
     try {
+      // Read AFTER the permit is held: a Reset that lands between here and Return must be
+      // observed as a generation change, and taking the reading earlier would widen that window.
+      var generation = Volatile.Read(ref _generation);
+
       // Try to get an existing channel from the pool
       if (_availableChannels.TryTake(out var channel)) {
-        return new PooledChannel(channel, this);
+        return new PooledChannel(channel, this, generation);
       }
 
       // No available channel, create a new one
@@ -43,7 +53,7 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
         _allChannels.Add(channel);
       }
 
-      return new PooledChannel(channel, this);
+      return new PooledChannel(channel, this, generation);
     } catch {
       // Release semaphore if we failed to get a channel
       _semaphore.Release();
@@ -55,9 +65,34 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
   /// Returns a channel to the pool.
   /// </summary>
   /// <param name="channel">The channel to return.</param>
-  internal void Return(IChannel channel) {
+  /// <param name="generation">The generation the channel was rented under.</param>
+  internal void Return(IChannel channel, int generation) {
     if (_disposed) {
       channel?.Dispose();
+      return;
+    }
+
+    // A rental that outlived a Reset. Reset already restored the semaphore to full capacity and
+    // discarded every channel it knew about, so this one belongs to the connection that was torn
+    // down: putting it back would hand a stale channel to the next caller, and releasing a permit
+    // would push the semaphore past its maximum -- which throws SemaphoreFullException out of
+    // Dispose, and therefore out of the caller's using block.
+    //
+    // That is not a hypothetical ordering. Reset exists to be called on connection recovery, and
+    // recovery happens precisely when channels are in flight, so the throw would land on top of
+    // whatever failure triggered the recovery and hide it.
+    if (generation != Volatile.Read(ref _generation)) {
+      if (channel != null) {
+        lock (_lock) {
+          _allChannels.Remove(channel);
+        }
+        try {
+          channel.Dispose();
+        } catch {
+          // The connection this channel belonged to is already gone; disposal failing here is
+          // expected and says nothing the caller can act on.
+        }
+      }
       return;
     }
 
@@ -107,6 +142,10 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
   /// New channels will be created on the recovered connection by subsequent RentAsync calls.
   /// </summary>
   public void Reset() {
+    // Bump first, so any rental still outstanding is already recognizable as stale by the time
+    // the channels it might hold are disposed below.
+    Interlocked.Increment(ref _generation);
+
     lock (_lock) {
       foreach (var channel in _allChannels) {
         try {
@@ -138,21 +177,23 @@ public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels)
 /// </summary>
 public readonly struct PooledChannel : IDisposable {
   private readonly RabbitMQChannelPool _pool;
+  private readonly int _generation;
 
   /// <summary>
   /// Gets the underlying RabbitMQ channel.
   /// </summary>
   public IChannel Channel { get; }
 
-  internal PooledChannel(IChannel channel, RabbitMQChannelPool pool) {
+  internal PooledChannel(IChannel channel, RabbitMQChannelPool pool, int generation) {
     Channel = channel;
     _pool = pool;
+    _generation = generation;
   }
 
   /// <summary>
   /// Returns the channel to the pool.
   /// </summary>
   public void Dispose() {
-    _pool.Return(Channel);
+    _pool.Return(Channel, _generation);
   }
 }

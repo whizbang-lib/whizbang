@@ -37,6 +37,22 @@ public class PackageManagerTests {
         """);
       return path;
     }
+    /// <summary>Enables CPM with the given packages already carrying central versions.</summary>
+    public void EnableCentralPackageManagement(params string[] packageVersions) {
+      var entries = string.Join("\n    ", packageVersions.Select(p =>
+        $"""<PackageVersion Include="{p}" Version="7.0.0" />"""));
+      File.WriteAllText(Path.Combine(Root, "Directory.Packages.props"), $"""
+        <Project>
+          <PropertyGroup>
+            <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+          </PropertyGroup>
+          <ItemGroup>
+            {entries}
+          </ItemGroup>
+        </Project>
+        """);
+    }
+
     public void EnableCentralPackageManagement() {
       File.WriteAllText(Path.Combine(Root, "Directory.Packages.props"), """
         <Project>
@@ -339,4 +355,49 @@ public class PackageManagerTests {
     await Assert.That(includes.Count(i => i == "SoftwareExtravaganza.Whizbang.Data.Postgres")).IsEqualTo(1);
   }
 
+
+  [Test]
+  public async Task UpdatePackagesAsync_APackageWithNoEquivalent_IsRemovedFromCentralVersionsAsync() {
+    // Some Wolverine packages have no Whizbang counterpart at all. Leaving their central version
+    // entry behind after the references are gone is dead configuration that outlives the
+    // migration, and the operator has no way to tell it from a package still in use — the whole
+    // point of the change list is that a dropped package is reported as dropped rather than
+    // silently kept.
+    using var sln = new TempSolution();
+    sln.EnableCentralPackageManagement("Wolverine.FluentValidation");
+    var project = sln.AddProject("OrderService", "Wolverine.FluentValidation");
+
+    var result = await PackageManager.UpdatePackagesAsync(sln.Root, [project], new PackageSettings());
+
+    await Assert.That(result.Success).IsTrue();
+    var remaining = _packageVersions(Path.Combine(sln.Root, "Directory.Packages.props"))
+      .Select(v => v.Include).ToList();
+    await Assert.That(remaining).DoesNotContain("Wolverine.FluentValidation")
+      .Because("nothing replaces it, so the central version entry has no reason to survive the "
+             + "reference that used it");
+    await Assert.That(result.Changes.Any(c =>
+        c.PackageName == "Wolverine.FluentValidation" && c.ChangeType == PackageChangeType.Removed))
+      .IsTrue()
+      .Because("a package dropped with no replacement is exactly the change an operator needs "
+             + "reported, because nothing in the migrated solution will mention it again");
+  }
+
+  [Test]
+  public async Task UpdatePackagesAsync_GeneratorProjects_AreLeftAloneAsync() {
+    // Source generators target netstandard2.0 and reference Roslyn, not the runtime packages.
+    // Adding Whizbang references to one does not migrate it — it stops it building, and the
+    // failure lands in a project the author never edited.
+    using var sln = new TempSolution();
+    var generator = sln.AddProject("OrderService.Generators", "Wolverine");
+
+    var result = await PackageManager.UpdatePackagesAsync(sln.Root, [generator], new PackageSettings());
+
+    await Assert.That(result.Success).IsTrue();
+    await Assert.That(_packageRefs(generator)).Contains("Wolverine")
+      .Because("the generator project is skipped whole, so even its stale reference is left for "
+             + "the author rather than rewritten by a pass that does not understand it");
+    await Assert.That(result.Changes.Any(c => c.FilePath == generator)).IsFalse()
+      .Because("reporting a change to a project that was deliberately skipped would send the "
+             + "author looking for an edit that is not there");
+  }
 }
