@@ -71,7 +71,7 @@ public sealed class PoisonAdmissionPolicy {
   /// lease expired without any reported outcome (the stamp is guarded on <c>error IS NULL</c>, so a real
   /// recorded failure is never overwritten by it).
   /// </summary>
-  public const string LEASE_EXPIRY_STAMP_MARKER = "ended without a reported outcome";
+  private const string LEASE_EXPIRY_STAMP_MARKER = "ended without a reported outcome";
 
   /// <summary>
   /// True when the row's recorded error is the framework's own abandonment stamp rather than a handler
