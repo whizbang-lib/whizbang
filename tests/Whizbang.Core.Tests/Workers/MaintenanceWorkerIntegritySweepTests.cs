@@ -175,4 +175,18 @@ public class MaintenanceWorkerIntegritySweepTests {
     await Assert.That(entry.Message).Contains("next cycle")
       .Because("the log states what failed and what happens to the pending rows as a result");
   }
+
+  [Test]
+  public async Task SweepCanceled_PropagatesCancellation_AndStopsTheCycleAsync() {
+    var coord = new SweepCoordinator { DiscardThrows = new OperationCanceledException() };
+    var (worker, logger) = _build(coord, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly });
+
+    await Assert.That(async () => await worker.RunMaintenanceOnceAsync(CancellationToken.None))
+      .Throws<OperationCanceledException>()
+      .Because("cancellation is shutdown, not a sweep failure; best-effort must not swallow it");
+    await Assert.That(coord.MaintenanceCalls).IsEqualTo(0)
+      .Because("a canceled cycle stops; nothing after the sweep runs");
+    await Assert.That(logger.Snapshot().Any(e => e.Message.Contains("sweep failed", StringComparison.Ordinal))).IsFalse()
+      .Because("shutdown is not reported as a failure");
+  }
 }

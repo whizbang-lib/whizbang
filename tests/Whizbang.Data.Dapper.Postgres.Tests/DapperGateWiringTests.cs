@@ -33,4 +33,20 @@ public class DapperGateWiringTests : PostgresTestBase {
     await Assert.That(gate.MaxConcurrent).IsEqualTo(7)
       .Because("the option that has always been documented is the one that takes effect");
   }
+
+  [Test]
+  public async Task MaxInFlightCommands_ReachesTheGate_ThroughTheSchemaSqlOverloadAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbangPostgres(
+      ConnectionString, new JsonSerializerOptions(), initializeSchema: false, perspectiveSchemaSql: null,
+      configureOptions: o => o.MaxInFlightCommands = 7);
+    services.AddWhizbangWorkers();
+
+    await using var provider = services.BuildServiceProvider();
+    var gate = provider.GetRequiredService<WorkCoordinatorGate>();
+
+    await Assert.That(gate.MaxConcurrent).IsEqualTo(7)
+      .Because("both registration overloads carry the option into the gate");
+  }
 }
