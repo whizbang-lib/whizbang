@@ -9,7 +9,6 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
-using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Perspectives;
@@ -120,7 +119,7 @@ public class ResurrectionProbeIsPerspectiveAwareTests {
 
   // -------------------------------------------------------------------------------------------
 
-  private static ResurrectionProbePerspectiveRunner _runner(RecordingEventStore store, InMemoryPerspectiveStore rows) {
+  private static IPerspectiveRunner _runner(RecordingEventStore store, InMemoryPerspectiveStore rows) {
     // The generated module initializer registers the TTL; register again so a test elsewhere that
     // reconfigures the static registry cannot switch this branch off.
     PerspectiveTtlRegistry.Register(typeof(ResurrectionProbeModel), 60 * 24 * 60 * 60);
@@ -128,12 +127,19 @@ public class ResurrectionProbeIsPerspectiveAwareTests {
     services.AddLogging();
     services.AddSingleton<ResurrectionProbePerspective>();
     var provider = services.BuildServiceProvider();
-    return new ResurrectionProbePerspectiveRunner(
-      provider,
-      NullLogger<ResurrectionProbePerspectiveRunner>.Instance,
-      store,
-      rows,
-      provider.GetRequiredService<IServiceScopeFactory>());
+    // The real generated runner, resolved by name: naming a generated type in source does not
+    // compile in a workspace that loads without running the generators (the formatting gate).
+    var runnerType = typeof(ResurrectionProbeIsPerspectiveAwareTests).Assembly
+      .GetType("Whizbang.Core.Tests.Generated.ResurrectionProbePerspectiveRunner", throwOnError: true)!;
+    var logger = Activator.CreateInstance(typeof(NullLogger<>).MakeGenericType(runnerType))!;
+    var ctor = runnerType.GetConstructors().Single();
+    var args = new object?[ctor.GetParameters().Length];
+    args[0] = provider;
+    args[1] = logger;
+    args[2] = store;
+    args[3] = rows;
+    args[4] = provider.GetRequiredService<IServiceScopeFactory>();
+    return (IPerspectiveRunner)ctor.Invoke(args);
   }
 
   private static MessageEnvelope<IEvent> _envelope(IEvent payload) => new() {
