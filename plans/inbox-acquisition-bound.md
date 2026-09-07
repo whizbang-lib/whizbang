@@ -177,6 +177,10 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
   never queue behind the drain bodies); logged at Debug.
 * Gate holder diagnostics (cycle 7a): `WorkCoordinatorGate.SnapshotHolders()` names every held slot by
   caller and age, and the deadline warning lists the holders grouped by caller ("Caller xN (oldest S s)").
+* Connection scope (cycle 7b): `CoordinatorConnectionScope.AcquireForEfCoreAsync` closes the DbContext
+  connection it opened when the call ends (EF Core only closes what it opened itself; a scope that left it
+  open held one pooled connection per DI scope for the scope's whole life). A connection the caller had
+  open, or a transaction in progress, is left as found.
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
