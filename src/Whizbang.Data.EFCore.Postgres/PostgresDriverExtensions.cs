@@ -52,6 +52,8 @@ public static class PostgresDriverExtensions {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LibraryVersionRegistrationTests.cs:Postgres_WhenTheConsumerRegisteredItsOwnDbContext_StillRegistersTheLibraryVersionAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionByoDataSourceE2ETests.cs:Elector_UnderUseNpgsqlDataSource_WithNoNotificationConfiguration_AcquiresTheDutyAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverRegistrationTests.cs:Postgres_CarriesMaxInFlightCommandsIntoTheWorkCoordinatorGateAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresGatePrecedenceTests.cs:ASectionValue_WinsOverMaxInFlightCommandsAsync</tests>
     /// <docs>data/drivers#bring-your-own-dbcontext</docs>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension property - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
