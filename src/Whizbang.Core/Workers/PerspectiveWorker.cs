@@ -524,23 +524,27 @@ public partial class PerspectiveWorker(
       // batch N completed. Multiple consumers race for items, so different streams flow in
       // parallel without each having to wait for a prior batch to finish.
       var consumerCount = Math.Max(1, _options.MaxConcurrentDrainConsumers);
-      var watchdog = _runAffinityWatchdogAsync(stoppingToken);
-      if (consumerCount == 1) {
-        try {
+      // The watchdog ends with the consumer loops, whatever ends them: the stopping token, or a loop
+      // that broke out on its own (a scope factory disposed mid-stream). It must never hold the
+      // worker open on its own.
+      using var watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+      var watchdog = _runAffinityWatchdogAsync(watchdogCts.Token);
+      try {
+        if (consumerCount == 1) {
           await _runChannelConsumerLoopAsync(stoppingToken).ConfigureAwait(false);
-        } finally {
-          await watchdog.ConfigureAwait(false);
+        } else {
+          var consumers = new Task[consumerCount];
+          for (var i = 0; i < consumerCount; i++) {
+            consumers[i] = Task.Run(() => _runChannelConsumerLoopAsync(stoppingToken), stoppingToken);
+          }
+          try {
+            await Task.WhenAll(consumers).ConfigureAwait(false);
+          } catch (OperationCanceledException) {
+            // expected on shutdown
+          }
         }
-      } else {
-        var consumers = new Task[consumerCount];
-        for (var i = 0; i < consumerCount; i++) {
-          consumers[i] = Task.Run(() => _runChannelConsumerLoopAsync(stoppingToken), stoppingToken);
-        }
-        try {
-          await Task.WhenAll(consumers).ConfigureAwait(false);
-        } catch (OperationCanceledException) {
-          // expected on shutdown
-        }
+      } finally {
+        await watchdogCts.CancelAsync().ConfigureAwait(false);
         await watchdog.ConfigureAwait(false);
       }
     } finally {
