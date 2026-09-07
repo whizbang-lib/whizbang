@@ -1,6 +1,6 @@
 # Inbox acquisition: bounded, deterministic, cost-aware
 
-Status: **138 in flight (red/green)** · 139 designed + prototyped · 140 designed · consumer-side follow-ups listed
+Status: **138 merged (PR #694)** · **safe-by-default coordinator PR in flight** (cycle 1: defaults + poison casualties; cycle 2: coordinator-owned command timeout) · 139 designed + prototyped · 140 designed
 
 ## The problem (diagnosed live on a consumer bulk import)
 
@@ -96,6 +96,27 @@ Add a latency observation with a target to both controllers and to the flusher b
   (a consumer ran 20) - warn like `AsbOpsRateSelfCheck`.
 * red/green: controller unit tests with injected observations (no timing tests); E2E under a seeded
   backlog asserting the window shrinks when claim latency is injected above target.
+
+## Safe-by-default coordinator (in flight)
+
+What a consumer gets with no configuration must be the safe thing. Changed, each red/green:
+
+* `StreamIntegrityOptions.RepairMode` default `AutoRepairCapped` -> `ReportOnly` (detect and report; repair is
+  the opt-in). A default that mutates data unasked is not one a consumer can trust out of the box.
+* `ClaimWorkerOptions.AdaptiveOutstandingBudget` default `true` -> `false` until 140 makes it per category
+  and row-bound; the churn-based claim window remains the bound.
+* `PostgresOptions.CommandTimeoutSeconds` default 5 -> 120 (the Dapper path).
+* Poison admission: rows whose `error` carries the acquisition SQL's abandonment stamp ("Attempt N ended
+  without a reported outcome ...") are lease casualties, not poison: they neither raise the high-attempt
+  share nor get deferred by it (`PoisonAdmissionPolicy.IsLeaseExpiryCasualty`).
+* Coordinator-owned command timeout (cycle 2): every raw command the EF coordinator creates composes
+  `WithCoordinatorTimeout()` (180 s, the same budget its EF context already had), so a consumer's
+  connection-string timeout can no longer cancel a commit batch. 78 creation sites; 4 deliberate explicit
+  timeouts (vacuum, maintenance) still override.
+
+Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
+from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
+fix, not a concurrency default); `MaxInFlightCommands` stays 50 pending the gate/pool self-check.
 
 ## Correctness follow-ups (separate PRs)
 

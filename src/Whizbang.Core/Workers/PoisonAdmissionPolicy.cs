@@ -66,6 +66,23 @@ public sealed class PoisonAdmissionPolicy {
   /// <param name="ObservedHighAttemptShare">The share that informed the decision.</param>
   public readonly record struct Decision(bool Admit, Verdict Reason, double ObservedHighAttemptShare);
 
+  /// <summary>
+  /// Marker the acquisition SQL writes into an inbox row's <c>error</c> when an attempt ended because its
+  /// lease expired without any reported outcome (the stamp is guarded on <c>error IS NULL</c>, so a real
+  /// recorded failure is never overwritten by it).
+  /// </summary>
+  public const string LEASE_EXPIRY_STAMP_MARKER = "ended without a reported outcome";
+
+  /// <summary>
+  /// True when the row's recorded error is the framework's own abandonment stamp rather than a handler
+  /// failure: its attempts were spent on expired leases (restarts, deadlocks, timeouts), so it is a
+  /// casualty, not poison, and must not count toward the high-attempt share.
+  /// </summary>
+  public static bool IsLeaseExpiryCasualty(string? error) =>
+    error is not null
+    && error.StartsWith("Attempt ", StringComparison.Ordinal)
+    && error.Contains(LEASE_EXPIRY_STAMP_MARKER, StringComparison.Ordinal);
+
   private readonly Settings _settings;
 
   /// <summary>Initializes a new instance of the <see cref="PoisonAdmissionPolicy"/> class.</summary>

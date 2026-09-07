@@ -30,7 +30,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/InboxDrainWorker.cs</code-under-test>
 [Category("Workers")]
-public class PoisonAdmissionWiringTests {
+public partial class PoisonAdmissionWiringTests {
 
   private static InboxDrainWorker _worker() {
     var services = new ServiceCollection();
@@ -43,6 +43,11 @@ public class PoisonAdmissionWiringTests {
       Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
       new JsonSerializerOptions(),
       NullLogger<InboxDrainWorker>.Instance);
+  }
+
+  private static InboxBatchRow _rowWithError(int attempts, string? error) {
+    var row = _row(attempts);
+    return row with { Error = error };
   }
 
   private static InboxBatchRow _row(int attempts) => new() {
@@ -151,5 +156,31 @@ public class PoisonAdmissionWiringTests {
     public void Complete() => _c.Writer.Complete();
     public void SignalNewInboxWorkAvailable() { }
     public event Action? OnNewInboxWorkAvailable { add { } remove { } }
+  }
+}
+
+public partial class PoisonAdmissionWiringTests {
+  [Test]
+  public async Task SafeDefault_LeaseExpiryCasualtiesAreAdmittedNotDeferredAsync() {
+    // Every row is past the high-attempt threshold, but each attempt ended because a lease expired
+    // (a restart, a deadlock, a timeout) and the framework stamped it so: nothing ever failed. The gate
+    // must not treat them as poison and throttle the whole stream to one row per cycle.
+    const string STAMP = "Attempt 4 ended without a reported outcome: lease held by instance 00000000-0000-0000-0000-000000000001 expired";
+    var rows = new[] { _rowWithError(5, STAMP), _rowWithError(6, STAMP), _rowWithError(5, STAMP), _rowWithError(7, STAMP) };
+
+    var plan = _worker().AdmissionPlanForTest(rows);
+
+    await Assert.That(plan).IsEquivalentTo(new[] { true, true, true, true })
+      .Because("abandonment-stamped rows are lease casualties: admit them all");
+  }
+
+  [Test]
+  public async Task SafeDefault_RowsWithRecordedFailuresStillYieldAsync() {
+    var rows = new[] { _rowWithError(5, "boom"), _rowWithError(6, "boom"), _rowWithError(5, "boom"), _rowWithError(7, "boom") };
+
+    var plan = _worker().AdmissionPlanForTest(rows);
+
+    await Assert.That(plan.Count(x => x)).IsEqualTo(1)
+      .Because("a set saturated by rows with recorded failures yields except for the forced-progress row");
   }
 }

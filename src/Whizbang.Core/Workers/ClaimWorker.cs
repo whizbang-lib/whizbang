@@ -1064,7 +1064,7 @@ public sealed class ClaimWorkerOptions {
   public int MinStreamsPerBatch { get; set; } = 25;
 
   /// <summary>
-  /// Bounds how many claimed-but-unprocessed inbox ROWS this instance may hold at once. Default true.
+  /// Bounds how many claimed-but-unprocessed inbox ROWS this instance may hold at once. Default false.
   /// </summary>
   /// <remarks>
   /// <para>
@@ -1075,13 +1075,17 @@ public sealed class ClaimWorkerOptions {
   /// bound alone changes only how long that takes, never whether it happens.
   /// </para>
   /// <para>
-  /// Set false to restore the previous unbounded behaviour. Appropriate only where throughput is
-  /// known to exceed arrival rate, since the failure mode it prevents is silent: rows dead-letter as
-  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded"/> having never
-  /// reached a receptor, with no handler failure to explain it.
+  /// Off by default: the current budget samples inbox completions only and counts leased work of every
+  /// category as outstanding, so a perspective backlog reads as a zero drain rate, headroom collapses,
+  /// and inbox acquisition starves while the database sits idle; converting row headroom to a stream
+  /// count also turns any collapse into one row per cycle. The churn-based claim window remains the
+  /// bound. Set true to engage it where throughput is known to exceed arrival rate; the failure mode it
+  /// prevents is silent (rows dead-letter as
+  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded"/> having never reached
+  /// a receptor), so a per-category, row-bound version is the intended default.
   /// </para>
   /// </remarks>
-  public bool AdaptiveOutstandingBudget { get; set; } = true;
+  public bool AdaptiveOutstandingBudget { get; set; }
 
   /// <summary>
   /// Minimum outstanding inbox rows, retained even when stalled. Default 100.
