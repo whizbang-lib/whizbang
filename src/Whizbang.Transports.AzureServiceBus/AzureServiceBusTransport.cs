@@ -955,7 +955,8 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
   /// <see cref="AzureServiceBusOptions.EnableAdaptiveAcceptors"/> is on — an acceptor governor:
   /// the processor starts at the acceptor floor instead of the MaxConcurrentSessions ceiling,
   /// the session initialize/close hooks feed observed demand into the governor and apply its
-  /// grow/decay decisions to the RUNNING processor, and the shared periodic sweep re-evaluates
+  /// grow/decay decisions to the RUNNING processor (so the accept that fills the last slot
+  /// resizes the pool in the same callback), and the shared periodic sweep re-evaluates
   /// pools whose occupancy is not generating session events. Both session subscribe paths
   /// (batch and non-batch) create their processor here so neither keeps a standing army.
   /// </summary>

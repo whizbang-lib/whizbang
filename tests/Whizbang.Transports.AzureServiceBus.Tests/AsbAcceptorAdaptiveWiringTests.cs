@@ -120,18 +120,32 @@ public class AsbAcceptorAdaptiveWiringTests {
   }
 
   [Test]
-  public async Task SessionPressure_SustainedForOneWindow_GrowsTheRunningProcessorAsync() {
-    var (transport, client, time, _) = _createTransport();
+  public async Task SessionAccept_FillingThePool_GrowsTheRunningProcessorImmediatelyAsync() {
+    // Issue #710: the accept that fills the last slot resizes the running processor in the same
+    // callback, so the session already queueing behind the cap gets a slot without waiting a window.
+    var (transport, client, _, _) = _createTransport();
     await transport.InitializeAsync();
     await _subscribeBatchAsync(transport);
 
-    // 4 active sessions on 4 slots = 100% occupancy — pressure stamped at t0.
-    await _raiseSessionInitializingAsync(client, 4);
-    time.Advance(_window);
-    // The next session event triggers an evaluation with the pressure window elapsed.
-    await _raiseSessionInitializingAsync(client, 1);
+    await _raiseSessionInitializingAsync(client, 4); // 4 of 4 — no clock movement at all
 
     await Assert.That(client.LastSessionProcessor!.MaxConcurrentSessions).IsEqualTo(8)
+      .Because("a full pool grows at once — every session past the cap is a stream whose first message waits");
+  }
+
+  [Test]
+  public async Task SessionPressure_BelowFull_SustainedForOneWindow_GrowsTheRunningProcessorAsync() {
+    var (transport, client, time, _) = _createTransport(o => o.AcceptorFloor = 16);
+    await transport.InitializeAsync();
+    await _subscribeBatchAsync(transport);
+
+    // 13 active sessions on 16 slots = 81% occupancy — pressure stamped at t0, slots still free.
+    await _raiseSessionInitializingAsync(client, 13);
+    time.Advance(_window);
+    // The next session event (14 of 16, still not full) evaluates with the pressure window elapsed.
+    await _raiseSessionInitializingAsync(client, 1);
+
+    await Assert.That(client.LastSessionProcessor!.MaxConcurrentSessions).IsEqualTo(32)
       .Because("sustained pressure doubles the RUNNING processor's concurrency via UpdateConcurrency — no stop/recreate");
   }
 
@@ -157,7 +171,7 @@ public class AsbAcceptorAdaptiveWiringTests {
 
   [Test]
   public async Task PeriodicTick_EvaluatesWithoutAnySessionActivityAsync() {
-    var (transport, client, time, logger) = _createTransport();
+    var (transport, client, time, logger) = _createTransport(o => o.AcceptorFloor = 16);
     await transport.InitializeAsync();
     await _subscribeBatchAsync(transport);
 
@@ -168,14 +182,15 @@ public class AsbAcceptorAdaptiveWiringTests {
       }
     };
 
-    // Pressure stamped by the 4th initialize; then NOTHING else happens — only the periodic
-    // tick can observe the elapsed window (a stalled-at-capacity pool with no session churn).
-    await _raiseSessionInitializingAsync(client, 4);
+    // Pressure stamped by the 13th initialize (13 of 16, slots still free); then NOTHING else
+    // happens — only the periodic tick can observe the elapsed window (a near-capacity pool
+    // with no session churn).
+    await _raiseSessionInitializingAsync(client, 13);
     time.Advance(_window);
 
     await grown.Task;
-    await Assert.That(client.LastSessionProcessor!.MaxConcurrentSessions).IsEqualTo(8)
-      .Because("the periodic tick is what lets a saturated-but-quiet pool grow — session events alone would never re-evaluate");
+    await Assert.That(client.LastSessionProcessor!.MaxConcurrentSessions).IsEqualTo(32)
+      .Because("the periodic tick is what lets a near-saturated-but-quiet pool grow — session events alone would never re-evaluate");
 
     await transport.DisposeAsync();
   }
