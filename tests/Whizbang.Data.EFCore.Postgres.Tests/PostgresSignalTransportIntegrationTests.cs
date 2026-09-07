@@ -138,4 +138,68 @@ public class PostgresSignalTransportIntegrationTests : EFCoreTestBase {
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }
 
+  [Test]
+  public async Task StreamsTargetedSignal_WithAFullyQualifiedWireName_RoutesToTheOwningInstanceAsync() {
+    // Issue #702: the streams target resolves owners through notify_instance_owners, whose
+    // debounce key used to be sized to the doorbell vocabulary. A signal's default wire name is
+    // its fully qualified type name, so any real signal failed to publish (22001). The debounce
+    // key and the notify payload are now separate arguments; the transport passes the wire name
+    // as both, and the owning instance receives it.
+    const string wireName = "ConsumerService.Signals.StreamsTargetedTransportProbe11392";
+    SignalTypeRegistry.Register(new FakeSource([
+      new SignalTypeEntry(typeof(TargetedTransportProbe), wireName,
+        SignalDeliveryClass.BestEffort, SignalTargeting.Targeted,
+        static (sink, ct) => sink.ReceiveAsync<TargetedTransportProbe>(default, ct)),
+    ]));
+
+    var opts = new WhizbangNotificationOptions {
+      DirectConnectionString = ConnectionString,
+      SignalingMode = WorkSignalingMode.ListenNotify,
+    };
+    var cfg = new ConfigurationBuilder().AddInMemoryCollection([]).Build();
+    var instance = new Whizbang.Core.Observability.ServiceInstanceProvider(cfg);
+    using var shared = new PgSharedNotifyConnection(
+      Options.Create(opts), cfg, instance,
+      NullLogger<PgSharedNotifyConnection>.Instance,
+      connectionStringFallback: null,
+      timeProvider: null);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    await ((IHostedService)shared).StartAsync(cts.Token);
+    var deadline = DateTimeOffset.UtcNow.AddSeconds(15);
+    while (!shared.IsAvailable && DateTimeOffset.UtcNow < deadline) {
+      await Task.Delay(50, cts.Token);
+    }
+    await Assert.That(shared.IsAvailable).IsTrue();
+
+    var transport = new PostgresSignalTransport(
+      Options.Create(opts), cfg, shared, instance, NullLogger<PostgresSignalTransport>.Instance);
+    var bus = new SignalBus([transport]);
+
+    var received = new TaskCompletionSource<TargetedTransportProbe>(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var sub = bus.Subscribe<TargetedTransportProbe>(s => { received.TrySetResult(s); return ValueTask.CompletedTask; });
+
+    await bus.StartAsync(cts.Token);
+    await shared.WaitForChannelListenedAsync($"wh_work_i_{instance.InstanceId:D}", cts.Token);
+
+    // This instance owns the stream, so notify_instance_owners routes to its channel.
+    var streamId = Guid.NewGuid();
+    await using (var conn = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync(cts.Token);
+      await using var cmd = conn.CreateCommand();
+      cmd.CommandText = @"INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, last_activity_at)
+                          VALUES (@sid, 0, @inst, NOW())";
+      cmd.Parameters.AddWithValue("sid", streamId);
+      cmd.Parameters.AddWithValue("inst", instance.InstanceId);
+      await cmd.ExecuteNonQueryAsync(cts.Token);
+    }
+
+    await bus.PublishAsync(new TargetedTransportProbe(1), SignalTarget.Streams([streamId]));
+
+    var got = await received.Task.WaitAsync(TimeSpan.FromSeconds(15), cts.Token);
+    await Assert.That(got.V).IsEqualTo(0);
+
+    await ((IHostedService)shared).StopAsync(CancellationToken.None);
+  }
+
 }
