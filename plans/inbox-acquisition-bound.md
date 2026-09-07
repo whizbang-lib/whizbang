@@ -185,6 +185,8 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
   start; `SnapshotAffinityHolds` lists them and a periodic check names, at Warning, holds older than
   `PerspectiveStreamAffinityOptions.LongHoldWarning` (60 s; once per threshold while they persist). The
   next stall names its stream, perspective and step instead of an idle process.
+* Claim window sample guard (cycle 7b): a claim narrower than the floor neither shrinks nor grows the
+  window (one re-offered row read as 100 % churn and halved a 1000-stream window five times in a second).
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order

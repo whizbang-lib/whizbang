@@ -92,6 +92,13 @@ public sealed class AdaptiveClaimWindow {
     if (claimedRows <= 0) {
       return;
     }
+    // A sample narrower than the floor says nothing about the window either. One re-offered row is
+    // 100 % churn on paper, and a loop that halved on it walked a 1000-stream window to the floor in
+    // under a second while the queue held a single row (observed under a bulk import). The floor is the
+    // smallest claim the window ever makes, so a smaller sample cannot have been limited by the window.
+    if (claimedRows < _floor) {
+      return;
+    }
 
     var churn = (double)reclaimedRows / claimedRows;
 
