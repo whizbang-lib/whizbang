@@ -258,4 +258,61 @@ public class PerspectiveSchemaGeneratorCoverageTests {
     var element = last.IsArray ? last.GetElementType()! : last.GetGenericArguments()[0];
     return Array.CreateInstance(element, 0);
   }
+
+
+  /// <summary>
+  /// An ARRAY model type is an <c>IArrayTypeSymbol</c>, not an <c>INamedTypeSymbol</c>, so the
+  /// named-type property walk cannot be used and the generator falls back to enumerating the
+  /// symbol's own instance properties — of which an array has none.
+  /// </summary>
+  /// <remarks>
+  /// The number that falls out of this is the estimated row size the CREATE TABLE comment carries,
+  /// and it is what a regression here would corrupt: enumerating the ELEMENT type's properties
+  /// instead would size the row as though one array cell were the whole row, and an unconditional
+  /// cast to <c>INamedTypeSymbol</c> would throw inside the shared <c>RegisterSourceOutput</c>
+  /// callback and take every other perspective's schema down with it. The sibling perspective on
+  /// the same element type pins what the named-type walk produces, so the two numbers cannot both
+  /// be satisfied by one code path.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ArrayModelType_SizesTheRowFromTheArrayNotItsElementTypeAsync() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace MyApp.Perspectives;
+
+      public record OrderRow {
+        public Guid Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public int Quantity { get; set; }
+      }
+
+      public record OrderIndexed : IEvent;
+
+      public class ArrayModelPerspective : IPerspectiveFor<OrderRow[], OrderIndexed> {
+        public OrderRow[] Apply(OrderRow[] currentData, OrderIndexed @event) => currentData;
+      }
+
+      public class RowModelPerspective : IPerspectiveFor<OrderRow, OrderIndexed> {
+        public OrderRow Apply(OrderRow currentData, OrderIndexed @event) => currentData;
+      }
+      """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
+
+    await Assert.That(result.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error)).IsFalse()
+      .Because("an array model must degrade to zero discovered properties, not crash schema generation");
+
+    var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
+    await Assert.That(sql).IsNotNull();
+
+    // 20 bytes of JSON object overhead plus 40 per discovered property.
+    await Assert.That(sql).Contains("-- Estimated size: ~20 bytes")
+      .Because("an array symbol exposes no instance properties, so the array-modelled perspective is sized at the base overhead alone");
+    await Assert.That(sql).Contains("-- Estimated size: ~140 bytes")
+      .Because("the sibling perspective on the same element type must still be sized from its three properties, proving the zero above is the array path and not a broken walk");
+  }
 }

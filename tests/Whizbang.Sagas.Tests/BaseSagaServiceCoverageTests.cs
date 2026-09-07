@@ -3,16 +3,19 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Sagas.Helpers;
 using Whizbang.Sagas.Models;
 using Whizbang.Sagas.Services;
 
 namespace Whizbang.Sagas.Tests;
 
 /// <summary>
-/// Coverage for two <see cref="BaseSagaService{T1,T2,T3,T4,T5,T6,T7,T8,T9}"/> branches the sibling
+/// Coverage for <see cref="BaseSagaService{T1,T2,T3,T4,T5,T6,T7,T8,T9}"/> behavior the sibling
 /// suites (<see cref="BaseSagaServiceTests"/>, <see cref="Services.TryRecoverViaWatchdogAsyncTests"/>,
 /// <see cref="Backfill.SagaBackfillTests"/>) never drive: the in-memory tracker's failed-item
-/// increment, and the slow-recovery-path guard against a projection that has no items yet.
+/// increment, the slow-recovery-path guard against a projection that has no items yet, the
+/// protected saga-name accessor consumer subclasses read, and the framework-default
+/// <c>LoadProjectionAsync</c> that a service with no projection loader wired falls back to.
 /// </summary>
 /// <code-under-test>src/Whizbang.Sagas/Services/BaseSagaService.cs</code-under-test>
 public class BaseSagaServiceCoverageTests {
@@ -80,6 +83,58 @@ public class BaseSagaServiceCoverageTests {
     await Assert.That(recovered).IsFalse()
       .Because("a downstream saga awaiting its real item count from an upstream completion must not be treated as vacuously done");
     await Assert.That(emitter.PublishedOnce).IsEmpty();
+  }
+
+  // The protected SagaName accessor is the surface a consumer subclass reads when it builds its
+  // own saga-scoped payloads (audit rows, correlation tags, a hand-rolled completion claim). It
+  // has to hand back the exact string the framework itself uses, because the framework stamps
+  // that string on the watchdog tick it arms and folds it into the completion claim key. If the
+  // accessor ever drifted from the constructor argument, consumer-emitted events would carry a
+  // saga name that routes nowhere and a consumer-built claim key would stop deduplicating
+  // against the framework's own — a silent duplicate-completion hole.
+  [Test]
+  public async Task SagaName_MatchesTheNameTheFrameworkStampsAndClaimsWithAsync() {
+    var emitter = new _recordingEmitter();
+    var svc = new _coverageSagaService(emitter);
+    var ctx = new SagaContext(_sagaId, _entityId);
+
+    await svc.InitiateSagaAsync(ctx, itemIdentifiers: ["a"], hookNames: null, CancellationToken.None);
+    await svc.CompleteSagaAsync(
+      ctx, SagaStatus.Completed, completedByItemIdentifier: "a",
+      completedItems: 1, failedItems: 0, totalItems: 1, CancellationToken.None);
+
+    await Assert.That(svc.ExposedSagaName).IsEqualTo(SAGA_NAME)
+      .Because("the accessor exposes the name the service was constructed with, unmodified");
+
+    var watchdog = emitter.Published.OfType<SagaCompletionWatchdogTickEvent>().Single();
+    await Assert.That(watchdog.SagaName).IsEqualTo(svc.ExposedSagaName)
+      .Because("the watchdog tick the framework arms is routed by saga name — a subclass reading a different name would arm ticks the receptor never matches");
+
+    await Assert.That(emitter.PublishedOnce.Single().claimKey)
+      .IsEqualTo(SagaCompletionGuard.ClaimKey(svc.ExposedSagaName, _sagaId))
+      .Because("the completion claim key is derived from the same name, so a subclass that claims with the accessor's value collapses onto the framework's claim instead of publishing a second completion");
+  }
+
+  // A saga service built without overriding LoadProjectionAsync (the backwards-compatible
+  // constructor, or a fixture that only needs the in-memory fast path) has no durable state for
+  // the watchdog to read. The framework default returns no projection, and the slow path must
+  // treat that as "cannot judge" rather than "nothing outstanding": completing here would emit
+  // SagaCompletedEvent for a saga whose real progress nobody has looked at.
+  [Test]
+  public async Task TryRecoverViaWatchdogAsync_WithNoProjectionLoaderWired_DeclinesRecoveryAsync() {
+    var emitter = new _recordingEmitter();
+    var svc = new _defaultLoaderSagaService(emitter);
+
+    // No InitiateSagaAsync precedes this, so the in-memory tracker holds nothing for _sagaId and
+    // recovery drops straight through the fast path into the projection-backed slow path.
+    var recovered = await svc.TryRecoverViaWatchdogAsync(new SagaContext(_sagaId, _entityId), CancellationToken.None);
+
+    await Assert.That(recovered).IsFalse()
+      .Because("no projection means no authoritative completion state — the watchdog has nothing to recover from and must say so");
+    await Assert.That(emitter.PublishedOnce).IsEmpty()
+      .Because("declining has to be silent: no completion claim may be taken on the strength of an absent projection");
+    await Assert.That(emitter.Published).IsEmpty()
+      .Because("a declined recovery emits nothing at all — not even a lifecycle event");
   }
 
   // ── Test doubles ───────────────────────────────────────────────────────
@@ -166,13 +221,15 @@ public class BaseSagaServiceCoverageTests {
     public string? ErrorDetails { get; set; }
   }
 
-  private sealed class _coverageSagaService(ISagaEventEmitter emitter, BaseSagaModel? projection = null)
+  // Keeps the framework's own LoadProjectionAsync — the "consumer wired no projection loader"
+  // shape. _coverageSagaService below is the same service with a loader supplied.
+  private class _defaultLoaderSagaService(ISagaEventEmitter emitter)
     : BaseSagaService<_testInitiatedEvent, _testItemsDispatchedEvent, _testItemStartedEvent, _testItemCompletedEvent,
                       _testItemFailedEvent, _testCompletedEvent, _testResetEvent, _testHookStartedEvent, _testHookCompletedEvent>(
-        SAGA_NAME, emitter, NullLogger<_coverageSagaService>.Instance) {
+        SAGA_NAME, emitter, NullLogger<_defaultLoaderSagaService>.Instance) {
 
-    protected override Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken)
-      => Task.FromResult(projection);
+    /// <summary>Surfaces the protected <c>SagaName</c> accessor a consumer subclass would read.</summary>
+    public string ExposedSagaName => SagaName;
 
     protected override _testInitiatedEvent BuildInitiatedEvent(SagaContext ctx, IReadOnlyList<string> itemIdentifiers, IReadOnlyList<string>? hookNames, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, ItemIdentifiers = itemIdentifiers, TotalItems = itemIdentifiers.Count, HookNames = hookNames };
@@ -200,5 +257,12 @@ public class BaseSagaServiceCoverageTests {
 
     protected override _testHookCompletedEvent BuildHookCompletedEvent(SagaContext ctx, string hookName, SagaItemState status, string? errorMessage, string? errorDetails, DateTimeOffset sentAt) =>
       new() { EntityId = ctx.EntityId, HookName = hookName, Status = status, ErrorMessage = errorMessage, ErrorDetails = errorDetails };
+  }
+
+  private sealed class _coverageSagaService(ISagaEventEmitter emitter, BaseSagaModel? projection = null)
+    : _defaultLoaderSagaService(emitter) {
+
+    protected override Task<BaseSagaModel?> LoadProjectionAsync(Guid sagaId, CancellationToken cancellationToken)
+      => Task.FromResult(projection);
   }
 }

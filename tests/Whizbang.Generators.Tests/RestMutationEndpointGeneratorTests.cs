@@ -155,6 +155,37 @@ public class RestMutationEndpointGeneratorTests {
     await Assert.That(hints).Contains("WhizbangRestMutationEndpoints.g.cs");
   }
 
+  // The attribute is matched by a PREFIX on its display string, so anything in
+  // Whizbang.Transports.Mutations whose name starts with "CommandEndpointAttribute" reaches the
+  // type-argument extraction. Only the two-argument generic form carries TCommand and TResult;
+  // reading the type arguments off any other shape would throw inside the generator, and a
+  // generator that throws takes the consumer's whole build down with it.
+  [Test]
+  public async Task Generator_CommandEndpointAttributeCarryingNoTypeArguments_IsSkippedAsync() {
+    var generated = _generatedSource("""
+      namespace Whizbang.Transports.Mutations {
+        [System.AttributeUsage(System.AttributeTargets.Class)]
+        public sealed class CommandEndpointAttribute : System.Attribute {
+          public string? RestRoute { get; set; }
+        }
+      }
+      namespace App {
+        using Whizbang.Transports.Mutations;
+
+        [CommandEndpoint<PlaceOrder, OrderResult>(RestRoute = "/api/orders")]
+        public class PlaceOrderHandler { }
+
+        [CommandEndpoint(RestRoute = "/api/legacy")]
+        public class LegacyHandler { }
+      }
+      """);
+
+    await Assert.That(generated).Contains("PlaceOrderHandlerEndpoint")
+      .Because("the valid endpoint alongside it must still be generated, or an empty file would pass this test");
+    await Assert.That(generated).DoesNotContain("LegacyHandlerEndpoint")
+      .Because("an attribute with no TCommand/TResult has no endpoint to emit and must be skipped, not read positionally");
+  }
+
   [Test]
   public async Task Generator_OnAnEmptyCompilation_EmitsNothingWithoutErrorsAsync() {
     var result = GeneratorTestHelper.RunGenerator<RestMutationEndpointGenerator>(

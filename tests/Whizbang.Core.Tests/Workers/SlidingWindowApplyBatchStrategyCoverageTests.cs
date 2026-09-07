@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -122,5 +123,45 @@ public class SlidingWindowApplyBatchStrategyCoverageTests {
       .Because("the sweep must evict the stale stream while leaving the still-active one mapped — "
              + "evicting everything would tear a live buffer out from under a mid-burst stream, and "
              + "evicting nothing would defeat the memory bound the sweep exists to provide");
+  }
+
+  /// <summary>
+  /// The sweep timer is periodic and its callback is fire-and-forget, so a tick can land after
+  /// <see cref="SlidingWindowApplyBatchStrategy.FlushAndStopAsync"/> has already completed every
+  /// writer and disposed the strategy's internal cancellation source. If the sweep went ahead
+  /// anyway it would re-complete completed writers and await already-finished workers on a torn-
+  /// down object — during host shutdown, which is exactly when nobody is watching. The disposed
+  /// guard is what makes that tick a no-op.
+  /// </summary>
+  [Test]
+  [Timeout(30000)]
+  public async Task IdleSweep_AfterShutdown_LeavesTheBuffersAloneAsync(CancellationToken testToken) {
+    var clock = new FakeTimeProvider();
+    var sut = new SlidingWindowApplyBatchStrategy(
+      flush: (_, _, _) => Task.CompletedTask,
+      options: new SlidingWindowApplyOptions {
+        SlidingWindow = TimeSpan.FromMilliseconds(10),
+        MaxWait = TimeSpan.FromMilliseconds(50),
+        MaxSize = 100,
+        // Long enough that nothing fires on its own — the sweep under test is driven explicitly.
+        IdleSweepInterval = TimeSpan.FromMinutes(5),
+        IdleEvictionWindow = TimeSpan.FromSeconds(30),
+      },
+      timeProvider: clock);
+
+    await sut.AppendAsync(Guid.CreateVersion7(), testToken);
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the buffer has to be really mapped, or the assertion below would hold vacuously");
+
+    await sut.FlushAndStopAsync(CancellationToken.None);
+    // Every mapped buffer is now far past its eviction window: a running sweep WOULD evict it.
+    clock.Advance(TimeSpan.FromMinutes(10));
+
+    await sut.RunIdleSweepNowForTestAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("a sweep that lands after shutdown must return without touching the buffers — "
+             + "the clock was advanced past the eviction window, so without the disposed guard "
+             + "this stream would have been evicted and its finished worker awaited again");
   }
 }

@@ -457,6 +457,91 @@ public class EFCoreLensQueryFactoryTests : EFCoreTestBase {
 
   #endregion
 
+  #region Dispose (synchronous) Tests
+
+  /// <summary>
+  /// Verifies that the synchronous <see cref="IDisposable.Dispose"/> path releases the pooled
+  /// DbContext, not just the async one.
+  /// </summary>
+  /// <remarks>
+  /// The factory takes a context out of the pool in its constructor and is registered Transient, so
+  /// every resolution owes the pool one return. A DI container disposing a scope calls the
+  /// synchronous <c>Dispose</c> whenever the scope itself is not an async scope — if that overload
+  /// leaked the context, the pool would bleed one context per request while the async-disposal tests
+  /// stayed green.
+  /// </remarks>
+  [Test]
+  public async Task Dispose_WhenNotDisposed_DisposesDbContextAsync() {
+    var disposals = 0;
+    var trackingContext = new TrackingDbContext(DbContextOptions, () => disposals++);
+    var mockFactory = new MockDbContextFactory<WorkCoordinationDbContext>(() => trackingContext);
+    var tableNames = new Dictionary<Type, string> {
+      [typeof(Order)] = "orders_perspective"
+    };
+
+    var factory = new EFCoreLensQueryFactory<WorkCoordinationDbContext>(mockFactory, tableNames);
+
+    factory.Dispose();
+
+    await Assert.That(disposals).IsEqualTo(1)
+        .Because("the synchronous disposal path must return the pooled context exactly once — a "
+               + "Dispose that forwards to nothing leaks one context per factory resolution");
+  }
+
+  /// <summary>
+  /// Verifies that a second synchronous <c>Dispose</c> does not dispose the DbContext again.
+  /// </summary>
+  /// <remarks>
+  /// Disposal is not guaranteed to happen once: a container may dispose a factory that the caller
+  /// already disposed by hand. The <c>_disposed</c> latch is what stops the second call reaching the
+  /// context — and a pooled context returned to the pool twice can be handed to two live callers at
+  /// once, which corrupts both.
+  /// </remarks>
+  [Test]
+  public async Task Dispose_WhenCalledTwice_DisposesDbContextOnlyOnceAsync() {
+    var disposals = 0;
+    var trackingContext = new TrackingDbContext(DbContextOptions, () => disposals++);
+    var mockFactory = new MockDbContextFactory<WorkCoordinationDbContext>(() => trackingContext);
+    var tableNames = new Dictionary<Type, string> {
+      [typeof(Order)] = "orders_perspective"
+    };
+
+    var factory = new EFCoreLensQueryFactory<WorkCoordinationDbContext>(mockFactory, tableNames);
+
+    factory.Dispose();
+    factory.Dispose();
+
+    await Assert.That(disposals).IsEqualTo(1)
+        .Because("the disposed latch must suppress the second disposal — returning one pooled "
+               + "context to the pool twice lets two callers be handed the same context");
+  }
+
+  /// <summary>
+  /// Verifies that the synchronous disposal path also closes the factory to new queries.
+  /// </summary>
+  /// <remarks>
+  /// Distinct from the idempotence check: this proves the latch set by <c>Dispose</c> is the same one
+  /// <see cref="EFCoreLensQueryFactory{TDbContext}.GetQuery{TModel}"/> guards on. Without it a query
+  /// handed out after synchronous disposal would carry a disposed DbContext and fail at await time,
+  /// far from the code that made the mistake.
+  /// </remarks>
+  [Test]
+  public async Task Dispose_AfterDispose_GetQueryThrowsObjectDisposedAsync() {
+    var mockFactory = new MockDbContextFactory<WorkCoordinationDbContext>(CreateDbContext);
+    var tableNames = new Dictionary<Type, string> {
+      [typeof(Order)] = "orders_perspective"
+    };
+
+    var factory = new EFCoreLensQueryFactory<WorkCoordinationDbContext>(mockFactory, tableNames);
+    factory.Dispose();
+
+    await Assert.That(() => factory.GetQuery<Order>()).ThrowsExactly<ObjectDisposedException>()
+        .Because("synchronous disposal must set the same latch GetQuery checks, so misuse surfaces "
+               + "at the call that is wrong rather than at a later await on a dead context");
+  }
+
+  #endregion
+
   #region Helper Classes
 
   /// <summary>

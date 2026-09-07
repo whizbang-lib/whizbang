@@ -115,4 +115,106 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
     await Assert.That(logger.Errors).IsEmpty()
       .Because("a shutdown-forced cancellation of an in-flight flush is not a flush failure and must never be logged as one");
   }
+
+  // Target: SlidingWindowInboxBatchStrategy.cs:170 — the `_disposed` guard at the top of
+  // _runIdleSweepAsync.
+  //
+  // Shutdown sets the disposed flag FIRST and only then disposes the sweep timer, so a tick
+  // already on its way runs with the flag set. That tick must do nothing. If it proceeded, it
+  // would walk _streams and, for every idle buffer, TryRemove it, complete its writer and await
+  // its worker — concurrently with FlushAndStopAsync doing exactly the same thing to the same
+  // buffers. Two threads racing the same removal is how a shutdown drops inbox messages that were
+  // still queued in a per-stream buffer: the sweep removes the entry before the stop path
+  // snapshots the workers, so the stop path never waits for that stream's drain at all.
+  //
+  // The interleaving is forced rather than raced. The injected time provider hands the strategy a
+  // timer whose DisposeAsync parks, so FlushAndStopAsync is held at exactly the point after the
+  // flag is set and before the timer is gone, and the test fires the tick by hand from there.
+  //
+  // IdleEvictionWindow is zero on purpose: every buffer is then past its cutoff, so an unguarded
+  // sweep WOULD evict. The stream surviving the tick is therefore attributable to the guard and
+  // nothing else.
+  [Test]
+  [Timeout(30000)]
+  public async Task IdleSweep_TickArrivingDuringShutdown_DoesNotTouchTheBuffersTheStopPathIsDrainingAsync(
+      CancellationToken testToken) {
+    var timeProvider = new _parkingSweepTimerProvider();
+    var sut = new SlidingWindowInboxBatchStrategy(
+      flush: (_, _) => Task.CompletedTask,
+      options: new SlidingWindowInboxOptions {
+        SlidingWindow = TimeSpan.FromSeconds(30),
+        MaxWait = TimeSpan.FromSeconds(60),
+        MaxSize = 100,
+        IdleEvictionWindow = TimeSpan.Zero,
+        IdleSweepInterval = TimeSpan.FromSeconds(10),
+      },
+      timeProvider: timeProvider);
+
+    await sut.AppendAsync(_makeMessage(), testToken);
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("the sweep needs something to evict for its absence to mean anything");
+
+    var stop = Task.Run(() => sut.FlushAndStopAsync(CancellationToken.None), testToken);
+    // Shutdown is now parked inside the sweep timer's DisposeAsync: the disposed flag is set and
+    // the timer has not yet been torn down — the exact window a real tick lands in.
+    await timeProvider.SweepTimer.DisposeStarted.WaitAsync(testToken);
+
+    timeProvider.SweepTimer.Fire();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("a sweep tick that lands after shutdown has begun must return immediately; evicting "
+             + "here would remove the buffer out from under the stop path, which then never waits "
+             + "for that stream's drain and loses whatever was still queued in it");
+
+    timeProvider.SweepTimer.ReleaseDispose();
+    await stop.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+    await Assert.That(stop.IsCompletedSuccessfully).IsTrue()
+      .Because("the stop path owns the drain and must complete it once the timer is gone");
+  }
+
+  /// <summary>
+  /// Hands out one controllable timer — the strategy's idle-sweep timer, which is the first one it
+  /// creates — and delegates every later timer to the system provider so the per-stream batchers
+  /// keep their real behavior.
+  /// </summary>
+  private sealed class _parkingSweepTimerProvider : TimeProvider {
+    private int _created;
+    public _parkingTimer SweepTimer { get; } = new();
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      if (Interlocked.Exchange(ref _created, 1) == 0) {
+        SweepTimer.Arm(callback, state);
+        return SweepTimer;
+      }
+      return TimeProvider.System.CreateTimer(callback, state, dueTime, period);
+    }
+  }
+
+  /// <summary>
+  /// A timer that never fires on its own. <see cref="Fire"/> invokes the callback synchronously,
+  /// and <see cref="ITimer.DisposeAsync"/> parks until <see cref="ReleaseDispose"/> is called,
+  /// which is what holds a shutdown open at a chosen instruction.
+  /// </summary>
+  private sealed class _parkingTimer : ITimer {
+    private readonly TaskCompletionSource _disposeStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _releaseDispose = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TimerCallback? _callback;
+    private object? _state;
+
+    public Task DisposeStarted => _disposeStarted.Task;
+    public void ReleaseDispose() => _releaseDispose.TrySetResult();
+    public void Arm(TimerCallback callback, object? state) {
+      _callback = callback;
+      _state = state;
+    }
+    public void Fire() => _callback?.Invoke(_state);
+
+    public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+    public void Dispose() => _releaseDispose.TrySetResult();
+
+    public async ValueTask DisposeAsync() {
+      _disposeStarted.TrySetResult();
+      await _releaseDispose.Task.ConfigureAwait(false);
+    }
+  }
 }

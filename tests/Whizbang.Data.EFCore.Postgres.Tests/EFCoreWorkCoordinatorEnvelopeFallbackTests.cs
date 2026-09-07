@@ -55,6 +55,35 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task GetOrphanedLifecycleEventsAsync_WithNoScopeColumnAtAll_StillReturnsTheEventAsync() {
+    await using var dbContext = CreateDbContext();
+    var connection = await _openConnectionAsync(dbContext);
+    var logger = new CapturingLogger();
+    var coordinator = _createCoordinator(dbContext, JsonContextRegistry.CreateCombinedOptions(), logger);
+
+    // A NULL scope column, not an empty JSON object: events minted before scoping existed, and
+    // events minted with no ambient security context, both land this way.
+    var (_, eventId) = await _seedOrphanAsync(connection, scope: null);
+
+    var orphans = await coordinator.GetOrphanedLifecycleEventsAsync(
+      _orphanMap(), TimeSpan.FromHours(1));
+
+    // The event being present at all is the point. Rehydration runs inside a per-row catch that
+    // logs and skips, so a null scope reaching the deserializer would not surface as a failure —
+    // it would silently drop the event from the reconciler's orphan list, and the lifecycle
+    // completion it exists to repair would never be written.
+    await Assert.That(orphans).Count().IsEqualTo(1)
+      .Because("an unscoped event is still an orphan needing reconciliation; deserializing a null "
+             + "scope would throw into the per-row catch and drop it without anyone noticing");
+    await Assert.That(orphans[0].EventId).IsEqualTo(eventId);
+
+    var envelope = (MessageEnvelope<JsonElement>)orphans[0].Envelope;
+    await Assert.That(envelope.Hops).IsEmpty()
+      .Because("no scope means no security context to restore — inventing a hop here would "
+             + "attribute the replayed event to a tenant or user that never touched it");
+  }
+
+  [Test]
   public async Task GetOrphanedLifecycleEventsAsync_ScopeWithoutTenantOrUser_YieldsNoHopsAsync() {
     await using var dbContext = CreateDbContext();
     var connection = await _openConnectionAsync(dbContext);
@@ -192,7 +221,7 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
   /// caught-up cursor for the single expected perspective and no completion marker.
   /// </summary>
   private static async Task<(Guid StreamId, Guid EventId)> _seedOrphanAsync(
-      NpgsqlConnection connection, string scope = "{}", string eventData = "{}") {
+      NpgsqlConnection connection, string? scope = "{}", string eventData = "{}") {
     var streamId = (Guid)TrackedGuid.NewMedo();
     var eventId = (Guid)TrackedGuid.NewMedo();
 
@@ -207,7 +236,7 @@ public class EFCoreWorkCoordinatorEnvelopeFallbackTests : EFCoreTestBase {
       ins.Parameters.AddWithValue("stream", streamId);
       ins.Parameters.AddWithValue("type", ORPHAN_EVENT_TYPE);
       ins.Parameters.AddWithValue("data", eventData);
-      ins.Parameters.AddWithValue("scope", scope);
+      ins.Parameters.AddWithValue("scope", (object?)scope ?? DBNull.Value);
       await ins.ExecuteNonQueryAsync();
     }
 

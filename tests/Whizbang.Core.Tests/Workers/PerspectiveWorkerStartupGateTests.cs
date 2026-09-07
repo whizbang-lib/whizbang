@@ -111,4 +111,65 @@ public class PerspectiveWorkerStartupGateTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
   }
+
+  // Target: src/Whizbang.Core/Workers/PerspectiveWorker.cs:469-470 — the schema-gate cancellation
+  // arm, which cancels the startup-scan signal before returning.
+  //
+  // StartupScanComplete is a PUBLIC task other components await to know the worker's startup pass
+  // has finished. If the worker simply returned here without settling it, that task would never
+  // complete: a host whose migrations were interrupted (a stopped pod, a failed migration step)
+  // would leave every waiter parked on a signal that can no longer arrive, which is a hang rather
+  // than a shutdown. The assertion is therefore that the task SETTLES as canceled — not merely
+  // that the worker exited.
+  [Test]
+  [Timeout(30000)]
+  public async Task ExecuteAsync_CanceledWhileWaitingForTheGate_SettlesTheStartupScanSignalAsync(
+      CancellationToken testToken) {
+    var inner = new ServiceCollection().BuildServiceProvider();
+    var scopeFactory = new _countingScopeFactory(inner.GetRequiredService<IServiceScopeFactory>());
+    var gate = new _parkedGate();   // never opens, and reports when the worker begins waiting
+
+    var worker = new PerspectiveWorker(
+      instanceProvider: new _stubInstanceProvider(),
+      scopeFactory: scopeFactory,
+      options: Options.Create(new PerspectiveWorkerOptions()),
+      schemaReadyGate: gate);
+    var baseline = scopeFactory.Count;
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    // Without this the cancellation could beat the worker to the gate, and everything below would
+    // be answered by a worker that never waited.
+    await gate.Entered.WaitAsync(testToken);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // The load-bearing assertion: the public signal is settled, so a waiter is released.
+    await worker.StartupScanComplete
+      .WaitAsync(TimeSpan.FromSeconds(20), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await Assert.That(worker.StartupScanComplete.IsCompleted).IsTrue()
+      .Because("StartupScanComplete is public and awaited by other components — leaving it pending "
+             + "after the worker has given up turns an interrupted migration into a permanent hang");
+    await Assert.That(worker.StartupScanComplete.IsCanceled).IsTrue()
+      .Because("the scan did not run, so the signal must report cancellation rather than success — "
+             + "completing it normally would tell a waiter a startup pass happened that did not");
+    await Assert.That(scopeFactory.Count).IsEqualTo(baseline)
+      .Because("the worker returned at the gate, so none of the startup work touched the database");
+  }
+
+  /// <summary>A schema gate that never opens and announces when a worker starts waiting on it.</summary>
+  private sealed class _parkedGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+    }
+  }
 }

@@ -95,6 +95,88 @@ public class PgSharedNotifyConnectionProbeIntegrationTests : EFCoreTestBase {
     await Assert.That(ok).IsTrue();
   }
 
+  // ----- the probe's whole reason to exist: NOTIFY succeeds but nothing is delivered -----
+
+  /// <summary>
+  /// Shadows <c>pg_notify</c> with a no-op in a schema that precedes <c>pg_catalog</c> on the
+  /// search path. The statement the probe issues then succeeds while nothing is ever delivered —
+  /// which is exactly what pgbouncer in transaction-pooling mode does to a LISTEN/NOTIFY pair,
+  /// and the reason <c>IsAvailable</c> is gated on a round trip rather than on "the connection
+  /// opened". Returns a connection string pointed at the shadowed search path.
+  /// </summary>
+  private async Task<string> _blackholeNotifyConnectionStringAsync() {
+    await using var admin = new NpgsqlConnection(ConnectionString);
+    await admin.OpenAsync();
+    await using var ddl = admin.CreateCommand();
+    ddl.CommandText = """
+      CREATE SCHEMA IF NOT EXISTS notify_blackhole;
+      CREATE OR REPLACE FUNCTION notify_blackhole.pg_notify(text, text)
+        RETURNS void LANGUAGE plpgsql AS $body$ BEGIN RETURN; END $body$;
+      """;
+    await ddl.ExecuteNonQueryAsync();
+    return new NpgsqlConnectionStringBuilder(ConnectionString) {
+      SearchPath = "notify_blackhole,public,pg_catalog",
+    }.ConnectionString;
+  }
+
+  /// <summary>
+  /// The connection opens, LISTEN succeeds and the NOTIFY statement returns without error — only
+  /// the delivery never happens. The gate must NOT publish availability on that connection:
+  /// downstream consumers (ClaimWorker's wake, the per-listener subscribers) switch off polling
+  /// when <c>IsAvailable</c> is true, so announcing a connection whose notifications silently
+  /// vanish stalls every signalled path in the process until something else times out.
+  /// <see cref="BackgroundService_OnStart_RunsProbe_AndBecomesAvailableAsync"/> is the control:
+  /// the identical setup against a database where delivery works does go available.
+  /// </summary>
+  [Test]
+  public async Task BackgroundService_NotifyNeverDelivered_RecordsProbeFailureAndStaysUnavailableAsync() {
+    var blackholed = await _blackholeNotifyConnectionStringAsync();
+
+    var gate = _newGate(new WhizbangNotificationOptions {
+      DirectConnectionString = blackholed,
+      SignalingMode = WorkSignalingMode.ListenNotify,
+      // Real, short, and unraceable: the notification can never arrive, so the timeout is the
+      // only way out of the probe's wait loop no matter how fast the database is.
+      SelfTestTimeout = TimeSpan.FromMilliseconds(500),
+    });
+
+    var availabilityTransitions = new List<bool>();
+    gate.OnAvailabilityChanged += b => {
+      lock (availabilityTransitions) {
+        availabilityTransitions.Add(b);
+      }
+    };
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    await gate.StartAsync(cts.Token);
+    try {
+      // Wait on a signal the gate itself emits — the recorded failure reason — not on StartAsync,
+      // which returns before ExecuteAsync has run a single line.
+      var deadline = DateTimeOffset.UtcNow.AddSeconds(25);
+      while (gate.LastFailureReason is null && DateTimeOffset.UtcNow < deadline) {
+        await Task.Delay(50, cts.Token);
+      }
+
+      await Assert.That(gate.LastFailureReason).IsNotNull()
+        .Because("a probe that cannot round-trip has to say so; silence would leave operators with a connection that looks fine and delivers nothing");
+      await Assert.That(gate.LastFailureReason!).Contains("probe")
+        .Because("the recorded reason must name the self-test probe as the thing that failed — an Npgsql connection error here would mean the fixture never reached the probe at all, and the test would be proving nothing");
+      await Assert.That(gate.IsAvailable).IsFalse()
+        .Because("a connection whose pg_notify round-trip does not arrive must never be published as available — consumers stop polling when it is");
+      await Assert.That(gate.LastVerifiedAt).IsNull()
+        .Because("nothing was ever verified on this connection, so the last-verified stamp must stay unset");
+
+      bool[] observedTransitions;
+      lock (availabilityTransitions) {
+        observedTransitions = [.. availabilityTransitions];
+      }
+      await Assert.That(observedTransitions).DoesNotContain(true)
+        .Because("OnAvailabilityChanged(true) is the switch consumers use to disable polling; it must not fire for a connection that failed its probe");
+    } finally {
+      await gate.StopAsync(CancellationToken.None);
+    }
+  }
+
   // ----- slice 33.3 — real-Postgres end-to-end notification delivery -----
 
   private sealed class RecordingSubscription(string channel) : INotifySubscription {

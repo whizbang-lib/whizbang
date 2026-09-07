@@ -183,6 +183,17 @@ public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
     await Assert.That(observations).IsEmpty();
   }
 
+  [Test]
+  public async Task ReapExhaustedOrphanedPerspectiveRowsAsync_WithNoStreams_ReapsNothingAsync() {
+    // The drain-mode reaper is handed whatever streams the current pass found orphaned, which is
+    // routinely none. Zero is the count of rows reaped, and it must come from the guard rather than
+    // from a reap function invoked with an empty array on every drain tick.
+    var reaped = await _coordinator().ReapExhaustedOrphanedPerspectiveRowsAsync(
+      Guid.CreateVersion7(), [], maxAttempts: 3);
+
+    await Assert.That(reaped).IsEqualTo(0);
+  }
+
   // --- Empty result sets -----------------------------------------------------
   // Distinct from an empty input: the call is made, the function runs, and returns no
   // rows. The guard turns that into the documented empty value rather than throwing on

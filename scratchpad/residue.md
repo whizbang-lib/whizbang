@@ -3400,3 +3400,1410 @@ other.
   `hits > 0` — three "different" slices each reported exactly 1,541, which is what exposed it.
 
 Plain single-letter prefixes (`C*`) work correctly.
+
+## CQ. The DLQ operator-endpoint id guards, confirmed a third time
+
+`BaseSagaService` 80, 309, 562 all moved this round (protected `SagaName` accessor, the
+framework-default `LoadProjectionAsync`, and the degenerate-rate fall-through in
+`_computeAdaptiveNextDelay`). `DeadLetterOperatorEndpoints` 126, 127, 136, 137, 146, 147, 181 did
+not, and will not.
+
+### `DeadLetterOperatorEndpoints` 126-127, 136-137, 146-147, 181 — dead by call site
+
+Third confirmation, reached independently each time (sections BN and its predecessor hold the
+first two). `MapWhizbangDeadLetterEndpoints` registers all three id-taking routes with the guid
+route constraint:
+
+```csharp
+group.MapPost("/{id:guid}/retry",   _handleRetryAsync);
+group.MapPost("/{id:guid}/hold",    _handleHoldAsync);
+group.MapPost("/{id:guid}/give-up", _handleGiveUpAsync);
+```
+
+`GuidRouteConstraint` accepts a segment only when `Guid.TryParse` accepts it, and the route value
+ASP.NET stores for a matched segment is the segment string. So by the time a handler runs,
+`_tryGetIdFromRoute`'s `RouteValues.TryGetValue("id", …) && raw is string && Guid.TryParse(…)`
+chain has already been satisfied by routing itself: `return false` (181) is unreachable, and with
+it each handler's `400 BadRequest` + `return` pair. A malformed id is rejected with 404 before any
+handler is entered — `DeadLetterOperatorEndpointsTests` already pins that (`/whizbang/dlq/not-a-guid/{action}`
+→ `NotFound`), and its own comment says the assertion exists so a change of that contract from 404
+to 400 cannot happen silently.
+
+The only seams that would execute the guards are ones that fake the situation rather than
+reproduce it: rewriting `HttpContext.Request.RouteValues["id"]` from a middleware between
+`UseRouting` and `UseEndpoints`, or invoking the private handler by reflection. Both prove the line
+ran and nothing else, which is the failure mode `ai-docs/coverage-exclusions.md` names outright.
+Loosening the route template to `{id}` so the guard becomes live is a production contract change
+(404 → 400) that an existing test deliberately blocks.
+
+**These seven lines keep resurfacing** because the batch generator reads the merged CI cobertura,
+where they are legitimately uncovered, and nothing in the source marks them. The member-level
+`[ExcludeFromCodeCoverage]` rule forbids the obvious suppression: `_tryGetIdFromRoute`'s lines
+176-179 are covered on every successful request, and each handler's remaining lines are covered
+too. A future round that draws this file should read this entry and skip it rather than spend the
+cycle rediscovering the call graph.
+
+## CR. Round-24 transports batch: 19 of 31 closed, 12 declined
+
+`src/Whizbang.Transports.AzureServiceBus` and `src/Whizbang.Transports.RabbitMQ`. Closed and
+verified by scoped cobertura (`--coverage --coverage-output-format cobertura`, counting
+`hits > 0` on the exact line numbers, not file size):
+
+| File | Lines | How |
+|---|---|---|
+| `AsbTrafficClassOpsRateSource.cs` | 57-59, 62-63, 66-68, 72-73 | the existing tests only ever passed a non-ASB transport, so `_add` returned at its type guard and `_trafficClassFor` never ran at all. Two tests now build real `AzureServiceBusTransport`s over `RaisableServiceBusClient` and **subscribe** them (the projection only exists after a session subscription runs the self-check), give the two namespaces different acceptor budgets so a per-namespace projection cannot be faked by reporting one twice, and bind a routing tag to one of them. |
+| `ServiceCollectionExtensions.cs` (ASB) | 146-151, 154-155 | the `ServiceBusClient` factory lambda. Every prior test pre-registered a client to stay offline, so the lambda never ran. It now runs against a connection string the `ServiceBusClient` constructor rejects — deterministic, no DNS, no retry sleep — and the test asserts the factory logged the retry knobs that only the **options pipeline** can produce (configuration says 0/false, the registration callback says 99/true). |
+| `RabbitMQChannelPool.cs` | 94 | the empty catch around a stale channel's `Dispose()` in `Return`. `FakeChannel.ExceptionToThrowOnDispose` already existed; what was missing was a rental that spans a `Reset()` **and** whose channel fails to dispose. |
+
+### Declined — `AzureServiceBusHealthCheck` 24-25: a catch over a try that cannot throw
+
+```csharp
+try {
+  if (_transport is not AzureServiceBusTransport) { return ...Degraded("..."); }
+  return ...Healthy("...");
+} catch (Exception ex) {                                   // 24
+  return ...Unhealthy("...", ex);                          // 25
+}
+```
+
+The whole try body is one type test and two `HealthCheckResult` factory calls with constant
+arguments. `is` never invokes user code, and neither factory can fail on a literal string. The
+null guard that *can* throw (`transport ?? throw new ArgumentNullException(...)`) is a
+primary-constructor field initializer, outside the try. Nothing a caller can pass reaches the
+catch. Case 3 — the member's other lines are covered, so no member-level attribute.
+
+### Declined — `AzureServiceBusTransport` 1682 and 1761: exhaustive-switch defaults
+
+Both are `default: throw new InvalidOperationException($"Unknown AsbReceiveAction: ...")` in
+`_deserializeReceivedMessageAsync` and its session overload. `AsbReceiveAction` has exactly four
+members and all four have explicit cases. The only producer of an `AsbReceiveDecision` is
+`AsbReceiveDecisionMaker.Decide`, whose seven `Action =` sites are the four enum members and
+nothing else — no cast, no arithmetic. The decision maker is `internal sealed` and held as
+`private readonly AsbReceiveDecisionMaker _decisionMaker = new();`, so there is no injection point,
+and both enclosing methods are private. Dead by call site.
+
+### Declined — `AzureServiceBusTransport` 2041: dead by call site
+
+```csharp
+if (_adminClient != null) {                       // 2002
+  await _applyCorrelationFilterAsync(...);        // 2004 — the ONLY call site
+}
+...
+if (_adminClient == null) {
+  throw new InvalidOperationException("Administration client is not available");  // 2041
+}
+```
+
+`_adminClient` is `private readonly IServiceBusAdminClient?` assigned once in the constructor, so
+the guard at 2002 cannot go stale between the two statements. One call site, already guarded.
+
+### Declined — `RabbitMQConnectionRetry` 62 and 111: need a live broker, and the factory is sealed
+
+- **62** is the async epilogue of the connection-string overload, reached only when the delegated
+  call returns a connection. Nothing in `src/` calls that overload (production goes through the
+  `ConnectionFactory` one from `ServiceCollectionExtensions` and
+  `IRabbitMQNamespaceConnectionFactory`), so only a test can reach it, and only with a broker.
+- **111** is `LogConnectionEstablished`, guarded by `attempt > 1`: it needs a connection that
+  fails and then succeeds. Even a live-broker integration test cannot stage that without taking
+  the broker down mid-test.
+
+There is no seam for either. `factory.CreateConnectionAsync` is called on a parameter typed as the
+concrete `ConnectionFactory`, and in RabbitMQ.Client 7.2.0 that type is **sealed** — verified by
+compiling a subclass: `CS0509: cannot derive from sealed type 'ConnectionFactory'` (and
+`CS0115: no suitable method found to override`, so `new`-hiding would not be dispatched to
+either). Covering these would mean changing the production signature to `IConnectionFactory`,
+which is a public API change made solely to move two lines.
+
+### Declined — `RabbitMQConnectionRetry` 145: brace after a `[DoesNotReturn]` call
+
+`_logAndRethrowConnectionFailure` ends with `ExceptionDispatchInfo.Throw(ex);`. The closing brace
+after it is the same brace-artifact shape recorded in CA and CL.
+
+### Re-confirmed — `AzureServiceBusConnectionRetry` 76, 77, 80, 87
+
+Already recorded in **BS**, and unchanged: the success path awaits
+`ServiceBusAdministrationClient.GetNamespacePropertiesAsync`, a management-plane round trip the
+emulator does not implement, and both the client and the admin client are constructed inline
+inside the method with nothing to substitute. 76-77 additionally need `attempt > 1`, i.e. a
+failure followed by a success against a live namespace. A fourth pass over this file found no new
+seam; a future round should skip it rather than rediscover it.
+
+**Container note for this round.** Neither RabbitMQ nor Azure Service Bus was running locally, so
+every `*.Integration.Tests` project in this area was unrunnable. Nothing above was declined *because*
+of that alone — each decline has a structural reason that a live broker would not change, except
+`RabbitMQConnectionRetry` 62/111, which is the one place a broker genuinely would help and still
+would not be worth the public-API change.
+
+## CS. Round 24, Core batch 1 — eight worklist entries that were already recorded, and six new
+
+The worklist for this batch (61 lines, 23 files in `src/Whizbang.Core`) re-listed eight groups that
+already have entries above. Recording that here rather than re-deriving them next round:
+
+| lines | existing entry |
+|---|---|
+| `PolicyContext` 186-192, 221-223 | **BO** — `IMessageEnvelope.GetMetadata` returns `JsonElement?`, so the `string[]`/`IEnumerable<string>`/numeric compatibility arms cannot receive anything |
+| `JsonContextRegistry` 143-145, 830, 855 | the `_resolvers.IsEmpty` throw over process-global state, and the `_setter != null` arm no call site supplies |
+| `BacklogAgeWorker` 103 | **Z** — `WaitForNextTickAsync` returns false only for a disposed `PeriodicTimer`, and the timer is a `using var` local |
+| `ScopedWorkCoordinatorStrategy` 210-212 | dead since Phase H; a pinning test already asserts `TryWrite` is never called |
+| `MultiPassMessageTypeBinder` 122-123 | **BT** — deployment-shaped triggers (`FileLoadException`/`BadImageFormatException`) a unit test cannot stage |
+| `DefaultMessageSecurityContextProvider` 51, 55 | **CD** — the primary constructor's `?? throw` and `[.. …]` materialization make both fields non-null |
+| `ServiceBusConsumerWorker` 226-227 | **BB** — `Task.Delay(Timeout.Infinite, token)` cannot fault with anything but `OperationCanceledException` |
+| `ClaimWorker` 294 | **AR** — the `ObjectDisposedException` dispose race, no seam |
+
+### New: `IntervalWorkCoordinatorStrategy` 359-361 — the twin of the Scoped entry
+
+`_routeClaimedInboxWorkToChannel` is byte-for-byte the same method in both strategies, and it is
+dead for the same reason: `WorkCoordinatorFlushHelper.ExecuteFlushAsync` returns a `WorkBatch` with
+an empty `InboxWork` unconditionally since Phase H moved claiming to `ClaimWorker`, so the
+`workBatch.InboxWork.Count == 0` guard above always returns. Worth naming as a pair — the Scoped
+copy was recorded a round earlier and the Interval copy was not, which is how a worklist ends up
+re-asking about half of a known-dead method.
+
+### New: `IntervalWorkCoordinatorStrategy` 388 — dead by disposal ordering, not a race
+
+`_flushTimerCallback` opens with `if (_disposed) { return; }`. `_disposed` is set at the very END of
+`DisposeAsync`, *after* `await _flushTimer.DisposeAsync()` — and `Timer.DisposeAsync()`'s task
+completes only once every in-flight callback has finished. So the timer is dead before the flag is
+set, and no callback can ever observe it true. The only caller of the method is the timer itself.
+This is worth distinguishing from the dispose-race entries (AR): those need an interleaving no seam
+provides; this one is not a race at all, it is ordered shut.
+
+### New: `InMemoryTraceStore` 143 — dead by BOTH call sites
+
+`_addChildrenRecursive` opens with `if (chain.Contains(message.MessageId)) { return; }`. Both call
+sites — the top-level walk in `GetCausalChainAsync` and the recursive one inside the method — build
+their child list with `!chain.Contains(e.MessageId)` in the `Where`, so the argument is filtered
+before the call.
+
+The interesting question is whether a sibling can be *added to `chain` by an earlier sibling's
+recursion* between the `ToList()` and its own turn in the `foreach`. It cannot, and the reason is
+structural rather than incidental: a message carries exactly ONE causation id, so the children sets
+of two different nodes are disjoint. For sibling `C2` (causation `X`) to appear inside `C1`'s
+subtree, `X` would have to be visited by the recursion — and `X` is already in `chain` when its own
+children are computed, so it is never re-entered. The existing
+`GetCausalChainAsync_WithCircularReferenceInChildrenTree_…` test in `Whizbang.Observability.Tests`
+does not construct a cycle at all (its "circular child" is simply a second child of `child1`), which
+is why it never reached this line either.
+
+### New: `DebugAwareStopwatch` 40 — `Debugger.IsAttached`
+
+`Start()` sets `_debuggerWasAttached = true` when a debugger is attached, so `IsApproximate` can warn
+that an elapsed time includes breakpoint pauses. No test run has a debugger attached, and the only
+way to attach one is `Debugger.Launch()`, which is an interactive prompt. The surrounding lines —
+`_stopwatch.Start()`, `Stop()`, `Reset()`, `Elapsed`, `IsRunning`, and `IsApproximate` in its false
+state — are covered. Same family as `DebuggerAwareClock:132, 137` (BO), which is mode-gated rather
+than debugger-gated but declined for the same reason.
+
+### New: `JsonContextRegistry` 538 — a lambda in the trial branch that is never invoked
+
+`ObjectCreator = () => []` inside the `_inTrialConfigure` arm of `GetLazyPolymorphicListTypeInfo`.
+The line is the LAMBDA BODY, so it counts as covered only when a `List<TBase>` is actually
+deserialized through that typeinfo. The trial branch exists so a trial-configure thread never caches
+scratch-bound typeinfos; `_survivesTrialConfigure` only calls `scratch.GetTypeInfo(derivedType)` —
+it configures and throws the whole scratch options away with the thread. Nothing ever deserializes
+through the object it returns, so the creator cannot run. Same shape as 830/855 already recorded for
+this file: an assigned delegate whose invocation path does not exist.
+
+### New: `TransportConsumerBuilderExtensions` 430 — the "UnknownService" last resort
+
+`_getServiceName`'s final `return "UnknownService"` is reached only when
+`Assembly.GetEntryAssembly()` returns null or names a blank assembly. A managed host always has an
+entry assembly; null is reserved for a CLR hosted from unmanaged code. Lines 424-426 (the entry-
+assembly fallback itself) are NOT residue and are now covered by
+`tests/Whizbang.Core.Tests/Workers/TransportConsumerServiceNameFallbackTests.cs`: both
+`AddTransportConsumer` overloads call `AddWhizbangInstanceIdentity()`, so a normal composition
+always has an `IServiceInstanceProvider` by resolve time — the test reaches the fallback by
+composing normally and then `RemoveAll<IServiceInstanceProvider>()` before building the provider,
+which is the only condition the fallback exists for.
+
+### New: `DeadLetterRecoveryWorker` 231 and 248-251
+
+Both were already reasoned out in `DeadLetterRecoveryWorkerCoverageTests`' own class doc; moving the
+conclusion here so it is where the next round looks.
+
+- **231** is `break;` in the `catch (OperationCanceledException)` around
+  `await Task.WhenAny(pollDelay, wakeTask)`. `Task.WhenAny`'s returned task completes *successfully*
+  as soon as either constituent reaches any terminal state — it never propagates a constituent's
+  cancellation to its own awaiter — and neither constituent is awaited a second time. The two
+  constituents cannot throw synchronously either: `Task.Delay(ts, ct)` and
+  `SemaphoreSlim.WaitAsync(ct)` both RETURN a canceled task for an already-canceled token rather
+  than throwing. So the catch guards a statement that cannot throw the type it catches.
+- **248-251** is the loop breaker closing after its cooldown. `_isBreakerOpen` takes wall-clock
+  `DateTimeOffset.UtcNow` (no `TimeProvider` seam anywhere in `_scanOnceAsync`), and
+  `LoopBreakerCooldownMinutes` is an `int` whose only "auto-close eventually" values are whole
+  minutes — `<= 0` means "stay open until restart". Closing the breaker deterministically therefore
+  needs a real ≥60-second wall-clock gap between two scans. Declined as written; the tractable fix
+  is a clock seam on the worker, not a slow test.
+
+## CT. .NET 10 changed `BackgroundService.StartAsync` — and it silently hollowed out a family of worker tests
+
+**This is not residue. It is a live defect in the test suite, and it explains an intermittent CI
+failure.** Found while chasing why five different `catch (OperationCanceledException) { return; }`
+lines stayed red despite each having a dedicated, passing test.
+
+`Microsoft.Extensions.Hosting.Abstractions` 10.x:
+
+```csharp
+public virtual Task StartAsync(CancellationToken cancellationToken) {
+  _stoppingCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+  _executeTask = Task.Run(() => ExecuteAsync(_stoppingCts.Token), _stoppingCts.Token);
+  return Task.CompletedTask;
+}
+```
+
+Two changes from the shape every test in this repo was written against:
+
+1. **`ExecuteAsync` no longer runs synchronously up to its first await.** It is a thread-pool work
+   item now. "StartAsync returned, so the worker is parked at its first await" is false.
+2. **`Task.Run(action, token)` never invokes the delegate at all if the token is already canceled
+   when the work item is dequeued** — the task goes straight to `Canceled`.
+
+So the two shapes these tests use both fail to run the body:
+
+```csharp
+await worker.StartAsync(preCanceledCts.Token);   // delegate never invoked
+await worker.StartAsync(CancellationToken.None);
+await worker.StopAsync(CancellationToken.None);  // cancels before the pool dequeues — often never invoked
+```
+
+And the usual assertions — `ExecuteTask.IsCompleted` is true, `ExecuteTask.IsFaulted` is false —
+are **both satisfied by a `Canceled` task**. The test goes green having executed no production code.
+
+**Measured, not inferred.** A scoped run of the single test
+`OutboxPublishWorkerCoverageTests.ExecuteAsync_StoppedWhileWaitingOnSchemaGate_…` reports
+`OutboxPublishWorker..ctor` at 45/45 lines hit and `<ExecuteAsync>d__36::MoveNext` at **0/22** — the
+constructor ran, the body never did. The same pattern explains why `PerspectiveMigrationWorker` 37
+was hit in one run and 44 in another: it is a thread-pool race, so which lines appear depends on
+whether the pool won.
+
+**It also explains two red tests, and their flakiness.** Both are in
+`InboxDispatchWorkerCoverageTests`, and which one fails changes between runs because both are races
+against the thread pool:
+
+- `SchemaGateCanceledBeforeReady_ReturnsCleanlyWithoutDispatchingAsync` fails with
+  `TaskCanceledException` out of `await worker.ExecuteTask!.WaitAsync(...)` — `ExecuteTask` is the
+  *canceled `Task.Run` wrapper*, not a body that returned cleanly.
+- `ShutdownBeforeConsumersStart_AbsorbsTheCanceledConsumerTasksInsteadOfFaultingAsync` fails
+  asserting the "stopped" log line was emitted — it was not, because the body that emits it never
+  ran.
+
+Neither is caused by this round's changes: the first failed in a baseline run of this branch before
+any edit, the second in the verification run after. They are the same defect wearing two faces.
+
+**The fix, and the rule.** Never treat `StartAsync` returning as evidence the body ran. Wait on a
+signal the body itself emits, then stop:
+
+```csharp
+private sealed class BlockingGate : ISchemaReadyGate {
+  private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+  public Task Entered => _entered.Task;
+  public bool IsReady => false;
+  public void MarkReady() { }
+  public async Task WaitForReadyAsync(CancellationToken ct) {
+    _entered.TrySetResult();                       // "the body reached the barrier"
+    await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+  }
+}
+// await worker.StartAsync(None);  await gate.Entered.WaitAsync(timeout);  await worker.StopAsync(None);
+```
+
+`tests/Whizbang.Core.Tests/Workers/SchemaGateShutdownCoverageTests.cs` does this for
+`OrphanInboxJanitor`, `CoalesceShipWorker`, `OutboxPublishWorker`, `TransportConsumerWorker` and
+`PerspectiveMigrationWorker`, and each case then asserts on the work that must NOT have happened
+(no subscription, no scope, no channel read, no pending-rebuild query) rather than only that the
+task settled.
+
+**Measured.** With that shape, `OrphanInboxJanitor:80`, `CoalesceShipWorker:81`,
+`OutboxPublishWorker:137`, `TransportConsumerWorker:243` and `PerspectiveMigrationWorker:37,44` all
+moved from uncovered to covered in one run — the same five lines that stayed red across a full
+baseline sweep with the older tests in place.
+
+**Still to do, deliberately not done here** (these files belong to other batches in this round and a
+shared working tree makes concurrent edits lossy): the older gate tests in
+`OrphanInboxJanitorCoverageTests`, `OutboxPublishWorkerCoverageTests`,
+`CoalesceShipWorkerCoverageTests`, `PerspectiveMigrationWorkerCoverageTests`,
+`DeadLetterRecoveryWorkerCoverageTests` and `InboxDispatchWorkerCoverageTests` all use the
+superseded shape and should be converted to a body-emitted signal. Grep for
+`StartAsync` immediately followed by `StopAsync`, and for `StartAsync(alreadyCanceledToken)`.
+
+## CV. Round-24 data/Postgres batch: 13 of 31 closed, and three of BG's "races" were not races
+
+`src/Whizbang.Data.Postgres` + `src/Whizbang.Data.Dapper.Postgres`, 31 lines across 12 files. The
+shared `whizbang-test-postgres` container was up, so every line here was **measured** against a
+real database rather than argued from the source. Verification throughout: scoped
+`--coverage --coverage-output-format cobertura`, counting `hits > 0` on the exact line numbers.
+
+Nine of the twelve files were already recorded in this document by earlier rounds (AZ, BG, BQ, CA,
+CE, AA). Re-deriving those arguments is most of what a batch like this costs. Three things are
+worth carrying forward.
+
+### 1. Closed — 13 lines
+
+| File | Lines | How |
+|---|---|---|
+| `DapperPostgresPerspectiveStore.cs` | 80, 88, 104, 109, 113, 129, 215 | Seven API-surface methods with no test at all: both `UpsertWithPhysicalFieldsAsync` overloads, the two scoped `UpsertByPartitionKeyAsync` overloads, `FlushAsync`, `PurgeByPartitionKeyAsync`, and the Guid arm of the partition-key-to-row-id mapping. Written as behavior, not as calls: the overload pairs are separated by whether a **later event may reassign an existing row's tenant** (`forceUpdateScope`), purge is asserted against a second surviving key so a wrong id derivation cannot pass, the Guid key is proved to address the same row a stream-id read finds *and* to differ from the hashed derivation, and `FlushAsync` is exercised on a store built with an unreachable connection string so a regression that made it dial the database fails. |
+| `PgSharedNotifyConnection.cs` | 230, 461, 462, 463 | See §2. |
+| `PgInstanceLifecycleMonitor.cs` | 69 | The existing `ThrowingBus(new OperationCanceledException())` fixture was already there, used only against `TickForTestsAsync`. Driving the same fake through `StartAsync`'s hosted loop reaches the loop's cancellation arm — and the test never cancels the stopping token, so the loop condition stays true and the 5 s inter-tick delay never faults. The **only** thing that can end that loop is line 69, which makes `ExecuteTask` completing the whole assertion. |
+| `PgDurableSignalRetentionWorker.cs` | 74 | See §3. |
+
+### 2. BG's probe-timeout "race" was a missing fixture, not a race
+
+BG recorded `230` and `461-463` as unreachable because the self-test timeout has to fire "strictly
+after LISTEN and NOTIFY have succeeded but before the already-sent notification is read back" — a
+race against real delivery latency.
+
+That framing assumed the NOTIFY must be delivered. It does not have to be:
+
+```sql
+CREATE SCHEMA notify_blackhole;
+CREATE FUNCTION notify_blackhole.pg_notify(text, text) RETURNS void LANGUAGE plpgsql AS $$ BEGIN RETURN; END $$;
+-- connection string: Search Path=notify_blackhole,public,pg_catalog
+```
+
+`pg_catalog` is searched first *unless it is explicitly listed*, so naming it last lets the shadow
+win. The probe's `SELECT pg_notify(@channel, 'ping')` then succeeds and delivers nothing — which is
+precisely the production failure the probe exists to catch (pgbouncer in transaction pooling
+returns from the statement and swallows the delivery). With delivery impossible there is no race
+left: the wait loop is entered, the timeout is the only exit, `230` breaks, and `ExecuteAsync`
+records the failure and recycles the connection at `461-463`.
+
+The test asserts the gate never publishes `IsAvailable = true` and that `LastFailureReason` names
+the probe — an Npgsql connection error would fail that assertion rather than pass quietly, so a
+fixture that never reached the probe cannot masquerade as a pass.
+
+**Generalizable:** when a round-trip test needs the round trip to *fail*, look for a way to make
+the database lie about it rather than a way to out-run it. A shadowing function on the search path
+is a real, supported Postgres mechanism, not a reflection poke.
+
+Still uncovered in that file, and still for BG's reasons: `163-164` (Npgsql converts an internally
+timed-out cancel to `TimeoutException`/`NpgsqlException` before it escapes, and a real caller
+cancellation fails the `when` filter), `241` and `335-336` (UNLISTEN failing needs the connection
+to break inside a specific window), `294` (the `ObjectDisposedException` dispose race, AR).
+
+### 3. All three hosted-loop tests here follow CT's rule, and are backed by measurement
+
+CT (above) is the load-bearing caveat for everything in §2 and §3: under .NET 10,
+`BackgroundService.StartAsync` dispatches `ExecuteAsync` to the thread pool, so `StartAsync`
+returning proves nothing and `ExecuteTask.IsCompleted && !IsFaulted` is satisfied by a `Canceled`
+wrapper that never invoked the body. Each test added in this section waits on a signal the **body**
+emits before it asserts or stops — `LastFailureReason` going non-null for the probe, a
+`pg_stat_activity` row for the sweep, and for the monitor a bus that has actually been published to
+once (`Attempts == 1`) with no cancellation anywhere that could have produced a `Canceled` wrapper.
+All four target lines were then confirmed `hits > 0` in a scoped cobertura run, which is the only
+evidence that settles it.
+
+### 4. `pg_stat_activity` is the "a pass is in flight" seam AA asked for
+
+AA declined `PgInstanceLifecycleMonitor:69` and `PgDurableSignalRetentionWorker:74` together,
+noting the honest route would be "a seam on each worker that reports when a pass starts". The
+monitor turned out not to need one (§1). The retention worker does, and the database already has
+it:
+
+```sql
+LOCK TABLE wh_signals IN ACCESS EXCLUSIVE MODE   -- from a second session, transaction left open
+-- then poll: SELECT count(*) FROM pg_stat_activity
+--            WHERE wait_event_type = 'Lock' AND query LIKE '%DELETE FROM wh_signals%'
+```
+
+The sweep's DELETE parks on the lock indefinitely, and the `pg_stat_activity` row is proof — not a
+guess — that the statement is in flight. `StopAsync` then cancels into a genuinely-running sweep.
+Npgsql converts the server's `57014 query_canceled` into `OperationCanceledException` when the
+token was the cause, so it lands on the cancellation arm.
+
+`ExecuteTask` completing is not enough on its own to prove line 74 (deleting the arm still exits,
+one iteration later, via the inter-tick delay). The distinguishing assertion is that **no
+sweep-failure warning was logged**: filing a shutdown as a failed sweep would warn on every pod on
+every rolling deploy. A recording `ILogger` counting `EventId 1` makes the intended arm the only
+one that satisfies both assertions.
+
+### 5. `PostgresSchemaInitializer:470` is not uncovered
+
+The batch listed it; a scoped run of the 64 `PostgresSchemaInitializer*` tests shows it **HIT**,
+while `136`, `493` and `746` in the same file and same report are MISS, exactly as BQ says. Recorded
+so the next round does not spend a cycle on it. Whatever produced the merged number, `470` is not a
+gap.
+
+### 6. New residue
+
+**`PgAppSignalChannel:71`** — `_removeHandler`'s "topic is no longer in `_byTopic`" early return.
+Single-threaded it is unreachable by construction: `RemoveHandler` returns `_handlers.Count > 0`,
+and every live `HandlerSubscription` removes exactly one entry (its own `Dispose` is idempotent),
+so the count reaches zero exactly when the last live handle disposes — and that same call is what
+removes the topic. The only way to hold a live handle for an absent topic is the interleaving where
+a `Subscribe` reads the existing `TopicSubscription` out of `GetOrAdd` while another thread's last
+`Dispose` is between its `RemoveHandler` and its `TryRemove`. **A test for exactly this already
+exists** (`PgAppSignalChannelCoverageTests.Subscribe_DisposedConcurrentlyFromManyThreads_…`,
+whose own comment names the window) and the line is still red — the interleaving does not land.
+Same shape as `NotifySubscriptionRegistry` 45/72 in CA: deterministic assertions, a race that will
+not be scheduled. Do not write a second one.
+
+**`PostgresSignalTransport:186`** — the `sink is null || map is null` guard in `_onNotification`.
+Dead by call-site ordering. `_onNotification` has exactly two callers, `BroadcastSubscription` and
+`InstanceSubscription`, and both are constructed and registered at `StartAsync` lines 80-81 —
+after `_sink` (66) and `_wireNameToEntry` (77) are assigned. Neither field is ever reset to null;
+there is no `StopAsync` and no disposal path on this type. So no notification can reach the handler
+before both are set. (The transport's *other* not-started guard, `_typeToWireName is null` on the
+publish side, is live and covered — publishing before `StartAsync` is reachable; receiving before
+it is not.)
+
+### 7. Re-confirmed without new work
+
+`CollectivePredicateSqlCompiler` 394-395 (CE), `EventEnvelopeJsonbAdapter` 182 (AZ),
+`DapperWorkCoordinator` 232, `PgDutyElector` 165 (CA), `PostgresSchemaInitializer` 136/493/746 (BQ).
+
+One correction to the `DapperCollectiveSpecCompiler:189` entry above: it argued `Expression.Call`
+"quotes it or throws" for a bare `LambdaExpression` in a parameter typed `Expression<Func<…>>`.
+Measured: it **quotes**. A hand-built `Expression.Call(sParam, setPropertyMethod,
+Expression.Lambda<Func<_jobModel,int>>(…), …)` is accepted, compiles to the right jsonb path — and
+a scoped cobertura run shows line 188 (the `Quote` arm) HIT with 189 still MISS. The disjunction is
+resolved to its first branch; the conclusion (189 unreachable) stands, now on a measurement. The
+probe test was not kept: it added no coverage and duplicated an existing quoted-selector test.
+
+## CU. Round-24 generators batch: 6 of 80 closed, and why the other 74 are shaped alike
+
+Batch: 80 uncovered lines over 35 files in `src/Whizbang.Generators`,
+`src/Whizbang.Generators.Shared` and `src/Whizbang.Generators.CodeFixes`. Six closed. The rest is
+residue, and it is unusually homogeneous: **a source generator's uncovered lines are overwhelmingly
+guards against inputs Roslyn's own API contract forbids, or against shapes an upstream method in the
+same file has already filtered out.** Measured from a full `Whizbang.Generators.Tests` run with
+`--coverage --coverage-output-format cobertura` (2,102 tests), baseline 0/80, after 6/80.
+
+### Closed
+
+- **`ReceptorInfo` 59** — `HasSyncAttributes`. No production caller at all; tested directly the way
+  `ReceptorInfoTests` already tests `IsVoid`, across all three states of the slot (null /
+  present-but-empty / populated), because the predicate is `is { Length: > 0 }` and a regression to a
+  plain null check would claim a sync barrier the receptor never declared.
+- **`GuidInterceptorGenerator` 323** — `_isMatchingRestore`'s `!isRestore` arm. Reached by a SECOND
+  `#pragma warning disable` (an unrelated code) sitting between the `WHIZ055` disable and the
+  `Guid.NewGuid()` call: the restore scan collects every pragma directive in that span, so a
+  *disable* lands in `_isMatchingRestore` and has to be rejected on the keyword before its error
+  codes are read. Paired with a control that puts a real `restore WHIZ055` in the same slot and DOES
+  resume interception, so the negative assertion is attributable.
+- **`PerspectiveDiscoveryGenerator` 206-207** — the `<c>typeToValidate is not INamedTypeSymbol</c>`
+  arm of `_validateEventStreamId`. The half-written test left in this file aimed at a JAGGED ARRAY
+  `TEvent`; that shape does not reach the guard (see the defect below). An **open type parameter**
+  `TEvent` does, compiles cleanly, and is the realistic shape: a generic perspective can never be
+  stream-keyed at generation time.
+- **`ReceptorDiscoveryGenerator` 428 and 672** — `_tryExtractFireAtStage` / `_resolveEnumValueName`
+  both recover the enum TYPE from `AttributeClass.GetMembers().OfType<IMethodSymbol>()
+  .FirstOrDefault(ctor)?.Parameters.FirstOrDefault()?.Type`. When the FIRST-declared constructor is
+  parameterless there is no such type and the chain lands on null. Reached by declaring
+  `Whizbang.Core.Messaging.FireAtAttribute` / `Whizbang.Core.Dispatch.DefaultRoutingAttribute` in the
+  test source with a parameterless ctor first (source wins over the referenced metadata copy, CS0436)
+  — the same shadowing idiom `ReceptorDiscoveryGeneratorCoverageTests` already uses for
+  `FireDuringReplayAttribute`. Worth stating what the guard buys: without it the transform throws
+  inside the incremental pipeline and the **entire assembly's** receptor registry disappears, not just
+  the one receptor. That is what the tests assert.
+
+### The dominant category: Roslyn API-contract guards (33 lines, 21 files)
+
+Every one of these is `if (<Roslyn API result> is null / is not <the type the API guarantees>)
+return`. None can fire in a compiling — or even a badly broken — program:
+
+| lines | shape |
+| --- | --- |
+| `MessageTagDiscoveryGenerator` 71, `AutoPopulateDiscoveryGenerator` 110, `WhizbangIdGenerator` 112/175/236, `EventNamespaceRegistryGenerator` 76/122, `CollectiveApplyDiscoveryGenerator` 62, `MessageTypeCatalogGenerator` 73, `PerspectiveRunnerRegistryGenerator` 70, `PinnedIdRegistryGenerator` 46, `RawReceptorDiscoveryGenerator` 50, `ScopedLensFactoryGenerator` 45, `SignalTypeRegistryGenerator` 41, `TopicFilterGenerator` 80, `PerspectivePurityAnalyzer` 141/261, `PerspectiveModelArrayAnalyzer` 61, `PerspectiveModelConsistencyAnalyzer` 77 | `GetDeclaredSymbol(<declaration syntax>)` returning null / not a named symbol |
+| `PinnedTypeLedgerGenerator` 51, `InheritScopeAnalyzer` 64 | `context.Node`/`context.Symbol` not the kind the registration already filtered for |
+| `ReceptorDiscoveryGenerator` 170, `MessageJsonContextGenerator` 206 | `context.Attributes.FirstOrDefault() is null` on a `ForAttributeWithMetadataName` provider — a provider that fires only because the attribute is present |
+| `MessageRegistryGenerator` 213, `PerspectiveSyncInReceptorAnalyzer` 79, `MintedCompositeConstructionAnalyzer` 155 | `ISymbol.ContainingType` null on a resolved method/property |
+| `MessageJsonContextGenerator` 3003, `MintedCompositeConstructionAnalyzer` 115 | `ContainingNamespace` null — it is the global namespace, never null |
+| `MessageTagDiscoveryGenerator` 273 | `AttributeClass is null` on an entry that came from `GetAttributes()` |
+
+`TopicFilterGenerator` 98 (`attrClass is null` inside the attribute-matching `Where`) deserves a
+line of its own because it is the one that looks reachable: an unresolvable attribute. It is not —
+`TopicFilterGeneratorCoverageTests.Generator_UnresolvableAttribute_DoesNotPreventFilterDiscoveryAsync`
+already puts `[TotallyUnknownAttributeThatDoesNotExist]` on a command and line 98 stays unhit, because
+Roslyn gives an unresolvable attribute an ERROR type symbol, not a null one. Measured, not argued.
+
+### Dead by call site or by an enclosing condition (30 lines)
+
+- **`ReceptorDiscoveryGenerator` 849-850** — the second `Routed<` prefix, without `global::`. Every
+  string that reaches `_unwrapRoutedTypeString` is a `FullyQualifiedFormat` display string or a
+  substring of one that keeps the prefix (`receptor.ResponseType`, tuple segments,
+  collection element types). The un-prefixed constant has no producer.
+- **`ReceptorDiscoveryGenerator` 1070** — `_addTupleElement`'s empty-element short-circuit.
+  `_extractTupleElements` is only ever handed a real ValueTuple display string, whose top-level
+  comma-separated segments are non-empty after `Trim()`. C# cannot express a 0- or 1-arity tuple.
+- **`ReceptorDiscoveryGenerator` 1817-1818** — the `useStageFiltering: false` arm. Both call sites of
+  `_buildReceptorInvocationsCore` pass `true`. Second instance in this file of a parameterized helper
+  keeping an arm no caller selects.
+- **`ReceptorDiscoveryGenerator` 1972, 2001, 2016** — `_extractReceptorInfoFromSnippet` returning
+  null and the manual-fallback call it guards. `ReceptorRegistrySnippetInvariantTests` pins the
+  `new global::Whizbang.Core.Messaging.ReceptorInfo(` marker in all four snippets `_selectSnippet` can
+  return, so the marker search always succeeds and the paren walk always closes. The FALLBACK METHOD
+  already carries `[ExcludeFromCodeCoverage]` with the reasoning in its remarks; these three lines are
+  the same fact leaking out of the excluded member into its caller.
+- **`MessageJsonContextGenerator` 2292** — `_isCollectionType` inside `_extractDirectPropertyType`.
+  Every name `_isCollectionType` matches starts `global::System.Collections.Generic.`, and the
+  immediately preceding line already returned for anything starting `global::System.`. Shadowed guard.
+- **`MessageJsonContextGenerator` 2297** — the array short-circuit in the same method.
+  `_extractDirectPropertyType` is called only when `_extractElementType` returned null, and
+  `_extractElementTypeSingleLevel` returns a non-null element for every `T[]`. So the method never
+  sees an array.
+- **`MessageJsonContextGenerator` 2248** — `_findTopLevelComma` returning -1. Both callers first
+  match a `Dictionary<`/`IDictionary<`/`IReadOnlyDictionary<` prefix and slice between it and the last
+  `>`, which is always a two-argument list.
+- **`MessageTagDiscoveryGenerator` 248** — `null => "null"` in the Primitive arm. `value.IsNull`
+  (`_value == null`) is checked at the top of the method and returns `"null"` there, so a primitive
+  constant with a null value never reaches the switch. Shadowed guard.
+- **`MessageTagDiscoveryGenerator` 267** — the `default:` arm. `TypedConstantKind` has five members;
+  four are cased. The fifth, `Error`, carries a null `_value`, so `IsNull` catches it at the top for
+  the same reason as 248. The switch's default has no reachable kind.
+- **`MessageTagDiscoveryGenerator` 579** — `_escapeString(null)`. Its call sites pass `tag.Tag`
+  (non-nullable, `?? ""` at extraction) or `tag.ExtraJson` guarded by `!string.IsNullOrEmpty`.
+- **`PerspectiveRunnerGenerator` 104, 113, 804, 1063, 1083** — all five, one chain.
+  `_extractModelType` (804) needs both interface lists empty, but line 94 already returned null in
+  that case, which also makes 104 unreachable. 113 (`eventTypes.Count == 0`) cannot fire because
+  `_extractSingleStreamInterfaces` requires `TypeArguments.Length >= 2` and `_extractGlobalInterfaces`
+  `>= 3`, so the `Skip(1)`/`Skip(2)` always yields at least one event. 1063 and 1083 need a model type
+  that is not an `INamedTypeSymbol` — but `_findModelStreamIdProperty` runs first on the same symbol
+  and iterates `GetMembers()`, which is empty for both array and type-parameter symbols, so the method
+  returns the WHIZ033 warning long before either line.
+- **`AutoPopulateDiscoveryGenerator` 395** — `_ => null` over `info.PopulateKind`, which is set to one
+  of five constants at extraction; the preceding `if` handles Header and the switch handles the other
+  four.
+- **`AutoPopulateDiscoveryGenerator` 599** — `_ => "default"` in `_getValueExpression`. Two layers:
+  each `_extract*Info` collapses an unknown int to a KNOWN kind name via its own `_ =>` arm, and the
+  caller filters to `(Timestamp && SentAt) || Context || Service || Identifier || Header` before
+  invoking the selector. Every surviving `(kind, specificKind)` pair has an arm.
+- **`TopicFilterGenerator` 155** — `enumValue is null` where `firstArg.Type.TypeKind == Enum`. A
+  Roslyn `TypedConstant` whose Type is an enum always carries the boxed underlying value; an argument
+  that fails to bind produces `default(TypedConstant)`, whose `Type` is null and so never reaches the
+  enum branch.
+- **`ServiceRegistrationGenerator` 206** — the `return ServiceCategory.Lens` fallback, which the code's
+  own comment already calls "shouldn't happen". `_getServiceCategory` is only called after
+  `_isUserInterfaceExtendingWhizbang` returned true, and the two methods loop over the SAME
+  `AllInterfaces` with the SAME two prefix tests.
+- **`TemplateUtilities` 127** (Shared) — `_consumeLineEnding`'s "not a line ending" bail. Its single
+  caller invokes it immediately after `_captureTrailingContent`, which advances the position until it
+  hits end-of-string or a `\r`/`\n`. The preceding bounds check covers the first case.
+- **`Analyzers/MessageTagParameterAnalyzer` 56** — "skip the `MessageTagAttribute` base class
+  itself". It cannot run: the guard above it, `_inheritsFromMessageTagAttribute`, starts its walk at
+  `typeSymbol.BaseType`, so it is false for the base class itself and returns first. The skip is
+  shadowed by the check that was supposed to make it necessary.
+
+### Provably dead by the language, not by the call graph
+
+- **`SerializablePropertyAnalyzer` 180** — the branch tests for `Nullable<T>` whose type argument has
+  `SpecialType.System_Object`. `Nullable<T>` is constrained `where T : struct`; `Nullable<object>`
+  cannot exist. The comment above it ("Also check for `Nullable<object>` (`object?`)") confuses the
+  nullable-REFERENCE annotation with `Nullable<T>` — `object?` is `System.Object` with an annotation
+  and is already caught by the `SpecialType.System_Object` test five lines earlier.
+
+### A whole type nothing constructs
+
+- **`JsonMessageTypeInfo` 64-68** — `internal sealed record JsonWhizbangIdInfo(TypeName, SimpleName,
+  ConverterName)`. Its only occurrence in `src/` is its own declaration; `MessageJsonContextGenerator`
+  discovers WhizbangId converters by another route entirely. All five lines are the record's primary
+  constructor and positional members, never instantiated. This is not a guard to keep — it is dead
+  code, and the honest fix is deletion, not a test that constructs it to make the lines green.
+  Left in place (deleting production types is out of scope for a coverage round) and recorded here so
+  the next reader does not spend the cycle re-deriving it.
+
+### NEW SHAPE — a line that cannot be hit because of how the compiler attributes the IL
+
+- **`PerspectiveSchemaGenerator` 132.** The statement is
+
+  ```
+  130    var modelProperties = modelType is INamedTypeSymbol namedModelType
+  131        ? namedModelType.GetAllProperties().ToList()
+  132        : [.. modelType.GetMembers().OfType<IPropertySymbol>().Where(p => !p.IsStatic)];
+  ```
+
+  A new test drives an ARRAY `TModel` (`IPerspectiveFor<OrderRow[], OrderIndexed>`) alongside a
+  sibling perspective on the bare `OrderRow`, and asserts the two estimated row sizes the generated
+  CREATE TABLE comments carry: `~20 bytes` (base overhead, zero properties) for the array one and
+  `~140 bytes` (20 + 3x40) for the sibling. The 20 can only come from the FALSE arm running. It
+  passes — **and line 132 still reports zero hits.** Lines 130, 131 and 134 are all hit.
+
+  So the collection-expression spread in the false arm of a conditional is lowered such that its
+  sequence points land elsewhere; the line can never show a hit even when the branch demonstrably
+  runs. The test was kept (the invariant is real and the two-number assertion is not satisfiable by
+  one code path), but the line stays in the worklist forever.
+
+  **Check for this before writing a test for any uncovered `[.. ...]` line**: drive the branch, assert
+  an observable that only that branch produces, and look at the neighbouring lines in the same
+  cobertura. It is the same technique as the closing-brace artifact (CL), applied to a different
+  lowering.
+
+### Already recorded, re-confirmed without new work
+
+`PathResolver` 26/31/51 and `PinnedIdCodeFixProvider` 48/75 (CK); `GuidInterceptorGenerator`
+105/280/318/417 and `TopicFilterGenerator` 80, each already documented in that generator's own
+coverage-test `<remarks>`; `PerspectiveDiscoveryGenerator` 243 and 399, likewise.
+`SharedSelfTest` 96 (`failures.Add`) documents itself: the arm runs only when an ILRepack-merged copy
+has diverged from the source, which no shipping build does.
+
+### A latent defect found on the way
+
+`TypeNameUtilities.FormatTypeNameForRuntime` throws `NullReferenceException` on a JAGGED array:
+
+```
+var assemblyName = typeSymbol is IArrayTypeSymbol arrayType
+    ? arrayType.ElementType.ContainingAssembly.Name   // ElementType of T[][] is T[] -> ContainingAssembly is null
+    : typeSymbol.ContainingAssembly.Name;
+```
+
+`PerspectiveDiscoveryGenerator` calls it (line 121) BEFORE it validates event types (line 126), so a
+perspective declared `IPerspectiveFor<TModel, TEvent[][]>` does not get the WHIZ030 it deserves — the
+generator raises CS8785 and **every** perspective registration in the assembly is lost. Reaching it
+needs source that already violates `where TEvent1 : IEvent`, so it is behind a compile error and was
+left alone; noted because it is what made the half-written jagged-array test in
+`PerspectiveDiscoveryGeneratorCoverageTests` unfinishable, and the next person to try that shape
+should know why.
+
+### Operational note, third round running
+
+Two agents measured `Whizbang.Generators.Tests` with `--coverage` at the same time. **Concurrent
+coverage collectors on the same test assembly silently produce an EMPTY report** — a 178-byte
+cobertura with `<packages />` and a green test run. Six consecutive scoped attempts returned 178
+bytes while another agent's retry loop was running; the same command returned 20 MB once it stopped.
+The size check is the tell, and it belongs in any retry loop: `stat -f%z` on the output, retry if it
+is under a megabyte. Same family as the shard-filter trap in CP, different cause.
+
+## CW. Round-24 EFCore/transports generators batch: 9 of 55 closed, and the record-model trap
+
+Batch: 55 uncovered lines over 11 files in `src/Whizbang.Data.EFCore.Postgres.Generators`,
+`src/Whizbang.Transports.HotChocolate.Generators` and
+`src/Whizbang.Transports.FastEndpoints.Generators`. Tests live in
+`tests/Whizbang.Generators.Tests` (the EFCore *generators*; the EFCore *analyzers* are tested from
+`tests/Whizbang.Data.EFCore.Postgres.Tests`). Verified by scoped cobertura from a full
+`Whizbang.Generators.Tests` run — 2,102 tests, all green — counting `hits > 0` on the exact line
+numbers before and after. Baseline for every line below was 0.
+
+### Closed
+
+| File | Lines | How |
+|---|---|---|
+| `EFCorePerspectiveConfigurationGenerator` | 683, 706, 709, 729, 771 | see the record trap below — the existing tests for these shapes could not fail |
+| `EFCoreServiceRegistrationGenerator` | 552 | `_extractPhysicalFields(modelType as INamedTypeSymbol)` with a null argument. Reached by the generic-base-perspective shape: `abstract class SharedPerspectiveBase<TModel> : IPerspectiveFor<TModel, TEvent>` is itself a discovered candidate, and its model symbol is an `ITypeParameterSymbol`, so the `as` yields null. Asserted against a closed sibling perspective whose `[PhysicalField(ColumnName = "ext_id")]` DOES reach the DDL, so "no columns" is attributable to the open model rather than to physical-field extraction being dead. |
+| `EFCoreServiceRegistrationGenerator` | 618 | `depth > MAX_COALESCE_DEPTH` in `_appendCoalesceStatements`. The cycle guard only stops a type that repeats, so a chain of nine DISTINCT nested classes has nothing to catch it. `Level8` carries a `List<string> InsideCap` that IS coalesced and `Level9` a `List<string> PastCap` that is not — the positive half is what proves the walk actually descended eight levels rather than stopping early for some other reason. |
+| `GraphQLMutationTypeGenerator` | 76 | |
+| `RestMutationEndpointGenerator` | 77 | the `!attrClass.IsGenericType \|\| TypeArguments.Length < 2` arity guard. The attribute is matched by a **prefix** on its display string, so any type in `Whizbang.Transports.Mutations` whose name starts `CommandEndpointAttribute` reaches the type-argument read; a non-generic one declared in the test source does. Each test also carries a valid two-argument endpoint in the same compilation and asserts THAT one is generated, so an empty output file cannot pass. |
+
+### The trap: a record model makes every polymorphic-detection test vacuous
+
+`EFCorePerspectiveConfigurationGeneratorCoverageTests` already had tests for
+`Dictionary<string, Abstract>`, `List<Wrapper>`, `IReadOnlyList<Abstract>` and `[JsonPolymorphic]`.
+All were green. None of the code they name had ever run.
+
+Every one of them used a **record** as the perspective model. A record has a compiler-generated
+`EqualityContract` property of type `System.Type`, `System.Type` is an abstract class, and
+`_checkForPolymorphicTypes` is a `.Any(...)` over the model's properties in declaration order —
+so the FIRST property of any record model answers "polymorphic" before the property under test is
+ever looked at. The tests asserted the polymorphic marker and got it, from a property they did not
+write.
+
+The same file's own comment in `EFCoreServiceRegistrationGeneratorCoverageTests` names the hazard
+("records classify polymorphic via compiler-generated EqualityContract in other generators"), so it
+was known — it just had not been applied here. The five tests added here use **class** models, and
+a sixth gives the identical property shapes a fully concrete graph and asserts the marker is
+ABSENT, so the marker is not something every class model produces.
+
+One shape genuinely was unreachable the way it was written. `Dictionary<K, V>` does **not** reach
+`_hasPolymorphicTypeArguments`: `Dictionary` exposes an explicit
+`IReadOnlyDictionary<TKey,TValue>.Values` property typed `IEnumerable<TValue>`, `_isAnalyzableProperty`
+does not filter by accessibility, and `IEnumerable<` IS in the recognized-collection list — so the
+abstract value type is found by the member walk (line 683) and the type-argument scan never runs.
+Lines 706 and 709 needed a generic type that does **not** surface its argument as a property:
+`HashSet<T>` does exactly that, reaching them via its `Comparer` property (`IEqualityComparer<T>`).
+That also happens to be the more valuable test — a set of an abstract element type is a model shape
+`_getCollectionElementType` does not recognize, and if it were not detected the model would be
+routed back to `ComplexProperty().ToJson()`, which cannot round-trip it.
+
+### Already covered — worklist entry that did not need work
+
+`EFCorePerspectiveConfigurationGenerator` 715 (the closing brace of `_hasPolymorphicTypeArguments`)
+reads `hits=1` in a scoped local run **before** any change in this round; 704, 705, 708 and 714 in
+the same method are hit as well. The merged CI report listed it as uncovered. Line numbers around
+it are demonstrably correct (233/281/323 and 683/706/709/729/771 all match the code they describe),
+so this is a report artifact, not drift.
+
+### Declined — Roslyn API-contract guards (9 lines, 9 files)
+
+All of the form `if (GetDeclaredSymbol(<declaration syntax>) is not INamedTypeSymbol) return null;`
+or `is null`. Roslyn's contract guarantees a named type symbol for a class/struct/type declaration,
+including for a declaration full of errors. Same category as the 33 lines catalogued in CU.
+
+| file | line |
+|---|---|
+| `EFCoreServiceRegistrationGenerator` | 256, 446 |
+| `EFCorePerspectiveConfigurationGenerator` | 233, 323 |
+| `EFCorePerspectiveAssociationGenerator` | 60 |
+| `PerspectivePersistenceJsonContextGenerator` | 116 |
+| `GraphQLMutationTypeGenerator` | 53 |
+| `GraphQLLensTypeGenerator` | 57 |
+| `RestMutationEndpointGenerator` | 54 |
+| `RestLensEndpointGenerator` | 57 |
+
+`EFCoreServiceRegistrationGenerator` 841 belongs here too: `GetTypeInfo(genericName).Type is not
+INamedTypeSymbol`. A generic name in type position binds to a named type or to an ERROR named type;
+both implement `INamedTypeSymbol`. This is the same fact CU measured for `TopicFilterGenerator` 98.
+
+### Declined — `_deriveSchemaFromNamespace` empty-namespace default: dead by call site, and it hides a bug
+
+`EFCoreServiceRegistrationGenerator` 394 and `EFCorePerspectiveConfigurationGenerator` 281 are both
+`if (string.IsNullOrEmpty(namespaceName)) return "public";`. Each has exactly one call site, and
+both pass `symbol.ContainingNamespace.ToDisplayString()`. For a type in the global namespace that
+returns the literal string `"<global namespace>"`, **not** `""` — measured, with a
+`[WhizbangDbContext] class RootDbContext : DbContext` at global scope: the guard did not fire and
+the generated DDL came out as `CREATE SCHEMA IF NOT EXISTS ""<global namespace>""` with
+`SchemaInitializationLockKey.Compute("<global namespace>")`. So the fallback is unreachable AND the
+case it was written for is mishandled. Left alone — fixing it is a production change, not a coverage
+change — but it is worth a follow-up: the guard wants
+`ns.IsGlobalNamespace` (or `ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)` compared
+against the sentinel), not `IsNullOrEmpty`.
+
+### Declined — dead by an enclosing condition or by the pipeline predicate (5 lines)
+
+- **`EFCoreServiceRegistrationGenerator` 835 and 854.** The syntax provider's predicate is
+  `node is ParameterSyntax { Type: GenericNameSyntax { TypeArgumentList.Arguments.Count: >= 2 } }`.
+  The transform then re-checks `parameterSyntax.Type is not GenericNameSyntax` (835) and
+  `type.TypeArguments.Length < 2` (854). Neither can differ from what the predicate already
+  established — a syntactic two-argument generic name binds to a two-argument type.
+- **`EFCoreServiceRegistrationGenerator` 531 and 543.** `_extractKeysFromAttribute`'s
+  `ConstructorArguments.Length == 0` and non-array-kind arms. Its two call sites pass
+  `WhizbangDbContextAttribute` and `WhizbangPerspectiveAttribute`, matched by EXACT display string.
+  Both declare a single primary constructor, `params string[]? keys`, so Roslyn always supplies
+  exactly one constructor argument of `TypedConstantKind.Array` — `[WhizbangDbContext]` yields an
+  empty array, not zero arguments.
+- **`LensQueryTypeArgumentAnalyzer` 64.** `method.TypeArguments.FirstOrDefault() == null` after
+  `_isTargetMethod` has already required `method.IsGenericMethod && method.TypeArguments.Length == 1`.
+
+### Declined — `PerspectiveModelPolymorphicAnalyzer` 216: dead by the type system
+
+```csharp
+private static INamedTypeSymbol? _getCollectionElementType(INamedTypeSymbol type) {
+  if (type is IArrayTypeSymbol arrayType) {          // 216
+    return arrayType.ElementType as INamedTypeSymbol;
+  }
+```
+
+The parameter is `INamedTypeSymbol`. No Roslyn symbol implements both `INamedTypeSymbol` and
+`IArrayTypeSymbol` — arrays are `IArrayTypeSymbol` only. The compiler permits the test because both
+are interfaces; nothing can satisfy it. (`EFCorePerspectiveConfigurationGenerator` has the same
+helper WITHOUT the array arm, which is the shape that is actually correct here.)
+
+`PerspectiveModelPolymorphicAnalyzer` 244 and `PerspectiveModelDictionaryAnalyzer` 218 are the
+`type.ContainingNamespace?.ToDisplayString()` null arm of `_isSystemPrimitiveType` — the global
+namespace is a symbol, never null. Third and fourth instance of the `ContainingNamespace` guard
+already catalogued in CU.
+
+### Declined — "the generator would have to ship broken" (15 lines)
+
+- **`EFCoreServiceRegistrationGenerator` 176-184** — the `catch` around `_generateRegistrationMetadata`
+  reporting EFCORE996. Its sibling callbacks (997/995/994) can be made to throw by forcing duplicate
+  `AddSource` hint names, and
+  `Generator_WithDuplicateDbContextClassNames_ReportsGeneratorErrorDiagnosticsAsync` does exactly that
+  — and asserts EFCORE996 is NOT among them, because this callback's hint names are fixed. The only
+  indexing inside is `dbContextGroups[0]`, and `_groupPerspectivesByDbContext` returns one entry per
+  DbContext under a `dbContexts.IsEmpty` early return, so it cannot be empty. No reachable throw.
+- **`EFCoreServiceRegistrationGenerator` 1264 and 1353-1364** — `_tryLoadRegistrationSnippets`'s
+  failure path and the caller's abort. The snippets are embedded resources OF THE GENERATOR ASSEMBLY;
+  extraction fails only if the generator itself is built wrong.
+- **`EFCoreServiceRegistrationGenerator` 2166 and 2181** — `migrationResources.Length == 0` and
+  `GetManifestResourceStream(name) == null` for a name `GetManifestResourceNames()` had just
+  returned. Same category.
+
+### Note for the next round: the generator PDBs do not survive an incremental copy
+
+`Whizbang.Data.EFCore.Postgres.Generators`, `.Transports.HotChocolate.Generators` and
+`.Transports.FastEndpoints.Generators` are ILRepack-merged. After a rebuild, the merged `.dll`
+lands in `tests/Whizbang.Generators.Tests/bin/Debug/net10.0/` but the matching `.pdb` does not —
+and with no PDB the coverage collector **silently omits the whole assembly**. The run is green, the
+cobertura is a normal multi-megabyte file, and the generator simply is not in it (grep for
+`filename=` and the class is absent). Distinct from the 178-byte empty-report trap: the file looks
+healthy. Recipe that works:
+
+```
+dotnet build tests/Whizbang.Generators.Tests/... -c Debug --no-restore
+for p in <the three generator projects>; do
+  cp -p src/$p/bin/Debug/netstandard2.0/$p.pdb tests/Whizbang.Generators.Tests/bin/Debug/net10.0/
+done
+dotnet run -c Debug --no-build -- --coverage --coverage-output-format cobertura ...
+```
+
+Do the build, the copy and the run as ONE command. With other agents building concurrently, the
+src-side `.dll` gets replaced mid-window and the copied PDB then belongs to a different build than
+the `.dll` in the test output — which the collector also silently ignores. `cmp -s` the two DLLs
+before trusting a result.
+
+## DA. Round 24, Core batch 2: proofs from the callee, and one seam worth adding
+
+Twenty-three files, sixty-one lines. Fifteen closed, forty-six unreachable — but several of the
+forty-six were previously recorded as "declined" when the sharper answer is "cannot happen", so the
+reasons below replace the earlier ones. Three of the fifteen are CT's .NET 10 defect in this
+batch's files, wearing a disguise I nearly filed as residue.
+
+### The proof usually lives in the callee, not the file with the uncovered line
+
+Five of this batch's entries look like ordinary defensive arms until you read what the method they
+call actually does. In each case the callee has already handled the condition the guard is
+watching for.
+
+**`SlidingWindowApplyBatchStrategy` 183 / `SlidingWindowOutboxBatchStrategy` 150** — the outer
+`catch (OperationCanceledException)` in `_drainBufferAsync`. BU and BY recorded these as "an outer
+catch whose inner handlers absorb everything reachable". The proof is stronger and it is in
+`SlidingWindowBatcher.ReadBatchesAsync`, which **never throws**: it converts every cancellation
+into a `yield break` — the loop condition (66), the catch around the first `WaitToReadAsync` (71),
+the re-check after `WhenAny` (111), and the catch around the arrival await (124). The only other
+awaited call inside the drain loop is `_flush`, whose `OperationCanceledException` is taken by the
+filtered catch when `_stopCts` is canceled and by the general `catch (Exception)` when it is not.
+Nothing inside the `try` can hand an `OperationCanceledException` to the outer catch.
+
+**`Dispatcher` 1489-1490** — `_cascadeEventsExcludingResponseAsync`'s `result == null` arm. Its
+single call site (1458) is preceded by `ResponseExtractor.TryExtractResponse<TResult>`, whose FIRST
+statement is `if (result == null) { response = default; return false; }`, and a `false` return
+throws at 1448. A null result cannot reach 1458.
+
+**`Dispatcher` 4145** — the trailing `return null` of `_extractStreamIdFromMetadata`. The only
+argument it is ever passed (3998) is the output of `_createHopMetadata`, which returns either
+`null` — handled at 4135 — or a dictionary holding exactly one entry, `["AggregateId"]`, built by
+`JsonDocument.Parse("\"" + streamId.Value + "\"")`. A non-null dictionary therefore always has a
+`String`-kind `AggregateId` that `Guid.TryParse` accepts, and always returns at 4142.
+
+**`SystemEventEmitter` 196** — the `_ => null` arm of the tenant switch. The enable guard at
+174-177 falls through only when `IsEnabled<TSystemEvent>()` is true, or when `AuditEnabled` holds
+AND `TSystemEvent` is `EventAudited` or `CommandAudited`; and `SystemEventOptions.IsEnabled(Type)`
+returns true for those two types alone. Both are `sealed record`s, so the two preceding switch arms
+cover every value that can reach the switch.
+
+**`MessageEnvelope` 343** — the inner `return null` of the obsolete `GetCurrentSecurityContext()`.
+It is guarded by `Hops[i].Type == HopType.Current && Hops[i].Scope != null`, which is exactly the
+predicate `GetCurrentScope()` filters on — so its `Aggregate` has at least one element and returns
+`ScopeDelta.ApplyTo(...)`, whose `_applyValueChanges` starts from
+`previous?.Scope ?? new PerspectiveScope()` and can never produce a `ScopeContext` with a null
+`Scope`. Inside that branch `scope?.Scope != null` is always true.
+
+### Dead by call site, where the call site's own comment says so
+
+**`TransportPublishStrategy` 519-522** — "Null check should never trigger due to early return in
+PublishAsync, but be defensive". Correct: both call sites of `_resolveDestination` (176 in
+`PublishAsync`, 309 in the batch overload) sit behind `if (string.IsNullOrEmpty(work.Destination))`
+early returns, and `OutboxWork.Destination` is a record property with no mutation in between.
+
+**`Dispatcher` 3762** — `if (composite is not ICompositeEvent) return;`, whose two call sites
+(3211, 3310) are both inside `if (eventData is ICompositeEvent && _isOwnedNamespace(...))`.
+
+**`IntervalUnitOfWorkStrategy` 189** — the `catch (OperationCanceledException)` around
+`await _flushTask` in `DisposeAsync`. `_flushTask` is `_runFlushLoopAsync`, whose entire body is
+already wrapped in a `catch (OperationCanceledException)`. It can only end `RanToCompletion`, or
+`Faulted` with a non-OCE — never Canceled and never faulted with an OCE. Exactly the shape recorded
+for `BatchFlusher` 142.
+
+**`SignalHandlerList` 27** — `_remove`'s `index < 0` guard. `Add` is the only writer, and
+`Subscription.Dispose` — the only caller of `_remove` — is one-shot via
+`Interlocked.Exchange(ref _handler, null)`. Every handler reaching `_remove` was added to this
+list, and removals can never outnumber adds for an equal delegate, so `Array.IndexOf` (which
+compares delegates structurally, not by reference) always finds one.
+
+**`BasePollSignalSource` 75** — `_onTick`'s null-sink guard. `_sink` is assigned in `StartAsync`
+*before* `_clock.CreateTimer` is called, and nothing sets it back to null — the class has no Stop
+and no Dispose. The timer that invokes `_onTick` does not exist until after the assignment.
+
+**`DebuggerAwareClock` 326** — the `catch (ChannelClosedException)` in `_readLoopAsync`.
+`_pauseStateChannel` is completed only by `Dispose()`, through the no-argument `TryComplete()`, and
+a gracefully completed channel ends `ReadAllAsync`'s enumeration rather than throwing. (132 and 137
+remain as recorded: mode-gated, since the sampler timer only exists for `CpuTimeSampling`/`Auto`.)
+
+**`SerialExecutor` 217-223** — `RecordDefensiveException` around `workItem.ExecuteAsync`. The
+delegate is always `_executeWithPooledStateAsync<TResult>`, whose whole body is
+`try { … } catch (Exception ex) { state.Source.SetException(ex); } finally { … }`. A queued item
+goes through `ExecuteAsync` **or** `CancelAsync`, never both, so the source is completed exactly
+once and `SetException` cannot throw a double-completion either. This is the current line range for
+the entry the original table recorded as line 210.
+
+**`ScopeDelta` 381** — `_scopesEqual(null, null)`. `IScopeContext.Scope`, `ScopeContext.Scope` and
+`SecurityExtraction.Scope` are all non-nullable `PerspectiveScope` (the latter two `required`), so
+`b` (`current.Scope`) is never null at the only call site. Only the `a == null` half — 383-384,
+covered — is reachable.
+
+**`EnvelopeSerializer` 40-45** — see BX; re-confirmed unchanged this round.
+
+### Races with no seam
+
+**`SerialExecutor` 185-190** — `RecordDefensiveCancellation` in `DrainAsync`, the current range for
+the entry recorded as line 182. It needs `_workerTask` to end canceled while `_state` is still
+`Running`. `StopAsync`/`DisposeAsync` set `_state = Stopped` under `_stateLock` before cancelling
+`_workerCts`, and `DrainAsync` returns early under that same lock — so the only window is between
+`DrainAsync` releasing the lock and reaching its `await _workerTask`, reachable only by a concurrent
+`StopAsync`. Any test for it is a scheduling coin flip.
+
+**`InboxDeserializeCache` 124** — the double-checked `overflow <= 0` recheck inside
+`_evictionLock`. Two `Set` calls must both pass the unlocked `Count > _maxEntries` test and the
+first must evict enough that the second finds nothing to do. The recompute is the first statement
+after the lock is taken, so there is no seam between the two reads.
+
+**`DebuggerAwareClock` 112** — `_sampleCpuTime`'s `_disposed` early return. `Dispose()` sets the
+flag and then disposes the `System.Threading.Timer`; reaching 112 needs a callback that was queued
+before the disposal but had not started when the flag was set. Forcing that means starving the
+thread pool of workers so queued callbacks cannot start, which blocks pool threads for the rest of
+the suite.
+
+**`PerspectiveCursorCache` 212, `LeaseHandle` 166, `WhizbangIdProviderRegistry` 148,
+`PerStreamSerializer` 198 and 225** — already recorded (AO, BY, and the two entries near the end of
+BY); re-confirmed unchanged.
+
+**`PerspectiveRunnerCallbackRegistry` 53** — the `_callbacks.Count == 0` guard, the exact twin of
+the `WhizbangIdProviderRegistry` 148 entry. This assembly's own generated
+`PerspectiveRunnerRegistry.g.cs` calls `RegisterCallback` from a module initializer, so the static
+list is non-empty before the first test runs, and there is no clear seam.
+
+### The one seam worth adding
+
+`SlidingWindowApplyBatchStrategy` 188 and `SlidingWindowOutboxBatchStrategy` 155 — the
+`_runIdleSweepAsync` disposed guard — were declined in BU/BY as "a timer callback that must fire in
+the statement gap between `Interlocked.Exchange(ref _disposed, 1)` and
+`_idleSweepTimer.DisposeAsync()`". That is true of the *timer*, but the sibling class in this same
+family, `PerStreamSerializer`, already exposes `public Task RunIdleSweepNowAsync()` for exactly this
+reason, and `PerspectiveCursorCache` exposes `RunSweepNowForTests()`. Both strategies now carry
+`internal Task RunIdleSweepNowForTestAsync()`, and the guard is covered by a test that shuts the
+strategy down, advances a `FakeTimeProvider` well past the eviction window, drives one sweep, and
+asserts the mapped buffer is still mapped — which is only true because the guard returned first.
+
+The sweep's `catch { }` around `await buffer.Worker` (Apply 203, Outbox 170) stays declined even
+with the seam. Given the `ReadBatchesAsync` proof above, the drain worker cannot fault at all
+unless the injected `ILogger` throws, so a test for that catch would be staging an exception the
+class cannot otherwise produce.
+
+**Line numbers moved.** Adding the seam shifted the two files: `SlidingWindowApplyBatchStrategy`
+183/188/203 are now 190/195/210, and `SlidingWindowOutboxBatchStrategy` 150/155/170 are now
+157/162/177. Worklists built before this round will point one method too high in both files.
+
+### CT's .NET 10 defect again — this time it looked like a stale worklist
+
+`BackupTickCoordinator` 80 and `PerspectiveCompletionFlushWorker` 53-54 both had a committed,
+passing, dedicated test. Measuring the first produced two contradictory readings of the SAME test
+against the SAME binary:
+
+- filter `/*/*/BackupTickCoordinatorCoverageTests/*` (three tests) — line 80 `hits="0"`, and the
+  `ExecuteAsync` entry point at line 70 `hits="1"` even though two of the three tests start a
+  coordinator;
+- the same filter narrowed to that one test — line 80 `hits="1"`.
+
+The first reading is the true one and the cause is CT, not a measurement artifact: since .NET 10,
+`BackgroundService.StartAsync` does `Task.Run(() => ExecuteAsync(token), token)`, so the body is a
+thread-pool work item. `ExecuteAsync_SchemaGateCanceledDuringStartup_…` did
+`StartAsync(cts.Token)` then `StopAsync(None)` — which cancels the linked token, and a `Task.Run`
+whose token is already canceled when the item is dequeued never invokes the delegate at all. Run
+alone, the pool wins and the body runs; run alongside other tests, it often does not. Both
+assertions (`IsCompleted` true, `IsFaulted` false) are satisfied by that `Canceled` wrapper, so the
+test is green either way. `PerspectiveCompletionFlushWorkerTests.WhenDisabled_NothingIsWrittenAsync`
+has the same shape, and its "nothing was written" assertion is satisfied outright when the body
+never ran.
+
+Both are rewritten to CT's shape — wait on a signal the body itself emits, then assert on the work
+that must NOT have happened:
+
+- the schema gate now signals `Entered` before returning its faulted task, the test waits on that,
+  and **the stopping token is never canceled at all**. That is what makes `IsCompleted` mean
+  something: with the token live, the only exit from `ExecuteAsync` other than the schema-gate catch
+  is the polling loop, which would run until shutdown. A registered backstop tick and
+  `IdleThreshold = 0` give the second assertion — a coordinator that swallowed the cancellation and
+  carried on would have fired that tick against a database whose migration has not run.
+- the flush worker's test waits for the `LogDisabled` `EventId` through a capturing logger, then
+  asserts `ExecuteTask.IsCompleted` is **false** — the disabled branch parks on an infinite delay,
+  and an early `return Task.CompletedTask` (the obvious "simplification") would tell the host the
+  service had finished while its channel is still open.
+
+After the rewrites, line 70 reads `hits="2"` — both coordinator tests now really enter the body —
+and 80, 53 and 54 are hit on every run. **The lesson to carry: a line the worklist calls uncovered
+that has an obvious passing test is a CT candidate, not a stale worklist entry.** Grep the test for
+`StartAsync` followed by `StopAsync`, or `StartAsync(alreadyCanceledToken)`, before assuming the
+measurement was wrong.
+
+### One tooling note
+
+A `}` that closes a `try` and opens a `catch` on one source line carries TWO sequence points, so a
+per-line checker that takes the max reports HIT when only the try-end ran. That is exactly the shape
+of `} catch (OperationCanceledException) {`. Read the `return`/`break` INSIDE the catch, never the
+catch line itself — several of the declines above would have looked covered otherwise.
+
+### Closed this round — fifteen lines, each verified by re-measuring the line
+
+| File | Lines | Test |
+|---|---|---|
+| `Observability/NotifyDebounceMetrics.cs` | 44, 52, 60, 66, 71 | `NotifyDebounceMetricsTests.Gauges_ProjectEveryCachedReading_TaggedByPayloadKindAsync` + `…_ReportTheLatestCachedReading_NotTheFirstAsync` |
+| `Observability/NotifyDebounceStatsCollector.cs` | 52, 69 | `NotifyDebounceStatsCollectorTests.ShutdownDuringSchemaWait_ExitsWithoutQueryingTheProviderAsync`, `…ProviderThrowsObjectDisposed_LeavesTheLoopInsteadOfRetryingAsync` |
+| `Security/ScopeDelta.cs` | 459, 464 | `ScopeDeltaCoverageTests.CreateDelta_ScopeWithSeveralExtensions_…`, `…_ExtensionWithNullValue_SerializesAnExplicitJsonNullAsync` |
+| `Signals/BasePollSignalSource.cs` | 98 | `PollSignalSourceTests.TimerTick_DetectionThrows_GoesToOnTickErrorAndTheSourceKeepsPollingAsync` |
+| `Workers/SlidingWindowApplyBatchStrategy.cs` | 188 (now 196) | `SlidingWindowApplyBatchStrategyCoverageTests.IdleSweep_AfterShutdown_LeavesTheBuffersAloneAsync` |
+| `Workers/SlidingWindowOutboxBatchStrategy.cs` | 155 (now 163) | `SlidingWindowOutboxBatchStrategyCoverageTests.IdleSweep_AfterShutdown_LeavesTheBuffersAloneAsync` |
+| `Workers/BackupTickCoordinator.cs` | 80 | `BackupTickCoordinatorCoverageTests.ExecuteAsync_SchemaGateCanceledDuringStartup_ReturnsWithoutFaultingAsync` (rewritten) |
+| `Workers/PerspectiveCompletionFlushWorker.cs` | 53, 54 | `PerspectiveCompletionFlushWorkerTests.WhenDisabled_ExecuteAsyncParksUntilShutdownAsync` |
+
+Two of these are worth copying elsewhere. The gauge test asserts `sampled.Count == 8` — four
+instruments times two seeded payload kinds — because the failure mode a per-kind gauge actually has
+is collapsing into ONE aggregate measurement, and every per-instrument value assertion still passes
+when that happens. And the `ObjectDisposedException` test starts the collector with
+`CancellationToken.None`: the only thing that can end that task inside the timeout is the `break`
+under test, since the log-and-continue arm would sit in a fifteen-second delay. Cancelling anything
+would have made the assertion pass either way.
+
+## CX. Round-24 data/EFCore.Postgres batch: 20 of 38 closed, 18 declined
+
+Batch: 38 uncovered lines across 14 files in `src/Whizbang.Data.EFCore.Postgres`. A live
+`pgvector/pgvector:pg17` container was available, so the Postgres-backed suites ran locally and
+every claim below was verified by re-running the scoped suite under
+`--coverage --coverage-output-format cobertura` and counting `hits > 0` on the exact line numbers.
+
+### Closed (20)
+
+| File | Lines | How |
+| --- | --- | --- |
+| `EFCoreLensQueryFactory.cs` | 83,84,85,87 | The synchronous `Dispose()` had no test at all — only `DisposeAsync` did. Three tests: it returns the pooled context exactly once, the disposed latch suppresses a second disposal, and it closes the factory to `GetQuery`. |
+| `EFCoreWorkCoordinator.cs` | 404,486,920 | `CREATE OR REPLACE` of `reclassify_events_ephemeral` / `register_type_definition` / `wh_integrity_ledger_summary` with `BEGIN RETURN; END` — same declared signature, no rows. Follows `CountOutstandingWorkNoRowSqlTests`. |
+| `EFCoreWorkCoordinator.cs` | 2939 | The lost advance race. A `BEFORE UPDATE` trigger on `wh_settings` returning NULL for the watermark key reproduces the loser's only observable — its conditional UPDATE matched zero rows. |
+| `EFCoreWorkCoordinator.cs` | 4325 | An orphaned lifecycle event with a NULL `scope` column. The helper's null guard is what keeps the row in the reconciler's list; without it the per-row catch swallows the event and the lifecycle completion is never written. |
+| `EFCoreWorkCoordinator.cs` | 4511 | `ReapExhaustedOrphanedPerspectiveRowsAsync` with an empty stream list, added to the existing empty-input class. |
+| `IntegrityManifestReceptors.cs` | 589,839,840,882 | See "two existing tests that proved nothing" below. |
+| `EFCorePostgresPerspectiveCheckpointCompleter.cs` | 84,175 | A `HasDefaultSchema` context plus `svc.wh_perspective_cursors` created `LIKE public.… INCLUDING ALL`; the cursor must land in the service schema and NOT in public. Line 84 (`} finally {`) came along with it — it was NOT the brace artifact it looks like. |
+| `EFCorePostgresLensQuery.cs` | 182,183 | Split-mode `FilteredScopedAccess`. A hydrator registered against a model type unique to the new class (the split-mode decision latches into a `static readonly` on first touch of the closed generic type), then assert the rows come back tenant-filtered AND tracked AND that the hydrator actually ran. |
+| `EFCorePerspectiveReplayReader.cs` | 119 | `DROP TABLE wh_perspective_events CASCADE` makes the pending-id read raise 42P01; the connection the reader opened must still be closed. A replay that keeps failing otherwise leaks one pooled connection per attempt. |
+| `EFCoreDeadLetterRecoveryService.cs` | 123 | `evaluate_canary_campaign` replaced with a no-row body. No row must read as Pending — Pass would release a held cohort and Fail would hold a healthy one, both off evidence never read. |
+
+### Two existing tests that proved nothing — the "assertion satisfied by two paths" trap, live
+
+`ManifestReceptor_BulkBackfillDeficit_UnknownOriginTopic_WithholdsTheBackfillAsync` and
+`ManifestReceptor_StreamDeficit_MissingRequesterIdentity_WithholdsTheRepairAsync` both read as
+targeted tests for exactly the lines in this batch. Both were green. Neither reached the method
+it names.
+
+Both omit `RepairMode = IntegrityRepairMode.AutoRepairCapped`, and `StreamIntegrityOptions`
+defaults to `ReportOnly`. So the bulk-escalation block (`bulkCandidates.Count > 0 && RepairMode ==
+AutoRepairCapped`) never ran and no repair batch was ever built — `_sendBulkBackfillRequestAsync`
+and `_sendRepairRequestAsync` were never called at all.
+
+The first one's log assertion is the instructive part. It asserts the message contains
+"no origin-carried request address", which is emitted by TWO different `[LoggerMessage]`s — the
+repair withhold (EventId 56) and the drill-down withhold (EventId 58). The drill-down fired, the
+assertion passed, and the bulk path stayed dark. The replacements assert the EventId-56 shape
+including its `0 stream(s)` count, which only the bulk call site can produce, and the second one
+asserts the ledger GRANTED the repair (via the published `IntegrityDivergenceDetected`'s
+`AutoRepairRequested`) so the send is provably attempted before it is withheld.
+
+The originals are left in place — they still assert something true about the receptor — but they
+are not the tests their names claim.
+
+### Declined (18)
+
+**`EFCoreEventStore.cs` 683-688 — `_localInstance()` is dead code, and a duplicate.**
+Zero references anywhere in `src/` or `tests/`. It is a character-for-character duplicate of
+`_replayInstance()` (same file, line 577), which IS called from `_restoreScopeInHops`. It was
+orphaned when the drain-mode copy of the scope-restore path was consolidated into the shared
+helper. Not covered here because covering it is impossible: private, no callers, and this repo
+does not use reflection. **This should be deleted rather than excluded** — it is 6 lines of a
+helper that already exists under another name. Not deleted in this round because the round's
+mandate was tests, and a source deletion wants its own review.
+
+**`EFCoreWorkCoordinator.cs` 275 — `CountServiceBacklogAsync`'s no-row guard.**
+Unlike its three siblings above, this one calls no function: the statement is
+`SELECT (SELECT count(*) …), (SELECT count(*) …), COALESCE(…)` with no top-level `FROM`. A
+PostgreSQL `SELECT` without `FROM` returns exactly one row, always. There is no function to
+replace and no shape that yields zero rows. Genuinely unreachable; the guard is correct and stays.
+
+**`EFCoreWorkCoordinator.cs` 2924 — brace artifact.**
+The `}` closing `if (prior is null) { … return … ; }`. Both arms of the ternary at 2921-2923 are
+covered (verified: 2921, 2922 and 2923 all report hits) and the block has no path that falls out
+of it. Ninth instance of this artifact in the round.
+
+**`IntegrityManifestReceptors.cs` 835 — dead by enclosing condition.**
+`_sendBulkBackfillRequestAsync` re-reads `ITransport`, `IEnvelopeSerializer`, the requester name
+and the topic from the same `services` scope and the same `options`, then guards on them. Its only
+call site sits after line 691-693 in the type-level comparison, which returns on the *identical*
+predicate over the *identical* values. By the time the callee's guard is evaluated it cannot be
+true. Confirmed by the new test: 834 and 838-840 all report hits, 835 does not.
+
+**`IntegrityCheckpointReceptor.cs` 215-216 — dead by enclosing condition, and it hides a dead
+diagnostic.** Line 214 is `if (measurable && !settled && options.RepairMode == AutoRepairCapped)`.
+Line 149 — 65 lines earlier in the same loop body — is `if (measurable && !settled) { …; continue; }`.
+So `measurable && !settled` is false for every iteration that reaches 214, and
+`LogRepairWithheldConsumerBehind` can never fire. Worth flagging beyond coverage: that log line
+exists to tell an operator *why* a confirmed gap shows `autoRepair=false`, and it has been
+unreachable since the #667 deferral guard was added above it. Not touched here — removing it or
+moving it is a behavior change, not a test change.
+
+**`QueryTranslation/PhysicalFieldExpressionVisitor.cs` 63, 73.**
+63 guards `propertyInfo.DeclaringType == null`. `MemberInfo.DeclaringType` is null only for a
+global member on a module, which C# cannot declare for a property — a BCL contract guard.
+73 guards `dataAccess.Expression == null`, but the enclosing `if` at 56-58 requires
+`_isPerspectiveRowType(dataAccess.Expression?.Type)`, and that helper returns false for null
+(line 109-111). Dead by enclosing condition.
+
+**`EFCoreDeadLetterStore.cs` 68 — dead by call-site.**
+`result switch { null => null, DBNull => null, _ => (Guid)result }` over
+`ExecuteScalarAsync` on `SELECT move_to_dead_letters(…)`. `move_to_dead_letters` is
+`RETURNS UUID` — a scalar function, so the statement yields exactly one row whatever happens, and
+a SQL NULL arrives as `DBNull.Value` (the arm below, which is covered). `ExecuteScalarAsync`
+returns `null` only for an empty result set, which this statement shape cannot produce. Reaching
+it would need the function redefined as `RETURNS SETOF uuid`, which is not a shape the product
+has.
+
+**`VectorSearchExtensions.cs` 732 — dead by call-site.**
+`_toSnakeCase`'s empty-input guard. Both call sites (`_buildEfPropertyAccess`,
+`_buildEfPropertyAccessForNullCheck`) are handed a `propertyName` that came from
+`_getPropertyNameFromSelector`, i.e. a `MemberExpression`'s `Member.Name`. A C# member name is
+never the empty string.
+
+**`Collective/CollectiveSettersRewriter.cs` 188 — dead by call-site, verified experimentally.**
+`_unwrapLambda`'s `LambdaExpression direct => direct` arm, for a selector argument that is a bare
+lambda rather than a `Quote`. I did not trust the reasoning here, so I built the tree by hand —
+`Expression.Call(sParam, setProperty, Expression.Lambda<Func<M,int>>(…), …)` — and measured: line
+187 (the Quote arm) reports a hit, 188 does not. `Expression.Call` validates each argument through
+`ExpressionUtils.TryQuote`, which wraps a `LambdaExpression` in a `Quote` whenever the parameter
+type is `Expression<TDelegate>`; `MethodCallExpression.Update` routes back through the same
+factory. There is no supported way to put an unquoted lambda in that slot. The probe test was
+removed after it answered the question.
+
+**`DbContextNotificationConnectionStringFallback.cs` 59, 89 — race with no seam.**
+The inner `if (_resolved) return _cached;` of a double-checked lock (and its `_searchPathResolved`
+twin). Reaching it needs a second caller to have read the latch as false at the outer check and
+then park on `_gate` *before* the winner sets the latch inside it.
+
+The winner's side is controllable — `IServiceProvider.CreateScope()` / `GetRequiredService` are
+called inside the lock and can be a fake that blocks. The loser's side is not: .NET exposes no way
+to observe a thread parking on a `Lock`, and every construction that would wait for it deadlocks,
+because the only thread that could signal "the loser has arrived" is the one blocked behind the
+lock the winner is holding. Polling `Thread.ThreadState` for `WaitSleepJoin` would work most of
+the time, which is worse than an uncovered line: it flakes in CI and it is not a signal the code
+emits. Declined on the same grounds as the other races in this file.
+
+
+## CZ. Round-24 Core batch 3: 19 files, and eight previously-declined lines re-checked
+
+`src/Whizbang.Core`, 61 lines across 19 files. Everything in the closed table was verified with a
+scoped cobertura and `hits > 0` counted on the exact line numbers.
+
+### A tooling trap that cost an hour: `--coverage-output` silently yields an EMPTY report
+
+```
+dotnet run ... -- --coverage --coverage-output-format cobertura --coverage-output name.xml
+```
+
+writes a **178-byte** cobertura containing `<packages />`, and the run reports "Passed!". Drop
+`--coverage-output` and the identical run writes a full ~11 MB report under a GUID filename.
+Nothing warns. Same family as the `[Category=ShardN]` trap in CP, and the same check catches it:
+count `hits > 0`, never trust the run's exit status. Collection also fails intermittently under
+parallel agent load (a `Coverlet ... UnloadModule` `FileStream` error) and produces the same
+178-byte file, so assert a size floor before reading any report.
+
+### A sequence-point fact that explains several "impossible" readings
+
+For `} catch (SomeException) {` the line carries the **try block's `leave`**, not the handler. So a
+member whose try body always succeeds reports that line as HIT while the handler's own lines stay
+at zero. `IntegrityCheckpointWorker.cs` read 45:1, 46:1, 47:0 — 46 is the `} catch (...) {` line,
+hit by the success path, and only 47 (`return;`) reports the handler. Do not read a hit on the
+`} catch` line as evidence the catch ran.
+
+### Closed and verified
+
+| File | Lines | How |
+|---|---|---|
+| `Messaging/CompositeExpansionBudget.cs` | 49 | `MaxChildrenPerExpansion` had no production reader and no test. Asserted against the OBSERVED chunking boundary — `Plan(cap)` within budget, `Plan(cap + 1)` split with `ChunkSize == MaxChildrenPerExpansion` — so the property is pinned to the limit the planner enforces rather than to the constructor argument. |
+| `Tags/TagOptions.cs` | 171 | `.OrderBy(r => r.Priority)` in the non-generic `GetHooksFor(Type)`. The existing test enumerated a ONE-element result, and .NET's ordered-enumerable `ToArray` short-circuits at count <= 1 without ever invoking the key selector — so the line stayed dark under a passing test. Two matching hooks registered in reverse priority order, asserted on order, not count. |
+| `Signals/SignalTypeRegistry.cs` | 53 | `Clear()`, which had ZERO callers repo-wide. Asserted on all three query surfaces (count, `IsRegistered`, `GetAll`), captures the pre-existing union and re-registers it through the public `Register` seam in a `finally`, and the three suites that read this process-wide static now share a `[NotInParallel("SignalTypeRegistryStatic")]` key so nothing observes the empty window. |
+| `Workers/IntegrityCheckpointWorker.cs` | 47 | The schema-gate cancellation return. The existing round-23 test stops via `StopAsync` without ever confirming the worker reached the gate, and measurement showed line 47 never running under it. New test parks in a gate that publishes an "entered" signal, then cancels, and asserts the coordinator saw ZERO checkpoint cycles — the half that proves it RETURNED rather than falling through to SQL against un-migrated tables. |
+| `Workers/SubscriptionExpansionWorker.cs` | 134-136 | The missing-infrastructure skip. The existing `MissingTransport_LeavesPendingForNextBootAsync` never reaches it: default `RepairMode` is `ReportOnly`, so the run returns at the backfill gate two branches earlier and its Pending assertion is satisfied by the wrong path. New test enables repair (`AutoRepairCapped`) and asserts on the LOG EVENT (74 present, 73 absent), because "disabled" and "skipped" leave identical registry state. |
+| `Workers/TransportBatchCollector.cs` | 64 | `Enqueue`'s disposed guard. A post-dispose enqueue must be dropped: the timers that would flush it are gone, so buffering it swallows a message the broker was told had been taken. Asserted via a second dispose that flushes nothing. |
+| `Messaging/BatchWorkCoordinatorStrategy.cs` | 373 | `_resetDebounceTimer`'s disposed guard. Forced, not raced: the injected logger parks inside `QueueOutboxMessage`'s trace log — past the disposed check, past the lock — until `DisposeAsync` has fully returned. Without the guard the call reaches `Change()` on a disposed `Timer` and throws out of a worker completion path during an ordinary stop. |
+| `Workers/PerspectiveWorker.cs` | 469-470 | The schema-gate cancellation arm. `StartupScanComplete` is PUBLIC and awaited by the read-model barrier, so the assertion is that the task SETTLES CANCELED — not merely that the worker exited. Left pending, an interrupted migration is a hang, not a shutdown. |
+| `Workers/InboxDrainWorker.cs` | 535 | See the overturned section above. |
+| `Workers/SlidingWindowInboxBatchStrategy.cs` | 170 | See the overturned section above. |
+| `Workers/InboxDispatchWorker.cs` | 244 | See the overturned section above. Eight tests in the class, all green; verified 244 at hits=1. |
+
+### Re-checked and OVERTURNED — three lines a previous round declined
+
+Recorded here because the failure mode of this file is turning "not checked" into "cannot be
+done", and each of these had a seam the earlier pass did not look for.
+
+- **`SlidingWindowInboxBatchStrategy:170`** (BO listed it under "Races declined"). The disposed
+  guard at the top of `_runIdleSweepAsync` is reachable deterministically, because the strategy
+  takes an injectable `TimeProvider` and creates its idle-sweep timer through it. A provider that
+  hands back a timer whose `DisposeAsync` **parks** holds `FlushAndStopAsync` at exactly the point
+  after `_disposed` is set (line 99) and before the timer is torn down (line 102) — the window a
+  real tick lands in — and the test then fires the tick by hand. `IdleEvictionWindow` is set to
+  zero so an unguarded sweep WOULD evict, which is what makes the surviving buffer attributable to
+  the guard rather than to the eviction window.
+- **`InboxDrainWorker:535`** (BI: "a timing window, not a fixture"). It is a fixture. Cancelling
+  from the coordinator's `AfterCall` hook — what the existing sibling test does — puts the token
+  in a cancelled state *before* the page is written, so `ChannelWriter.WriteAsync` returns a
+  cancelled `ValueTask` on the first row and the drain leaves through the exception path instead.
+  Cancelling from the **channel writer**, after the last row of a FULL page has been handed over,
+  lands the stop on the one boundary where the loop can only exit through its `while` condition.
+  `CapturingInboxChannel` gained an `AfterWrite` hook (invoked after the inner write, so it cannot
+  turn the awaited write into a cancelled one) to make that possible.
+- **`InboxDispatchWorker:244`** was not previously recorded. The arm needs the stopping token to be
+  dead by the time `Task.Run(..., stoppingToken)` spawns the partition consumers, so that
+  `Task.WhenAll` throws from inside a `finally`. Reaching it took two attempts, and the failed one is
+  an independent re-derivation of CT — see the next section. What works is the **gate**: `ISchemaReadyGate`
+  promises to block "until MarkReady is called OR the token fires", and an implementation may
+  legitimately observe readiness and RETURN rather than throw. A gate that parks, lets the test
+  cancel while parked, and then returns normally puts the worker past the barrier with a dead
+  token — the real shape of a stop landing between the schema gate and the fan-out.
+
+### An independent confirmation of CT, arrived at from the other direction
+
+The first version of the `InboxDispatchWorker:244` test cancelled the CTS and then called
+`StartAsync(cts.Token)`, expecting `ExecuteAsync` to run with a dead token. It does not — and the
+failure is **silent in the passing direction**.
+
+Measured with a capturing logger: `ExecuteTask.Status == Canceled`, `IsFaulted == false`, and **not
+one log entry emitted**, not even the "started" line that is the first statement of `ExecuteAsync`.
+The body never ran. Two of that test's three assertions — "the task completed cleanly" and "nothing
+was dispatched" — passed over a worker that had never started; only the assertion on a log line the
+worker itself emits caught it.
+
+**CT already documents the cause** (`_executeTask = Task.Run(() => ExecuteAsync(...), token)` in
+Hosting.Abstractions 10.x, which skips the delegate entirely when the token is already canceled).
+Recording the second sighting because it was reached independently, and because it shows the
+diagnostic that settles it: assert on something the worker itself EMITS, not on the shape of its
+task. A completed, non-faulted `ExecuteTask` is exactly what a worker that never started looks like.
+
+### Declined — five newly proven "dead by call site", four in `PerspectiveWorker`
+
+Each was traced to its single call site rather than judged by shape.
+
+- **`PerspectiveWorker:604`** — `break` in the `catch (OperationCanceledException)` around
+  `await Task.WhenAny(workWait, drainWait, idleTimeout, perspectiveSignal)`. `Task.WhenAny` never
+  propagates a constituent's exception to its own awaiter; its task completes successfully the
+  moment any constituent completes, in whatever state. The catch guards an exception this await
+  cannot raise. Identical to the `DeadLetterRecoveryWorker:227` entry already recorded in BY.
+- **`PerspectiveWorker:1289`** — `if (evictedStreams.Count == 0) return;` in the cursor-cache
+  eviction handler. The handler is private and wired only to `PerspectiveCursorCache.OnStreamsEvicted`,
+  and `PerspectiveCursorCache._raiseEvicted` is itself called from one place, under
+  `if (evicted.Count > 0)`. An empty list cannot reach the handler.
+- **`PerspectiveWorker:3669`** — `if (batchProcessedEvents.IsEmpty) return;` at the top of
+  `_firePostLifecycleDetached`. Its one call site (line 1248) is already inside
+  `if (!batchProcessedEvents.IsEmpty)` at line 1231, and nothing removes from that dictionary
+  between the check and the background task that reads it.
+- **`PerspectiveWorker:3924`** — `if (_streamLocker is null) return;` in `_startLockKeepaliveAsync`.
+  The one call site (3337-3338) is the true arm of `lockAcquired ? ... : Task.CompletedTask`, and
+  `lockAcquired` can only be true inside `if (_streamLocker is not null)` at 3321.
+- **`InboxDrainWorker:654`** — re-confirms BI. `_admitRow`'s fallback `return true;` when the row
+  is not found in the fetch it is checked against; both call sites derive the row from that same
+  list through non-copying projections.
+
+### Declined — dead by enclosing condition
+
+- **`TypeMatcher:111` and `:137`** — the `string.IsNullOrEmpty` early returns in `_stripVersionInfo`
+  and `_stripAssembly`. Both are private with only three call sites between them
+  (`Matches(string, string, MatchStrictness)` lines 53/54, 59/60 and `_getSimpleName` line 160).
+  `Matches` returns at lines 42-47 for any null-or-empty input, so both helpers only ever see a
+  non-empty string; and neither helper can PRODUCE an empty one from a non-empty input —
+  `_stripVersionInfo` either returns its argument or `$"{parts[0]}, {parts[1]}"`, which always
+  contains ", ". `_getSimpleName`'s own empty guard at 155 IS reachable (via
+  `IgnoreAssembly|IgnoreNamespace` over an input like `", Assembly"`), which is what makes the
+  other two look reachable at a glance. They are not.
+- **`TransportSubscriptionBuilder:108`** — re-confirms BK. `RoutingOptions.InboxStrategy` is
+  non-nullable, assigned in the constructor and settable only through a setter that throws on null.
+
+### Declined — a `return` after an infinite delay that can only end by throwing
+
+**`RecentlyProcessedEventCacheSweepWorker:37`.**
+
+```csharp
+if (!_options.Enabled) {
+  LogDisabled(_logger);
+  await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);   // 36
+  return;                                                                    // 37
+}
+```
+
+`Task.Delay(Timeout.Infinite, ct)` has exactly two outcomes: never complete, or throw on
+cancellation. There is no path on which control reaches line 37.
+
+Worth flagging beyond the coverage point: every sibling worker wraps the same call
+(`IntegrityCheckpointWorker:39`, `InboxDispatchWorker:172`) in
+`try { ... } catch (OperationCanceledException) { }` so the disabled worker exits cleanly. This one
+does not, so a disabled sweep worker's `ExecuteTask` settles Canceled on every shutdown instead of
+RanToCompletion. Benign under the host's default exception behavior, but it is the inconsistency
+that makes the dead `return` look alive. **The fix is the try/catch, not a test.**
+
+### Declined — races with no seam, re-confirmed
+
+- **`BatchFlusher:74`** (`break` on `OperationCanceledException` from `_channel.Reader.ReadAsync(ct)`).
+  `_stop` is cancelled in exactly two places, both in `DisposeAsync` and both AFTER
+  `_channel.Writer.TryComplete()`, so a pending read resolves as `ChannelClosedException` (the very
+  next catch). Reaching the cancellation arm needs the cancel to land between the `while` condition
+  and the `ReadAsync` call.
+- **`BatchFlusher:175-176`** — re-confirms BY's entry for the same catch under its old line number
+  (142). `_runAsync` converts every `OperationCanceledException` it can produce into a `break`, and
+  the `WaitAsync` it guards is passed `CancellationToken.None`, so `_loop` can only end
+  RanToCompletion or Faulted-with-something-else.
+- **`BatchWorkCoordinatorStrategy:413`** — the `_disposed` guard in `_debounceTimerCallback`.
+  Unreachable for a sharper reason than a race: `DisposeAsync` awaits `_debounceTimer.DisposeAsync()`
+  at line 448 and only sets `_disposed = true` at line 480. Timer disposal drains in-flight callbacks
+  and prevents new ones, so no callback can ever observe the flag set. (Its sibling at line 373 IS
+  reachable and is now covered — see the closed table.)
+- **`TransportBatchCollector:116`** — the same guard in `_slideTimerCallback`, and here the ordering
+  is the opposite one: `_disposed = true` at line 99 precedes both timer disposals at 101-108, so a
+  callback CAN observe it, but only inside that few-microsecond window. No seam; the timers are
+  created with `new Timer(...)` directly rather than through a `TimeProvider`. Giving this class the
+  `TimeProvider` seam `SlidingWindowInboxBatchStrategy` already has would make it testable the same
+  way — that is the owner's call, not a coverage edit.
+- **`LifecycleCoordinator:245`** — `return false;` when `_fired` is already set in
+  `WhenAllState.TrySignalAndComplete`. `SignalSegmentCompleteAsync` removes the state from
+  `_whenAllStates` on the very next statement after a `true` result, so a later call cannot obtain
+  the same instance; only two callers that both read the dictionary before the removal can, and
+  there is nothing between the `TryGetValue` and the `TrySignalAndComplete` to suspend. The metrics
+  counters, which would otherwise be a `MeterListener` seam, are all recorded after the removal.
+- **`SlidingWindowInboxBatchStrategy:165` and `:185`** — re-confirm BO. 165 is the outer
+  shutdown catch, reachable only if the batcher's enumerator observes `_stopCts` cancellation, which
+  happens on the hard-stop path *after* `_stopCts.Dispose()`; the existing stop test releases the
+  hung flush and returns without awaiting the worker, so whether it lands is scheduling. 185 needs
+  a FAULTED drain worker, and `_drainBufferAsync` absorbs every exception its body can raise —
+  the only way to fault it is to inject a logger that throws from `_logFlushFailed`, which tests the
+  fake rather than the code.
+- **`PerspectiveWorker:275`** (SemaphoreFullException coalesce) and **`:1462`** (CAS-loss return in
+  the affinity-gate sweep) are both genuine multi-writer races. 275 has a possible seam — the
+  notification listener is injectable, and the worker does not consume `_perspectiveWake` during its
+  startup phase — but it needs the startup work held open to be deterministic.
+
+### Tractable — available work, NOT residue
+
+Listed so a later round does not re-derive them.
+
+- **`PerspectiveWorker:3825-3827`, `:3857`, `:3862-3866`** — the `catch (Exception)` arms of the two
+  detached-stage helpers. Both need only a fake `IReceptorInvoker` that throws, and both are
+  observable: `_fireDetachedStageAsync` adds its task to `_detachedTasks` (there is a
+  wait-for-detached-tasks seam), and both log through `LogDetachedStageError`. The obstacle is
+  reaching them — 3246 is on the drain path — not the arm itself.
+- **`PerspectiveWorker:3984-3986`** — the log-and-rethrow around
+  `GetEventsBetweenPolymorphicAsync`. A throwing `IEventStore` is an ordinary fake.
+- **`PerspectiveWorker:1604`, `:1606`** — the reactive-orphan-disposal catch. Needs
+  `ReapExhaustedOrphanedPerspectiveRowsAsync` to throw on a fake coordinator, plus a drain-mode
+  fixture whose `GetStreamEventsAsync` returns nothing and `MaxPerspectiveEventAttempts` set.
+- **`PerspectiveWorker:4518-4519`** — the claim-window `TryAdd` collision. It does NOT need
+  concurrency: two entries with the same `WorkId` in ONE `WorkBatch.PerspectiveWork` list take the
+  branch on the second item, single-threaded. `PerspectiveWorkerDedupTests`'s coordinator already
+  lets a test supply the batch contents; the open question is only whether the harness's
+  enqueue-per-item pump keeps both items in the same claim cycle.
+- **`PerspectiveWorker:1878`, `:1923`** — drain-mode refetch guards; ordinary fixtures, deep path.
+- **`PerspectiveWorker:2849-2850`** — re-confirms AT: not reachable through
+  `PerspectiveWorkerTestHarness`, which never reaches `_resolveDependenciesAndLoadEventsAsync`.
+  Note the existing `Worker_RegistryNotRegistered_SkipsPerspectiveAndContinuesAsync` is named for
+  this branch and asserts `ConsecutiveEmptyPolls >= 0`, which is true either way.
+
+### Already recorded, re-confirmed without change
+
+- **`MessageExtractor:72, 73, 77, 78`** — CB, dead by C# generic covariance. Re-read: `IEvent : IMessage`
+  and `ICommand : IMessage`, `IEnumerable<out T>` is covariant, and the `IEnumerable<IMessage>` test
+  on line 66 is checked first, so it always wins. Unchanged.
+- **`MessageTagProcessor:86` and `:113`** — logger-null by construction (recorded in BO). Both debug
+  blocks require `_scopeFactory is null`, and the lazy `Logger` property resolves to
+  `NullLogger.Instance` in exactly that case, so `IsEnabled(Debug)` is pinned false there.
+
+### Already covered — two batch lines that were already green locally
+
+- **`TableStatisticsCollector:45`** is covered by the round-23
+  `TableStatisticsCollectorCoverageTests.ExecuteAsync_SchemaGateCancelledBeforeReady_...` test
+  (measured 41:1 42:1 43:1 44:1 45:1).
+- **`LifecycleCoordinator:65`** — the closing brace of `ExpectCompletionsFrom` — is covered by the
+  existing `LifecycleCoordinatorTests` (measured 60:1 through 65:1 across 52 tests).
+
+No test was written for either. **Measure a worklist entry against a local scoped run before
+writing anything for it**: the merged CI cobertura can list a line that is already green, and two of
+this batch's sixty-one were. The reverse also happens — the same merge listed
+`IntegrityCheckpointWorker:47` and `SubscriptionExpansionWorker:134-136` as uncovered, which was
+correct, and each had a *named, passing test* that did not reach them.

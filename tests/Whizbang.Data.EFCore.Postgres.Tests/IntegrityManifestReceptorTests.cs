@@ -1657,6 +1657,63 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Any(r => r is not null)).IsFalse();
   }
 
+  [Test]
+  public async Task ManifestReceptor_CursorFollowBudgets_AreEvictedOnceTheyOutgrowTheirBoundAsync() {
+    // The page-budget map is a per-process static keyed by (origin, window). Windows advance every
+    // audit cycle and origins come and go, so every key it holds is dead within a cycle or two —
+    // but nothing removes them on that schedule: a complete answer removes its own key and an
+    // incomplete one does not. In a consumer auditing many origins over a long uptime the map is
+    // therefore append-only, and the bound is the only thing that keeps a diagnostic counter from
+    // growing for the life of the process. Eviction is observable because a budget the map has
+    // forgotten starts over.
+    var stream = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator {
+      ReceivedDigests = [_digest(stream, 41, 42, 5)],   // folds match — only the paging is under test
+    };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { MaxManifestPagesPerAudit = 1 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    int follows() => transport.Published.Select(p => _tryDeserializeRequest(p.Envelope)).Count(r => r is not null);
+
+    async Task followAsync(long since, long through) =>
+      await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 41, 42, 5)]) with {
+        SinceSequence = since,
+        ComputedThrough = through,
+        ChunkCount = 1,
+        ResumeAfterStreamId = TrackedGuid.NewMedo().Value,
+      });
+
+    await followAsync(100, 300);
+    await Assert.That(follows()).IsEqualTo(1);
+
+    // The budget for this window is now spent, and stays spent while the map remembers it.
+    await followAsync(100, 300);
+    await Assert.That(follows()).IsEqualTo(1)
+      .Because("without a live budget entry for this window the rest of the test would prove "
+             + "nothing — the second follow has to be refused before eviction can be seen");
+
+    // Enough distinct windows to carry the map past its bound whatever it already held. Each one
+    // is a fresh key, so each is allowed its first page.
+    const int floodWindows = 300;
+    for (var i = 0; i < floodWindows; i++) {
+      await followAsync(1000 + i, 5000);
+    }
+    await Assert.That(follows()).IsEqualTo(1 + floodWindows)
+      .Because("each distinct window gets its own budget; eviction resets counters, it does not "
+             + "refuse pages");
+
+    await followAsync(100, 300);
+    await Assert.That(follows()).IsEqualTo(2 + floodWindows)
+      .Because("the original window's spent budget was evicted with the rest — an unbounded map "
+             + "would still be refusing this page, and would still be holding every dead key "
+             + "behind it for the life of the process");
+  }
+
   // ── bulk-deficit escalation: big type-level deficits skip the drip ──────
 
   [Test]
@@ -2070,6 +2127,110 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(transport.Published).IsEmpty()
       .Because("the repair cannot be addressed without a requester identity — sending nowhere would look identical to a healthy audit");
+  }
+
+  // A GRANTED bulk backfill whose origin has not yet taught its request address must be withheld
+  // at the send, after the ledger has already recorded the attempt. Distinct from the drill-down
+  // withhold beside it: that one is a stream-page ask, this one is the whole window's redelivery,
+  // and only this path can put a range-bounded RequestRedeliveryCommand on the wire.
+  [Test]
+  public async Task ManifestReceptor_GrantedBulkBackfill_WithNoOriginRequestAddress_WithholdsTheSendAsync() {
+    var coordinator = new _auditCoordinator {
+      WindowedTypeResult = new WindowedDigestResult {
+        Digests = [_typeDigest("Contracts.TypeX", 99, 98, 100)],   // local holds 100 of 5000
+        ComputedThrough = 300,
+      },
+    };
+    var transport = new _captureTransport();
+    var logger = new _capturingLogger<IntegrityManifestReceptor>();
+    // A tracker with NO checkpoint recorded: the origin's request address is unlearned, which is
+    // the normal state for the first cycle after a consumer starts or an origin is redeployed.
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions {
+        RepairMode = IntegrityRepairMode.AutoRepairCapped,
+        BulkBackfillThresholdEvents = 1000,
+      },
+      tracker: new IntegrityGapTracker());
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(
+      _manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5000)], ManifestLevel.Types) with {
+        SinceSequence = 100,
+        ComputedThrough = 300,
+        ChunkCount = 1,
+      });
+
+    await Assert.That(transport.Published.Any(p => p.EnvelopeType?.Contains("RequestRedeliveryCommand") == true))
+      .IsFalse()
+      .Because("a redelivery of a whole 4900-event window may go to the origin's own carried "
+             + "address or nowhere; the only other topic on hand is the requester's own shared "
+             + "one, and publishing a backfill there fans it out to every service on it");
+
+    // The zero stream count is what makes this the BULK site and not the stream-scoped one: the
+    // stream path only ever withholds a request that names at least one stream, and it is not
+    // even reachable from a type-level manifest.
+    await Assert.That(logger.Entries.Any(e =>
+        e.Message.Contains("Repair request to 'origin-svc' withheld (Contracts.TypeX, 0 stream(s))",
+          StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("the ledger has already burned an attempt on this bucket, so a silent withhold "
+             + "would leave the deficit un-backfilled and the spent attempt unexplained");
+  }
+
+  // The stream-scoped repair has no infrastructure check before it is called — its own guard is
+  // the only thing between an unaddressable repair and a NullReferenceException out of a
+  // background audit. Withholding must also stay silent about the address, because the address is
+  // fine here; it is this service's own identity that is missing.
+  [Test]
+  public async Task ManifestReceptor_GrantedStreamRepair_WithNoRequesterIdentity_WithholdsTheSendAsync() {
+    var coordinator = new _auditCoordinator();   // nothing local — the origin bucket diverges
+    var stream = TrackedGuid.NewMedo().Value;
+    var transport = new _captureTransport();
+    var dispatcher = new _captureDispatcher();
+    var logger = new _capturingLogger<IntegrityManifestReceptor>();
+    var tracker = new IntegrityGapTracker();
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IDispatcher>(dispatcher);
+    services.AddSingleton<IEnvelopeSerializer>(new EnvelopeSerializer(JsonContextRegistry.CreateCombinedOptions()));
+    // No IServiceInstanceProvider: the repair request has no requester name to carry, so the
+    // origin would have nowhere to send the redelivery back to.
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
+      RepairDrainEnabled = false,
+      PublishReportEvents = true,
+    }));
+    services.AddSingleton(tracker);
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination("inbox"));
+    services.AddSingleton(consumerOptions);
+    var sp = services.BuildServiceProvider();
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), logger);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(stream, 11, 21, 2)]));
+
+    // Repair was GRANTED — this is what proves the send was actually attempted rather than the
+    // whole repair path being skipped, which is how an unaddressable repair looks identical to a
+    // healthy audit.
+    var reports = dispatcher.Published.Cast<IntegrityDivergenceDetected>().ToList();
+    await Assert.That(reports.Count).IsEqualTo(1)
+      .Because("the divergence itself is still real and still reported — only the wire send is "
+             + "withheld");
+    await Assert.That(reports[0].AutoRepairRequested).IsTrue()
+      .Because("the ledger granted the repair, so the batch reached the send; without that grant "
+             + "this test would pass on a path that never tried to publish anything");
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("a repair request that cannot name its requester cannot be answered — the origin "
+             + "would have no return address, so sending it is worse than withholding it");
+    await Assert.That(logger.Entries.Any(e =>
+        e.Message.Contains("no origin-carried request address", StringComparison.Ordinal)))
+      .IsFalse()
+      .Because("the origin's address was learned; blaming it would send an operator chasing the "
+             + "origin's checkpoints instead of this service's own missing identity");
   }
 
   // ── helpers / fakes ─────────────────────────────────────────────────────

@@ -110,6 +110,53 @@ public class EFCorePerspectiveReplayReaderTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task ReadReplayEventsAsync_WhenThePendingIdReadFails_StillClosesTheConnectionItOpenedAsync() {
+    // The reader opens the DbContext's connection itself when it finds it closed, and owes it a
+    // close on the way out. Replay runs on the perspective worker, which retries a failing stream
+    // for as long as it keeps failing — so a connection leaked on the failure path is leaked once
+    // per attempt. The pool empties, and the first symptom is unrelated work on the same context
+    // timing out waiting for a connection, which points investigation everywhere but here.
+    var streamId = Guid.NewGuid();
+
+    // A real fault rather than a mocked one: the pending-id query raises 42P01 against the actual
+    // Npgsql command the try block wraps. EFCoreTestBase gives this test its own database.
+    await using (var conn = new NpgsqlConnection(ConnectionString)) {
+      await conn.OpenAsync();
+      await using var drop = conn.CreateCommand();
+      drop.CommandText = "DROP TABLE wh_perspective_events CASCADE";
+      await drop.ExecuteNonQueryAsync();
+    }
+
+    await using var dbContext = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(dbContext);
+    var connection = dbContext.Database.GetDbConnection();
+    await Assert.That(connection.State).IsEqualTo(System.Data.ConnectionState.Closed)
+      .Because("the reader only owes a close for a connection it opened itself — if this were "
+             + "already open the test would assert nothing about the finally");
+
+    var reader = new EFCorePerspectiveReplayReader<WorkCoordinationDbContext>(dbContext, eventStore);
+    var enumerator = reader.ReadReplayEventsAsync(
+      streamId, PerspectiveName, fromVersionExclusive: 0,
+      [typeof(ActionTestCreatedEvent)], CancellationToken.None).GetAsyncEnumerator(CancellationToken.None);
+
+    Exception? caught = null;
+    try {
+      await enumerator.MoveNextAsync();
+    } catch (Exception ex) {
+      caught = ex;
+    } finally {
+      await enumerator.DisposeAsync();
+    }
+
+    await Assert.That(caught).IsNotNull()
+      .Because("the failure must reach the caller — swallowing it would report a stream as "
+             + "replayed with every event marked already-completed");
+    await Assert.That(connection.State).IsEqualTo(System.Data.ConnectionState.Closed)
+      .Because("the connection the reader opened has to be given back even when the read throws; "
+             + "a repeatedly failing replay would otherwise drain the pool one attempt at a time");
+  }
+
+  [Test]
   public async Task ReadReplayEventsAsync_EmptyWorkQueue_AllIsNewFalse_Async() {
     var streamId = Guid.NewGuid();
     var events = await _appendEventsAsync(streamId, count: 3);

@@ -41,14 +41,27 @@ public class InboxDrainWorkerCoverageTests {
     public TaskCompletionSource<int> ReachedCount { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public int TargetCount { get; set; } = 1;
     public ChannelReader<InboxWork> Reader => _channel.Reader;
+
+    /// <summary>
+    /// Runs with the running write count AFTER the row has been handed to the channel. Lets a test
+    /// land an event (a host stop, say) at an exact row boundary. It deliberately runs after the
+    /// inner write, so cancelling from here cannot turn the write the worker is currently awaiting
+    /// into a cancelled one.
+    /// </summary>
+    public Action<int>? AfterWrite { get; set; }
+
     public ValueTask WriteAsync(InboxWork work, CancellationToken ct = default) {
+      int count;
       lock (Written) {
         Written.Add(work);
-        if (Written.Count >= TargetCount) {
-          ReachedCount.TrySetResult(Written.Count);
+        count = Written.Count;
+        if (count >= TargetCount) {
+          ReachedCount.TrySetResult(count);
         }
       }
-      return _channel.Writer.WriteAsync(work, ct);
+      var write = _channel.Writer.WriteAsync(work, ct);
+      AfterWrite?.Invoke(count);
+      return write;
     }
     public bool TryWrite(InboxWork work) {
       lock (Written) {
@@ -364,6 +377,82 @@ public class InboxDrainWorkerCoverageTests {
     await Assert.That(inbox.Written.Count).IsGreaterThanOrEqualTo(2)
       .Because("the first page was already in hand and fully written before cancellation could be "
              + "observed -- a canceled drain must not discard rows it already fetched");
+
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+  }
+
+  [Test]
+  public async Task DrainStreamInner_CanceledAfterAFullPageIsWritten_LeavesThroughTheLoopConditionAsync() {
+    // Target: InboxDrainWorker.cs:535 — the trailing _logPerfIfInteresting call reached ONLY when
+    // the inner loop leaves through its `while (!ct.IsCancellationRequested)` condition, rather
+    // than through one of the three early returns every other exit takes.
+    //
+    // The sibling test above cancels while the page is still being written, so the write itself
+    // observes the cancelled token and the drain aborts through the exception path. This one lands
+    // the cancellation on the row boundary instead: the page is FULL (so the partial-page early
+    // exit cannot fire) and every row of it has already been handed to the working set (so nothing
+    // is discarded) when the stop signal arrives.
+    //
+    // What that pins is the drain's shutdown contract at a page boundary: a canceled worker
+    // finishes the page it already fetched, hands all of it over, and then stops without issuing
+    // another query against a connection the host is tearing down. A regression in either
+    // direction is silent — dropping the tail of the page loses work that the SQL fetch already
+    // consumed, and missing the condition keeps pulling pages through shutdown.
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var firstPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+    var secondPageMsgs = Enumerable.Range(0, 2).Select(_ => (Guid)TrackedGuid.NewMedo()).ToArray();
+
+    var coord = new ScriptedWorkCoordinator();
+    // Both pages exactly saturate the cap, so neither can take the partial-page early exit.
+    coord.Enqueue(_ => [.. firstPageMsgs.Select(m => _row(m, streamId))]);
+    coord.Enqueue(_ => [.. secondPageMsgs.Select(m => _row(m, streamId))]);
+
+    var drain = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 4 };
+    var instance = new FakeServiceInstanceProvider();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      instance, drain, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions {
+        Enabled = true,
+        MaxPerStream = 2,
+        AdaptivePerStreamEnabled = false,
+      }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+
+    using var cts = new CancellationTokenSource();
+    // The host's stop signal lands exactly when the 4th row — the last of the second, full page —
+    // has been handed over, which is the one instant the loop can only leave via its condition.
+    inbox.AfterWrite = written => {
+      if (written == 4) {
+        cts.Cancel();
+      }
+    };
+
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(15))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue();
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("leaving the drain loop through its own cancellation condition is an ordinary stop, "
+             + "not a fault to report on every shutdown");
+
+    await Assert.That(inbox.Written.Count).IsEqualTo(4)
+      .Because("both full pages must be handed over in their entirety — the SQL fetch already "
+             + "consumed those rows, so a page abandoned mid-write is work that nothing will "
+             + "re-issue until the lease lapses");
+    await Assert.That(coord.CallCount).IsEqualTo(2)
+      .Because("the loop must notice the cancellation at the top of the next iteration instead of "
+             + "issuing a third fetch against a coordinator the host is already tearing down");
 
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
   }

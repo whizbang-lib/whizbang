@@ -965,5 +965,114 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     await Assert.That(result.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error)).IsFalse();
   }
 
+  /// <summary>The walk stops descending once the model graph is nested past the depth cap.</summary>
+  [Test]
+  public async Task Coalescer_ModelNestedPastTheDepthCap_StopsDescendingAsync() {
+    // The cycle guard only stops a type that repeats on the path. A long chain of DISTINCT
+    // types has no repeat to catch, so without the depth cap the walk would keep emitting an
+    // ever-deeper nest of foreach/if statements into a file the consumer cannot edit. The cap
+    // is eight levels below the model root: the eighth level is still repaired, the ninth is
+    // not — and the first half of that is what proves the walk really descended that far.
+    var generated = await _generatedCoalescerAsync("""
+      public Level1 Chain { get; set; } = new();
+    """, """
+    public class Level1 { public Level2 Next { get; set; } = new(); }
+    public class Level2 { public Level3 Next { get; set; } = new(); }
+    public class Level3 { public Level4 Next { get; set; } = new(); }
+    public class Level4 { public Level5 Next { get; set; } = new(); }
+    public class Level5 { public Level6 Next { get; set; } = new(); }
+    public class Level6 { public Level7 Next { get; set; } = new(); }
+    public class Level7 { public Level8 Next { get; set; } = new(); }
+
+    public class Level8 {
+      public List<string> InsideCap { get; set; } = new();
+      public Level9 Next { get; set; } = new();
+    }
+
+    public class Level9 {
+      public List<string> PastCap { get; set; } = new();
+    }
+    """);
+
+    await Assert.That(generated).Contains("InsideCap ??=")
+      .Because("the walk must reach the deepest level still inside the cap, or the cap is not what stopped it");
+    await Assert.That(generated).DoesNotContain("PastCap ??=")
+      .Because("past the cap the walk must stop, or a deep model graph emits unbounded generated code");
+  }
+
+  #endregion
+
+  #region Open generic perspective (model type is an unbound type parameter)
+
+  /// <summary>
+  /// A perspective that declares its model as an open type parameter - the generic base class
+  /// pattern - has no named model symbol to read [PhysicalField] properties from. Physical-field
+  /// extraction must yield nothing for it rather than dereferencing the type parameter, and the
+  /// closed perspective sharing that base must still get its own physical column.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithOpenGenericPerspectiveBase_ExtractsNoPhysicalFieldsForItAsync() {
+    // Arrange - a generic base perspective plus a closed subclass over a model with a physical field
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record CoverageEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public class ClosedModel {
+        [StreamId]
+        public Guid Id { get; set; }
+
+        [PhysicalField(ColumnName = "ext_id")]
+        public string? ExternalId { get; set; }
+      }
+
+      public abstract class SharedPerspectiveBase<TModel> : IPerspectiveFor<TModel, CoverageEvent>
+          where TModel : class {
+        public abstract TModel Apply(TModel currentData, CoverageEvent eventData);
+      }
+
+      public class ClosedPerspective : SharedPerspectiveBase<ClosedModel> {
+        public override ClosedModel Apply(ClosedModel currentData, CoverageEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert - the generator survived the open type parameter
+    await Assert.That(result.Diagnostics.Any(d => d.Severity == DiagnosticSeverity.Error)).IsFalse()
+      .Because("an unbound model type parameter must not fault the generator");
+
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var ddl = schemaExtensions!.SourceText.ToString();
+
+    // The closed model's physical field still becomes a column - proves the extraction ran at all
+    await Assert.That(ddl).Contains("ext_id TEXT")
+      .Because("the closed sibling's physical field must still reach the DDL");
+
+    // The open perspective was discovered too, so its model went through the same extraction
+    var openHeader = ddl.IndexOf("(model: TModel)", StringComparison.Ordinal);
+    await Assert.That(openHeader).IsGreaterThan(-1)
+      .Because("the open base must be discovered, or nothing proves its model reached field extraction");
+
+    // ...and contributed no physical columns of its own
+    var openTable = ddl[openHeader..ddl.IndexOf(");", openHeader, StringComparison.Ordinal)];
+    await Assert.That(openTable).DoesNotContain("ext_id")
+      .Because("a type parameter has no properties, so it must contribute no physical columns");
+  }
+
   #endregion
 }

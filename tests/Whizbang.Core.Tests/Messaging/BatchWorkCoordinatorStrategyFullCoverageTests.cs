@@ -565,6 +565,77 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
+  // Target: src/Whizbang.Core/Messaging/BatchWorkCoordinatorStrategy.cs:373 — the `_disposed`
+  // guard at the top of _resetDebounceTimer.
+  //
+  // Every caller of _resetDebounceTimer is a public Queue* method that opens with
+  // ObjectDisposedException.ThrowIf(_disposed), so the guard only matters when disposal completes
+  // BETWEEN that check and the timer touch — which is exactly the shutdown shape: workers keep
+  // reporting completions and failures while the host tears the strategy down. Without the guard
+  // the call reaches _debounceTimer.Change on an already-disposed Timer and throws
+  // ObjectDisposedException out of a completion path, so a routine shutdown surfaces as an error
+  // on work that had already been queued successfully.
+  //
+  // The interleaving is forced, not raced: the injected logger parks inside QueueOutboxMessage's
+  // trace log — which sits after the disposed check and after the lock is released, and before
+  // _resetDebounceTimer — until DisposeAsync has fully returned.
+  [Test]
+  [Timeout(30000)]
+  public async Task QueueOutboxMessage_DisposedWhileInFlight_DoesNotTouchTheDisposedTimerAsync(
+      CancellationToken testToken) {
+    var coordinator = new BatchFullCoverageCoordinator();
+    var instanceProvider = new BatchFullCoverageInstanceProvider();
+    // A long debounce so nothing flushes on its own while the interleaving is set up.
+    var options = _createOptions(batchSize: 1000, debounceMs: 60000);
+    var logger = new BatchParkingLogger();
+    var sut = new BatchWorkCoordinatorStrategy(coordinator, instanceProvider, options, logger);
+
+    var queueCall = Task.Run(() => sut.QueueOutboxMessage(_createOutboxMessage()), testToken);
+
+    // The queue call is now parked past its disposed check, holding no lock.
+    await logger.Parked.WaitAsync(testToken);
+    await sut.DisposeAsync();
+    logger.Release();
+
+    await queueCall.WaitAsync(TimeSpan.FromSeconds(20), testToken);
+
+    await Assert.That(queueCall.IsCompletedSuccessfully).IsTrue()
+      .Because("a queue call that was already past its disposed check when shutdown completed must "
+             + "finish quietly — reaching Change() on the disposed debounce timer would throw "
+             + "ObjectDisposedException out of a worker's completion path during an ordinary stop");
+  }
+
+  /// <summary>
+  /// Parks the FIRST "queued outbox message" trace (EventId 2) until released, so a test can run
+  /// disposal to completion while a queue call is suspended mid-method. Every other log passes
+  /// straight through, so disposal's own logging is not blocked.
+  /// </summary>
+  private sealed class BatchParkingLogger : ILogger<BatchWorkCoordinatorStrategy> {
+    private const int QUEUED_OUTBOX_MESSAGE_EVENT_ID = 2;
+    private readonly TaskCompletionSource _parked = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _parkedOnce;
+
+    public Task Parked => _parked.Task;
+    public void Release() => _release.TrySetResult();
+
+    public void Log<TState>(
+      LogLevel logLevel,
+      Microsoft.Extensions.Logging.EventId eventId,
+      TState state,
+      Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      if (eventId.Id != QUEUED_OUTBOX_MESSAGE_EVENT_ID || Interlocked.Exchange(ref _parkedOnce, 1) != 0) {
+        return;
+      }
+      _parked.TrySetResult();
+      _release.Task.GetAwaiter().GetResult();
+    }
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+  }
+
   private sealed class BatchFullCoverageLogger : ILogger<BatchWorkCoordinatorStrategy> {
     public int LogCount { get; private set; }
 

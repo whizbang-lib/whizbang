@@ -20,12 +20,18 @@ namespace Whizbang.Core.Tests.Workers;
 public class BackupTickCoordinatorCoverageTests {
 
   /// <summary>Always reports schema readiness as canceled, regardless of the caller's own token —
-  /// simulates a host stopped mid-migration before the schema ever became ready.</summary>
+  /// simulates a host stopped mid-migration before the schema ever became ready. Signals
+  /// <see cref="Entered"/> first, so a test can wait on evidence the coordinator's own body reached
+  /// the barrier instead of on <c>StartAsync</c> returning (which, since .NET 10, only means the
+  /// thread-pool work item was queued).</summary>
   private sealed class _canceledSchemaGate : ISchemaReadyGate {
+    public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool IsReady => false;
     public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken) =>
-      Task.FromException(new OperationCanceledException("schema never became ready"));
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      Entered.TrySetResult();
+      return Task.FromException(new OperationCanceledException("schema never became ready"));
+    }
   }
 
   /// <summary>Always reports a small, constant idle time so the ASLEEP branch never transitions
@@ -49,27 +55,49 @@ public class BackupTickCoordinatorCoverageTests {
 
   /// <summary>What breaks: a host stopped before its schema exists must shut down cleanly. If the
   /// schema-gate cancellation escaped instead of returning, a routine "stopped during migration"
-  /// would report as a hosted-service crash.</summary>
+  /// would report as a hosted-service crash — and if the coordinator swallowed it and carried on,
+  /// it would start polling the database the migration has not created yet.</summary>
+  /// <remarks>
+  /// The stopping token is deliberately never canceled here. That is what makes the "ExecuteAsync
+  /// completed" assertion mean something: the only way out of this method without the schema-gate
+  /// catch returning is the polling loop, which would run until shutdown. The wait is on a signal
+  /// the coordinator's own body emits — since .NET 10 <c>BackgroundService.StartAsync</c> queues
+  /// <c>ExecuteAsync</c> to the thread pool, so StartAsync returning proves nothing ran.
+  /// </remarks>
   [Test]
   [Timeout(30000)]
   public async Task ExecuteAsync_SchemaGateCanceledDuringStartup_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
+    var gate = new _canceledSchemaGate();
+    var registry = new BackupTickRegistry();
+    var ticked = 0;
+    registry.Register("backstop", _ => { Interlocked.Increment(ref ticked); return Task.CompletedTask; }, () => true);
+
     var coordinator = new BackupTickCoordinator(
       new IdleActivityTracker(TimeProvider.System),
-      new BackupTickRegistry(),
-      Options.Create(new BackupTickCoordinatorOptions()),
+      registry,
+      // Zero idle threshold: if the gate cancellation were ignored, the coordinator would go
+      // straight to POLLING and fire the registration above.
+      Options.Create(new BackupTickCoordinatorOptions { IdleThreshold = TimeSpan.Zero }),
       NullLogger<BackupTickCoordinator>.Instance,
-      schemaReadyGate: new _canceledSchemaGate());
+      schemaReadyGate: gate);
 
-    using var cts = new CancellationTokenSource();
-    await coordinator.StartAsync(cts.Token);
+    await coordinator.StartAsync(CancellationToken.None);
+    await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     var executeTask = coordinator.ExecuteTask;
-    await coordinator.StopAsync(CancellationToken.None);
 
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(5), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
     await Assert.That(executeTask.IsCompleted).IsTrue()
-      .Because("a canceled schema wait during startup must let ExecuteAsync return promptly");
+      .Because("with the stopping token still live, the only way out of ExecuteAsync is the "
+             + "schema-gate catch returning — the polling loop would run indefinitely");
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("a host stopped before the schema exists must shut down cleanly, not report a crash");
+    await Assert.That(Volatile.Read(ref ticked)).IsEqualTo(0)
+      .Because("returning at the gate means no registered backstop tick ever queries a database "
+             + "whose migration has not run");
+
+    await coordinator.StopAsync(CancellationToken.None);
   }
 
   /// <summary>What breaks: the ASLEEP branch's whole purpose is zero DB calls while idle — if it

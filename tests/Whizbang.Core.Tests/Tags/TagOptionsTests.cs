@@ -364,4 +364,41 @@ public class TagOptionsTests {
     // Assert
     await Assert.That(hooks.Length).IsEqualTo(1);
   }
+
+  // Hook priority is an ORDERING contract, not a label: a hook registered at -100 has to run
+  // before one registered at 100 no matter which order they were declared in. The two non-generic
+  // overloads are the ones the runtime tag processor reaches through (it only has a Type at that
+  // point, never a type parameter), so if their sort were dropped the hooks would silently fall
+  // back to registration order and, for example, an enrichment hook would observe the payload
+  // after the hook that was supposed to run second had already rewritten it.
+  //
+  // Both assertions deliberately use MORE THAN ONE matching hook. A single-element result is
+  // satisfied by an unsorted implementation just as well as a sorted one, so it proves nothing.
+  [Test]
+  public async Task GetHooksFor_NonGeneric_SortsByPriorityNotRegistrationOrderAsync() {
+    // Arrange - registered highest-priority-value first, so registration order is the WRONG order.
+    var options = new TagOptions();
+    options
+      .UseHook<SignalTagAttribute, TestNotificationHook2>(priority: 100)
+      .UseHook<SignalTagAttribute, TestNotificationHook>(priority: -100);
+
+#pragma warning disable CA2263 // non-generic overload is the subject of this test
+    var hooks = options.GetHooksFor(typeof(SignalTagAttribute)).ToArray();
+    var staged = options.GetHooksFor(typeof(SignalTagAttribute), LifecycleStage.PostInboxInline).ToArray();
+#pragma warning restore CA2263
+
+    // Assert
+    await Assert.That(hooks.Length).IsEqualTo(2);
+    await Assert.That(hooks[0].Priority).IsEqualTo(-100);
+    await Assert.That(hooks[0].HookType).IsEqualTo(typeof(TestNotificationHook))
+      .Because("lower priority values execute first; returning registration order instead would "
+             + "run the hooks back to front and every payload rewrite would land out of sequence");
+    await Assert.That(hooks[1].HookType).IsEqualTo(typeof(TestNotificationHook2));
+
+    await Assert.That(staged.Length).IsEqualTo(2)
+      .Because("neither hook pinned a stage, so both fire at every stage");
+    await Assert.That(staged[0].HookType).IsEqualTo(typeof(TestNotificationHook))
+      .Because("the stage-filtered overload must apply the same priority ordering — a hook's "
+             + "position cannot depend on which query the caller happened to use");
+  }
 }

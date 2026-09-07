@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -73,7 +74,8 @@ public class PerspectiveCompletionFlushWorkerTests {
   }
 
   private static PerspectiveCompletionFlushWorker _worker(
-      RecordingCoordinator coordinator, bool enabled = true, bool debugMode = false) {
+      RecordingCoordinator coordinator, bool enabled = true, bool debugMode = false,
+      ILogger<PerspectiveCompletionFlushWorker>? logger = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     var sp = services.BuildServiceProvider();
@@ -93,7 +95,7 @@ public class PerspectiveCompletionFlushWorkerTests {
         },
       }),
       Options.Create(new WorkCoordinatorOptions { DebugMode = debugMode }),
-      NullLogger<PerspectiveCompletionFlushWorker>.Instance);
+      logger ?? NullLogger<PerspectiveCompletionFlushWorker>.Instance);
   }
 
   private static PerspectiveCursorCompletion _cursor(Guid? streamId = null) => new() {
@@ -340,5 +342,62 @@ public class PerspectiveCompletionFlushWorkerTests {
       .Throws<ArgumentNullException>();
     await Assert.That(() => new PerspectiveCompletionFlushWorker(scopeFactory, gate, options, coordOptions, null!))
       .Throws<ArgumentNullException>();
+  }
+
+  /// <summary>
+  /// Waits for one specific <see cref="Microsoft.Extensions.Logging.EventId"/> so a test can key on
+  /// something the worker's own body emitted.
+  /// </summary>
+  private sealed class _eventIdWaiter(int eventId) : ILogger<PerspectiveCompletionFlushWorker> {
+    public TaskCompletionSource Seen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (id.Id == eventId) {
+        Seen.TrySetResult();
+      }
+    }
+  }
+
+  /// <summary>
+  /// The disabled branch parks on an infinite delay rather than returning, so the host keeps the
+  /// worker as a live hosted service and its channel keeps accepting enqueues. An early return
+  /// would make the host treat the service as finished, and the <c>ContinueWith</c> is what turns
+  /// the eventual canceled delay into a clean stop instead of a faulted hosted service.
+  /// </summary>
+  /// <remarks>
+  /// The wait is on the "disabled" log line — a signal the body itself emits. Since .NET 10,
+  /// <c>BackgroundService.StartAsync</c> queues <c>ExecuteAsync</c> to the thread pool, so
+  /// <c>StartAsync</c> returning is no evidence the branch ran, and a test that stops the worker
+  /// straight afterwards can assert "nothing was written" against a body that never executed.
+  /// </remarks>
+  [Test]
+  [Timeout(30000)]
+  public async Task WhenDisabled_ExecuteAsyncParksUntilShutdownAsync(CancellationToken testToken) {
+    var coordinator = new RecordingCoordinator();
+    var logger = new _eventIdWaiter(3); // LogDisabled
+    var worker = _worker(coordinator, enabled: false, logger: logger);
+
+    await worker.StartAsync(testToken);
+    await logger.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("a disabled worker must stay a live hosted service until shutdown — returning here "
+             + "would tell the host this service had finished while its channel is still open");
+
+    await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.NewMedo(), testToken);
+    await worker.StopAsync(CancellationToken.None);
+    await worker.ExecuteTask.WaitAsync(TimeSpan.FromSeconds(10), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue();
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("the continuation is what turns the canceled infinite delay into a clean stop "
+             + "rather than a faulted hosted service at every shutdown");
+    await Assert.That(coordinator.Completions).IsEmpty()
+      .Because("disabled means the completions are handled elsewhere — writing them here would "
+             + "double up");
   }
 }
