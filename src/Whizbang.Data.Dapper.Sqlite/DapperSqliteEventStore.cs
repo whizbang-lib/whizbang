@@ -263,8 +263,13 @@ public class DapperSqliteEventStore(
   /// </summary>
   private MessageEnvelope<IEvent>? _tryMatchEventType(JsonElement root, IReadOnlyList<Type> eventTypes, JsonElement messageIdProp) {
     foreach (var eventType in eventTypes) {
-      var typeInfo = JsonOptions.GetTypeInfo(eventType);
-      if (typeInfo == null) {
+      // TryGetTypeInfo, not GetTypeInfo. GetTypeInfo THROWS NotSupportedException for a type the
+      // resolver chain does not know -- it never returns null -- so the null check this guard used
+      // to perform could not fire, and a caller listing one unregistered candidate type crashed
+      // the entire read instead of having that candidate skipped. Skipping is the whole contract
+      // of a polymorphic union: the caller offers several shapes and the store picks the one that
+      // fits, so one unknown shape must cost that shape, not the stream.
+      if (!JsonOptions.TryGetTypeInfo(eventType, out var typeInfo) || typeInfo == null) {
         continue;
       }
 
@@ -322,8 +327,9 @@ public class DapperSqliteEventStore(
   /// Deserializes the MessageId from its JSON element. Returns null on failure.
   /// </summary>
   private MessageId? _tryDeserializeMessageId(JsonElement messageIdProp) {
-    var messageIdTypeInfo = JsonOptions.GetTypeInfo(typeof(MessageId));
-    if (messageIdTypeInfo == null) {
+    // See _tryMatchEventType: GetTypeInfo throws rather than returning null, so this guard was
+    // unreachable and a resolver gap for MessageId surfaced as an exception out of the read.
+    if (!JsonOptions.TryGetTypeInfo(typeof(MessageId), out var messageIdTypeInfo) || messageIdTypeInfo == null) {
       return null;
     }
 
@@ -338,8 +344,10 @@ public class DapperSqliteEventStore(
       return [];
     }
 
-    var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
-    if (hopsTypeInfo == null) {
+    // Hops are diagnostic trace metadata, not authoritative event data, so a resolver gap here
+    // must cost the trace and not the event. GetTypeInfo threw instead of returning null, which
+    // meant one unregistered hop shape took down delivery of the event carrying it.
+    if (!JsonOptions.TryGetTypeInfo(typeof(List<MessageHop>), out var hopsTypeInfo) || hopsTypeInfo == null) {
       return [];
     }
 

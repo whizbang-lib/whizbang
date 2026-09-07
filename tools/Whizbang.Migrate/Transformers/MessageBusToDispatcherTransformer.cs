@@ -194,8 +194,15 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
                           parent is ParameterSyntax ||
                           parent is FieldDeclarationSyntax;
 
-        // Also check grandparent for type argument lists
-        if (!isTypeUsage && parent?.Parent is TypeArgumentListSyntax) {
+        // A type argument's parent IS the argument list -- in `List<IMessageBus>` the identifier
+        // hangs directly off the TypeArgumentListSyntax, and the grandparent is the GenericName.
+        // Checking only the grandparent therefore never matched the common case, and the type
+        // argument survived the migration while its using directive did not: the file came out
+        // referring to a Wolverine interface it no longer imports. The grandparent check stays for
+        // a qualified argument (`List<Wolverine.IMessageBus>`), where the parent is the
+        // QualifiedName instead.
+        if (!isTypeUsage &&
+            (parent is TypeArgumentListSyntax || parent?.Parent is TypeArgumentListSyntax)) {
           isTypeUsage = true;
         }
 

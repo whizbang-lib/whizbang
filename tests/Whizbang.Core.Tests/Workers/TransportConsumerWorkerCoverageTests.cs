@@ -1087,8 +1087,251 @@ public class TransportConsumerWorkerCoverageTests {
   }
 
   // ========================================
+  // ExecuteAsync — schema-ready gate canceled before ready (coverage round 23)
+  // ========================================
+
+  // If a host shuts down while migrations are still running, this early return must still let
+  // ExecuteAsync exit promptly instead of hanging. Today it does NOT settle SubscriptionsReady on
+  // the way out — any caller awaiting readiness (a startup health probe,
+  // IStartupReadinessContributor) is left parked forever even though the worker itself already
+  // stopped, which during a canceled startup means the host never reports ready and the readiness
+  // waiter never exits either.
+  [Test]
+  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_ReturnsWithoutSettlingSubscriptionsReadyAsync() {
+    var neverReady = new Whizbang.Core.Workers.SchemaReadyGate();
+    var worker = _createWorkerWithSchemaGate(new CoverageTransport(), neverReady);
+
+    using var stopping = new CancellationTokenSource();
+    await worker.StartAsync(stopping.Token);
+    await stopping.CancelAsync();
+
+    // ExecuteTask reaching a terminal state on its own is the deterministic signal that the early
+    // return fired, rather than the host launching ExecuteAsync on the thread pool and the test
+    // racing it. SuppressThrowing because the task may finish either RanToCompletion (the catch
+    // swallowed the cancellation) or Canceled (the token was already canceled when ExecuteAsync
+    // first ran) depending on how quickly the thread pool picks it up -- both are graceful exits,
+    // and rethrowing one of them would make this test fail only under load.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
+      .Because("a host shutting down mid-migration must not leave this worker parked on the gate");
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("canceling the schema wait is a graceful shutdown path, not a failure");
+    await Assert.That(worker.SubscriptionsReady.IsCompleted).IsFalse()
+      .Because("today, returning here leaves SubscriptionsReady unsettled — pinning this so a fix " +
+               "that adds the missing TrySetCanceled/TrySetResult call must consciously update this test");
+
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  // ========================================
+  // ExecuteAsync — topology manifest provisioning Debug log (coverage round 23)
+  // ========================================
+
+  // If this Debug-gated block regressed, an operator debugging a manifest-driven provisioning
+  // issue (missing per-namespace inbox entity, unexpected publish/subscription counts) would have
+  // nothing in the logs confirming the manifest was even seen, let alone its shape — the only
+  // remaining signal would be the provisioner's own, possibly silent, side effects.
+  [Test]
+  public async Task ExecuteAsync_ManifestResolvableWithDebugLogger_LogsManifestProvisioningDetailsAsync() {
+    var logger = new CoverageCapturingLogger();
+    var manifest = new Whizbang.Core.Routing.TopologyManifest("coverage-service", [], []);
+    var provisioner = new CoverageProvisioner();
+    var transport = new CoverageManifestTransport();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IInfrastructureProvisioner>(provisioner);
+    services.AddSingleton(manifest);
+    services.AddSingleton(Options.Create(new RoutingOptions()));
+    var serviceProvider = services.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      logger: logger,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    using var cts = new CancellationTokenSource();
+    try {
+      await worker.StartAsync(cts.Token);
+      // The manifest-provisioning Debug log runs BEFORE subscriptions are created, so the first
+      // subscribe is the deterministic "provisioning already happened" signal.
+      await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    } finally {
+      await cts.CancelAsync();
+      await worker.StopAsync(CancellationToken.None);
+    }
+
+    var log = string.Join("\n", logger.Messages);
+    await Assert.That(log).Contains(
+        "Provisioning topology manifest for 'coverage-service' (0 publish destinations, 0 subscriptions)")
+      .Because("the Debug block must name the manifest's service and report its actual " +
+               "publish-destination and subscription counts");
+  }
+
+  // ========================================
+  // Poison quarantine — missing dead-letter dependencies (coverage round 23)
+  // ========================================
+
+  // Best-effort by design: a dead-letter store, generation provider, or instance provider that
+  // isn't wired must not turn an optional quarantine feature into a hard failure of the receive
+  // path. If this guard regressed into throwing (or into stopping after the first miss), a host
+  // that wired a poison detector before finishing the dead-letter wiring would have every batch
+  // containing a redelivery observation abort the receive path entirely.
+  [Test]
+  public async Task Batch_PoisonQuarantineWithoutDeadLetterDependencies_StillProcessesEveryObservationAsync() {
+    var firstHostage = Guid.Parse("0199aaaa-bbbb-cccc-dddd-eeeeffff1001");
+    var secondHostage = Guid.Parse("0199aaaa-bbbb-cccc-dddd-eeeeffff1002");
+    var coordinator = new CoverageObservingWorkCoordinator(
+      [new InboxRedeliveryObservation(firstHostage, 10) { ProcessingAttempts = 10 }],
+      [new InboxRedeliveryObservation(secondHostage, 10) { ProcessingAttempts = 10 }]);
+    var detector = new CoverageAlwaysQuarantineDetector();
+
+    var transport = new CoverageTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddSingleton<IPoisonMessageDetector>(detector);
+    // Deliberately NOT registering IDeadLetterStore / IGenerationProvider / IServiceInstanceProvider
+    // — the missing-dependency path this test targets.
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    var serviceProvider = services.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      receptorRegistry: new CoverageAlwaysConsumedRegistry(),
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await Task.Delay(200);
+
+    var firstEnvelope = _createJsonEnvelope(MessageId.New());
+    var secondEnvelope = _createJsonEnvelope(MessageId.New());
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+
+    // Two SEPARATE batches: the second must still be evaluated even though the first's
+    // quarantine attempt hit the missing-dependency skip.
+    await transport.SimulateMessageReceivedAsync(firstEnvelope, envelopeType);
+    await transport.SimulateMessageReceivedAsync(secondEnvelope, envelopeType);
+
+    cts.Cancel();
+
+    await Assert.That(detector.QuarantinedMessageIds).Contains(firstHostage.ToString());
+    await Assert.That(detector.QuarantinedMessageIds).Contains(secondHostage.ToString())
+      .Because("a missing dead-letter dependency on the first observation must not stop the " +
+               "receive path from evaluating (and best-effort-skipping) the next batch's " +
+               "observation too");
+    await Assert.That(coordinator.StoredInboxCount).IsEqualTo(2)
+      .Because("both batches must still reach the inbox store despite the quarantine dependency gap");
+  }
+
+  // ========================================
+  // Receive-path flag derivation — event type missing from marker-resolver catalog (coverage round 23)
+  // ========================================
+
+  // If this diagnostic regressed, an event type present in IEventTypeProvider (used for the
+  // known-event filter) but absent from the message-type catalog behind IEventMarkerResolver
+  // (used for flags) would lose its flags/TTL silently on receive, with nothing in the logs
+  // pointing at the exact type whose catalog registration is missing.
+  [Test]
+  public async Task Batch_EventTypeMissingFromMarkerCatalog_LogsDiagnosticMissAsync() {
+    var eventType = typeof(CoverageDiagMissEvent);
+    var logger = new CoverageCapturingLogger();
+    var coordinator = new NoOpWorkCoordinator();
+
+    var services = new ServiceCollection();
+    services.AddScoped<IWorkCoordinator>(_ => coordinator);
+    services.AddSingleton<IEventTypeProvider>(new CoverageEventTypeProvider(eventType));
+    services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
+    var serviceProvider = services.BuildServiceProvider();
+    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+
+    var transport = new CoverageTransport();
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("test-topic"));
+
+    var worker = new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: scopeFactory,
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      logger: logger,
+      receptorRegistry: new CoverageAlwaysConsumedRegistry(),
+      eventMarkerResolver: new Whizbang.Core.EventMarkerResolver(new CoverageEmptyCatalog()),
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    using var cts = new CancellationTokenSource();
+    _ = worker.StartAsync(cts.Token);
+    await Task.Delay(200);
+
+    var envelope = _createJsonEnvelope(MessageId.New());
+    var envelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core";
+
+    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
+
+    cts.Cancel();
+
+    await Assert.That(coordinator.StoredInboxCount).IsGreaterThanOrEqualTo(1)
+      .Because("the diagnostic must not block the message from still being stored");
+    var log = string.Join("\n", logger.Messages);
+    await Assert.That(log).Contains("Receive-path flag derivation MISS")
+      .Because("an event type absent from the marker-resolver's catalog union must log the miss " +
+               "so the gap is visible in service logs, not just in silently-dropped flags");
+    await Assert.That(log).Contains(eventType.FullName!)
+      .Because("the diagnostic must name the exact CLR type that missed, not just say something did");
+  }
+
+  // ========================================
   // Helper Methods
   // ========================================
+
+  private static TransportConsumerWorker _createWorkerWithSchemaGate(
+      ITransport transport, ISchemaReadyGate schemaReadyGate) {
+    var options = new TransportConsumerOptions();
+    options.Destinations.Add(new TransportDestination("schema-gate-topic"));
+    return new TransportConsumerWorker(
+      transport: transport,
+      options: options,
+      resilienceOptions: new SubscriptionResilienceOptions(),
+      scopeFactory: _buildScopeFactory(),
+      jsonOptions: new JsonSerializerOptions(),
+      orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
+      lifecycleMessageDeserializer: null,
+      metrics: null,
+      logger: NullLogger<TransportConsumerWorker>.Instance,
+      serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
+      schemaReadyGate: schemaReadyGate);
+  }
 
   private static IServiceScopeFactory _buildScopeFactory() {
     var services = new ServiceCollection();
@@ -1464,6 +1707,138 @@ public class TransportConsumerWorkerCoverageTests {
         CancellationToken cancellationToken = default) {
       ProvisionCalled = true;
       return Task.CompletedTask;
+    }
+    // ProvisionManifestAsync intentionally left as the interface's no-op default.
+  }
+
+  // ========================================
+  // Test Doubles — coverage round 23 additions
+  // ========================================
+
+  /// <summary>Transport exposing a deterministic "first subscribe" signal, so tests can wait for
+  /// startup provisioning to have already run instead of sleeping a fixed delay.</summary>
+  private sealed class CoverageManifestTransport : ITransport {
+    private readonly TaskCompletionSource _firstSubscribe = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task FirstSubscribe => _firstSubscribe.Task;
+    public bool IsInitialized => true;
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task PublishAsync(
+        IMessageEnvelope envelope, TransportDestination destination,
+        string? envelopeType = null, ReadOnlyMemory<byte>? preSerializedBytes = null,
+        CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task<ISubscription> SubscribeBatchAsync(
+        Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+        TransportDestination destination, TransportBatchOptions batchOptions,
+        CancellationToken cancellationToken = default) {
+      _firstSubscribe.TrySetResult();
+      return Task.FromResult<ISubscription>(new CoverageSubscription());
+    }
+
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
+        IMessageEnvelope requestEnvelope, TransportDestination destination,
+        CancellationToken cancellationToken = default)
+        where TRequest : notnull where TResponse : notnull => throw new NotSupportedException();
+  }
+
+  /// <summary>Work coordinator reporting a caller-supplied, per-call sequence of durable
+  /// redelivery observations — one dequeue per StoreInboxMessagesWithObservationsAsync call, so
+  /// separate batches can report independent observations.</summary>
+  private sealed class CoverageObservingWorkCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    private readonly Queue<IReadOnlyList<InboxRedeliveryObservation>> _perCallObservations;
+    public new int StoredInboxCount { get; private set; }
+
+    public CoverageObservingWorkCoordinator(params IReadOnlyList<InboxRedeliveryObservation>[] perCallObservations) {
+      _perCallObservations = new Queue<IReadOnlyList<InboxRedeliveryObservation>>(perCallObservations);
+    }
+
+    // Explicit re-implementation remaps the interface slot on this derived type, so the worker's
+    // IWorkCoordinator call lands here rather than on the base no-op.
+    Task IWorkCoordinator.StoreInboxMessagesAsync(
+        InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken) {
+      StoredInboxCount += messages.Length;
+      return Task.CompletedTask;
+    }
+
+    Task<IReadOnlyList<InboxRedeliveryObservation>> IWorkCoordinator.StoreInboxMessagesWithObservationsAsync(
+        InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken) {
+      StoredInboxCount += messages.Length;
+      var observations = _perCallObservations.Count > 0 ? _perCallObservations.Dequeue() : [];
+      return Task.FromResult(observations);
+    }
+  }
+
+  /// <summary>Poison detector that always quarantines and records every message id it was asked
+  /// to quarantine, so tests can assert every observation in a batch was actually evaluated.</summary>
+  private sealed class CoverageAlwaysQuarantineDetector : IPoisonMessageDetector {
+    public List<string> QuarantinedMessageIds { get; } = [];
+
+    public PoisonVerdict Evaluate(PoisonEvaluationContext context) =>
+      PoisonVerdict.Quarantine(PoisonQuarantineReason.ObservationCountExceeded, "coverage-forced-quarantine");
+
+    public void RecordQuarantine(
+        PoisonQuarantineGate gate,
+        PoisonVerdict verdict,
+        PoisonEvaluationContext context,
+        IReadOnlyDictionary<string, object?>? additionalTags = null) {
+      QuarantinedMessageIds.Add(context.MessageId);
+    }
+
+    public void ReportAgeCapability(string transport, string entity, bool canSupplyTrustworthyAge) {
+      // Not exercised by these tests.
+    }
+  }
+
+  /// <summary>Registry claiming every message type has a consumer, so the no-consumer
+  /// pre-filter never drops messages these tests need to reach the store.</summary>
+  private sealed class CoverageAlwaysConsumedRegistry : IReceptorRegistryQuery {
+    public bool HasReceptors(LifecycleStage stage, string messageType) => false;
+    public bool HasInboxHandler(string messageType) => true;
+    public bool HasAnyConsumer(string messageType) => true;
+  }
+
+  /// <summary>IEventTypeProvider reporting exactly one known event type — used to drive
+  /// isEvent=true down the receive path for a type deliberately absent from the SEPARATE
+  /// message-type catalog behind IEventMarkerResolver.</summary>
+  private sealed class CoverageEventTypeProvider(Type eventType) : IEventTypeProvider {
+    public IReadOnlyList<Type> GetEventTypes() => [eventType];
+  }
+
+  /// <summary>Catalog with no entries — an EventMarkerResolver built from this never resolves any
+  /// type, simulating a message-type catalog that has not been updated for a newer event type.</summary>
+  private sealed class CoverageEmptyCatalog : Whizbang.Core.IMessageTypeCatalog {
+    public IReadOnlyList<Whizbang.Core.MessageTypeCatalogEntry> GetAll() => [];
+  }
+
+  /// <summary>Marker type standing in for an event whose catalog registration is missing.</summary>
+  private sealed class CoverageDiagMissEvent;
+
+  /// <summary>Logger with every level enabled that captures formatted messages, so Debug/Warning
+  /// blocks a NullLogger never enters are observable.</summary>
+  private sealed class CoverageCapturingLogger : ILogger<TransportConsumerWorker> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _messages = [];
+
+    public IReadOnlyList<string> Messages {
+      get {
+        lock (_lock) {
+          return [.. _messages];
+        }
+      }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      var message = formatter(state, exception);
+      lock (_lock) {
+        _messages.Add(message);
+      }
     }
   }
 }

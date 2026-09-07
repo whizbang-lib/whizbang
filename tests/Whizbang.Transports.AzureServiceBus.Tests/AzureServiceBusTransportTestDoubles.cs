@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Azure;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
@@ -208,11 +209,65 @@ internal sealed class RaisableProcessor : ServiceBusProcessor {
 internal sealed class RaisableSessionProcessor : ServiceBusSessionProcessor {
   private readonly InnerRaisableProcessor _inner = new();
 
-  protected override ServiceBusProcessor InnerProcessor => _inner;
+  /// <summary>
+  /// When set, accessing <see cref="InnerProcessor"/> throws this instead of returning the
+  /// live inner processor. The real SDK's <c>UpdateConcurrency</c> and <c>IsClosed</c> both
+  /// resolve through <c>InnerProcessor</c> before doing anything else, so this is the seam that
+  /// lets a test simulate "the concurrency-apply/closed-check call fails" (e.g. a disposed or
+  /// closed processor) without a live broker. Null by default — no existing test's behavior
+  /// changes.
+  /// </summary>
+  public Exception? ThrowFromInnerProcessor { get; set; }
 
-  public override Task StartProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+  protected override ServiceBusProcessor InnerProcessor =>
+    ThrowFromInnerProcessor is null ? _inner : throw ThrowFromInnerProcessor;
 
-  public override Task StopProcessingAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+  /// <summary>
+  /// When set, IsClosed throws this instead of returning its normal (always-false) value.
+  /// IsClosed is overridden directly here — rather than left to fall through to
+  /// InnerProcessor.IsClosed like the real SDK does — specifically so it is INDEPENDENT of
+  /// <see cref="ThrowFromInnerProcessor"/>: the adaptive sweep's RemoveAll checks IsClosed for
+  /// every registration before evaluating any of them, while UpdateConcurrency (gated by
+  /// ThrowFromInnerProcessor) is only ever reached for the registration actually being resized.
+  /// Conflating the two would make a resize-only failure abort the whole sweep. Null by
+  /// default — no existing test's behavior changes.
+  /// </summary>
+  public Exception? IsClosedException { get; set; }
+
+  public override bool IsClosed => IsClosedException is null ? false : throw IsClosedException;
+
+  /// <summary>Total StartProcessingAsync invocations. The initial subscribe start counts as 1;
+  /// a later increment is the ONLY proof that a detached resume (e.g. the throttle-pause
+  /// Task.Run) actually ran — it completes on the thread pool after the method that started it
+  /// returns, so nothing else observes it.</summary>
+  public int StartProcessingAsyncCallCount { get; private set; }
+
+  /// <summary>Total StopProcessingAsync invocations — see <see cref="StartProcessingAsyncCallCount"/>.</summary>
+  public int StopProcessingAsyncCallCount { get; private set; }
+
+  /// <summary>Raised synchronously at the end of every StartProcessingAsync call — a
+  /// deterministic signal tests can await instead of sleeping.</summary>
+  public event Action? Started;
+
+  /// <summary>Raised synchronously at the end of every StopProcessingAsync call.</summary>
+  public event Action? Stopped;
+
+  /// <summary>When set, StartProcessingAsync returns a faulted task with this exception instead
+  /// of completing — simulates a failed resume so the throttle pause's catch/finally can be
+  /// exercised. Null by default — no existing test's behavior changes.</summary>
+  public Exception? StartProcessingException { get; set; }
+
+  public override Task StartProcessingAsync(CancellationToken cancellationToken = default) {
+    StartProcessingAsyncCallCount++;
+    Started?.Invoke();
+    return StartProcessingException is null ? Task.CompletedTask : Task.FromException(StartProcessingException);
+  }
+
+  public override Task StopProcessingAsync(CancellationToken cancellationToken = default) {
+    StopProcessingAsyncCallCount++;
+    Stopped?.Invoke();
+    return Task.CompletedTask;
+  }
 
   public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -483,6 +538,13 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   public Exception? CreateSubscriptionException { get; init; }
 
   /// <summary>
+  /// Opt-in failure hook for <see cref="GetSubscriptionsAsync"/> — thrown during enumeration
+  /// (not before the async-enumerable is returned) so tests can drive the ownership-drift
+  /// check's best-effort catch path. Defaults to null so no existing test changes behavior.
+  /// </summary>
+  public Exception? GetSubscriptionsException { get; init; }
+
+  /// <summary>
   /// Total management-plane operations issued against this double — the phase-5 boot budget
   /// counter ("management-op count per boot bounded and asserted"). Every interface member
   /// increments it once per call (rule enumeration counts once, not per rule).
@@ -513,10 +575,22 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
   /// probes included.</summary>
   public List<string> TopicExistenceChecks { get; } = [];
 
-  public Task<bool> TopicExistsAsync(string topicName, CancellationToken cancellationToken = default) {
+  /// <summary>
+  /// Optional gate awaited inside <see cref="TopicExistsAsync"/>, after recording the call but
+  /// before returning — lets a test force two concurrent _getOrCreateSenderAsync callers to
+  /// interleave at the exact point needed to exercise the double-checked-lock's second
+  /// TryGetValue (the caller that loses the race must observe the sender the winner created).
+  /// Null by default, so no existing test's timing changes.
+  /// </summary>
+  public Func<Task>? TopicExistsGate { get; set; }
+
+  public async Task<bool> TopicExistsAsync(string topicName, CancellationToken cancellationToken = default) {
     ManagementOpCount++;
     TopicExistenceChecks.Add(topicName);
-    return Task.FromResult(ExistingTopics.Contains(topicName));
+    if (TopicExistsGate is not null) {
+      await TopicExistsGate();
+    }
+    return ExistingTopics.Contains(topicName);
   }
 
   public Task CreateTopicAsync(string topicName, CancellationToken cancellationToken = default) {
@@ -614,6 +688,11 @@ internal sealed class RecordingProvisioningAdminClient : IServiceBusAdminClient 
     [EnumeratorCancellation] CancellationToken cancellationToken = default) {
     ManagementOpCount++;
     await Task.CompletedTask;
+    if (GetSubscriptionsException is not null) {
+      // Thrown here — inside the iterator body — so it fires only once the caller starts
+      // enumerating (await foreach), not when GetSubscriptionsAsync is merely invoked.
+      throw GetSubscriptionsException;
+    }
     foreach (var (topic, subscription) in ExistingSubscriptions.ToList()) {
       if (!string.Equals(topic, topicName, StringComparison.OrdinalIgnoreCase)) {
         continue;

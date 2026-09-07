@@ -315,7 +315,7 @@ public class ServiceCollectionExtensionsBranchCoverageTests {
 
     public void Log<TState>(
       LogLevel logLevel,
-      EventId eventId,
+      Microsoft.Extensions.Logging.EventId eventId,
       TState state,
       Exception? exception,
       Func<TState, Exception?, string> formatter) {

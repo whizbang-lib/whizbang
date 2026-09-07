@@ -199,6 +199,45 @@ public class MergedSharedCopyTests {
 
   [Test]
   [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_BuildStampNamesTheHostItWasMergedIntoAsync(MergedHost host) {
+    // The stamp goes into every generated file to say which build of the generator produced it,
+    // and the property reaches for it via typeof(TemplateUtilities).Assembly — which, after the
+    // merge, IS the host. If a host somehow resolved the shared assembly instead, every package
+    // would stamp the same version and the stamp would answer the one question it exists for
+    // with the wrong assembly's number, in files nobody re-reads.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+    var type = _type(host.Assembly, ns + "TemplateUtilities");
+    var property = type.GetProperty("DeterministicBuildStamp", BindingFlags.Public | BindingFlags.Static)
+      ?? throw new InvalidOperationException($"DeterministicBuildStamp is missing from {host.Host}.");
+
+    var stamp = (string)property.GetValue(null)!;
+    var forThisHost = (string)_call(
+      host.Assembly, ns + "TemplateUtilities", "GetDeterministicBuildStamp", host.Assembly)!;
+
+    await Assert.That(stamp).IsEqualTo(forThisHost)
+      .Because($"the property must report {host.Host}'s own version, which is the only thing that "
+             + "makes the stamp identify the generator that wrote the file");
+    await Assert.That(stamp).IsEqualTo((string)property.GetValue(null)!)
+      .Because("the stamp carries no clock or counter: CI verifies that a same-version rebuild is "
+             + "byte-identical, and anything varying between two reads breaks that outright");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_IndentingNothingAddsNothingAsync(MergedHost host) {
+    // Generators indent whatever a section produced, including sections that produced nothing.
+    // Indenting an empty string into whitespace would put a stray indented blank line into the
+    // emitted file — harmless to compile, and enough to make a rebuild differ byte for byte.
+    const string ns = "Whizbang.Generators.Shared.Utilities.";
+
+    await Assert.That((string)_call(host.Assembly, ns + "TemplateUtilities", "IndentCode", "", "    ")!)
+      .IsEqualTo("")
+      .Because("an empty section indents to nothing; producing whitespace instead is invisible in "
+             + "review and visible to the deterministic-rebuild check");
+  }
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
   public async Task MergedCopy_ShapesGeneratedTextIdenticallyAsync(MergedHost host) {
     // Template handling produces the source these generators emit. A divergence here shows up as
     // malformed generated code in whichever package carried the bad copy.
@@ -238,6 +277,46 @@ public class MergedSharedCopyTests {
     }
   }
 
+
+  [Test]
+  [MethodDataSource(nameof(Hosts))]
+  public async Task MergedCopy_PhysicalFieldInfoStillComparesByValueAsync(MergedHost host) {
+    // Incremental generators cache on these records, and the caching is only correct because the
+    // record compares by value. A merged copy that compared by reference would report every
+    // rebuild as a change and re-run the whole generator on each keystroke; one that compared
+    // everything equal would never re-run it and emit stale code. Neither failure announces
+    // itself -- the generator still produces output, just at the wrong time.
+    //
+    // Two of the four hosts never construct one of these in their own generator, so their copy's
+    // synthesized members had never executed. Reflection is the only way in: the record type is
+    // internal to each host and a distinct type identity per copy.
+    const string physicalField = "Whizbang.Generators.Shared.Models.PhysicalFieldInfo";
+    var fieldType = _type(host.Assembly, physicalField);
+
+    object?[] arguments = [
+      "Embedding", "embedding", "float[]", true, false, null, true, null, null, null, null,
+    ];
+    var one = Activator.CreateInstance(fieldType, arguments)!;
+    var same = Activator.CreateInstance(fieldType, arguments)!;
+
+    object?[] differing = [.. arguments];
+    differing[1] = "a_different_column";
+    var other = Activator.CreateInstance(fieldType, differing)!;
+
+    await Assert.That(ReferenceEquals(one, same)).IsFalse()
+      .Because("these are two separate instances; comparing them is the point of the test");
+    await Assert.That(one.Equals(same)).IsTrue()
+      .Because("two fields describing the same column are the same value, and the generator's "
+             + "incremental cache depends on that being true across the merge boundary");
+    await Assert.That(one.GetHashCode()).IsEqualTo(same.GetHashCode())
+      .Because("equal values must hash alike or the cache lookup misses even when equality holds");
+    await Assert.That(one.Equals(other)).IsFalse()
+      .Because("a copy that found every field equal would cache a stale result and emit code for "
+             + "a column that had been renamed");
+    await Assert.That(one.ToString()).Contains("Embedding")
+      .Because("the record's generated ToString is what a generator diagnostic prints when it "
+             + "reports which field it choked on");
+  }
 
   // ── The symbol-dependent surface, per host ────────────────────────────────
 

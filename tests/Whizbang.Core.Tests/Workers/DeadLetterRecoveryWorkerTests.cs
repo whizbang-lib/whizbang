@@ -32,8 +32,15 @@ public class DeadLetterRecoveryWorkerTests {
     public List<(Guid Id, DateTimeOffset NextAt)> ScheduleCalls { get; } = [];
     public List<string> ResetForGenerationCalls { get; } = [];
     public bool RecoverShouldThrow { get; set; }
+    // recover_dead_letter returned false: the row was already terminal or another worker's
+    // atomic UPDATE claimed it first. Defaults false so every existing test keeps seeing the
+    // "always succeeds unless it throws" behavior.
+    public bool RecoverShouldReturnFalse { get; set; }
     public bool TerminalTransitionShouldThrow { get; set; }
     public bool ScheduleShouldThrow { get; set; }
+    public bool ResetForGenerationShouldThrow { get; set; }
+    public bool CountServiceBacklogShouldThrow { get; set; }
+    public bool DiscardShouldThrow { get; set; }
     public int GenerationReplayReturn { get; set; }
     public TaskCompletionSource FirstFetchSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource SecondFetchSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -52,7 +59,12 @@ public class DeadLetterRecoveryWorkerTests {
 
     /// <summary>Fails the first scan so a test can check the loop outlives one.</summary>
     public bool FetchThrowsOnFirstCall { get; set; }
-    public Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
+    // Blocks a fetch call indefinitely (respecting ct) so a test can cancel while a scan is
+    // genuinely in flight, rather than racing a sleep against the loop. Defaults false so
+    // every existing test's fetch returns immediately, unchanged.
+    public bool BlockFetchUntilCanceled { get; set; }
+    public TaskCompletionSource FetchStartedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public async Task<IReadOnlyList<DeadLetterEntry>> FetchDueAsync(int maxCount, CancellationToken ct = default) {
       FetchedBatchSizes.Enqueue(maxCount);
       _fetchCount++;
       _fetchSignals.GetOrAdd(_fetchCount, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
@@ -60,14 +72,18 @@ public class DeadLetterRecoveryWorkerTests {
       if (FetchThrowsOnFirstCall && _fetchCount == 1) {
         throw new InvalidOperationException("simulated scan failure");
       }
+      if (BlockFetchUntilCanceled) {
+        FetchStartedSignal.TrySetResult();
+        await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+      }
       var batch = FetchBatches.Count > 0 ? FetchBatches.Dequeue() : [];
-      return Task.FromResult<IReadOnlyList<DeadLetterEntry>>(batch);
+      return batch;
     }
     public Task<bool> RecoverAsync(Guid deadLetterId, CancellationToken ct = default) {
       if (RecoverShouldThrow) { throw new InvalidOperationException("simulated DB failure"); }
       RecoverCalls.Add(deadLetterId);
       RecoverSignal.TrySetResult();
-      return Task.FromResult(true);
+      return Task.FromResult(!RecoverShouldReturnFalse);
     }
     public Task MarkHoldingAsync(Guid deadLetterId, CancellationToken ct = default) {
       if (TerminalTransitionShouldThrow) { throw new InvalidOperationException("simulated terminal-set failure"); }
@@ -79,6 +95,7 @@ public class DeadLetterRecoveryWorkerTests {
     }
     public List<(Guid Id, string Note)> DiscardCalls { get; } = [];
     public Task MarkDiscardedAsync(Guid deadLetterId, string note, CancellationToken ct = default) {
+      if (DiscardShouldThrow) { throw new InvalidOperationException("simulated discard failure"); }
       DiscardCalls.Add((deadLetterId, note)); return Task.CompletedTask;
     }
     public Task ScheduleNextAttemptAsync(Guid deadLetterId, DateTimeOffset nextAt, CancellationToken ct = default) {
@@ -86,8 +103,10 @@ public class DeadLetterRecoveryWorkerTests {
       ScheduleCalls.Add((deadLetterId, nextAt)); return Task.CompletedTask;
     }
     public ServiceBacklog? Backlog { get; set; }
-    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken ct = default) =>
-      ValueTask.FromResult(Backlog);
+    public ValueTask<ServiceBacklog?> CountServiceBacklogAsync(CancellationToken ct = default) {
+      if (CountServiceBacklogShouldThrow) { throw new InvalidOperationException("simulated backlog-count failure"); }
+      return ValueTask.FromResult(Backlog);
+    }
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default)
       => throw new NotSupportedException();
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -137,6 +156,7 @@ public class DeadLetterRecoveryWorkerTests {
     }
 
     public Task<int> ResetForGenerationAsync(string currentGeneration, int staggerMinutes, CancellationToken ct = default) {
+      if (ResetForGenerationShouldThrow) { throw new InvalidOperationException("simulated generation-replay failure"); }
       ResetForGenerationCalls.Add(currentGeneration);
       return Task.FromResult(GenerationReplayReturn);
     }
@@ -1030,6 +1050,197 @@ public class DeadLetterRecoveryWorkerTests {
     await Assert.That(svc.FetchedBatchSizes.Count).IsGreaterThanOrEqualTo(2)
       .Because("the scan after a failed one still has to run; one bad read is not a reason to "
              + "stop retrying dead letters for the life of the process");
+  }
+
+  [Test]
+  public async Task RecoveryThrows_ZeroCooldownPolicy_SchedulesImmediateRetryAsync() {
+    // Line 99: _exponentialCooldown returns TimeSpan.Zero when the policy's configured base
+    // cooldown is already zero or negative (LeaseExpired's built-in policy is explicitly
+    // Cooldown=TimeSpan.Zero — "retry immediately"). If exponential backoff manufactured a
+    // delay here anyway, an operator who deliberately configured a zero-cooldown policy for a
+    // transient failure would silently lose that immediacy.
+    var (worker, svc) = _newWorker();
+    svc.RecoverShouldThrow = true;
+    var entry = _entry(MessageFailureReason.LeaseExpired, recoveryAttempts: 2);
+    svc.FetchBatches.Enqueue([entry]);
+
+    var before = DateTimeOffset.UtcNow;
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    await Assert.That(svc.ScheduleCalls).Count().IsEqualTo(1)
+      .Because("a recovery exception must still schedule a next attempt, even under a zero-cooldown policy");
+    var scheduled = svc.ScheduleCalls[0];
+    await Assert.That(scheduled.NextAt).IsLessThan(before.AddSeconds(5))
+      .Because("a zero-cooldown policy means retry immediately; exponential backoff must not "
+             + "manufacture a delay the operator did not configure — a real delay here would be "
+             + "many minutes out, not a couple of seconds");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Covers lines 183-184: the generation-replay sweep's catch. A failed sweep must degrade to a
+  /// logged error affecting only that startup sweep — never kill the worker before it reaches its
+  /// scan loop, or one bad ResetForGenerationAsync call would stop all dead-letter recovery for
+  /// the life of the process.
+  /// </summary>
+  [Test]
+  public async Task GenerationReplaySweepThrows_LogsAndStillRunsTheScanLoopAsync() {
+    var (worker, svc) = _newWorker();
+    svc.ResetForGenerationShouldThrow = true;
+    var entry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([entry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
+      .Because("the generation-replay sweep threw, but the scan loop that follows it must still "
+             + "run and recover due rows");
+    await Assert.That(worker.TotalGenerationReplays).IsEqualTo(0)
+      .Because("the sweep threw before recording anything, so nothing was scheduled by it");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Covers line 211: the OperationCanceledException catch around _scanOnceAsync, which breaks
+  /// the loop. A shutdown while a scan's fetch is genuinely in flight must end the loop quietly.
+  /// The fetch is blocked on a real await (Task.Delay(Infinite, ct)), and the test waits on a
+  /// signal proving the fetch call has actually started before canceling — never a sleep.
+  /// </summary>
+  [Test]
+  public async Task CanceledWhileAScanIsFetching_StopsTheLoopCleanlyAsync() {
+    var (worker, svc) = _newWorker();
+    svc.BlockFetchUntilCanceled = true;
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchStartedSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+
+    // StopAsync (BackgroundService, .NET) awaits the executing task to completion, so by the
+    // time it returns the whole loop has genuinely exited — this is not a race against a timer.
+    await Assert.That(svc.FetchedBatchSizes.Count).IsEqualTo(1)
+      .Because("the loop must stop at the in-flight scan and never start a second one after "
+             + "cancellation is observed");
+  }
+
+  /// <summary>
+  /// Covers lines 426-427: CountServiceBacklogAsync failing under WaitForIdle=true. A gate that
+  /// cannot measure settledness must default to proceeding (Verdict.ProceedUnmeasured, same as an
+  /// unwired coordinator) rather than silently disabling recovery for the rest of the process.
+  /// </summary>
+  [Test]
+  public async Task BacklogCountThrows_ProceedsUnmeasuredAndStillRecoversAsync() {
+    var options = new DeadLetterRecoveryOptions {
+      ScanIntervalMinutes = 1,
+      ScanBatchSize = 50,
+      EnableGenerationReplay = false,
+      WaitForIdle = true,
+    };
+    var svc = new FakeRecoveryService { CountServiceBacklogShouldThrow = true };
+    var services = new ServiceCollection();
+    services.AddSingleton<IDeadLetterRecoveryService>(svc);
+    services.AddSingleton<IWorkCoordinator>(svc);
+    services.AddSingleton<IDeadLetterRecoveryPolicy>(
+      new DefaultDeadLetterRecoveryPolicy(Options.Create(options)));
+    var sp = services.BuildServiceProvider();
+    var housekeeping = new HousekeepingCoordinator();
+    var worker = new DeadLetterRecoveryWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(), new ImmediateSchemaGate(), Options.Create(options),
+      Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
+      new FixedGenerationProvider("test/0.0.1"), NullLogger<DeadLetterRecoveryWorker>.Instance,
+      notificationListener: null, housekeeping: housekeeping);
+    svc.FetchBatches.Enqueue([_entry()]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(svc.RecoverCalls.Count).IsGreaterThanOrEqualTo(1)
+      .Because("a backlog-count failure must default to unmeasured-proceed, not a silent deadlock "
+             + "that never recovers anything because settledness can never be confirmed");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Covers lines 565-566: LogTerminalSetFailed around MarkDiscardedAsync in the
+  /// disabled-subsystem discard branch. A settle failure (DB hiccup) must be swallowed and
+  /// logged, leaving the row due for the next scan's retry — and, critically, must not stall the
+  /// loop from processing the rest of the queue.
+  /// </summary>
+  [Test]
+  public async Task DisabledSubsystemEntry_DiscardThrows_SwallowsAndKeepsScanningAsync() {
+    var listener = new FakeNotificationListener();
+    var (worker, svc) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener,
+      integrity: new Whizbang.Core.Messaging.StreamIntegrityOptions { CheckpointsEnabled = false });
+    svc.DiscardShouldThrow = true;
+    var poisonEntry = _entry(MessageFailureReason.PoisonRedeliveryLoop, recoveryAttempts: 0)
+      with { MessageType = "Whizbang.Core.Messaging.IntegrityCheckpoint, Whizbang.Core" };
+    var recoverableEntry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([poisonEntry]);
+    svc.FetchBatches.Enqueue([recoverableEntry]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    await Assert.That(svc.DiscardCalls).IsEmpty()
+      .Because("MarkDiscardedAsync threw, so the row was not actually settled this cycle");
+
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(svc.RecoverCalls).Contains(recoverableEntry.DeadLetterId)
+      .Because("the discard failure must not stall the loop — the next scan still processes new work");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// Covers line 610: the empty else when RecoverAsync returns false — recover_dead_letter's
+  /// atomic UPDATE lost the race to another worker, or the row was already terminal. This is a
+  /// normal outcome, not an error: no retry is scheduled, no terminal transition happens, and the
+  /// rest of the batch still gets processed.
+  /// </summary>
+  [Test]
+  public async Task RecoverAsync_ReturnsFalse_MovesOnWithoutRetryOrAlarmAsync() {
+    var (worker, svc) = _newWorker();
+    svc.RecoverShouldReturnFalse = true;
+    var raced = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    var other = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([raced, other]);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FirstFetchSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Task.Delay(100);
+
+    await Assert.That(svc.RecoverCalls).IsEquivalentTo([raced.DeadLetterId, other.DeadLetterId])
+      .Because("losing the race is a normal outcome — recovery is still attempted for every due "
+             + "row, and a false result for one must not stop the rest of the batch");
+    await Assert.That(svc.ScheduleCalls).IsEmpty()
+      .Because("a lost race is not a failure, so nothing is rescheduled");
+    await Assert.That(svc.HoldCalls).IsEmpty();
+    await Assert.That(svc.PermanentlyFailedCalls).IsEmpty();
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 
 }

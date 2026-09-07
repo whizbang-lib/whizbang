@@ -35,6 +35,12 @@ public sealed class DeadLetterCanaryCampaignTests {
     public List<string> CallOrder { get; } = [];
     public int PurgeCalls;
     public int PurgeReturn { get; set; }
+    // Defaults false so every existing test's purge behaves exactly as before.
+    public bool PurgeShouldThrow { get; set; }
+    // Blocks the purge call indefinitely (respecting ct) so a test can cancel the worker while
+    // the startup held-cohort campaign is genuinely in flight, rather than racing a sleep.
+    public bool BlockPurgeUntilCanceled { get; set; }
+    public TaskCompletionSource PurgeStartedSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public List<HeldCohort> Cohorts { get; set; } = [];
     public List<(string Fp, string Gen, int Size)> BeginCalls { get; } = [];
     public Func<string, int> BeginReturns { get; set; } = _ => 10;
@@ -87,15 +93,23 @@ public sealed class DeadLetterCanaryCampaignTests {
       lock (RecordedStacks) { foreach (var e in entries) { RecordedStacks.Add((e.Item1, e.Item2.SequenceHash)); } }
       return Task.FromResult(entries.Count);
     }
+    // Defaults 0 so every existing test (which only checks the call happened) sees the same
+    // "nothing pruned" result as before.
+    public int PruneReturnValue { get; set; }
     public Task<int> PruneStackHistoryAsync(int retentionDays, CancellationToken ct = default) {
       lock (PruneCalls) { PruneCalls.Add(retentionDays); }
-      return Task.FromResult(0);
+      return Task.FromResult(PruneReturnValue);
     }
 
-    public Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) {
+    public async Task<int> PurgeUndeliverableHeldAsync(CancellationToken ct = default) {
+      if (PurgeShouldThrow) { throw new InvalidOperationException("simulated purge failure"); }
+      if (BlockPurgeUntilCanceled) {
+        PurgeStartedSignal.TrySetResult();
+        await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+      }
       Interlocked.Increment(ref PurgeCalls);
       lock (CallOrder) { CallOrder.Add("purge"); }
-      return Task.FromResult(PurgeReturn);
+      return PurgeReturn;
     }
     public Task<IReadOnlyList<HeldCohort>> ListHeldCohortsAsync(CancellationToken ct = default) {
       lock (CallOrder) { CallOrder.Add("list"); }
@@ -715,5 +729,85 @@ public sealed class DeadLetterCanaryCampaignTests {
 
     await Assert.That(svc.ReleaseCalls.Count).IsEqualTo(1)
       .Because("a restart mid-campaign resumes the campaign, it does not orphan it");
+  }
+
+  /// <summary>
+  /// Covers lines 200-203 (generic Exception arm): a failure inside the startup held-cohort
+  /// campaign must degrade to a logged error and let the ordinary scan loop still run —
+  /// otherwise one bad startup call (e.g. the grandfather purge) would silently stop the worker
+  /// from ever scanning for new dead letters.
+  /// </summary>
+  [Test]
+  public async Task Canary_StartupCampaignThrows_LogsAndStillRunsTheScanLoopAsync() {
+    var svc = new CampaignFake { PurgeShouldThrow = true, Cohorts = [new("fp-aaa", 100, 1)] };
+    var (worker, _, logs, _) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.BeginCalls.Count).IsEqualTo(0)
+      .Because("the purge failure aborted the campaign before any cohort was probed");
+    var loggedFailure = logs.GetSnapshot().Any(r => r.Level == LogLevel.Warning
+      && r.Message.Contains("scan cycle failed", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(loggedFailure).IsTrue()
+      .Because("a startup campaign failure must be said, not silently swallowed");
+  }
+
+  /// <summary>
+  /// Covers lines 199-200 (OperationCanceledException arm): the worker shuts down while the
+  /// startup held-cohort campaign is still purging. A shutdown mid-campaign is an ordinary
+  /// lifecycle event, not a failure — it must exit through the cancellation catch quietly,
+  /// never fall through to the generic-Exception arm that logs a scan-cycle failure. The purge
+  /// is blocked on a real await (Task.Delay(Infinite, ct)), and the test waits on a signal
+  /// proving the purge call has actually started before canceling — never a sleep.
+  /// </summary>
+  [Test]
+  public async Task Canary_CanceledDuringStartupCampaign_ExitsWithoutLoggingAnErrorAsync() {
+    var svc = new CampaignFake { BlockPurgeUntilCanceled = true, Cohorts = [new("fp-aaa", 100, 1)] };
+    var (worker, _, logs, _) = _build(_opts(RetryHeldOnStartupMode.Canary), svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.PurgeStartedSignal.Task.WaitAsync(_timeout);
+
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(svc.CallOrder.Contains("list")).IsFalse()
+      .Because("the cancellation happened mid-purge, before the cohort list was ever fetched — "
+             + "the campaign never resumed after the shutdown signal");
+    var loggedFailure = logs.GetSnapshot().Any(r => r.Level == LogLevel.Warning
+      && r.Message.Contains("scan cycle failed", StringComparison.OrdinalIgnoreCase));
+    await Assert.That(loggedFailure).IsFalse()
+      .Because("a shutdown mid-campaign is ordinary lifecycle, not a failure — it must take the "
+             + "cancellation arm quietly, never the generic-Exception arm that logs a scan-cycle "
+             + "failure");
+  }
+
+  /// <summary>
+  /// Covers lines 479, 482-484: the if (pruned > 0) body — LogStackHistoryPruned plus the
+  /// stack-history metrics. Retention that deletes rows without reporting how many is
+  /// indistinguishable from retention that silently does nothing.
+  /// </summary>
+  [Test]
+  public async Task Scan_PrunesStackHistory_ReportsTheActualPrunedCountAsync() {
+    var svc = new CampaignFake { PruneReturnValue = 42 };
+    var opts = _opts(RetryHeldOnStartupMode.Off);
+    opts.StackHistoryRetentionDays = 90;
+    var (worker, _, logs, _) = _build(opts, svc);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(_timeout);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    var logged = logs.GetSnapshot().Any(r => r.Level == LogLevel.Information
+      && r.Message.Contains("42", StringComparison.Ordinal)
+      && r.Message.Contains("90", StringComparison.Ordinal));
+    await Assert.That(logged).IsTrue()
+      .Because("an operator watching the log must see how many rows the rolling window actually "
+             + "removed, not just that a prune ran — a report of 0 pruned looks identical to "
+             + "retention silently doing nothing");
   }
 }

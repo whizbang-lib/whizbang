@@ -126,6 +126,115 @@ public class PostSerializeHookChainTests {
   // Helpers
   // ============================================================
 
+  [Test]
+  public async Task RunAsync_HookReplacingOnlyTheContentType_LeavesEverythingElseAsync() {
+    // Each field on the result is independently optional: null means "keep what the chain has".
+    // A compression hook that reports only a new content type must not blank the envelope or the
+    // bytes on its way past — and because the chain threads its own state into the next hook,
+    // one field wrongly cleared here is invisible until a later hook, or the transport, receives
+    // an envelope that is suddenly null.
+    var chain = new PostSerializeHookChain([
+      new _testHook(100, _ => new PostSerializeResult { NewContentType = "application/x-whizbang" }),
+    ]);
+    var ctx = _buildContext("original"u8.ToArray());
+
+    var outcome = await chain.RunAsync(ctx, CancellationToken.None);
+
+    await Assert.That(outcome.FinalContentType).IsEqualTo("application/x-whizbang")
+      .Because("the one field the hook did set is the one field that changes");
+    await Assert.That(outcome.FinalSerializedBytes.ToArray()).IsEquivalentTo("original"u8.ToArray())
+      .Because("the hook said nothing about the bytes, so the bytes it was given go on unchanged");
+    await Assert.That(outcome.FinalEnvelope).IsSameReferenceAs(ctx.Envelope)
+      .Because("a hook that only re-labels the payload has not replaced the envelope, and "
+             + "substituting one here would hand the transport something the sender never built");
+    await Assert.That(outcome.FinalEnvelopeType).IsEqualTo(ctx.EnvelopeType)
+      .Because("the type string names the envelope, so it may only move when the envelope does");
+  }
+
+  [Test]
+  public async Task RunAsync_HookSubstitutingTheEnvelope_CarriesItsTypeAlongAsync() {
+    // This is the offload shape: the body goes to a store and a claim-check envelope takes its
+    // place. The receiver deserializes by the type string, so an envelope swapped without its
+    // type produces a message that arrives and cannot be read — the failure lands on the
+    // consumer, far from the hook that caused it.
+    var replacement = _buildContext("ignored"u8.ToArray()).Envelope;
+    var chain = new PostSerializeHookChain([
+      new _testHook(100, _ => new PostSerializeResult {
+        NewEnvelope = replacement,
+        NewEnvelopeType = "Claim.Check.Envelope, Whizbang.Core",
+      }),
+    ]);
+    var ctx = _buildContext("original"u8.ToArray());
+
+    var outcome = await chain.RunAsync(ctx, CancellationToken.None);
+
+    await Assert.That(outcome.FinalEnvelope).IsSameReferenceAs(replacement)
+      .Because("the substitution is the point of the hook");
+    await Assert.That(outcome.FinalEnvelopeType).IsEqualTo("Claim.Check.Envelope, Whizbang.Core")
+      .Because("the receiver picks its deserializer by this string; leaving the old type on a new "
+             + "envelope produces a message that arrives and cannot be read");
+  }
+
+  [Test]
+  public async Task RunAsync_HookReturningNothing_IsSkippedWithoutDisturbingTheChainAsync() {
+    // The interface declares a non-nullable result, but the hooks come from DI and may come from
+    // a package that does not honour that. Skipping a hook that returns nothing keeps the publish
+    // path alive; dereferencing it would fail every send in the process for one bad hook.
+    var chain = new PostSerializeHookChain([
+      new _nullHook(100),
+      new _testHook(200, _ => new PostSerializeResult { NewContentType = "application/after" }),
+    ]);
+    var ctx = _buildContext("original"u8.ToArray());
+
+    var outcome = await chain.RunAsync(ctx, CancellationToken.None);
+
+    await Assert.That(outcome.FinalContentType).IsEqualTo("application/after")
+      .Because("the hook after the misbehaving one still ran, which is the whole point of "
+             + "skipping rather than throwing");
+    await Assert.That(outcome.FinalSerializedBytes.ToArray()).IsEquivalentTo("original"u8.ToArray())
+      .Because("a hook that returned nothing changed nothing");
+  }
+
+  [Test]
+  public async Task RunAsync_MetadataAlreadyOnTheDestination_SurvivesAndMergesAsync() {
+    // Destination metadata can be set before the chain runs — routing keys, tenant headers. The
+    // chain copies it and merges hook additions on top. Dropping the original would strip headers
+    // the caller set on the send, and the message would route or authorize differently for no
+    // reason the caller can see.
+    var existing = new Dictionary<string, JsonElement> {
+      ["tenant"] = JsonSerializer.SerializeToElement("acme"),
+    };
+    var chain = new PostSerializeHookChain([
+      new _testHook(100, _ => new PostSerializeResult {
+        AdditionalDestinationMetadata = new Dictionary<string, JsonElement> {
+          ["whizbang.is-claim"] = JsonSerializer.SerializeToElement(true),
+        },
+      }),
+    ]);
+    var ctx = _buildContext("original"u8.ToArray(), existing);
+
+    var outcome = await chain.RunAsync(ctx, CancellationToken.None);
+
+    await Assert.That(outcome.MergedDestinationMetadata).IsNotNull();
+    await Assert.That(outcome.MergedDestinationMetadata!.ContainsKey("tenant")).IsTrue()
+      .Because("the caller set that header before the chain ran, and nothing in the chain has "
+             + "any reason to take it away");
+    await Assert.That(outcome.MergedDestinationMetadata.ContainsKey("whizbang.is-claim")).IsTrue()
+      .Because("the hook's addition merges on top rather than replacing what was already there");
+  }
+
+  private static PostSerializeContext _buildContext(
+      byte[] bytes, IReadOnlyDictionary<string, JsonElement> destinationMetadata) {
+    var basic = _buildContext(bytes);
+    return basic with { Destination = new TransportDestination("test", null, destinationMetadata) };
+  }
+
+  private sealed class _nullHook(int order) : IPostSerializeHook {
+    public int Order { get; } = order;
+    public Task<PostSerializeResult> RunAsync(PostSerializeContext context, CancellationToken cancellationToken) =>
+      Task.FromResult<PostSerializeResult>(null!);
+  }
+
   private static PostSerializeContext _buildContext(byte[] bytes) {
     var envelope = new MessageEnvelope<_testPayload> {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
