@@ -1,13 +1,12 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
-using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
@@ -20,24 +19,6 @@ namespace Whizbang.Core.Tests.Workers;
 /// consumer fans it out, and ordinary composites are untouched by the mode.
 /// </summary>
 public partial class InboxDispatchWorkerTests {
-  private sealed record _dispatchLogEntry(LogLevel Level, string Message);
-
-  private sealed class _capturingDispatchLogger : ILogger<InboxDispatchWorker> {
-    private readonly List<_dispatchLogEntry> _entries = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => _nullScope.Instance;
-    public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(
-        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) {
-      lock (_entries) { _entries.Add(new _dispatchLogEntry(logLevel, formatter(state, exception))); }
-    }
-    public List<_dispatchLogEntry> Snapshot() { lock (_entries) { return [.. _entries]; } }
-    private sealed class _nullScope : IDisposable {
-      public static readonly _nullScope Instance = new();
-      public void Dispose() { }
-    }
-  }
-
   private static RedeliveryComposite _redeliveryBundle(int innerCount) {
     var composite = new RedeliveryComposite { OriginServiceId = (Guid)TrackedGuid.NewMedo() };
     for (var i = 0; i < innerCount; i++) {
@@ -48,7 +29,7 @@ public partial class InboxDispatchWorkerTests {
     return composite;
   }
 
-  private static async Task<(HandlerCommitRequest Routed, List<_dispatchLogEntry> Log)> _runCompositeUnderRepairModeAsync(
+  private static async Task<(HandlerCommitRequest Routed, List<CapturedLog> Log)> _runCompositeUnderRepairModeAsync(
       ICompositeEvent composite, IntegrityRepairMode repairMode) {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
@@ -59,7 +40,7 @@ public partial class InboxDispatchWorkerTests {
       .AddSingleton<IEnvelopeSerializer>(new FakeEnvelopeSerializer())
       .AddSingleton<IReceptorInvoker>(new DirectiveInvoker(FanoutDirective.Proceed))
       .BuildServiceProvider();
-    var logger = new _capturingDispatchLogger();
+    var logger = new CapturingLogger<InboxDispatchWorker>();
     var worker = new InboxDispatchWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new FakeInstanceProvider(), inbox, handlerCommit, failure, gate,

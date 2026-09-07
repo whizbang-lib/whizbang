@@ -161,6 +161,8 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
   perspective drain clamps consumers x width to half the gate (`PerspectiveWorker.ClampWidthToGate`), and
   `BatchFlusher` retries a failed batch with a backoff and drops it only after `MaxFlushAttempts`, at
   Error, naming the consequence (the old "items lost" discard is how one timeout became lease churn).
+* Dedupe (cycle 5x, refactor): one `_discardPendingAsync` helper per driver behind both interface methods,
+  one parameterized SQL test class per driver, one shared `CapturingLogger<T>` for the Core tests.
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order

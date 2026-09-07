@@ -5,6 +5,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -23,24 +24,6 @@ namespace Whizbang.Core.Tests.Workers;
 [Category("Core")]
 [Category("Workers")]
 public class MaintenanceWorkerIntegritySweepTests {
-  private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
-
-  private sealed class CapturingLogger : ILogger<MaintenanceWorker> {
-    private readonly List<LogEntry> _entries = [];
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-    public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(
-        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) {
-      lock (_entries) { _entries.Add(new LogEntry(logLevel, formatter(state, exception), exception)); }
-    }
-    public List<LogEntry> Snapshot() { lock (_entries) { return [.. _entries]; } }
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
-  }
-
   private sealed class SweepCoordinator : IWorkCoordinator {
     public Exception? DiscardThrows { get; init; }
     public long InboxDiscarded { get; init; }
@@ -85,7 +68,7 @@ public class MaintenanceWorkerIntegritySweepTests {
     PublishReportEvents = true,
   };
 
-  private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
+  private static (MaintenanceWorker Worker, CapturingLogger<MaintenanceWorker> Logger) _build(
       SweepCoordinator coord, StreamIntegrityOptions? integrity) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -95,7 +78,7 @@ public class MaintenanceWorkerIntegritySweepTests {
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
     gate.MarkReady();
-    var logger = new CapturingLogger();
+    var logger = new CapturingLogger<MaintenanceWorker>();
     var worker = new MaintenanceWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       gate,

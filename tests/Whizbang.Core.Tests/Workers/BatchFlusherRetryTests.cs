@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -16,29 +17,6 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/BatchFlusher.cs</code-under-test>
 public class BatchFlusherRetryTests {
-  private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
-
-  private sealed class CapturingLogger : ILogger {
-    private readonly List<LogEntry> _entries = [];
-    public TaskCompletionSource<LogEntry> FirstError { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-    public bool IsEnabled(LogLevel logLevel) => true;
-    public void Log<TState>(
-        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
-        Func<TState, Exception?, string> formatter) {
-      var entry = new LogEntry(logLevel, formatter(state, exception), exception);
-      lock (_entries) { _entries.Add(entry); }
-      if (logLevel == LogLevel.Error) {
-        FirstError.TrySetResult(entry);
-      }
-    }
-    public List<LogEntry> Snapshot() { lock (_entries) { return [.. _entries]; } }
-    private sealed class NullScope : IDisposable {
-      public static readonly NullScope Instance = new();
-      public void Dispose() { }
-    }
-  }
-
   /// <summary>
   /// Flushes on item COUNT, not on time: the coalesce window is long enough never to elapse in a test,
   /// and the immediate-flush threshold is exactly the number of items the test writes, so the batch
@@ -57,7 +35,7 @@ public class BatchFlusherRetryTests {
   public async Task FlushFailsOnce_RetriesTheSameBatchAndDeliversItAsync() {
     var calls = new List<IReadOnlyList<int>>();
     var delivered = new TaskCompletionSource<IReadOnlyList<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var logger = new CapturingLogger();
+    var logger = new CapturingLogger<BatchFlusher<int>>();
     await using var flusher = new BatchFlusher<int>(
       flush: (items, _) => {
         lock (calls) { calls.Add([.. items]); }
@@ -90,7 +68,7 @@ public class BatchFlusherRetryTests {
   [Test]
   public async Task FlushAlwaysFails_DropsAfterMaxAttemptsAndNamesTheConsequenceAsync() {
     var attempts = 0;
-    var logger = new CapturingLogger();
+    var logger = new CapturingLogger<BatchFlusher<int>>();
     await using var flusher = new BatchFlusher<int>(
       flush: (_, _) => {
         Interlocked.Increment(ref attempts);
@@ -101,7 +79,7 @@ public class BatchFlusherRetryTests {
 
     await flusher.Writer.WriteAsync(10);
     await flusher.Writer.WriteAsync(20);
-    var error = await logger.FirstError.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    var error = await logger.WaitForAsync(e => e.Level == LogLevel.Error).WaitAsync(TimeSpan.FromSeconds(10));
     await flusher.DisposeAsync();
 
     await Assert.That(attempts).IsEqualTo(3)

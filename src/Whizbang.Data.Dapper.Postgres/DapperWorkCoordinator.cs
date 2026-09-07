@@ -617,36 +617,25 @@ public partial class DapperWorkCoordinator(
   }
 
   /// <inheritdoc />
-  public async Task<long> DiscardPendingInboxMessagesAsync(
+  public Task<long> DiscardPendingInboxMessagesAsync(
       IReadOnlyList<string> messageTypeNames,
-      CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(messageTypeNames);
-    if (messageTypeNames.Count == 0) {
-      return 0;
-    }
-    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
-    var connection = __scope.Connection;
-    await using var command = connection.CreateCommand();
-    // Containment, not equality: a stored message_type may carry assembly version metadata or an envelope
-    // wrapper around the normalized name. Unleased only: a leased row is mid-dispatch and the dispatch seam
-    // applies the same mode check.
-    command.CommandText =
-      "DELETE FROM public.wh_inbox i " +
-      "WHERE i.processed_at IS NULL AND i.instance_id IS NULL " +
-      "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(i.message_type, t.name) > 0)";
-    command.CommandTimeout = 30;
-    var param = (NpgsqlParameter)command.CreateParameter();
-    param.ParameterName = "type_names";
-    param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
-    param.Value = messageTypeNames is string[] arr ? arr : System.Linq.Enumerable.ToArray(messageTypeNames);
-    command.Parameters.Add(param);
-    return await command.ExecuteNonQueryAsync(cancellationToken);
-  }
+      CancellationToken cancellationToken = default)
+    => _discardPendingAsync("wh_inbox", messageTypeNames, cancellationToken);
 
   /// <inheritdoc />
-  public async Task<long> DiscardPendingOutboxMessagesAsync(
+  public Task<long> DiscardPendingOutboxMessagesAsync(
       IReadOnlyList<string> messageTypeNames,
-      CancellationToken cancellationToken = default) {
+      CancellationToken cancellationToken = default)
+    => _discardPendingAsync("wh_outbox", messageTypeNames, cancellationToken);
+
+  /// <summary>
+  /// The maintenance sweep behind "a feature that is off leaves nothing behind", for one table.
+  /// Containment, not equality: a stored message_type may carry assembly version metadata or an envelope
+  /// wrapper around the normalized name. Unleased only: a leased row is mid-flight and its own seam
+  /// (the dispatch worker for the inbox, the publisher for the outbox) applies the same mode check.
+  /// </summary>
+  private async Task<long> _discardPendingAsync(
+      string table, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(messageTypeNames);
     if (messageTypeNames.Count == 0) {
       return 0;
@@ -654,16 +643,13 @@ public partial class DapperWorkCoordinator(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
     await using var command = connection.CreateCommand();
-    // Same rules as the inbox half: containment on the normalized name; unleased only.
     command.CommandText =
-      "DELETE FROM public.wh_outbox o " +
-      "WHERE o.processed_at IS NULL AND o.instance_id IS NULL " +
-      "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(o.message_type, t.name) > 0)";
+      $"DELETE FROM public.{table} r " +
+      "WHERE r.processed_at IS NULL AND r.instance_id IS NULL " +
+      "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
     command.CommandTimeout = 30;
-    var param = (NpgsqlParameter)command.CreateParameter();
+    var param = Whizbang.Data.Postgres.PostgresArrayHelper.ToVarcharArray([.. messageTypeNames]);
     param.ParameterName = "type_names";
-    param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
-    param.Value = messageTypeNames is string[] arr ? arr : System.Linq.Enumerable.ToArray(messageTypeNames);
     command.Parameters.Add(param);
     return await command.ExecuteNonQueryAsync(cancellationToken);
   }
