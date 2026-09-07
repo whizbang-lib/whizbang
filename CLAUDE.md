@@ -195,6 +195,16 @@ complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-
 has any tested behavior suppresses real coverage. The target is near-100%, not
 literal 100% — the file gives the decision procedure and worked examples.
 
+### 📖 **[type-naming.md](ai-docs/type-naming.md)** - CRITICAL
+**Read when**:
+- Writing or comparing a type name that is a key (`clr_type_name`, `event_type`, perspective names, registry JSON)
+- Touching a generator that renders a type name, or runtime code that reads `Type.FullName`
+- Matching a persisted type name against a registered one
+
+**Why critical**: one helper per form on each side (`TypeNameUtilities` in generators,
+`TypeNameFormatter` and `EventTypeMatchingHelper` at runtime); a local rendering has silently
+broken row retention, routing, and registry lookups more than once.
+
 ### 📖 **[efcore-10-usage.md](ai-docs/efcore-10-usage.md)**
 **Read when**:
 - Working with EF Core 10
