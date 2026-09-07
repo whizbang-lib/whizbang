@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -118,6 +119,25 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       .Because("the warning names the gate it clamped against");
   }
 
+  [Test]
+  public async Task Watchdog_TicksOnTheWorkerClock_AndNamesAHoldPastTheThresholdAsync() {
+    var clock = new FakeTimeProvider();
+    await using var f = await _Fixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), timeProvider: clock);
+    await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
+    await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    clock.Advance(TimeSpan.FromSeconds(61));
+    var warning = await f.Logger
+      .WaitForAsync(e => e.Level == LogLevel.Warning && e.Message.Contains("held its affinity gate", StringComparison.Ordinal))
+      .WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(warning.Message).Contains(PERSPECTIVE)
+      .Because("the periodic check runs on the worker's clock and names the hold without anyone asking");
+
+    f.Registry.Release.TrySetResult();
+    await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
+  }
+
   #region Fixture
 
   private sealed record WatchdogTestEvent(string Data) : IEvent;
@@ -133,7 +153,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     private Task _workerTask = Task.CompletedTask;
     private bool _stopped;
 
-    public static async Task<_Fixture> StartAsync(TimeSpan longHoldWarning, int gateMaxConcurrent = 0) {
+    public static async Task<_Fixture> StartAsync(TimeSpan longHoldWarning, int gateMaxConcurrent = 0, TimeProvider? timeProvider = null) {
       var f = new _Fixture();
       var eventId = (Guid)TrackedGuid.NewMedo();
       f.Coordinator.StreamEventsToReturn = [
@@ -189,7 +209,8 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
         failureChannel: f.Harness.FailureCapture,
         perspectiveDrainChannel: f.Harness.DrainChannel,
         schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null);
+        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null,
+        timeProvider: timeProvider);
       f._workerTask = f.Worker.StartAsync(f._cts.Token);
       return f;
     }
