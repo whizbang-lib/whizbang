@@ -325,7 +325,8 @@ public partial class PerspectiveWorker(
     Dictionary<Type, string> TypeNameCache,
     ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> BatchProcessedEvents,
     ConcurrentDictionary<Guid, bool> BatchIsNewByEventId,
-    ILifecycleCoordinator? LifecycleCoordinator);
+    ILifecycleCoordinator? LifecycleCoordinator,
+    ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> AppliedGroups);
 
   // Metrics tracking
   private int _consecutiveEmptyPolls;
@@ -1026,12 +1027,22 @@ public partial class PerspectiveWorker(
     // forwarded SQL-detected drain stream IDs, batch-fetch + RunWithEventsAsync them.
     // If drain processed nothing, fall through to the per-event path so events don't
     // stay claimed forever.
+    //
+    // The two sources overlap only per (stream, perspective): a stream the drain pass actually
+    // APPLIED has had its pending rows fetched and completed, so its claimed copy is redundant.
+    // Every other claimed group still runs. The decision is keyed on applies, never on the
+    // batch's processed-event bookkeeping: cooled events (skipped because their work id is in
+    // the recently-processed cache) are signaled into that bookkeeping for lifecycle purposes
+    // and are not progress. Gating on the bookkeeping discarded every claimed item whenever a
+    // single cooled event was present, and the rows behind them stayed leased until the lease
+    // lapsed, were re-claimed, and were discarded again (issue #700).
+    var drainAppliedGroups = new ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte>();
     if (workBatch.PerspectiveStreamIds.Count > 0) {
       await _processDrainModeStreamsAsync(
         scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, batchIsNewByEventId,
-        lifecycleCoordinator, cancellationToken).ConfigureAwait(false);
-      if (!batchProcessedEvents.IsEmpty) {
-        groupedWork = [];
+        lifecycleCoordinator, drainAppliedGroups, cancellationToken).ConfigureAwait(false);
+      if (!drainAppliedGroups.IsEmpty) {
+        groupedWork = groupedWork.Where(g => !drainAppliedGroups.ContainsKey(g.Key)).ToList();
       }
     }
 
@@ -1530,6 +1541,7 @@ public partial class PerspectiveWorker(
       ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
       ConcurrentDictionary<Guid, bool> batchIsNewByEventId,
       ILifecycleCoordinator? lifecycleCoordinator,
+      ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> appliedGroups,
       CancellationToken cancellationToken) {
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
@@ -1546,7 +1558,7 @@ public partial class PerspectiveWorker(
     await _prefetchMissingDrainModeCursorsAsync(scope, eventsByStream.Keys, cancellationToken);
 
     var drainBatchContext = new DrainBatchContext(
-      rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator);
+      rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, appliedGroups);
     await Parallel.ForEachAsync(
       eventsByStream,
       new ParallelOptions {
@@ -1932,7 +1944,8 @@ public partial class PerspectiveWorker(
       typeNameCache,
       sharedContext.BatchProcessedEvents,
       sharedContext.BatchIsNewByEventId,
-      sharedContext.LifecycleCoordinator);
+      sharedContext.LifecycleCoordinator,
+      sharedContext.AppliedGroups);
     return (eventsForStream, nextContext);
   }
 
@@ -2028,6 +2041,7 @@ public partial class PerspectiveWorker(
         .ToArray();
       _markAffinityPhase(streamId, perspectiveName, "collective");
       await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, sinkWorkIds, ct);
+      batchContext.AppliedGroups.TryAdd((streamId, perspectiveName), 0);
       return;
     }
 
@@ -2171,6 +2185,10 @@ public partial class PerspectiveWorker(
           result = await runner.RunWithEventsAsync(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
         }
+        // The runner ran for this (stream, perspective): the batch's claimed copy of the same
+        // group is redundant. Only a real runner invocation records here; a pass that cooled
+        // everything returned above and left the group unrecorded on purpose (issue #700).
+        batchContext.AppliedGroups.TryAdd((streamId, perspectiveName), 0);
 
         // Slice 29 instrumentation: capture per-drain wall time partitioned into the three
         // dominant phases — runner (read + apply + save), completion (cursor update + lifecycle),
