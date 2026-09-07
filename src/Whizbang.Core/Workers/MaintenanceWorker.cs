@@ -117,6 +117,10 @@ public sealed partial class MaintenanceWorker(
     }
   }
 
+  /// <summary>Type names for a log line: the simple name of each normalized assembly-qualified name.</summary>
+  private static string _shortTypeNames(IReadOnlyList<string> normalizedNames)
+    => string.Join(", ", normalizedNames.Select(n => n.Split(',')[0].Split('.')[^1]));
+
   private async Task _runMaintenanceCycleAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     // Publish debug retention BEFORE the sweep reads it. The sweep decides from a stored setting,
@@ -182,6 +186,41 @@ public sealed partial class MaintenanceWorker(
       }
     }
 
+    // A stream-integrity feature that is off leaves nothing behind. The dispatch seams enforce that for
+    // the rows they reach; rows parked by retry backoff, minted before the operator opted out, or delivered
+    // by a peer that does not know would otherwise wait out their schedule (or sit unpublished for as long
+    // as the feature is off), so the sweep drops them here. A feature that is on is never touched.
+    var inboxTypes = IntegrityTraffic.InboxTypesToDiscard(integrity);
+    var outboxTypes = IntegrityTraffic.OutboxTypesToDiscard(integrity);
+    if (inboxTypes.Count > 0 || outboxTypes.Count > 0) {
+      try {
+        var inboxDiscarded = inboxTypes.Count == 0 ? 0
+          : await coordinator.DiscardPendingInboxMessagesAsync(inboxTypes, ct).ConfigureAwait(false);
+        var outboxDiscarded = outboxTypes.Count == 0 ? 0
+          : await coordinator.DiscardPendingOutboxMessagesAsync(outboxTypes, ct).ConfigureAwait(false);
+        var sweepMetrics = sp.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
+        if (inboxDiscarded > 0) {
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            var inboxTypeNames = _shortTypeNames(inboxTypes);
+            LogIntegrityRowsDiscarded(_logger, inboxDiscarded, "inbox", inboxTypeNames);
+          }
+          sweepMetrics?.RepairTrafficDiscarded.Add(inboxDiscarded,
+            new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", "inbox"));
+        }
+        if (outboxDiscarded > 0) {
+          if (_logger.IsEnabled(LogLevel.Information)) {
+            var outboxTypeNames = _shortTypeNames(outboxTypes);
+            LogIntegrityRowsDiscarded(_logger, outboxDiscarded, "outbox", outboxTypeNames);
+          }
+          sweepMetrics?.RepairTrafficDiscarded.Add(outboxDiscarded,
+            new KeyValuePair<string, object?>("role", "maintenance_sweep"), new KeyValuePair<string, object?>("table", "outbox"));
+        }
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        LogIntegritySweepFailed(_logger, ex);
+      }
+    }
     var results = await coordinator.PerformMaintenanceAsync(ct);
     var sweptRows = 0L;
     foreach (var r in results) {
@@ -830,6 +869,14 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 26, Level = LogLevel.Warning,
     Message = "Digest-epoch closure failed (non-fatal — the frontier advances on a later cycle)")]
   static partial void LogEpochClosureFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 53, Level = LogLevel.Information,
+    Message = "Discarded {Count} pending stream-integrity {Table} rows of features that are off ({Types}): minted or delivered for a feature this service has turned off")]
+  static partial void LogIntegrityRowsDiscarded(ILogger logger, long count, string table, string types);
+
+  [LoggerMessage(EventId = 54, Level = LogLevel.Warning,
+    Message = "Stream-integrity sweep failed; pending rows of features that are off stay until the next cycle (repair rows are still discarded at dispatch when their schedule arrives)")]
+  static partial void LogIntegritySweepFailed(ILogger logger, Exception ex);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
     Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded — the post-ready Rewrite step performs it on the next boot when MaintenanceWorkerOptions.AllowTableRewrite permits (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]

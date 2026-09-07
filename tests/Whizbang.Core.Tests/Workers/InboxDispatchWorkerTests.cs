@@ -17,7 +17,7 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 [NotInParallel("WhizbangBackgroundServiceTests")]
-public class InboxDispatchWorkerTests {
+public partial class InboxDispatchWorkerTests {
 
   // ============================================================
   // Test fakes

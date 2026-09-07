@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -249,15 +250,68 @@ public class RedeliveryRequestReceptorTests {
 
   // ── helpers / fakes ─────────────────────────────────────────────────────
 
+  private static RequestRedeliveryCommand _request(Guid streamId) => new() {
+    TenantScope = "tenant-a",
+    EventTypes = ["Contracts.ProbeHappened"],
+    StreamIds = [streamId],
+    FromCommitSequence = 1,
+    ToCommitSequence = 99,
+    MaxEvents = 5,
+    RequesterService = "damaged-svc",
+    Topic = "events-topic",
+    StateOnly = true
+  };
+
+  [Test]
+  public async Task Receptor_UnderReportOnly_DeclinesTheRequestWithoutSelectingOrShippingAsync() {
+    var coordinator = new _selectingCoordinator();
+    var transport = new _captureTransport();
+    var streamId = TrackedGuid.NewMedo().Value;
+    coordinator.Selection = [_evt(streamId, TrackedGuid.NewMedo().Value, 1)];
+    await using var sp = _buildProvider(coordinator, transport, repairMode: IntegrityRepairMode.ReportOnly);
+    var receptor = new RedeliveryRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(_request(streamId));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("report-only is bilateral: an origin that opted down from repair ships no bundles");
+    await Assert.That(coordinator.Requests).IsEmpty()
+      .Because("declining costs nothing: no selection is attempted, and returning completes the row so it is never retried");
+  }
+
+  [Test]
+  public async Task Receptor_WithNoIntegrityOptionsRegistered_DeclinesAsTheReportOnlyDefaultAsync() {
+    var coordinator = new _selectingCoordinator();
+    var transport = new _captureTransport();
+    var streamId = TrackedGuid.NewMedo().Value;
+    coordinator.Selection = [_evt(streamId, TrackedGuid.NewMedo().Value, 1)];
+    await using var sp = _buildProvider(coordinator, transport, repairMode: null);
+    var receptor = new RedeliveryRequestReceptor(
+      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
+
+    await receptor.HandleAsync(_request(streamId));
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("absent options read as the report-only default; serving repair is the opt-in");
+    await Assert.That(coordinator.Requests).IsEmpty();
+  }
+
   private static ServiceProvider _buildProvider(
       _selectingCoordinator coordinator, _captureTransport transport,
-      _captureSerializer? serializer = null, RedeliveryPumpOptions? options = null) {
+      _captureSerializer? serializer = null, RedeliveryPumpOptions? options = null,
+      IntegrityRepairMode? repairMode = IntegrityRepairMode.AutoRepairCapped) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coordinator);
     services.AddSingleton<ITransport>(transport);
     services.AddSingleton<IEnvelopeSerializer>(serializer ?? new _captureSerializer());
     if (options is not null) {
       services.AddSingleton(options);
+    }
+    // Report-only is bilateral, so the existing tests opt this origin in explicitly; pass null to
+    // leave the options unregistered and exercise the default.
+    if (repairMode is { } mode) {
+      services.AddSingleton(Options.Create(new StreamIntegrityOptions { RepairMode = mode }));
     }
     return services.BuildServiceProvider();
   }

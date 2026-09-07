@@ -367,6 +367,7 @@ public class ClaimWorkerAttemptAccountingTests {
     // 200 inbox + 400 outbox + 400 perspective = 1000 outstanding. Inbox alone reads 200.
     var coord = new RecordingCoordinator { BatchToReturn = _mixedBatch(200, 400, 400) };
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      AdaptiveOutstandingBudget = true,
       PollingIntervalMilliseconds = 20,
       PollingMaxIntervalMilliseconds = 60,
       MaxStreamsPerBatch = 5000,

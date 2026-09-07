@@ -1,6 +1,6 @@
 # Inbox acquisition: bounded, deterministic, cost-aware
 
-Status: **138 in flight (red/green)** · 139 designed + prototyped · 140 designed · consumer-side follow-ups listed
+Status: **138 merged (PR #694)** · **safe-by-default coordinator PR in flight** (cycle 1: defaults + poison casualties; cycle 2: coordinator-owned command timeout) · 139 designed + prototyped · 140 designed
 
 ## The problem (diagnosed live on a consumer bulk import)
 
@@ -96,6 +96,135 @@ Add a latency observation with a target to both controllers and to the flusher b
   (a consumer ran 20) - warn like `AsbOpsRateSelfCheck`.
 * red/green: controller unit tests with injected observations (no timing tests); E2E under a seeded
   backlog asserting the window shrinks when claim latency is injected above target.
+
+### Lease expiry is the over-claim signal (second bulk import, observed)
+
+With the outstanding budget off, the only bound on leased work was the churn-based claim window, and
+it grows +25 streams per calm cycle up to `MaxStreamsPerBatch` (1000). Under a fan-out backlog every
+service pulled hundreds of streams of rows with payloads per claim: pods reached 2.2-3.0 GiB and three
+downstream services were OOM-killed (their restarts stranded leases, which became stamped casualties,
+which the poison gate then throttled); the bff held ~15k leased rows while completing ~90 rows/s, so
+leases expired in bulk (2.9k, then 9.7k stamped rows) and the drain collapsed to the gate's
+one-row-per-cycle forced progress. Capping the window at 100 streams dropped pod memory to 350-900 MiB
+and stopped the expiries.
+
+For 140 the controller must treat an expired lease as the strongest over-claim signal: any expiry in a
+cycle is a multiplicative decrease of both the claim window and the outstanding cap (target: zero
+expiries), and the outstanding cap is derived from measured completion rate times lease length, per
+work category, so a service never leases more than it can finish inside the lease. `MaxStreamsPerBatch`
+should also bound memory (rows times payload), not just streams, and the framework default of 1000 is
+too high for a fan-out backlog. Consumers that pin 1000 in their own configuration need the same change.
+
+### Doorbell state hygiene (observed)
+
+`wh_notify_state` keeps one row per (instance, payload kind) forever: on one service 134 of 140 rows
+belonged to instances that no longer exist, and a dashboard reading `max(effective_window_ms)` reported
+a 7 s regime that no live pod was in. The live rows were at the 50 ms floor. The maintenance sweep
+should purge rows whose instance has been gone longer than the lease, and any regime reading must join
+on live instances. Related: a chat start measured 19 s from creation to first turn with the model call
+at 3 s; the doorbell was not the cause, and the remaining hop latency (claim poll intervals, perspective
+lag, the projection re-fold on a missing row) still needs a per-hop measurement.
+
+## Safe-by-default coordinator (in flight)
+
+What a consumer gets with no configuration must be the safe thing. Changed, each red/green:
+
+* `StreamIntegrityOptions.RepairMode` default `AutoRepairCapped` -> `ReportOnly` (detect and report; repair is
+  the opt-in). A default that mutates data unasked is not one a consumer can trust out of the box.
+* `ClaimWorkerOptions.AdaptiveOutstandingBudget` default `true` -> `false` until 140 makes it per category
+  and row-bound; the churn-based claim window remains the bound.
+* `PostgresOptions.CommandTimeoutSeconds` default 5 -> 120 (the Dapper path).
+* Poison admission: rows whose `error` carries the acquisition SQL's abandonment stamp ("Attempt N ended
+  without a reported outcome ...") are lease casualties, not poison: they neither raise the high-attempt
+  share nor get deferred by it (`PoisonAdmissionPolicy.IsLeaseExpiryCasualty`).
+* Coordinator-owned command timeout (cycle 2): every raw command the EF coordinator creates composes
+  `WithCoordinatorTimeout()` (180 s, the same budget its EF context already had), so a consumer's
+  connection-string timeout can no longer cancel a commit batch. 78 creation sites; 4 deliberate explicit
+  timeouts (vacuum, maintenance) still override.
+* Report-only is bilateral (cycle 3): a `ReportOnly` service takes no part in repair in either direction.
+  `RepairTraffic` names the two repair message types; `RedeliveryRequestReceptor` declines requests as an
+  origin; `InboxDispatchWorker` completes a `RedeliveryComposite` without fan-out as a consumer (a peer on
+  the same topic may have asked for it); `MaintenanceWorker` sweeps parked, unleased repair rows every cycle
+  through `IWorkCoordinator.DiscardPendingInboxMessagesAsync` (both drivers; containment match on the
+  normalized type name because a stored `message_type` may carry version metadata or an envelope wrapper).
+  Detection traffic is never touched. Metric `RepairTrafficDiscarded` (tag `role`). Consequence: healing
+  needs the opt-in on both sides.
+* A feature that is off leaves nothing behind (cycle 4): `IntegrityTraffic` maps every control-plane
+  message to its feature, and the maintenance sweep discards pending inbox and outbox rows of features
+  that are off (`IWorkCoordinator.DiscardPendingOutboxMessagesAsync` added, both drivers). Observed:
+  a service with checkpoints, audit and report publishing all off held tens of thousands of unpublished
+  `PerspectiveCoverageGapDetected` / `IntegrityDivergenceDetected` rows for weeks (unclaimable anyway
+  because their partition numbers no longer matched the service's partition count: a separate stuck-row
+  case for the sentinel). Never swept: peers' manifest requests, `RebuildPerspectiveCommand`.
+
+Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
+from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
+fix, not a concurrency default); `MaxInFlightCommands` stays 50 pending the gate/pool self-check.
+
+### Audit singles under a bulk import (observed)
+
+With audit logging on, every event also produces an `EventAudited` single that the tag-bound coalescer
+folds into a `sys-audit` composite (`CoalescePolicyOptions`: slide 15 s, `MaxDelaySeconds` 120, batch
+500). Under a bulk import the singles pile up (4,141 pending, 812 leased, oldest 13 min) and the folded
+composites are the largest commits in the batch (the 13-30 s tail of the original root cause). Rows that
+sit leased through a fold window that drifts past the lease churn as casualties. Two follow-ups: the
+coalescer must renew the leases it holds (or hold rows claim-invisible without a lease), and the fold
+size should be bounded by commit cost, not only by row count.
+
+### Audit ledger streams (decided: one deterministic ledger stream per tenant)
+
+Today every `EventAudited` single is minted on its own fresh stream (`AuditOutboxMessageBuilder`,
+`StreamId = auditEvent.Id`) and every folded `sys-audit` composite gets another fresh stream
+(`CoalesceShipWorker`, `TrackedGuid.NewMedo()`): a bulk import creates tens of thousands of singleton
+streams with no ordering across audit records and full per-stream machinery spent on each. Audit records
+are a ledger about the domain event, not part of the domain stream (they are `IsEvent = false`), so they
+belong on neither the original stream nor a per-composite stream. Decision (owner, 2026-09-07): one
+deterministic ledger stream per tenant, `UUIDv5("sys-audit", tenant)`, stamped on each single at mint and
+inherited by the composite that folds it (the group is per tenant, so a fold never mixes ledgers);
+`OriginalStreamId` stays a field. The collective sink (`__collective__`) then sees one orderable ledger
+per tenant. No time bucket by default; a bucket or a small shard count is an optional policy knob for
+bulk phases only. No migration: audit rows are never event-stored. Lands in its own PR after the
+hold-and-wait fix (audit builder + coalesce fold + sink routing, red/green).
+
+## Perspective drain hold-and-wait (next PR, red/green)
+
+Mapped from source (file:line in the worktree at the time of writing):
+
+* Lock graph edges (holder waits for): affinity semaphore S(stream, perspective) -> gate
+  (`PerspectiveWorker.cs:1029` then `1049`, `1128`, `1160`, `2025`); S -> bounded completion/lease
+  channel (`2842`, `BatchFlusher` FullMode.Wait); pinned connection P (Size 1) -> gate
+  (`LeaseRenewalWorker.cs:63->94`, `PerspectiveCompletionFlushWorker.cs:67->71`, `ClaimWorker.cs:659->700`);
+  completion-channel drain -> P -> gate; gate -> Npgsql pool.
+* The cycle: S -> gate -> P -> completion/lease flush -> channel capacity -> S. Demand is
+  `MaxConcurrentDrainConsumers` (4) x governor width (`MaxConcurrentPerspectives` 30) = 120 bodies holding
+  S while queuing for 50 gate slots; the only worker that completes perspective rows and the lease
+  renewer queue behind them on one pinned wire, renewals stop, leases lapse at `LeaseSeconds` 300, the
+  claim loop re-offers the same set. Pinned on adds the Size-1 wire and `BatchFlusher.cs:91-100`
+  discarding a batch on a borrow timeout (fatal); pinned off leaves S -> gate -> channel -> S (milder).
+  One consumer keeps demand under the gate.
+* `PostgresOptions.MaxInFlightCommands` has no consumer in `src/`; the gate is hard-coded at 50
+  (`WorkerPipelineExtensions.cs:543`). The gate's acquire timeout (30 s) does not throw: it logs and
+  returns a no-slot releaser; a timeout of 0 waits forever.
+* Fix, in order: (1) no gated coordinator call and no bounded-channel write under S: resolve and load
+  before `WaitAsync`, apply and mutate the cursor cache under S, report completion after `Release`
+  (the cursor-inversion detector at `1955` already re-validates staleness); (2) pinned-pool borrows skip
+  the gate (a borrow already caps concurrency at Size; gating it double-counts); (3) wire
+  `MaxInFlightCommands` and clamp consumers x width against it at startup as `InboxDispatchWorker.cs:1059`
+  does; (4) `BatchFlusher` re-enqueues a failed batch instead of discarding it (perspective completions
+  and commit batches both ride it). RED test: `PerspectiveWorkerTestHarness` + a fake coordinator whose
+  gate is a `SemaphoreSlim(1)` and a completion channel whose drain needs the same gate; two work items
+  on one (stream, perspective) with two consumers; assert the completion capture stays empty while a
+  gate wait is outstanding under S (hook `OnStreamAffinityGateContended`, `1263`). GREEN: the cursor
+  completes with the gate at 1 because nothing gated runs under S.
+
+### Load-sensitive test (to make deterministic)
+
+`ClaimWorkerDoorbellLivenessTests.FreshWorkOnEmptyEdge_DoorbellPreceded_NoMissRecordedAsync` timed out at
+its 30 s completion-signal cap once in a full Core run on a heavily loaded machine (11k tests in parallel
+plus external probes) and passed in isolation immediately after. It waits on real signals (no polling),
+so the cap is not the problem; the second claim it waits for depends on the worker's poll back-off
+(`PollingMaxIntervalMilliseconds` 10 s) under starvation. Drive the second claim with an explicit
+doorbell in the test instead of relying on the poll, so the outcome no longer depends on scheduling.
 
 ## Correctness follow-ups (separate PRs)
 

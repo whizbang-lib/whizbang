@@ -360,7 +360,7 @@ public class IntegrityAuditWorkerTests {
     var tracker = new IntegrityGapTracker();
     tracker.RecordCheckpoint(TrackedGuid.NewMedo().Value, "origin-a", DateTimeOffset.UtcNow, "origin-a.requests");
     var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
-      new StreamIntegrityOptions { FullSweepEveryNthAudit = 1 }, tracker, metrics);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, FullSweepEveryNthAudit = 1 }, tracker, metrics);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -388,7 +388,7 @@ public class IntegrityAuditWorkerTests {
     };
     var dispatcher = new _captureDispatcher();
     var worker = _buildWorker(coordinator, dispatcher, new _captureTransport(),
-      new StreamIntegrityOptions { MaxCoverageGapReportsPerAudit = 100 });
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxCoverageGapReportsPerAudit = 100 });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 
@@ -402,7 +402,7 @@ public class IntegrityAuditWorkerTests {
   public async Task CoverageGapQuery_IsBoundedByTheReportCapAsync() {
     var coordinator = new _auditCoordinator();
     var worker = _buildWorker(coordinator, new _captureDispatcher(), new _captureTransport(),
-      new StreamIntegrityOptions { MaxCoverageGapReportsPerAudit = 42 });
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxCoverageGapReportsPerAudit = 42 });
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
 

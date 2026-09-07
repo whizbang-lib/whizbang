@@ -95,6 +95,11 @@ public sealed class StreamIntegrityMetrics {
   /// <summary>Events selected and shipped in redelivery bundles as an origin.</summary>
   public Counter<long> RedeliveryEventsShipped { get; }
 
+  /// <summary>Repair traffic discarded because RepairMode is ReportOnly: re-delivery requests declined as an
+  /// origin, bundles completed without fan-out as a consumer, and parked rows swept by maintenance (tag
+  /// <c>role</c>: origin_request, consumer_bundle, maintenance_sweep).</summary>
+  public Counter<long> RepairTrafficDiscarded { get; }
+
   /// <summary>Windowed stream pages followed via the resume cursor (per follow).</summary>
   public Counter<long> ManifestPagesFollowed { get; }
 
@@ -174,6 +179,9 @@ public sealed class StreamIntegrityMetrics {
     ManifestPagesCapped = meter.CreateCounter<long>(
       "whizbang.stream_integrity.manifest_pages_capped",
       description: "Cursor-follow chains stopped at the per-window page budget");
+    RepairTrafficDiscarded = meter.CreateCounter<long>(
+      "whizbang.stream_integrity.repair_traffic_discarded",
+      description: "Repair requests, bundles and parked repair rows discarded because RepairMode is ReportOnly (tag role)");
 
     _ = meter.CreateObservableGauge(
       "whizbang.stream_integrity.sealed_through",

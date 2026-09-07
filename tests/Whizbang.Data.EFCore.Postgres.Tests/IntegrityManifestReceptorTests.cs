@@ -582,7 +582,7 @@ public class IntegrityManifestReceptorTests {
     var transport = new _captureTransport();
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
-    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker);
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -607,7 +607,7 @@ public class IntegrityManifestReceptorTests {
     var dispatcher = new _captureDispatcher();
     var tracker = new IntegrityGapTracker();
     var ledger = new IntegrityRepairLedger();
-    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
+    var sp = _provider(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false, PublishReportEvents = true }, dispatcher: dispatcher, tracker: tracker, ledger: ledger);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -715,7 +715,7 @@ public class IntegrityManifestReceptorTests {
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { RepairDrainEnabled = false, PublishReportEvents = true }, tracker: tracker);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false, PublishReportEvents = true }, tracker: tracker);
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
     var manifest = _manifest(coordinator, [_digest(stream, 11, 21, 2)]);
@@ -823,7 +823,7 @@ public class IntegrityManifestReceptorTests {
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1674,7 +1674,7 @@ public class IntegrityManifestReceptorTests {
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
@@ -1745,7 +1745,7 @@ public class IntegrityManifestReceptorTests {
     var tracker = new IntegrityGapTracker();
     var ledger = new IntegrityRepairLedger();
     var sp = _provider(coordinator, transport,
-      new StreamIntegrityOptions { BulkBackfillThresholdEvents = 1000 }, tracker: tracker, ledger: ledger);
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, BulkBackfillThresholdEvents = 1000 }, tracker: tracker, ledger: ledger);
     tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     var receptor = new IntegrityManifestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
