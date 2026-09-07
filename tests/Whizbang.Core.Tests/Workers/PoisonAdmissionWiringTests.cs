@@ -170,7 +170,7 @@ public partial class PoisonAdmissionWiringTests {
 
     var plan = _worker().AdmissionPlanForTest(rows);
 
-    await Assert.That(plan).IsEquivalentTo(new[] { true, true, true, true })
+    await Assert.That(plan.Count(x => x)).IsEqualTo(rows.Length)
       .Because("abandonment-stamped rows are lease casualties: admit them all");
   }
 
