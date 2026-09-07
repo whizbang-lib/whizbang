@@ -3098,3 +3098,45 @@ Three consequences worth carrying:
 This is the fourth environmental cause found this session by refusing to write an anomaly off:
 71 leaked test databases, a peer session competing for RAM, a `VBCSCompiler` growing to 4.86 GB,
 and now a container being reclaimed mid-run. None of them were visible in a test name.
+
+## CI. Wave 5 transports: a residue hint of mine that pointed at the wrong class
+
+### `AsbBacklogPeek` is NOT residue — I conflated it with its neighbour
+
+I told an agent that `AsbBacklogPeek` was covered by residue entry AL. AL is about
+`AsbTrafficClassOpsRateSource`, whose guard reads a private field only a live subscription
+populates. `AsbBacklogPeek`'s guard only needs `transport is AzureServiceBusTransport`, which the
+existing offline tests already satisfy via `RecordingProvisioningAdminClient`. All three lines were
+coverable offline and are now covered.
+
+The two classes sit in the same file family and have the same shape — a guard that returns early
+unless some transport state is present — which is exactly what made the conflation easy. A residue
+entry names ONE class; applying it to a neighbour by resemblance is how real coverage gets written
+off. The agent checked instead of accepting the decline, which is the behaviour worth reinforcing.
+
+### `AzureServiceBusTransport` 1682, 1761, 2041 — confirmed as recorded residue AU
+
+Verified against source rather than taken from the entry: two `default: throw` arms over
+`AsbReceiveAction`, an internal enum with exactly four members, all handled, fed by a private
+`_decisionMaker` with no injection seam; and an `if (_adminClient == null) throw` whose only call
+site already guards with `if (_adminClient != null)`. No file created.
+
+### Shared test doubles gained two opt-in seams — deliberate, and worth flagging
+
+`tests/Whizbang.Transports.RabbitMQ.Tests/TestDoubles.cs` now has:
+- `FakeConnection.IsOpen` as a settable property (was a readonly field fixed at construction), so a
+  connection can go closed → open → closed. `RabbitMQReadinessCheck`'s recovery branch is
+  unreachable otherwise, since the flag only resets on a transition.
+- `FakeChannel.ExceptionToThrowOnDispose` and `SuppressChannelShutdownUnsubscribe`, both defaulting
+  to off.
+
+The second one deserves scrutiny rather than a free pass: it makes the fake's event `remove` a
+no-op so a shutdown handler can still fire after `Dispose()` set the disposed flag. That models a
+race the real client CAN produce — an event already dispatched before the unsubscribe completes —
+which is precisely why the production guard exists. It is not an impossible state invented to turn
+a line green. Same justification as the `ChannelReader` seam that made `SlidingWindowBatcher`'s
+race lines deterministic in wave 4: **the seam reproduces a real interleaving, it does not
+fabricate one.**
+
+Both full suites pass unchanged with the seams present (RabbitMQ 310, ASB 604), which is the
+evidence that the defaults really are inert.
