@@ -15,17 +15,53 @@ namespace Whizbang.Core.Tests.RunControl;
 /// </summary>
 public class LifecyclePhaseWorkerCoverageTests {
 
+  /// <summary>
+  /// Records every lifecycle phase the worker advances through, and signals the two phases these
+  /// tests need to wait on.
+  /// </summary>
+  /// <remarks>
+  /// The phase signals are the point. The host starts ExecuteAsync on the thread pool, so
+  /// StartAsync returning proves only that the worker was scheduled — not that it advanced any
+  /// phase yet. Asserting on <see cref="Seen"/> straight after StartAsync passes on an idle
+  /// machine and races on a loaded one; each test here waits on the signal for the phase it needs
+  /// instead. <see cref="Seen"/> is written from the worker's thread and read from the test's, so
+  /// it is guarded rather than handed out raw.
+  /// </remarks>
   private sealed class RecordingLifecycle : IWhizbangLifecycleState {
-    public LifecyclePhase Phase { get; private set; } = LifecyclePhase.Starting;
-    public List<LifecyclePhase> Seen { get; } = [];
+    private readonly Lock _lock = new();
+    private readonly List<LifecyclePhase> _seen = [];
+    private LifecyclePhase _phase = LifecyclePhase.Starting;
+
+    public LifecyclePhase Phase {
+      get { lock (_lock) { return _phase; } }
+    }
+
+    public IReadOnlyList<LifecyclePhase> Seen {
+      get { lock (_lock) { return [.. _seen]; } }
+    }
+
+    public TaskCompletionSource Migrating { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public TaskCompletionSource AcceptingCommands { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public ValueTask AdvanceToAsync(LifecyclePhase phase, CancellationToken cancellationToken) {
-      Phase = phase;
-      Seen.Add(phase);
+      lock (_lock) {
+        _phase = phase;
+        _seen.Add(phase);
+      }
+      if (phase == LifecyclePhase.Migrating) {
+        Migrating.TrySetResult();
+      }
+      if (phase == LifecyclePhase.AcceptingCommands) {
+        AcceptingCommands.TrySetResult();
+      }
       return default;
     }
+
     public ValueTask FaultAsync(CancellationToken cancellationToken) {
-      Phase = LifecyclePhase.Faulted;
-      Seen.Add(LifecyclePhase.Faulted);
+      lock (_lock) {
+        _phase = LifecyclePhase.Faulted;
+        _seen.Add(LifecyclePhase.Faulted);
+      }
       return default;
     }
   }
@@ -45,10 +81,11 @@ public class LifecyclePhaseWorkerCoverageTests {
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
-    // RecordingLifecycle completes synchronously, so ExecuteAsync has already run Connecting and
-    // Migrating (both real awaits complete instantly) by the time it suspends on the still-closed
-    // schema gate — StartAsync only returns once ExecuteAsync reaches that first genuine await.
-    await Assert.That(lifecycle.Seen).Contains(LifecyclePhase.Migrating);
+    // Wait for the phase itself, not for StartAsync: the host runs ExecuteAsync on the thread
+    // pool, so StartAsync returning says nothing about how far the worker got. Reaching Migrating
+    // is also the precondition this test needs — it puts the worker on the schema gate that the
+    // cancellation below is meant to interrupt.
+    await lifecycle.Migrating.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
     await cts.CancelAsync();
 
@@ -83,7 +120,10 @@ public class LifecyclePhaseWorkerCoverageTests {
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
-    await Assert.That(lifecycle.Seen).Contains(LifecyclePhase.AcceptingCommands);
+    // Same reasoning as above: wait for the write-side barrier to actually fire. Without this the
+    // cancellation below can land before the worker ever reaches the read-model gate, and the test
+    // would then "pass" having never exercised the wait it names.
+    await lifecycle.AcceptingCommands.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
     await cts.CancelAsync();
 

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using Microsoft.CodeAnalysis;
 using Whizbang.Generators.Shared.Models;
 
@@ -226,7 +227,7 @@ public class PerspectiveSchemaGeneratorCoverageTests {
       3,
       140,
       GeneratorFieldStorageMode.JsonOnly,
-      Array.Empty<PhysicalFieldInfo>())
+      _emptyPhysicalFields(schemaInfoType))
       ?? throw new InvalidOperationException("Failed to construct PerspectiveSchemaInfo via reflection.");
 
     var fullyQualifiedClassName = (string)schemaInfoType.GetProperty("FullyQualifiedClassName")!.GetValue(instance)!;
@@ -234,5 +235,27 @@ public class PerspectiveSchemaGeneratorCoverageTests {
 
     await Assert.That(fullyQualifiedClassName).IsEqualTo("global::MyApp.Perspectives.OrderSummary");
     await Assert.That(propertyCount).IsEqualTo(3);
+  }
+
+  /// <summary>
+  /// The empty physical-field collection for <c>PerspectiveSchemaInfo</c>'s last constructor
+  /// parameter, built from the constructor's own parameter type rather than by naming
+  /// <c>PhysicalFieldInfo</c> here.
+  /// </summary>
+  /// <remarks>
+  /// <c>Whizbang.Generators.Shared</c> is referenced with <c>&lt;Aliases&gt;shared&lt;/Aliases&gt;</c> to keep
+  /// its types from colliding with the ILRepack-merged copies inside <c>Whizbang.Generators</c>. A
+  /// normal build resolves a bare <c>PhysicalFieldInfo</c> against the merged assembly, but
+  /// <c>dotnet format</c> loads the pre-merge one through MSBuildWorkspace and fails with CS0246 —
+  /// which is a CI formatting failure with no local build error to explain it. Since the whole call
+  /// is reflective anyway, deriving the element type sidesteps the alias question entirely.
+  /// </remarks>
+  private static Array _emptyPhysicalFields(Type schemaInfoType) {
+    var ctor = schemaInfoType.GetConstructors()
+      .OrderByDescending(static c => c.GetParameters().Length)
+      .First();
+    var last = ctor.GetParameters()[^1].ParameterType;
+    var element = last.IsArray ? last.GetElementType()! : last.GetGenericArguments()[0];
+    return Array.CreateInstance(element, 0);
   }
 }

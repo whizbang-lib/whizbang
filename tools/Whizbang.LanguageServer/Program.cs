@@ -32,7 +32,7 @@ var server = await LanguageServer.From(options => options
 await server.WaitForExit.ConfigureAwait(false);
 
 /// <summary>
-/// 
+/// Coverage marker for the language server's top-level entry point.
 /// </summary>
 /// <remarks>
 /// The whole of this file is the process entry point: it binds the LSP server to this process's
