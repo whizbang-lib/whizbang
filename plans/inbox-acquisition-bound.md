@@ -175,6 +175,8 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
 * Pinned borrows pass the gate (cycle 6): a caller with a pinned connection in context takes no gate slot
   (a borrow already caps concurrency at the pool size, and the borrowing workers are the ones that must
   never queue behind the drain bodies); logged at Debug.
+* Gate holder diagnostics (cycle 7a): `WorkCoordinatorGate.SnapshotHolders()` names every held slot by
+  caller and age, and the deadline warning lists the holders grouped by caller ("Caller xN (oldest S s)").
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order

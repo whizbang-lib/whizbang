@@ -36,6 +36,41 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// <summary>Maximum concurrent calls. 0 disables the cap.</summary>
   public int MaxConcurrent { get; }
 
+  /// <summary>One held slot: the coordinator method that took it and how long it has held it.</summary>
+  public readonly record struct GateHolder(string Caller, long HeldMs);
+
+  private readonly System.Collections.Concurrent.ConcurrentDictionary<long, (string Caller, long StartTicks)> _holders = new();
+  private long _nextHolderId;
+
+  /// <summary>
+  /// The slots currently held, oldest first. A saturated gate against an idle database is the
+  /// signature of a hold-and-wait; without this nothing in the process could say which coordinator
+  /// methods held the slots.
+  /// </summary>
+  public IReadOnlyList<GateHolder> SnapshotHolders() {
+    var now = Environment.TickCount64;
+    return _holders.Values
+      .Select(h => new GateHolder(h.Caller, now - h.StartTicks))
+      .OrderByDescending(h => h.HeldMs)
+      .ToList();
+  }
+
+  /// <summary>Holders grouped by caller with a count and the oldest age, for the deadline warning.</summary>
+  private string _holdersSummary() {
+    var groups = SnapshotHolders()
+      .GroupBy(h => h.Caller)
+      .Select(g => $"{g.Key} x{g.Count()} (oldest {g.Max(h => h.HeldMs) / 1000.0:0.#} s)")
+      .Take(8);
+    var text = string.Join(", ", groups);
+    return text.Length == 0 ? "(none)" : text;
+  }
+
+  private Releaser _grant(string caller) {
+    var id = Interlocked.Increment(ref _nextHolderId);
+    _holders[id] = (caller, Environment.TickCount64);
+    return new Releaser(_semaphore!, _holdDurationHistogram, caller, _holders, id);
+  }
+
   /// <summary>
   /// Deadline in milliseconds for an individual <see cref="AcquireAsync"/> call to acquire
   /// a slot. When the deadline elapses, the call logs a Warning and returns a degraded
@@ -144,7 +179,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       if (_logger is not null) {
         LogAcquireGrantedNoDeadline(_logger);
       }
-      return new Releaser(_semaphore, _holdDurationHistogram, caller);
+      return _grant(caller);
     }
     var acquired = await _semaphore
       .WaitAsync(AcquireTimeoutMilliseconds, cancellationToken)
@@ -153,10 +188,10 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       if (_logger is not null) {
         LogAcquireGranted(_logger, _semaphore.CurrentCount, MaxConcurrent);
       }
-      return new Releaser(_semaphore, _holdDurationHistogram, caller);
+      return _grant(caller);
     }
     if (_logger is not null) {
-      LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent);
+      LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, _holdersSummary());
     }
     // Degrade gracefully: return a no-op Releaser so the caller proceeds without
     // holding a slot. The cap becomes advisory for this single call; pool exhaustion
@@ -180,16 +215,23 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     private readonly Histogram<double>? _holdDurationHistogram;
     private readonly string? _caller;
     private readonly long _startTicks;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, (string Caller, long StartTicks)>? _holders;
+    private readonly long _holderId;
 
-    internal Releaser(SemaphoreSlim semaphore, Histogram<double>? holdDurationHistogram, string? caller) {
+    internal Releaser(
+        SemaphoreSlim semaphore, Histogram<double>? holdDurationHistogram, string? caller,
+        System.Collections.Concurrent.ConcurrentDictionary<long, (string Caller, long StartTicks)>? holders = null, long holderId = 0) {
       _semaphore = semaphore;
       _holdDurationHistogram = holdDurationHistogram;
       _caller = caller;
       _startTicks = Environment.TickCount64;
+      _holders = holders;
+      _holderId = holderId;
     }
 
     /// <inheritdoc />
     public void Dispose() {
+      _holders?.TryRemove(_holderId, out _);
       _semaphore?.Release();
       if (_holdDurationHistogram is not null && _semaphore is not null) {
         var elapsedMs = (double)(Environment.TickCount64 - _startTicks);
@@ -205,8 +247,8 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
-    Message = "WorkCoordinatorGate.AcquireAsync timed out after {TimeoutMilliseconds} ms (MaxConcurrent={MaxConcurrent}) — gate is saturated; this call proceeds WITHOUT holding a slot. Persistent saturation indicates pool pressure or callers leaking slots; investigate the gated call site.")]
-  static partial void LogAcquireTimedOut(ILogger logger, int timeoutMilliseconds, int maxConcurrent);
+    Message = "WorkCoordinatorGate.AcquireAsync timed out after {TimeoutMilliseconds} ms (MaxConcurrent={MaxConcurrent}) — gate is saturated; this call proceeds WITHOUT holding a slot. Persistent saturation indicates pool pressure or callers leaking slots; investigate the gated call site.. Holders: {Holders}")]
+  static partial void LogAcquireTimedOut(ILogger logger, int timeoutMilliseconds, int maxConcurrent, string holders);
 
   [LoggerMessage(EventId = 5, Level = LogLevel.Debug,
     Message = "WorkCoordinatorGate.AcquireAsync exempt: {Caller} runs on a pinned connection, which already bounds its concurrency; no slot taken")]
