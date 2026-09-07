@@ -3323,3 +3323,37 @@ or keep the debounce key separate from the notify payload. Flagged rather than p
 The test that caught it (`PostgresSignalTransportStreamsTargetTests`) exists to verify Streams
 ROUTING, so its wire name was shortened to 17 characters to keep it testing what it was written to
 test. It is deliberately not doubling as the reproduction for this defect.
+
+## CO. Two verification catches in the final round's tail
+
+### `PostgresOptions` 97 — the worklist targeted a documentation comment
+
+Line 97 of `PostgresOptions.cs` is `/// </summary>`. A doc comment has no sequence point and can
+never be covered by anything; the property it documents sits at line 99.
+
+The agent, given "line 97" as a target, wrote two auto-property round-trip tests for the nearby
+property. They pass and cover nothing that was asked for. The property IS read — by both
+`CollectiveEventsDapperExtensions` and `CollectiveEventsEFCoreExtensions` — so its accessor is
+already exercised by real usage, which makes the round-trip pure filler of exactly the kind removed
+twice before (BaseSagaModel, and the write-only sets). File deleted.
+
+Two lessons. The worklist is derived from a coverage report and a line number in it can point at a
+non-executable line, so **check that a target line is executable before assigning it**. And the
+instruction "cover line N" is enough rope for an agent to write something adjacent that passes —
+the brief should say what the line must DO, not only where it is.
+
+### `DapperEventTypeRenameTool` 73 — a test that could not fail
+
+The orphan-pinned-id test seeded one registry row, used an empty catalog, and asserted the result
+was EMPTY. That assertion holds whether the loop skipped the row (the intent) or the row was never
+visible to the tool at all — and the coverage run showed line 73 unhit, so the loop had not run over
+it.
+
+This is the seeding-vacuity rule (BW) recurring in a new project: **when a fixture seeds data, at
+least one assertion in the file must prove something came back.** Rewritten to seed a SECOND row
+whose pinned id the catalog still carries under a changed name, so the expected result is exactly
+one `PendingRename`. The positive half proves the tool saw the seeded rows; the orphan half then
+means something. Line 73 now covered, and 75/76 with it.
+
+Worth noting what caught each: the first was caught by a line number that could not move, the
+second by a line that did not move. Neither would have been visible from the test's own result.
