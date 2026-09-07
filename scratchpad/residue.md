@@ -3140,3 +3140,67 @@ fabricate one.**
 
 Both full suites pass unchanged with the seams present (RabbitMQ 310, ASB 604), which is the
 evidence that the defaults really are inert.
+
+## CJ. A process error of mine: `git add -A` with agents still in flight
+
+Commit `b1f8e46bd` was meant to carry six verified transport classes. It also swept in **ten files
+from two agents that were still running** — Migrate, LanguageServer, Generators, Sagas and two
+EFCore.Postgres classes — none of which had been built or run at the time.
+
+I had been deliberately holding builds while agents worked, precisely to avoid compiling a moving
+target, and then staged with `git add -A` anyway. The agent noticed before I did and reported that
+"something in this environment auto-commits working-tree changes" — it was me.
+
+All ten were verified afterwards and all pass (14/14 target lines confirmed across the six from the
+settled projects). That is luck, not process. **Stage by explicit path when any agent is running.**
+`git add -A` is only safe once `ListAgents` shows none running.
+
+## CK. Wave 5 declines: two classes blocked by a missing seam, not by shape
+
+Both of these are worth separating from the usual residue, because the code is perfectly testable —
+it is the ABSENCE of a seam that blocks it, and that is an owner-actionable finding rather than a
+fact about the language.
+
+### `GitExecutable` 64, 65, 75
+
+`_resolve()` caches into a private static for the process lifetime (`_resolvedPath ??= _resolve()`),
+so whichever branch fires first wins forever. On any developer or CI machine that is the
+well-known-path branch, so the env-var-hit branch and the not-found branch never run.
+
+Covering them means mutating `GIT_CLI` or the filesystem before ANY other test in the assembly
+touches `GitExecutable.Path` — and three other coverage suites in that project
+(`GitOperationsCoverageTests`, `GitWorktreeServiceCoverageTests`, `RevertCommandCoverageTests`)
+need the real git binary. Poisoning the cache would break them. Needs an injectable resolver or a
+reset hook.
+
+### `PathResolver` 26, 31, 51
+
+All three sit behind `Directory.GetCurrentDirectory()` with no override — the original author's own
+comment already says "FUTURE: requires temporary git repository setup". Forcing the null-returning
+branches means mutating process-wide CWD and clearing `WHIZBANG_DOCS_PATH`, while the existing
+`PathResolverTests.cs` env-var tests carry strict equality assertions and are NOT `[NotInParallel]`
+guarded. A concurrent CWD or env mutation would flip their result mid-race.
+
+The agent declined to introduce that flake, which is the right call: **a test that turns one line
+green by making a neighbouring test unreliable is a net loss**, and the effort already spent a
+session chasing a manufactured flake.
+
+### Also declined, ordinary categories
+
+- `StatusHandler` 22 — `continue` on `info is null`. Every symbol from `GetAllSymbols()` comes from
+  one of the three collections `SymbolResolver.Resolve` consults, and it falls back to the raw
+  symbol name in each, so a match is structurally guaranteed.
+- `PinnedIdCodeFixProvider` 48, 75 — `root is null` after `GetSyntaxRootAsync`. The provider is
+  registered for `LanguageNames.CSharp` only, so a routed document always supports syntax trees.
+  Roslyn contract guard, ~a dozen now recorded.
+- `RestLensInfo` 21-23 — `EnableFiltering`/`EnableSorting`/`EnablePaging` are written by
+  `_extractLensInfo` and read by nothing; the generated endpoint's filtering and sorting are
+  literally `// TODO` comments. **Ninth** write-only set.
+
+### One correction to a hint of mine
+
+I suggested `StatusHandler`'s lines might be the same dead LSP surface as residue BR. They are not:
+BR is `CacheAgeMinutes`/`ServerUptime` on `StatusInfo`, a different gap. Lines 35-36 are a live
+`case "message"` arm that no existing entry reached because none had both `IsCommand` and `IsEvent`
+false. Second time this wave a residue pointer of mine named the wrong thing (see CI), and both
+times the agent checked rather than accepting the decline.
