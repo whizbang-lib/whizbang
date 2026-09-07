@@ -161,6 +161,31 @@ Not changed: `PinnedPool.Enabled` already defaults to false in the framework (th
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
 fix, not a concurrency default); `MaxInFlightCommands` stays 50 pending the gate/pool self-check.
 
+### Audit singles under a bulk import (observed)
+
+With audit logging on, every event also produces an `EventAudited` single that the tag-bound coalescer
+folds into a `sys-audit` composite (`CoalescePolicyOptions`: slide 15 s, `MaxDelaySeconds` 120, batch
+500). Under a bulk import the singles pile up (4,141 pending, 812 leased, oldest 13 min) and the folded
+composites are the largest commits in the batch (the 13-30 s tail of the original root cause). Rows that
+sit leased through a fold window that drifts past the lease churn as casualties. Two follow-ups: the
+coalescer must renew the leases it holds (or hold rows claim-invisible without a lease), and the fold
+size should be bounded by commit cost, not only by row count.
+
+### Audit ledger streams (decided: one deterministic ledger stream per tenant)
+
+Today every `EventAudited` single is minted on its own fresh stream (`AuditOutboxMessageBuilder`,
+`StreamId = auditEvent.Id`) and every folded `sys-audit` composite gets another fresh stream
+(`CoalesceShipWorker`, `TrackedGuid.NewMedo()`): a bulk import creates tens of thousands of singleton
+streams with no ordering across audit records and full per-stream machinery spent on each. Audit records
+are a ledger about the domain event, not part of the domain stream (they are `IsEvent = false`), so they
+belong on neither the original stream nor a per-composite stream. Decision (owner, 2026-09-07): one
+deterministic ledger stream per tenant, `UUIDv5("sys-audit", tenant)`, stamped on each single at mint and
+inherited by the composite that folds it (the group is per tenant, so a fold never mixes ledgers);
+`OriginalStreamId` stays a field. The collective sink (`__collective__`) then sees one orderable ledger
+per tenant. No time bucket by default; a bucket or a small shard count is an optional policy knob for
+bulk phases only. No migration: audit rows are never event-stored. Lands in its own PR after the
+hold-and-wait fix (audit builder + coalesce fold + sink routing, red/green).
+
 ## Perspective drain hold-and-wait (next PR, red/green)
 
 Mapped from source (file:line in the worktree at the time of writing):
@@ -191,6 +216,15 @@ Mapped from source (file:line in the worktree at the time of writing):
   on one (stream, perspective) with two consumers; assert the completion capture stays empty while a
   gate wait is outstanding under S (hook `OnStreamAffinityGateContended`, `1263`). GREEN: the cursor
   completes with the gate at 1 because nothing gated runs under S.
+
+### Load-sensitive test (to make deterministic)
+
+`ClaimWorkerDoorbellLivenessTests.FreshWorkOnEmptyEdge_DoorbellPreceded_NoMissRecordedAsync` timed out at
+its 30 s completion-signal cap once in a full Core run on a heavily loaded machine (11k tests in parallel
+plus external probes) and passed in isolation immediately after. It waits on real signals (no polling),
+so the cap is not the problem; the second claim it waits for depends on the worker's poll back-off
+(`PollingMaxIntervalMilliseconds` 10 s) under starvation. Drive the second claim with an explicit
+doorbell in the test instead of relying on the poll, so the outcome no longer depends on scheduling.
 
 ## Correctness follow-ups (separate PRs)
 

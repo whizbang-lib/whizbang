@@ -10,18 +10,19 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Report-only is bilateral: while <see cref="StreamIntegrityOptions.RepairMode"/> is
-/// <see cref="IntegrityRepairMode.ReportOnly"/> the maintenance cycle discards parked repair rows
-/// (re-delivery requests and bundles) through
-/// <see cref="IWorkCoordinator.DiscardPendingInboxMessagesAsync"/>; under
-/// <see cref="IntegrityRepairMode.AutoRepairCapped"/> it leaves them for the repair path. The sweep is
+/// A stream-integrity feature that is off leaves nothing behind. Every maintenance cycle the worker asks
+/// <see cref="IntegrityTraffic"/> which control-plane types belong to features that are off under the
+/// current <see cref="StreamIntegrityOptions"/> and discards their pending rows from the inbox
+/// (<see cref="IWorkCoordinator.DiscardPendingInboxMessagesAsync"/>) and the outbox
+/// (<see cref="IWorkCoordinator.DiscardPendingOutboxMessagesAsync"/>). Report-only is the default, so
+/// repair traffic is swept out of the box; with everything on nothing is touched. The sweep is
 /// best-effort like every other maintenance step: a failing sweep is logged with its consequence and
 /// the cycle continues.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
 [Category("Core")]
 [Category("Workers")]
-public class MaintenanceWorkerRepairTrafficSweepTests {
+public class MaintenanceWorkerIntegritySweepTests {
   private sealed record LogEntry(LogLevel Level, string Message, Exception? Exception);
 
   private sealed class CapturingLogger : ILogger<MaintenanceWorker> {
@@ -42,14 +43,21 @@ public class MaintenanceWorkerRepairTrafficSweepTests {
 
   private sealed class SweepCoordinator : IWorkCoordinator {
     public Exception? DiscardThrows { get; init; }
-    public long Discarded { get; init; }
-    public List<IReadOnlyList<string>> DiscardCalls { get; } = [];
+    public long InboxDiscarded { get; init; }
+    public long OutboxDiscarded { get; init; }
+    public List<IReadOnlyList<string>> InboxCalls { get; } = [];
+    public List<IReadOnlyList<string>> OutboxCalls { get; } = [];
     public int MaintenanceCalls;
 
     public Task<long> DiscardPendingInboxMessagesAsync(
         IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken = default) {
-      lock (DiscardCalls) { DiscardCalls.Add(messageTypeNames); }
-      return DiscardThrows is not null ? Task.FromException<long>(DiscardThrows) : Task.FromResult(Discarded);
+      lock (InboxCalls) { InboxCalls.Add(messageTypeNames); }
+      return DiscardThrows is not null ? Task.FromException<long>(DiscardThrows) : Task.FromResult(InboxDiscarded);
+    }
+    public Task<long> DiscardPendingOutboxMessagesAsync(
+        IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken = default) {
+      lock (OutboxCalls) { OutboxCalls.Add(messageTypeNames); }
+      return DiscardThrows is not null ? Task.FromException<long>(DiscardThrows) : Task.FromResult(OutboxDiscarded);
     }
     public Task<IReadOnlyList<MaintenanceResult>> PerformMaintenanceAsync(CancellationToken cancellationToken = default) {
       Interlocked.Increment(ref MaintenanceCalls);
@@ -68,6 +76,14 @@ public class MaintenanceWorkerRepairTrafficSweepTests {
     public Task StoreInboxMessagesAsync(InboxMessage[] m, int partitionCount, CancellationToken ct = default)
       => Task.CompletedTask;
   }
+
+  private static StreamIntegrityOptions _everythingOn() => new() {
+    RepairMode = IntegrityRepairMode.AutoRepairCapped,
+    CheckpointsEnabled = true,
+    GapDetectionEnabled = true,
+    AuditEnabled = true,
+    PublishReportEvents = true,
+  };
 
   private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
       SweepCoordinator coord, StreamIntegrityOptions? integrity) {
@@ -89,52 +105,74 @@ public class MaintenanceWorkerRepairTrafficSweepTests {
   }
 
   [Test]
-  public async Task ReportOnly_DiscardsParkedRepairRowsAndLogsTheCountAsync() {
-    var coord = new SweepCoordinator { Discarded = 3 };
-    var (worker, logger) = _build(coord, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly });
+  public async Task ReportOnly_DiscardsParkedRepairRowsFromBothTablesAndLogsTheCountsAsync() {
+    var coord = new SweepCoordinator { InboxDiscarded = 3, OutboxDiscarded = 2 };
+    var options = _everythingOn();
+    options.RepairMode = IntegrityRepairMode.ReportOnly;
+    var (worker, logger) = _build(coord, options);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coord.DiscardCalls.Count).IsEqualTo(1);
-    await Assert.That(coord.DiscardCalls[0]).IsEquivalentTo(RepairTraffic.InboxMessageTypeNames)
-      .Because("the sweep names exactly the repair types, never detection traffic");
-    var entry = logger.Snapshot().FirstOrDefault(e =>
-      e.Level == LogLevel.Information && e.Message.Contains("Discarded 3 parked", StringComparison.Ordinal));
-    await Assert.That(entry).IsNotNull().Because("an operator must see repair rows being dropped and why");
-    await Assert.That(entry!.Message).Contains("ReportOnly");
+    await Assert.That(coord.InboxCalls.Count).IsEqualTo(1);
+    await Assert.That(coord.InboxCalls[0]).IsEquivalentTo(IntegrityTraffic.InboxTypesToDiscard(options))
+      .Because("the sweep names exactly the types of features that are off; with only repair off, that is repair traffic");
+    await Assert.That(coord.OutboxCalls.Count).IsEqualTo(1);
+    await Assert.That(coord.OutboxCalls[0]).IsEquivalentTo(IntegrityTraffic.OutboxTypesToDiscard(options));
+    var entries = logger.Snapshot().Where(e => e.Level == LogLevel.Information && e.Message.Contains("Discarded", StringComparison.Ordinal)).ToList();
+    await Assert.That(entries.Any(e => e.Message.Contains("Discarded 3", StringComparison.Ordinal) && e.Message.Contains("inbox", StringComparison.Ordinal))).IsTrue()
+      .Because("an operator must see rows being dropped, from which table, and why");
+    await Assert.That(entries.Any(e => e.Message.Contains("Discarded 2", StringComparison.Ordinal) && e.Message.Contains("outbox", StringComparison.Ordinal))).IsTrue();
   }
 
   [Test]
-  public async Task AutoRepairCapped_LeavesParkedRepairRowsForTheRepairPathAsync() {
-    var coord = new SweepCoordinator { Discarded = 3 };
-    var (worker, _) = _build(coord, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
+  public async Task EverythingOn_SweepsNothingAsync() {
+    var coord = new SweepCoordinator { InboxDiscarded = 3, OutboxDiscarded = 3 };
+    var (worker, _) = _build(coord, _everythingOn());
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coord.DiscardCalls).IsEmpty()
-      .Because("an opted-in service retries its repair traffic; the sweep must not race the repair path");
+    await Assert.That(coord.InboxCalls).IsEmpty()
+      .Because("a feature that is on owns its traffic; the sweep must not race the repair or detection paths");
+    await Assert.That(coord.OutboxCalls).IsEmpty();
   }
 
   [Test]
-  public async Task NoIntegrityOptionsRegistered_SweepsAsTheReportOnlyDefaultAsync() {
+  public async Task CheckpointsOff_SweepsUnpublishedCheckpointsFromTheOutboxAsync() {
+    var coord = new SweepCoordinator { OutboxDiscarded = 7 };
+    var options = _everythingOn();
+    options.CheckpointsEnabled = false;
+    var (worker, logger) = _build(coord, options);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(coord.InboxCalls).IsEmpty();
+    await Assert.That(coord.OutboxCalls.Count).IsEqualTo(1);
+    await Assert.That(coord.OutboxCalls[0]).IsEquivalentTo(IntegrityTraffic.OutboxTypesToDiscard(options));
+    await Assert.That(logger.Snapshot().Any(e => e.Message.Contains("Discarded 7", StringComparison.Ordinal) && e.Message.Contains("outbox", StringComparison.Ordinal))).IsTrue();
+  }
+
+  [Test]
+  public async Task NoIntegrityOptionsRegistered_SweepsAsTheDefaultsAsync() {
     var coord = new SweepCoordinator();
     var (worker, _) = _build(coord, integrity: null);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coord.DiscardCalls.Count).IsEqualTo(1)
-      .Because("absent options read as report-only; a bundle broadcast by a peer still lands here and must not be folded in");
+    await Assert.That(coord.InboxCalls.Count).IsEqualTo(1)
+      .Because("absent options read as the defaults: report-only, so a bundle broadcast by a peer must not be folded in");
+    await Assert.That(coord.InboxCalls[0]).IsEquivalentTo(IntegrityTraffic.InboxTypesToDiscard(null));
+    await Assert.That(coord.OutboxCalls.Count).IsEqualTo(1);
   }
 
   [Test]
-  public async Task NothingParked_LogsNothingAsync() {
-    var coord = new SweepCoordinator { Discarded = 0 };
+  public async Task NothingPending_LogsNothingAsync() {
+    var coord = new SweepCoordinator { InboxDiscarded = 0, OutboxDiscarded = 0 };
     var (worker, logger) = _build(coord, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.ReportOnly });
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
-    await Assert.That(coord.DiscardCalls.Count).IsEqualTo(1);
-    await Assert.That(logger.Snapshot().Any(e => e.Message.Contains("parked", StringComparison.Ordinal))).IsFalse()
+    await Assert.That(coord.InboxCalls.Count).IsEqualTo(1);
+    await Assert.That(logger.Snapshot().Any(e => e.Message.Contains("Discarded", StringComparison.Ordinal))).IsFalse()
       .Because("a quiet sweep is the steady state; logging it every cycle is noise");
   }
 
@@ -152,6 +190,6 @@ public class MaintenanceWorkerRepairTrafficSweepTests {
     await Assert.That(entry).IsNotNull();
     await Assert.That(entry!.Exception).IsNotNull();
     await Assert.That(entry.Message).Contains("next cycle")
-      .Because("the log states what failed and what happens to the parked rows as a result");
+      .Because("the log states what failed and what happens to the pending rows as a result");
   }
 }

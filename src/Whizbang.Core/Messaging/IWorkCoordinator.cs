@@ -2133,6 +2133,22 @@ public interface IWorkCoordinator {
     => Task.FromResult(0L);
 
   /// <summary>
+  /// The outbox half of <see cref="DiscardPendingInboxMessagesAsync"/>: deletes pending, unleased
+  /// <c>wh_outbox</c> rows whose <c>message_type</c> names one of <paramref name="messageTypeNames"/>. The
+  /// maintenance worker passes <see cref="IntegrityTraffic.OutboxTypesToDiscard"/>: what this service
+  /// minted for a stream-integrity feature that is now off and never published (checkpoints, audit asks,
+  /// report events, repair bundles), which would otherwise sit unpublished for as long as the feature is off.
+  /// </summary>
+  /// <remarks>Same matching and lease rules as the inbox half; empty list = no-op; default impl returns 0.</remarks>
+  /// <param name="messageTypeNames">Normalized assembly-qualified type names.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows deleted.</returns>
+  Task<long> DiscardPendingOutboxMessagesAsync(
+    IReadOnlyList<string> messageTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0L);
+
+  /// <summary>
   /// v0.657 slice 5: structural canary for the "row claimed but never drained"
   /// bug class. Returns <c>wh_outbox</c> rows whose <c>attempts</c> exceeds
   /// <paramref name="maxAttempts"/> AND have not been processed.

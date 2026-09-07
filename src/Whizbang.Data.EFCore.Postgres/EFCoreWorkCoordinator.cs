@@ -5027,6 +5027,34 @@ public class EFCoreWorkCoordinator<TDbContext>(
     command.Parameters.Add(param);
     return await command.ExecuteNonQueryAsync(cancellationToken);
   }
+
+  /// <inheritdoc />
+  public async Task<long> DiscardPendingOutboxMessagesAsync(
+      IReadOnlyList<string> messageTypeNames,
+      CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(messageTypeNames);
+    if (messageTypeNames.Count == 0) {
+      return 0;
+    }
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA, _logger);
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var connection = __scope.Connection;
+    await using var command = connection.CreateCommand().WithCoordinatorTimeout();
+    // Same rules as the inbox half: containment on the normalized name; unleased only.
+    command.CommandText =
+      $"DELETE FROM \"{schema}\".wh_outbox o " +
+      "WHERE o.processed_at IS NULL AND o.instance_id IS NULL " +
+      "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(o.message_type, t.name) > 0)";
+    var param = (Npgsql.NpgsqlParameter)command.CreateParameter();
+    param.ParameterName = "type_names";
+    param.NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Text;
+    param.Value = messageTypeNames is string[] arr ? arr : System.Linq.Enumerable.ToArray(messageTypeNames);
+    command.Parameters.Add(param);
+    return await command.ExecuteNonQueryAsync(cancellationToken);
+  }
 }
 
 /// <summary>
