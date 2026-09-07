@@ -85,6 +85,9 @@ public sealed class AdaptiveClaimWindow {
   /// Whether the outstanding budget has actually MEASURED drain yet. Growth is gated on it;
   /// shrinking never is.
   /// </param>
+  /// <docs>operations/workers/claim-backpressure</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveClaimWindowTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveClaimWindowSampleSizeTests.cs</tests>
   public void Observe(int claimedRows, int reclaimedRows, bool drainMeasured = true) {
     // An empty claim says nothing about capacity — the queue was simply empty. Treating it as a
     // clean cycle would inflate the window during idle periods and guarantee an overshoot the

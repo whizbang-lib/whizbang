@@ -136,6 +136,8 @@ public partial class PerspectiveWorker(
   /// the drain used to hold every slot: nothing completed, leases lapsed, the claim loop re-offered
   /// the same rows. A gate at or below zero is disabled and imposes nothing.
   /// </summary>
+  /// <docs>operations/workers/perspective-worker</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerParallelismTests.cs</tests>
   internal static int ClampWidthToGate(int consumers, int width, int gateMaxConcurrent) {
     var requested = Math.Max(1, width);
     if (gateMaxConcurrent <= 0) {

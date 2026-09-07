@@ -2127,6 +2127,9 @@ public interface IWorkCoordinator {
   /// <see cref="EventTypeMatchingHelper.NormalizeTypeName"/>).</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of rows deleted.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiscardPendingMessagesSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperDiscardPendingMessagesTests.cs</tests>
   Task<long> DiscardPendingInboxMessagesAsync(
     IReadOnlyList<string> messageTypeNames,
     CancellationToken cancellationToken = default)
@@ -2143,6 +2146,9 @@ public interface IWorkCoordinator {
   /// <param name="messageTypeNames">Normalized assembly-qualified type names.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <returns>The number of rows deleted.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiscardPendingMessagesSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperDiscardPendingMessagesTests.cs</tests>
   Task<long> DiscardPendingOutboxMessagesAsync(
     IReadOnlyList<string> messageTypeNames,
     CancellationToken cancellationToken = default)

@@ -24,6 +24,8 @@ namespace Whizbang.Core.Workers;
 /// in a follow-up that adopts the same activity-triggered eviction shape.
 /// </para>
 /// </remarks>
+/// <docs>operations/workers/perspective-worker</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
 public class PerspectiveStreamAffinityOptions {
 
   /// <summary>

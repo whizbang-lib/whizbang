@@ -17,6 +17,7 @@ namespace Whizbang.Core.Workers;
 /// dead-letter cleanup, dedup pruning) light up automatically.
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/maintenance</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
 public sealed partial class MaintenanceWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,

@@ -152,6 +152,9 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// pre-v0.654 behavior) was to wait forever silently, which surfaced in production as the
   /// "stuck row that never DLQ-promotes" pattern.
   /// </remarks>
+  /// <docs>fundamentals/workers/pinned-connection-pool</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGatePinnedExemptionTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateHolderDiagnosticsTests.cs</tests>
   public async ValueTask<Releaser> AcquireAsync(
       CancellationToken cancellationToken = default,
       [CallerMemberName] string caller = "<unknown>") {

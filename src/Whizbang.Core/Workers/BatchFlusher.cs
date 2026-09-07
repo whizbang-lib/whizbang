@@ -14,6 +14,7 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <typeparam name="T">Item type the channel carries.</typeparam>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/BatchFlusherRetryTests.cs</tests>
 public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   private readonly Channel<T> _channel;
   private readonly Func<IReadOnlyList<T>, CancellationToken, Task> _flush;
