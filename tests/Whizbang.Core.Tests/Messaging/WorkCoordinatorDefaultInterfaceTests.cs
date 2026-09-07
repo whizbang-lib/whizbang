@@ -322,6 +322,20 @@ public class WorkCoordinatorDefaultInterfaceTests {
   }
 
   [Test]
+  public async Task DiscardPendingInboxMessagesAsync_DefaultImplementation_ReturnsZeroAsync() {
+    var discarded = await _coordinator.DiscardPendingInboxMessagesAsync(RepairTraffic.InboxMessageTypeNames);
+
+    await Assert.That(discarded).IsEqualTo(0L);
+  }
+
+  [Test]
+  public async Task DiscardPendingOutboxMessagesAsync_DefaultImplementation_ReturnsZeroAsync() {
+    var discarded = await _coordinator.DiscardPendingOutboxMessagesAsync(IntegrityTraffic.OutboxTypesToDiscard(null));
+
+    await Assert.That(discarded).IsEqualTo(0L);
+  }
+
+  [Test]
   public async Task FindStuckOutboxRowsAsync_DefaultImplementation_ReturnsEmptyListAsync() {
     var rows = await _coordinator.FindStuckOutboxRowsAsync(5, 100);
 

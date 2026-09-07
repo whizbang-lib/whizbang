@@ -6,21 +6,20 @@ using Whizbang.Core.Messaging;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
-/// Regression locks for the stream-integrity out-of-the-box posture. The feature is
-/// self-healing BY DEFAULT: detection on, repair at <see cref="IntegrityRepairMode.AutoRepairCapped"/>
-/// (storm caps bound every rung), with <see cref="IntegrityRepairMode.ReportOnly"/> as the explicit
-/// opt-DOWN for operators who want report-and-decide. Changing any default silently changes what
+/// Regression locks for the stream-integrity out-of-the-box posture. Detection is ON by default and
+/// repair is <see cref="IntegrityRepairMode.ReportOnly"/> BY DEFAULT: report and let an operator decide;
+/// <see cref="IntegrityRepairMode.AutoRepairCapped"/> (storm caps bound every rung) is the explicit opt-IN. Changing any default silently changes what
 /// every consumer's production system does — lock them.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Messaging/IntegrityCheckpoint.cs</code-under-test>
 public class StreamIntegrityOptionsDefaultsTests {
 
   [Test]
-  public async Task Defaults_SelfHealingOutOfTheBoxAsync() {
+  public async Task SafeDefault_RepairModeIsReportOnlyAsync() {
     var options = new StreamIntegrityOptions();
 
-    await Assert.That(options.RepairMode).IsEqualTo(IntegrityRepairMode.AutoRepairCapped)
-      .Because("the out-of-the-box posture is SELF-HEALING — capped auto-repair; ReportOnly is the explicit opt-down.");
+    await Assert.That(options.RepairMode).IsEqualTo(IntegrityRepairMode.ReportOnly)
+      .Because("the out-of-the-box posture is REPORT-ONLY: detection on, repair only when an operator opts in; a default that mutates data unasked is not a trustworthy default.");
     await Assert.That(options.CheckpointsEnabled).IsTrue();
     await Assert.That(options.GapDetectionEnabled).IsTrue();
     await Assert.That(options.AuditEnabled).IsTrue();

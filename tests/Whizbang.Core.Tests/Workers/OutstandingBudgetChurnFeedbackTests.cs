@@ -145,6 +145,7 @@ public class OutstandingBudgetChurnFeedbackTests {
       new NoOpWorkNotificationListener(),
       gate,
       Options.Create(new ClaimWorkerOptions {
+        AdaptiveOutstandingBudget = true,
         PollingIntervalMilliseconds = 1,
         PollingMaxIntervalMilliseconds = 5,
         MinStreamsPerBatch = WINDOW_FLOOR,

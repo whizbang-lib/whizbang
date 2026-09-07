@@ -51,7 +51,7 @@ public class SubscriptionExpansionWorkerTests {
     var coordinator = new _registryCoordinator();
     coordinator.Registry["Contracts.PriorType"] = ConsumedTypeBackfillStatus.Baseline;   // prior boot
     var transport = new _captureTransport();
-    var worker = _buildWorker(coordinator, transport);
+    var worker = _buildWorker(coordinator, transport, new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped });
 
     await worker.RunOnceAsync(CancellationToken.None);
 

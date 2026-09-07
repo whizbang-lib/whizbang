@@ -62,6 +62,10 @@ public partial class DeadLetterRecoveryWorker(
   private readonly DeadLetterMetrics? _metrics = metrics;
   private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _notificationListener = notificationListener;
   private readonly SemaphoreSlim _wake = new(0, 1);
+  // #DLQ-adaptive: AIMD scan-batch controller (reuses the claim path's AdaptiveStreamBatch).
+  // Lazily built on first scan so it reads the bound options. Null when adaptivity is off.
+  private AdaptiveStreamBatch? _adaptiveBatch;
+  private bool _adaptiveBatchInit;
   private bool _signalSubscribed;
 
   /// <summary>NOTIFY signal handler — wakes on a DeadLetterReady signal so the next scan runs within ms.</summary>
@@ -492,9 +496,22 @@ public partial class DeadLetterRecoveryWorker(
       // #669: a pass FORCED through the settledness gate runs narrow. The bounded-deferral
       // escape exists so a never-settled service still heals — but the service is visibly
       // busy, so recovery trickles instead of flooding the queues it is yielding to.
-      var batchSize = housekeeping?.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit
+      if (!_adaptiveBatchInit) {
+        _adaptiveBatchInit = true;
+        if (_options.AdaptiveScanBatchEnabled) {
+          _adaptiveBatch = new AdaptiveStreamBatch(
+            ceiling: Math.Max(1, _options.ScanBatchSize),
+            floor: Math.Max(1, _options.MinScanBatchSize),
+            additiveStep: Math.Max(1, _options.ScanBatchIncreaseStep),
+            churnThreshold: _options.ScanBatchChurnThreshold);
+        }
+      }
+      var pressured = housekeeping?.Reason == HousekeepingCoordinator.Verdict.ProceedDeferralLimit;
+      // A forced pass keeps the #669 narrow trickle regardless of the adaptive ramp; a settled
+      // pass uses the controller's current width (or the fixed ScanBatchSize when adaptivity off).
+      var batchSize = pressured
         ? Math.Min(Math.Max(1, _options.PressuredScanBatchSize), _options.ScanBatchSize)
-        : _options.ScanBatchSize;
+        : _adaptiveBatch?.Current ?? _options.ScanBatchSize;
       var entries = await svc.FetchDueAsync(batchSize, ct).ConfigureAwait(false);
       if (entries.Count == 0) {
         // A quiet cycle is evidence the cycle is NOT feeding itself, so it clears the consecutive
@@ -623,6 +640,16 @@ public partial class DeadLetterRecoveryWorker(
           }
         }
       }
+
+      // Adaptive scan-batch feedback (AIMD): a clean, saturated settled scan earns growth toward
+      // ScanBatchSize; a pass forced through under pressure is treated as full churn so sustained
+      // load walks the batch back to the floor. Same controller the claim path uses. entries is
+      // non-empty here (an empty scan returned earlier), so this is always real evidence.
+      _adaptiveBatch?.Observe(
+        rowsReturned: entries.Count,
+        capRequested: batchSize,
+        reclaimedRows: pressured ? entries.Count : 0,
+        drainMeasured: true);
     } finally {
       // In a finally: a scan that throws and never releases the slot would disable BOTH recovery
       // and every lower-ranked activity for the lifetime of the process.

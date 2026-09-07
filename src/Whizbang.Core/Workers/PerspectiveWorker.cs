@@ -87,7 +87,8 @@ public partial class PerspectiveWorker(
   WorkCompletionMeter? completionMeter = null,
   // Optional, defaulted below: with none supplied the width is the configured option exactly,
   // so adopting the seam changes no scheduling behavior.
-  Whizbang.Core.Execution.IConcurrencyGovernor? governor = null
+  Whizbang.Core.Execution.IConcurrencyGovernor? governor = null,
+  Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -96,6 +97,8 @@ public partial class PerspectiveWorker(
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly WorkCompletionMeter? _completionMeter = completionMeter;
+  private readonly Whizbang.Core.Messaging.WorkCoordinatorGate? _gate = gate;
+  private int _widthClampLogged;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
@@ -126,6 +129,37 @@ public partial class PerspectiveWorker(
   /// shares a database budget with every other worker, so the ability to give width back under
   /// pressure is what keeps it from starving the rest of the system during a bulk replay.
   /// </remarks>
+  /// <summary>
+  /// The drain may use at most half of the coordinator gate, split across its consumer loops, so
+  /// the completion flusher and lease renewal (which queue for the same gate behind a pinned
+  /// connection) always find a slot. With the default 4 consumers x 30 wide against a 50-slot gate
+  /// the drain used to hold every slot: nothing completed, leases lapsed, the claim loop re-offered
+  /// the same rows. A gate at or below zero is disabled and imposes nothing.
+  /// </summary>
+  /// <docs>operations/workers/perspective-worker</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerParallelismTests.cs</tests>
+  internal static int ClampWidthToGate(int consumers, int width, int gateMaxConcurrent) {
+    var requested = Math.Max(1, width);
+    if (gateMaxConcurrent <= 0) {
+      return requested;
+    }
+    var perConsumer = gateMaxConcurrent / 2 / Math.Max(1, consumers);
+    return Math.Max(1, Math.Min(requested, perConsumer));
+  }
+
+  private int _effectiveWidth() {
+    var width = Math.Max(1, _governor.CurrentWidth);
+    if (_gate is null || _gate.MaxConcurrent <= 0) {
+      return width;
+    }
+    var consumers = Math.Max(1, _options.MaxConcurrentDrainConsumers);
+    var capped = ClampWidthToGate(consumers, width, _gate.MaxConcurrent);
+    if (capped < width && Interlocked.Exchange(ref _widthClampLogged, 1) == 0) {
+      LogWidthClampedToGate(_logger, consumers, width, _gate.MaxConcurrent, capped);
+    }
+    return capped;
+  }
+
   internal static Whizbang.Core.Execution.IConcurrencyGovernor CreateDefaultGovernor(PerspectiveWorkerOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var configured = Math.Max(1, options.MaxConcurrentPerspectives);
@@ -194,6 +228,14 @@ public partial class PerspectiveWorker(
   private sealed class StreamAffinityGateEntry : IDisposable {
     public readonly SemaphoreSlim Semaphore = new(1, 1);
     public long LastActivityTicks = DateTimeOffset.UtcNow.Ticks;
+    /// <summary>Worker-clock UTC ticks since the current holder took the gate; 0 while it is free.</summary>
+    public long HeldSinceTicks;
+    /// <summary>When the watchdog last named this hold; 0 until it has.</summary>
+    public long LastWarnedTicks;
+    /// <summary>What the holder is doing right now ("resolve", "apply", "report", ...).</summary>
+    public volatile string Phase = string.Empty;
+    /// <summary>Which processing path holds it ("standard", "drain").</summary>
+    public volatile string Path = string.Empty;
     public void Dispose() => Semaphore.Dispose();
   }
 
@@ -482,18 +524,28 @@ public partial class PerspectiveWorker(
       // batch N completed. Multiple consumers race for items, so different streams flow in
       // parallel without each having to wait for a prior batch to finish.
       var consumerCount = Math.Max(1, _options.MaxConcurrentDrainConsumers);
-      if (consumerCount == 1) {
-        await _runChannelConsumerLoopAsync(stoppingToken).ConfigureAwait(false);
-      } else {
-        var consumers = new Task[consumerCount];
-        for (var i = 0; i < consumerCount; i++) {
-          consumers[i] = Task.Run(() => _runChannelConsumerLoopAsync(stoppingToken), stoppingToken);
+      // The watchdog ends with the consumer loops, whatever ends them: the stopping token, or a loop
+      // that broke out on its own (a scope factory disposed mid-stream). It must never hold the
+      // worker open on its own.
+      using var watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+      var watchdog = _runAffinityWatchdogAsync(watchdogCts.Token);
+      try {
+        if (consumerCount == 1) {
+          await _runChannelConsumerLoopAsync(stoppingToken).ConfigureAwait(false);
+        } else {
+          var consumers = new Task[consumerCount];
+          for (var i = 0; i < consumerCount; i++) {
+            consumers[i] = Task.Run(() => _runChannelConsumerLoopAsync(stoppingToken), stoppingToken);
+          }
+          try {
+            await Task.WhenAll(consumers).ConfigureAwait(false);
+          } catch (OperationCanceledException) {
+            // expected on shutdown
+          }
         }
-        try {
-          await Task.WhenAll(consumers).ConfigureAwait(false);
-        } catch (OperationCanceledException) {
-          // expected on shutdown
-        }
+      } finally {
+        await watchdogCts.CancelAsync().ConfigureAwait(false);
+        await watchdog.ConfigureAwait(false);
       }
     } finally {
       // Graceful shutdown: drain any in-flight PostLifecycle task so background work
@@ -1011,7 +1063,7 @@ public partial class PerspectiveWorker(
     await Parallel.ForEachAsync(
       groupedWork,
       new ParallelOptions {
-        MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
+        MaxDegreeOfParallelism = _effectiveWidth(),
         CancellationToken = cancellationToken
       },
       async (group, ct) => {
@@ -1027,6 +1079,7 @@ public partial class PerspectiveWorker(
         var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
         Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
         await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
+        _markAffinityHeld(gateEntry, "standard");
         try {
           await using var groupScope = _scopeFactory.CreateAsyncScope();
           var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -1038,6 +1091,7 @@ public partial class PerspectiveWorker(
             // The leased group IS the set of __collective__ work rows for this stream; their WorkIds
             // (event_work_id) are what the sink must complete on success so the rows are deleted.
             var sinkWorkIds = group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct().ToArray();
+            _markAffinityPhase(streamId, perspectiveName, "collective");
             await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, sinkWorkIds, ct);
             return;
           }
@@ -1045,6 +1099,7 @@ public partial class PerspectiveWorker(
           var groupReceptorInvoker = groupScope.ServiceProvider.GetService<IReceptorInvoker>();
           var groupLifecycleCoordinator = groupScope.ServiceProvider.GetService<ILifecycleCoordinator>();
 
+          _markAffinityPhase(streamId, perspectiveName, "resolve");
           var (checkpoint, runner, eventStore, upcomingEvents, perspectiveParentContext) =
             await _resolveDependenciesAndLoadEventsAsync(
               groupScope, groupWorkCoordinator, groupReceptorInvoker, streamId, perspectiveName,
@@ -1068,10 +1123,12 @@ public partial class PerspectiveWorker(
           var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
 
           try {
+            _markAffinityPhase(streamId, perspectiveName, "pre-lifecycle");
             await _invokePrePerspectiveLifecycleAsync(
               upcomingEvents, enableLifecycleSpans, groupLifecycleCoordinator, groupReceptorInvoker,
               streamCtx, runner, ct);
 
+            _markAffinityPhase(streamId, perspectiveName, "apply");
             var (result, processingMode, rewindLockSkipped) = await _executePerspectiveRunnerAsync(
               group, runner, checkpoint, streamCtx, enablePerspectiveSpans, ct);
 
@@ -1079,6 +1136,7 @@ public partial class PerspectiveWorker(
               return;
             }
 
+            _markAffinityPhase(streamId, perspectiveName, "load-processed");
             var processedEvents = await _loadAndLogProcessedEventsAsync(
               groupReceptorInvoker, eventStore, result, streamId, perspectiveName,
               lastProcessedEventId, ct);
@@ -1125,8 +1183,10 @@ public partial class PerspectiveWorker(
               batchIsNewByEventId.AddOrUpdate(id, true, (_, existing) => existing || true);
             }
 
+            _markAffinityPhase(streamId, perspectiveName, "report");
             await _reportCompletionAndSignalSyncAsync(
               result, processedEvents, groupWorkCoordinator, streamId, perspectiveName, ct);
+            _markAffinityPhase(streamId, perspectiveName, "post-lifecycle");
             await _invokePostPerspectiveLifecycleAsync(
               processedEvents, groupReceptorInvoker, streamCtx, result,
               new PostPerspectiveLifecycleOptions(enableLifecycleSpans, processingMode, IsNewByEventId: null), ct);
@@ -1162,6 +1222,7 @@ public partial class PerspectiveWorker(
           }
         } finally {
           Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+          _markAffinityReleased(gateEntry);
           gateEntry.Semaphore.Release();
           _sweepIdleStreamAffinityGatesIfDue();
         }
@@ -1257,18 +1318,118 @@ public partial class PerspectiveWorker(
     var gateEntry = _streamAffinityGates.GetOrAdd((streamId, perspectiveName), static _ => new StreamAffinityGateEntry());
     Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
     // Fast path: take the gate synchronously when it's free (the common case — different streams, or
-    // one applier per stream). Only when it's already HELD do we surface contention + park. Wait(0)
-    // never blocks; it just reports whether the slot was free.
-    if (!gateEntry.Semaphore.Wait(0, CancellationToken.None)) {
+    // one applier per stream). Only when it's already HELD do we surface contention + park. A zero
+    // timeout completes at once; it just reports whether the slot was free.
+    if (!await gateEntry.Semaphore.WaitAsync(0, CancellationToken.None).ConfigureAwait(false)) {
       OnStreamAffinityGateContended?.Invoke((streamId, perspectiveName));
       await gateEntry.Semaphore.WaitAsync(ct).ConfigureAwait(false);
     }
+    _markAffinityHeld(gateEntry, "drain");
     try {
       await body().ConfigureAwait(false);
     } finally {
       Interlocked.Exchange(ref gateEntry.LastActivityTicks, DateTimeOffset.UtcNow.Ticks);
+      _markAffinityReleased(gateEntry);
       _ = gateEntry.Semaphore.Release();
       _sweepIdleStreamAffinityGatesIfDue();
+    }
+  }
+
+  /// <summary>One affinity gate held by an apply in progress: who holds it, where it is, and for how long.</summary>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  public readonly record struct AffinityHold(Guid StreamId, string PerspectiveName, string Path, string Phase, TimeSpan Held);
+
+  private void _markAffinityHeld(StreamAffinityGateEntry entry, string path) {
+    entry.Path = path;
+    entry.Phase = "entered";
+    Interlocked.Exchange(ref entry.LastWarnedTicks, 0);
+    Interlocked.Exchange(ref entry.HeldSinceTicks, _timeProvider.GetUtcNow().UtcTicks);
+  }
+
+  private static void _markAffinityReleased(StreamAffinityGateEntry entry) {
+    Interlocked.Exchange(ref entry.HeldSinceTicks, 0);
+    entry.Phase = string.Empty;
+  }
+
+  /// <summary>Records what the holder of (stream, perspective) is doing, for the watchdog to name.</summary>
+  private void _markAffinityPhase(Guid streamId, string perspectiveName, string phase) {
+    if (_streamAffinityGates.TryGetValue((streamId, perspectiveName), out var entry)) {
+      entry.Phase = phase;
+    }
+  }
+
+  /// <summary>The held gates aged against <paramref name="now"/>, longest first, with their entries.</summary>
+  private List<(StreamAffinityGateEntry Entry, AffinityHold Hold)> _affinityHoldsOlderThan(long olderThanTicks, long now) {
+    var holds = new List<(StreamAffinityGateEntry Entry, AffinityHold Hold)>();
+    foreach (var (key, entry) in _streamAffinityGates) {
+      var since = Interlocked.Read(ref entry.HeldSinceTicks);
+      if (since == 0) {
+        continue;
+      }
+      var held = now - since;
+      if (held < olderThanTicks) {
+        continue;
+      }
+      holds.Add((entry, new AffinityHold(key.StreamId, key.PerspectiveName, entry.Path, entry.Phase, TimeSpan.FromTicks(Math.Max(0L, held)))));
+    }
+    holds.Sort(static (a, b) => b.Hold.Held.CompareTo(a.Hold.Held));
+    return holds;
+  }
+
+  /// <summary>
+  /// The affinity gates held for at least <paramref name="olderThan"/>, longest first. A live stall
+  /// read as one drain consumer holding a gate against an idle database, with nothing in the logs to
+  /// say which stream, which perspective or which step; this answers that question.
+  /// </summary>
+  /// <param name="olderThan">Minimum hold age to include; <see cref="TimeSpan.Zero"/> lists every hold.</param>
+  /// <param name="nowUtcTicks">The clock to age against; defaults to the worker's clock.</param>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
+  internal IReadOnlyList<AffinityHold> SnapshotAffinityHolds(TimeSpan olderThan, long? nowUtcTicks = null) {
+    var now = nowUtcTicks ?? _timeProvider.GetUtcNow().UtcTicks;
+    return _affinityHoldsOlderThan(olderThan.Ticks, now).Select(static h => h.Hold).ToList();
+  }
+
+  /// <summary>
+  /// Names, at Warning, every affinity gate held longer than
+  /// <see cref="PerspectiveStreamAffinityOptions.LongHoldWarning"/>: once when the hold crosses the
+  /// threshold and once per threshold thereafter while it persists. Returns how many were named.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
+  internal int ReportLongAffinityHolds(long? nowUtcTicks = null) {
+    var threshold = _streamAffinityOptions.LongHoldWarning;
+    if (threshold <= TimeSpan.Zero) {
+      return 0;
+    }
+    var now = nowUtcTicks ?? _timeProvider.GetUtcNow().UtcTicks;
+    var reported = 0;
+    foreach (var (entry, hold) in _affinityHoldsOlderThan(threshold.Ticks, now)) {
+      var lastWarned = Interlocked.Read(ref entry.LastWarnedTicks);
+      if (lastWarned != 0 && now - lastWarned < threshold.Ticks) {
+        continue;
+      }
+      Interlocked.Exchange(ref entry.LastWarnedTicks, now);
+      LogAffinityGateHeldTooLong(_logger, hold.PerspectiveName, hold.StreamId, hold.Held.TotalSeconds, hold.Phase, hold.Path);
+      reported++;
+    }
+    return reported;
+  }
+
+  /// <summary>
+  /// The one periodic task in this worker; it exists to speak when nothing else moves. The idle sweep
+  /// runs on gate releases, so a consumer stuck inside an apply never triggers it. This timer does.
+  /// </summary>
+  private async Task _runAffinityWatchdogAsync(CancellationToken ct) {
+    var threshold = _streamAffinityOptions.LongHoldWarning;
+    if (threshold <= TimeSpan.Zero) {
+      return;
+    }
+    var interval = TimeSpan.FromTicks(Math.Max(TimeSpan.FromSeconds(5).Ticks, threshold.Ticks / 2));
+    using var timer = new PeriodicTimer(interval, _timeProvider);
+    // Cancellation disposes the timer, which completes a pending tick with false and ends the loop on
+    // its normal path: no exception to catch, and a token already canceled ends it before the first tick.
+    using var stop = ct.Register(static state => ((PeriodicTimer)state!).Dispose(), timer);
+    while (await timer.WaitForNextTickAsync(CancellationToken.None).ConfigureAwait(false)) {
+      ReportLongAffinityHolds();
     }
   }
 
@@ -1389,7 +1550,7 @@ public partial class PerspectiveWorker(
     await Parallel.ForEachAsync(
       eventsByStream,
       new ParallelOptions {
-        MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
+        MaxDegreeOfParallelism = _effectiveWidth(),
         CancellationToken = cancellationToken
       },
       (streamGroup, ct) => new ValueTask(_processDrainModeStreamAsync(
@@ -1421,6 +1582,29 @@ public partial class PerspectiveWorker(
       _instanceProvider.InstanceId, [.. streamIds], cancellationToken);
 
     if (rawEvents.Count == 0) {
+      // #679 reactive orphan disposal: an empty join for leased streams means the rows'
+      // source events are absent from the event store. Rows attempted past
+      // MaxPerspectiveEventAttempts with no surviving event are unprojectable orphans that
+      // would otherwise re-claim forever (the hard wedge). Dispose them ON CONTACT here,
+      // keyed on attempts — the joined-row dead-letter cap (FilterDeadLetteredAsync) can
+      // never see them because the join is empty. The age-bounded maintenance sweep (#687)
+      // is the backstop; this closes the burst-livelock window between sweeps.
+      if (_options.MaxPerspectiveEventAttempts is int maxAttempts) {
+        try {
+          var reaped = await workCoordinator.ReapExhaustedOrphanedPerspectiveRowsAsync(
+            _instanceProvider.InstanceId, streamIds, maxAttempts, cancellationToken).ConfigureAwait(false);
+          if (reaped > 0) {
+            LogOrphanedPerspectiveRowsReaped(_logger, reaped);
+            _deadLetterMetrics?.Added.Add(reaped,
+              new KeyValuePair<string, object?>("source_table", DeadLetterSourceTable.PERSPECTIVE_EVENTS),
+              new KeyValuePair<string, object?>("reason", "PerspectiveSourceEventMissing"));
+          }
+        } catch (Exception ex) when (ex is not OperationCanceledException) {
+#pragma warning disable CA1848
+          _logger.LogWarning(ex, "Reactive orphan disposal failed for {StreamCount} stream(s) — the #687 maintenance sweep remains the backstop", streamIds.Count);
+#pragma warning restore CA1848
+        }
+      }
       return null;
     }
 
@@ -1828,6 +2012,7 @@ public partial class PerspectiveWorker(
       CancellationToken ct) {
     await using var groupScope = _scopeFactory.CreateAsyncScope();
     var groupWorkCoordinator = groupScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+    _markAffinityPhase(streamId, perspectiveName, "resolve");
 
     // Collective-event sink (drain path twin of the channel-path guard): dispatch via
     // ICollectiveDispatcher and skip the per-stream runner. See _processCollectiveSinkAsync.
@@ -1841,6 +2026,7 @@ public partial class PerspectiveWorker(
         .Where(id => id != Guid.Empty)
         .Distinct()
         .ToArray();
+      _markAffinityPhase(streamId, perspectiveName, "collective");
       await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, sinkWorkIds, ct);
       return;
     }
@@ -1951,6 +2137,7 @@ public partial class PerspectiveWorker(
       linkedTokens: [ct]);
 
     var drainStartTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+    _markAffinityPhase(streamId, perspectiveName, "apply");
     try {
       await LeaseDispatchExecutor.RunWithLeaseAsync(lease, async leaseCt => {
         PerspectiveCursorCompletion result;
@@ -1994,11 +2181,13 @@ public partial class PerspectiveWorker(
 
         if (result.Status == PerspectiveProcessingStatus.Completed) {
           var streamCtx = new PerspectiveStreamContext(streamId, perspectiveName, lastProcessedEventId, groupScope.ServiceProvider);
+          _markAffinityPhase(streamId, perspectiveName, "completion");
           await _applyDrainModePerspectiveCompletionAsync(
             streamCtx, filteredEvents, result, batchContext, leaseCt);
         }
         var completionMs = (System.Diagnostics.Stopwatch.GetTimestamp() - runnerEndTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
 
+        _markAffinityPhase(streamId, perspectiveName, "report");
         await _completionStrategy.ReportCompletionAsync(result, groupWorkCoordinator, leaseCt);
 
         if (filteredEvents.Count > 0 && _syncEventTracker is not null) {
@@ -4009,6 +4198,10 @@ public partial class PerspectiveWorker(
   )]
   static partial void LogErrorProcessingPerspectiveCursor(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
 
+  [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
+    Message = "PerspectiveWorker MaxConcurrentDrainConsumers={Consumers} x drain width {Width} exceeds half of WorkCoordinatorGate.MaxConcurrent={GateMaxConcurrent}; per-consumer width clamped to {Effective} so the drain cannot hold every gate slot while the completion flusher and lease renewal wait behind it")]
+  static partial void LogWidthClampedToGate(ILogger logger, int consumers, int width, int gateMaxConcurrent, int effective);
+
   [LoggerMessage(
     EventId = 15,
     Level = LogLevel.Information,
@@ -4274,6 +4467,14 @@ public partial class PerspectiveWorker(
     Message = "Failed to acquire stream lock for rewind on {PerspectiveName} stream {StreamId}, deferring"
   )]
   static partial void LogFailedToAcquireRewindLock(ILogger logger, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(EventId = 63, Level = LogLevel.Warning,
+    Message = "Reactive orphan disposal reaped {Reaped} unprojectable perspective-event row(s) whose source event is absent from the event store (#679)")]
+  static partial void LogOrphanedPerspectiveRowsReaped(ILogger logger, int reaped);
+
+  [LoggerMessage(EventId = 64, Level = LogLevel.Warning,
+    Message = "Perspective {PerspectiveName} on stream {StreamId} has held its affinity gate for {HeldSeconds:F0} s in phase {Phase} ({Path} path). The consumer applying it is not making progress; the rows claimed for this stream stay leased meanwhile and are re-offered when the lease lapses")]
+  static partial void LogAffinityGateHeldTooLong(ILogger logger, string perspectiveName, Guid streamId, double heldSeconds, string phase, string path);
 
   [LoggerMessage(
     EventId = 44,

@@ -14,6 +14,7 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <typeparam name="T">Item type the channel carries.</typeparam>
 /// <docs>fundamentals/work-coordinator/batched-flushers</docs>
+/// <tests>tests/Whizbang.Core.Tests/Workers/BatchFlusherRetryTests.cs</tests>
 public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   private readonly Channel<T> _channel;
   private readonly Func<IReadOnlyList<T>, CancellationToken, Task> _flush;
@@ -28,6 +29,9 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
 
   /// <summary>Total flush calls invoked (observability).</summary>
   public long FlushCallCount { get; private set; }
+
+  /// <summary>Items dropped after <see cref="BatchFlusherOptions.MaxFlushAttempts"/> consecutive failed flushes (diagnostic).</summary>
+  public long ItemsDropped { get; private set; }
 
   /// <summary>Producer-side writer for callers to enqueue items.</summary>
   public ChannelWriter<T> Writer => _channel.Writer;
@@ -89,18 +93,48 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
         }
 
         try {
-          await _flush(batch, ct);
-          FlushCallCount++;
-          ItemsFlushed += batch.Count;
+          await _flushWithRetryAsync(batch, ct);
         } catch (OperationCanceledException) {
           break;
-        } catch (Exception ex) {
-          LogFlushError(_logger, batch.Count, ex);
-          // Items are lost on flush failure — caller's responsibility to make the flush idempotent.
         }
       }
     } finally {
       _stoppedSignal.TrySetResult();
+    }
+  }
+
+  /// <summary>
+  /// A failed flush is retried in place with a backoff instead of being discarded. The items are
+  /// completions, lease renewals and failures: losing them leaves rows leased until expiry and
+  /// re-claimed afterwards, which is how one transient timeout turned into lease churn under a bulk
+  /// import. The flush is idempotent by contract, so retrying after a partial success is safe. Only
+  /// after <see cref="BatchFlusherOptions.MaxFlushAttempts"/> consecutive failures is the batch
+  /// dropped, at Error, with the consequence named.
+  /// </summary>
+  private async Task _flushWithRetryAsync(List<T> batch, CancellationToken ct) {
+    var maxAttempts = Math.Max(1, _options.MaxFlushAttempts);
+    var attempts = 0;
+    while (true) {
+      attempts++;
+      try {
+        await _flush(batch, ct);
+        FlushCallCount++;
+        ItemsFlushed += batch.Count;
+        return;
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        if (attempts >= maxAttempts) {
+          ItemsDropped += batch.Count;
+          LogBatchDropped(_logger, batch.Count, attempts, ex);
+          return;
+        }
+        var backoffMs = Math.Min(
+          Math.Max(1, _options.FlushRetryBackoffMs) * (1 << Math.Min(attempts - 1, 6)),
+          Math.Max(1, _options.FlushRetryMaxBackoffMs));
+        LogFlushRetry(_logger, batch.Count, attempts, maxAttempts, backoffMs, ex);
+        await Task.Delay(backoffMs, ct);
+      }
     }
   }
 
@@ -155,8 +189,12 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   static partial void LogDrainTimeout(ILogger logger, int drainTimeoutMs);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
-    Message = "BatchFlusher flush failed for batch of {Count}; items lost (caller flush should be idempotent)")]
-  static partial void LogFlushError(ILogger logger, int count, Exception ex);
+    Message = "BatchFlusher flush failed for batch of {Count} (attempt {Attempt} of {MaxAttempts}); retrying the same batch in {BackoffMs}ms")]
+  static partial void LogFlushRetry(ILogger logger, int count, int attempt, int maxAttempts, int backoffMs, Exception ex);
+
+  [LoggerMessage(EventId = 3, Level = LogLevel.Error,
+    Message = "BatchFlusher dropped a batch of {Count} after {Attempts} failed flushes; the rows behind these items stay leased until their lease expires and are then re-claimed and redone (the flush is idempotent)")]
+  static partial void LogBatchDropped(ILogger logger, int count, int attempts, Exception ex);
 }
 
 /// <summary>Configuration for <see cref="BatchFlusher{T}"/>.</summary>
@@ -180,4 +218,13 @@ public sealed class BatchFlusherOptions {
   /// and logs a warning, which is strictly better than blocking host shutdown indefinitely.
   /// </summary>
   public int DrainTimeoutMs { get; set; } = 5_000;
+
+  /// <summary>Consecutive failed flushes of one batch before it is dropped. Default 5.</summary>
+  public int MaxFlushAttempts { get; set; } = 5;
+
+  /// <summary>Backoff before the first retry of a failed flush, doubled per attempt. Default 250 ms.</summary>
+  public int FlushRetryBackoffMs { get; set; } = 250;
+
+  /// <summary>Cap on the retry backoff. Default 5000 ms.</summary>
+  public int FlushRetryMaxBackoffMs { get; set; } = 5_000;
 }

@@ -1887,6 +1887,22 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(new List<StreamEventData>());
 
   /// <summary>
+  /// Reactive orphan disposal (#679). When <see cref="GetStreamEventsAsync"/> returns nothing
+  /// for a leased stream, its rows may be orphaned — their source event is absent from the
+  /// event store, so they can never project and would re-claim forever. This disposes such
+  /// rows ON CONTACT for the given streams, scoped to this instance's leases and keyed on
+  /// <paramref name="maxAttempts"/>: a row attempted that many times with no surviving event is
+  /// unambiguously an orphan, so attempts (not age) are the safety. Returns the count reaped.
+  /// Default is a no-op for coordinators that do not back a relational event store.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/drain-mode</docs>
+  Task<int> ReapExhaustedOrphanedPerspectiveRowsAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> streamIds,
+    int maxAttempts,
+    CancellationToken cancellationToken = default) => Task.FromResult(0);
+
+  /// <summary>
   /// Slice 26.6b — returns the local service's stable identity from
   /// <c>wh_service_config</c>. Cached by callers (publish path) at startup; queried
   /// once per process. Default implementation returns <see cref="Guid.Empty"/> for
@@ -2091,6 +2107,52 @@ public interface IWorkCoordinator {
     IReadOnlyList<string> handledTypeNames,
     CancellationToken cancellationToken = default)
     => Task.FromResult<IReadOnlyList<PurgedOrphanInboxRow>>([]);
+
+  /// <summary>
+  /// Deletes pending, unleased <c>wh_inbox</c> rows whose <c>message_type</c> names one of
+  /// <paramref name="messageTypeNames"/>: the maintenance sweep's way to drop work this service has decided
+  /// not to perform. The maintenance worker passes <see cref="RepairTraffic.InboxMessageTypeNames"/> while
+  /// <see cref="StreamIntegrityOptions.RepairMode"/> is <see cref="IntegrityRepairMode.ReportOnly"/>; without
+  /// the sweep, a repair row that failed and backed off waits out its schedule and is only then discarded,
+  /// one row per dispatch, long after the operator opted down.
+  /// </summary>
+  /// <remarks>
+  /// A stored <c>message_type</c> may carry assembly version metadata or an envelope wrapper around the
+  /// normalized name, so implementations match by containment of each normalized name. Leased rows are
+  /// skipped: a row mid-dispatch is discarded by the dispatch seam, which applies the same mode check, and
+  /// deleting under a live lease could race its completion. Empty list = no-op. Default impl returns 0 so
+  /// non-Postgres backends and test fakes need not override.
+  /// </remarks>
+  /// <param name="messageTypeNames">Normalized assembly-qualified type names (see
+  /// <see cref="EventTypeMatchingHelper.NormalizeTypeName"/>).</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows deleted.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiscardPendingMessagesSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperDiscardPendingMessagesTests.cs</tests>
+  Task<long> DiscardPendingInboxMessagesAsync(
+    IReadOnlyList<string> messageTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0L);
+
+  /// <summary>
+  /// The outbox half of <see cref="DiscardPendingInboxMessagesAsync"/>: deletes pending, unleased
+  /// <c>wh_outbox</c> rows whose <c>message_type</c> names one of <paramref name="messageTypeNames"/>. The
+  /// maintenance worker passes <see cref="IntegrityTraffic.OutboxTypesToDiscard"/>: what this service
+  /// minted for a stream-integrity feature that is now off and never published (checkpoints, audit asks,
+  /// report events, repair bundles), which would otherwise sit unpublished for as long as the feature is off.
+  /// </summary>
+  /// <remarks>Same matching and lease rules as the inbox half; empty list = no-op; default impl returns 0.</remarks>
+  /// <param name="messageTypeNames">Normalized assembly-qualified type names.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>The number of rows deleted.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/MaintenanceWorkerIntegritySweepTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DiscardPendingMessagesSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperDiscardPendingMessagesTests.cs</tests>
+  Task<long> DiscardPendingOutboxMessagesAsync(
+    IReadOnlyList<string> messageTypeNames,
+    CancellationToken cancellationToken = default)
+    => Task.FromResult(0L);
 
   /// <summary>
   /// v0.657 slice 5: structural canary for the "row claimed but never drained"

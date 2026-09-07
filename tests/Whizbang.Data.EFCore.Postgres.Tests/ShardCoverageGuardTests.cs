@@ -32,13 +32,19 @@ public class ShardCoverageGuardTests {
                    .Any(m => m.GetCustomAttributes(typeof(TestAttribute), inherit: false).Length > 0))
       .Select(t => new {
         Type = t,
-        Shards = t.GetCustomAttributes(typeof(CategoryAttribute), inherit: true)
-                  .Cast<CategoryAttribute>()
-                  .Select(c => c.Category)
-                  .Where(c => c.StartsWith("Shard", StringComparison.Ordinal))
-                  .ToList()
+        Categories = t.GetCustomAttributes(typeof(CategoryAttribute), inherit: true)
+                     .Cast<CategoryAttribute>()
+                     .Select(c => c.Category)
+                     .ToList()
       })
-      .Where(x => x.Shards.Count != 1)
+      .Select(x => new {
+        x.Type,
+        Shards = x.Categories.Where(c => c.StartsWith("Shard", StringComparison.Ordinal)).ToList(),
+        // Benchmark classes run on a scheduled or manual job, never in a PR slice: the category is the
+        // alternative to a shard, and a class must carry exactly one of the two.
+        IsBenchmark = x.Categories.Contains("Benchmark")
+      })
+      .Where(x => x.IsBenchmark ? x.Shards.Count != 0 : x.Shards.Count != 1)
       .Select(x => $"{x.Type.FullName} -> [{string.Join(", ", x.Shards)}]")
       .OrderBy(s => s)
       .ToList();
@@ -46,6 +52,7 @@ public class ShardCoverageGuardTests {
     await Assert.That(offenders).IsEmpty()
       .Because("CI runs this project as [Category=ShardN] slices; a class with no shard category "
              + "runs in NO slice and silently stops being tested, and one with two runs twice. "
-             + "Offenders listed above — give each exactly one Shard category.");
+             + "A [Category(\"Benchmark\")] class runs on the scheduled benchmark job instead and must carry no shard. "
+             + "Offenders listed above - give each exactly one Shard category (or Benchmark alone).");
   }
 }

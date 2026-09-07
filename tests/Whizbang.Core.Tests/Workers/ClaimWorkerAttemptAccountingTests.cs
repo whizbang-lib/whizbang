@@ -56,8 +56,10 @@ public class ClaimWorkerAttemptAccountingTests {
   [Test]
   public async Task CleanWork_GrowsTheClaimWindowInsteadOfNarrowingItAsync() {
     var coord = new RecordingCoordinator {
-      // attempts == 1 is a FIRST claim, not a re-claim: nothing to correct.
-      BatchToReturn = _batchOf(rows: 4, attempts: 1)
+      // attempts == 1 is a FIRST claim, not a re-claim: nothing to correct. The claim fills the floor:
+      // a sample narrower than the floor was not limited by the window and moves it in neither
+      // direction (see AdaptiveClaimWindowSampleSizeTests).
+      BatchToReturn = _batchOf(rows: 25, attempts: 1)
     };
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
       PollingIntervalMilliseconds = 20,
@@ -367,6 +369,7 @@ public class ClaimWorkerAttemptAccountingTests {
     // 200 inbox + 400 outbox + 400 perspective = 1000 outstanding. Inbox alone reads 200.
     var coord = new RecordingCoordinator { BatchToReturn = _mixedBatch(200, 400, 400) };
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      AdaptiveOutstandingBudget = true,
       PollingIntervalMilliseconds = 20,
       PollingMaxIntervalMilliseconds = 60,
       MaxStreamsPerBatch = 5000,

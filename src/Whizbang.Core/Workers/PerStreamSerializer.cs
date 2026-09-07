@@ -114,7 +114,7 @@ public sealed class PerStreamSerializer<T> : IAsyncDisposable {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
       // shutdown deadline hit; remaining workers will observe _stopCts when canceled
-      _stopCts.Cancel();
+      await _stopCts.CancelAsync().ConfigureAwait(false);
     }
     _stopCts.Dispose();
   }

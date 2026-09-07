@@ -35,4 +35,23 @@ public class PerspectiveWorkerParallelismTests {
     opts.MaxConcurrentDrainConsumers = 8;
     await Assert.That(opts.MaxConcurrentDrainConsumers).IsEqualTo(8);
   }
+
+  [Test]
+  public async Task ClampWidthToGate_LeavesHalfTheGateForEverythingElseAsync() {
+    // 4 consumers x 30 wide = 120 bodies against a 50-slot gate: the drain held every slot while the
+    // completion flusher and lease renewal queued behind it. The drain may use at most half the gate,
+    // split across its consumers.
+    await Assert.That(PerspectiveWorker.ClampWidthToGate(consumers: 4, width: 30, gateMaxConcurrent: 50)).IsEqualTo(6);
+    await Assert.That(PerspectiveWorker.ClampWidthToGate(consumers: 1, width: 30, gateMaxConcurrent: 50)).IsEqualTo(25);
+    await Assert.That(PerspectiveWorker.ClampWidthToGate(consumers: 2, width: 3, gateMaxConcurrent: 50)).IsEqualTo(3)
+      .Because("a width already under the cap is untouched");
+  }
+
+  [Test]
+  public async Task ClampWidthToGate_NeverBelowOne_AndIgnoresADisabledGateAsync() {
+    await Assert.That(PerspectiveWorker.ClampWidthToGate(consumers: 8, width: 30, gateMaxConcurrent: 4)).IsEqualTo(1)
+      .Because("a serialized drain is the floor; the clamp must not stop it");
+    await Assert.That(PerspectiveWorker.ClampWidthToGate(consumers: 4, width: 30, gateMaxConcurrent: 0)).IsEqualTo(30)
+      .Because("MaxConcurrent <= 0 disables the gate, so there is nothing to protect");
+  }
 }

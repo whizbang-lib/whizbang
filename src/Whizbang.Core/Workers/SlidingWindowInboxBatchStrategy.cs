@@ -107,7 +107,7 @@ public sealed class SlidingWindowInboxBatchStrategy : IInboxBatchStrategy {
     try {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
-      _stopCts.Cancel();
+      await _stopCts.CancelAsync().ConfigureAwait(false);
     }
     _stopCts.Dispose();
   }

@@ -151,10 +151,46 @@ public sealed class DeadLetterRecoveryOptions {
   public int ScanIntervalMinutes { get; set; } = 10;
 
   /// <summary>
-  /// Maximum DLQ rows fetched per scan cycle. Bounds how many rows a single cycle
-  /// processes — subsequent scans pick up where prior ones stopped. Default <c>200</c>.
+  /// Maximum DLQ rows fetched per scan cycle — the CEILING the adaptive controller ramps
+  /// toward (see <see cref="AdaptiveScanBatchEnabled"/>). With adaptivity on (the default) a
+  /// scan never bursts to this size cold; it climbs additively from
+  /// <see cref="MinScanBatchSize"/> only while drain stays clean, so a high ceiling is safe.
+  /// With adaptivity off this is the fixed per-scan batch. Default <c>2000</c>.
   /// </summary>
-  public int ScanBatchSize { get; set; } = 200;
+  public int ScanBatchSize { get; set; } = 2000;
+
+  /// <summary>
+  /// When <c>true</c> (default), the settled-path scan batch is sized by an AIMD controller
+  /// (the same <see cref="Whizbang.Core.Workers.AdaptiveStreamBatch"/> the claim path uses):
+  /// it starts at <see cref="MinScanBatchSize"/>, grows by <see cref="ScanBatchIncreaseStep"/>
+  /// on each clean, saturated scan up to <see cref="ScanBatchSize"/>, and halves when a pass is
+  /// forced through under pressure. This lets a large backlog drain fast on an idle service
+  /// without a fixed high batch bursting into a busy one. When <c>false</c>, the fixed
+  /// <see cref="ScanBatchSize"/> is used every settled scan (legacy behavior).
+  /// </summary>
+  public bool AdaptiveScanBatchEnabled { get; set; } = true;
+
+  /// <summary>
+  /// Floor and starting point for the adaptive scan batch — the batch a freshly started worker
+  /// uses before any drain feedback, and the size it backs off toward under pressure. Must still
+  /// make forward progress. Default <c>50</c>. Ignored when <see cref="AdaptiveScanBatchEnabled"/>
+  /// is <c>false</c>.
+  /// </summary>
+  public int MinScanBatchSize { get; set; } = 50;
+
+  /// <summary>
+  /// Rows added to the adaptive scan batch per clean, saturated scan (additive increase).
+  /// Default <c>200</c>. Ignored when <see cref="AdaptiveScanBatchEnabled"/> is <c>false</c>.
+  /// </summary>
+  public int ScanBatchIncreaseStep { get; set; } = 200;
+
+  /// <summary>
+  /// Re-claim/pressure ratio above which the adaptive scan batch halves (multiplicative
+  /// decrease). A pass forced through the settledness gate counts as full churn, so sustained
+  /// pressure walks the batch back to <see cref="MinScanBatchSize"/>. Default <c>0.5</c>.
+  /// Ignored when <see cref="AdaptiveScanBatchEnabled"/> is <c>false</c>.
+  /// </summary>
+  public double ScanBatchChurnThreshold { get; set; } = 0.5;
 
   /// <summary>
   /// Scan batch when recovery was FORCED through the settledness gate by the bounded-deferral

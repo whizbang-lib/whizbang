@@ -31,7 +31,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class NotifyDebounceSqlTests : EFCoreTestBase {
 
   [Test]
-  public async Task FreshWatermark_SuppressesNotify_AndSlidesTheWatermarkAsync() {
+  public async Task FloodTowardFreshWatermark_SuppressesNotify_AndSlidesTheWatermarkAsync() {
+    // Adaptive (137): a fresh watermark alone no longer suppresses — suppression requires a
+    // sustained FLOOD toward a draining live target. Here the suppressed target is primed at
+    // rapid_run = churn-1 with its last doorbell 30ms ago, so THIS doorbell trips the ceiling.
+    // The two-target fence and the slide-on-suppress are preserved.
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
     var suppressed = (Guid)TrackedGuid.NewMedo();
@@ -42,11 +46,11 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await _registerInstanceAsync(conn, control, TimeSpan.Zero);
     await _ownStreamAsync(conn, streamA, suppressed);
     await _ownStreamAsync(conn, streamB, control);
-    await _setWatermarkAsync(conn, suppressed, ageSeconds: 2);   // fresh: inside the 7s window
+    await _primeRowAsync(conn, suppressed, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 30, rapidRun: 4);
     await _setWatermarkAsync(conn, control, ageSeconds: 600);    // stale: must fire
 
     var received = await _captureNotificationsAsync(conn, [suppressed, control], async () => {
-      await _notifyAsync(conn, "inbox", streamA);   // toward the fresh watermark
+      await _notifyAsync(conn, "inbox", streamA);   // toward the flooded, draining target
       await _notifyAsync(conn, "inbox", streamB);   // toward the stale one — the ordering fence
     });
 
@@ -55,8 +59,8 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{control}")).IsTrue()
       .Because("a stale watermark means the instance may be asleep — the doorbell must ring");
     await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{suppressed}")).IsFalse()
-      .Because("a fresh watermark means the target is draining or lingering — every extra "
-             + "doorbell to it is the redundant pg_notify load the debounce exists to remove");
+      .Because("a sustained flood toward a draining target is the redundant pg_notify load the "
+             + "debounce exists to remove — the linger poll delivers the suppressed store");
 
     await Assert.That(await _watermarkAgeSecondsAsync(conn, suppressed)).IsLessThan(2)
       .Because("a suppressed store slides the watermark: it IS work, and the drainer's "
@@ -64,7 +68,7 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task StaleWatermark_Fires_WithoutStampingAsync() {
+  public async Task StaleWatermark_Fires_WithoutArmingSuppressionAsync() {
     await using var dbContext = CreateDbContext();
     var conn = await _openAsync(dbContext);
     var inst = (Guid)TrackedGuid.NewMedo();
@@ -77,16 +81,17 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
       await _notifyAsync(conn, "inbox", stream));
 
     await Assert.That(received.Count).IsEqualTo(1);
-    await using var q = conn.CreateCommand();
-    q.CommandText = "SELECT count(*) FROM wh_notify_state WHERE instance_id = @id";
-    q.Parameters.AddWithValue("id", inst);
-    await Assert.That((long)(await q.ExecuteScalarAsync() ?? 0L)).IsEqualTo(0L)
-      .Because("a fire must NOT stamp the watermark (131): only a claim that actually finds "
-             + "work may arm suppression, because only found work arms the C# drain linger "
-             + "that makes suppression safe. The predicted-awake stamp armed suppression on a "
-             + "mere prediction — and when the woken claim found nothing (a pre-visibility "
-             + "wake ahead of a fenced stamp), the make-up doorbell was swallowed with no "
-             + "linger polling to cover it, quantizing visibility to the adaptive poll cap");
+    // The adaptive controller (137) records the attempt (rate state, for flood detection), but a
+    // fire MUST NOT arm suppression: the row it creates carries last_work_at = NULL. Only a claim
+    // that finds work may arm it (131/133) — the same condition that arms the C# drain linger.
+    // This replaces the old "no row on fire" rule with a type-enforced NULL watermark: a woken-
+    // but-empty claim's make-up doorbell can never be swallowed, since NULL fails the freshness
+    // gate and cannot suppress (issue #677 part 1).
+    var s = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(s.LastWorkIsNull).IsTrue()
+      .Because("a fire records rate state but must not arm suppression — a NULL watermark can "
+             + "never satisfy the freshness gate, so the make-up doorbell is never swallowed");
+    await Assert.That(s.FiredCount).IsEqualTo(1L);
   }
 
   [Test]
@@ -285,6 +290,140 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
              + "each kind's consumers earn suppression only from their own kind");
   }
 
+  [Test]
+  public async Task SporadicDoorbell_FiresDespiteFreshWatermark_WhenNotInFloodAsync() {
+    // Adaptive notify (interactive-latency fix): a LONE doorbell toward a live instance whose
+    // found-work watermark is fresh must still FIRE. The pre-adaptive debounce suppressed it —
+    // any recent activity (fresh watermark) armed suppression, so a single chat message landing
+    // within the window of unrelated prior work was stranded on the drainer's adaptive poll cap
+    // (the #677 class: forensic ~10.5s against a ~1.5s budget). Suppression must require a
+    // sustained flood, not mere recent draining: one doorbell is not a storm.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var inst = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+    await _ownStreamAsync(conn, stream, inst);
+    await _setWatermarkAsync(conn, inst, ageSeconds: 2);   // fresh: drained 2s ago, linger active
+
+    var received = await _captureNotificationsAsync(conn, [inst], async () =>
+      await _notifyAsync(conn, "inbox", stream));         // a single, isolated doorbell
+
+    await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{inst}")).IsTrue()
+      .Because("one sporadic doorbell is not a flood — it must fire immediately so an "
+             + "interactive message is delivered on the doorbell, not quantized to the "
+             + "drainer's adaptive poll cap. Only a sustained rapid run may debounce.");
+  }
+
+  [Test]
+  public async Task FloodRun_EscalatesToCeiling_SuppressesTowardDrainingTargetAsync() {
+    // Adaptive notify: a SUSTAINED rapid run toward a live target that is genuinely draining
+    // (fresh found-work watermark) escalates the window to the ceiling and debounces — the #665
+    // churn win under real fan-out load, preserved. rapid_run reaches notify_churn_run (5) on
+    // this doorbell (primed at 4, arriving 30ms after the last — inside the 100ms rapid gap).
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var inst = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+    await _ownStreamAsync(conn, stream, inst);
+    await _primeRowAsync(conn, inst, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 30, rapidRun: 4);
+
+    var received = await _captureNotificationsAsync(conn, [inst], async () =>
+      await _notifyAsync(conn, "inbox", stream));
+
+    await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{inst}")).IsFalse()
+      .Because("a sustained rapid run toward a draining live target debounces at the ceiling — "
+             + "the linger poll (which outlives the ceiling) delivers the suppressed store");
+    var s = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(s.RapidRun).IsEqualTo(5);
+    await Assert.That(s.SuppressedCount).IsEqualTo(1L);
+    await Assert.That(s.EffectiveWindowMs).IsEqualTo(7000)
+      .Because("crossing churn escalates the effective window to the ceiling (7s) — the regime gauge");
+  }
+
+  [Test]
+  public async Task CalmGap_ResetsRapidRun_FiresAndLeavesWatermarkArmedAsync() {
+    // A calm gap (wider than the rapid gap) resets the run to 0 even if it was high: the target
+    // is no longer flooding, so its doorbell fires at the floor. And a fire must NOT clobber the
+    // found-work watermark — only claim_work owns last_work_at.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var inst = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+    await _ownStreamAsync(conn, stream, inst);
+    await _primeRowAsync(conn, inst, "inbox", lastWorkAgeSeconds: 2, lastAttemptMsAgo: 5000, rapidRun: 10);
+
+    var received = await _captureNotificationsAsync(conn, [inst], async () =>
+      await _notifyAsync(conn, "inbox", stream));
+
+    await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{inst}")).IsTrue()
+      .Because("a calm gap means the flood is over — the doorbell fires at the floor again");
+    var s = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(s.RapidRun).IsEqualTo(0);
+    await Assert.That(s.FiredCount).IsEqualTo(1L);
+    await Assert.That(s.EffectiveWindowMs).IsEqualTo(50);
+    await Assert.That(await _watermarkAgeSecondsAsync(conn, inst)).IsLessThan(4)
+      .Because("a fire must NOT reset the found-work watermark — claim_work alone owns last_work_at, "
+             + "so it stays ~2s armed, not slid or cleared by the fire");
+  }
+
+  [Test]
+  public async Task CeilingZero_OffSwitch_AlwaysFires_EvenUnderFloodAsync() {
+    // notify_debounce_seconds <= 0 disables suppression entirely — the off switch — regardless
+    // of rapid_run or watermark freshness. Preserves 130's off-switch semantics adaptively.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var inst = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+    await _ownStreamAsync(conn, stream, inst);
+    await _setSettingAsync(conn, "notify_debounce_seconds", "0");
+    await _primeRowAsync(conn, inst, "inbox", lastWorkAgeSeconds: 1, lastAttemptMsAgo: 20, rapidRun: 50);
+
+    var received = await _captureNotificationsAsync(conn, [inst], async () =>
+      await _notifyAsync(conn, "inbox", stream));
+
+    await Assert.That(received.Any(r => r.Channel == $"wh_work_i_{inst}")).IsTrue()
+      .Because("ceiling <= 0 is the global off switch: suppression is disabled entirely, even "
+             + "under a sustained flood toward a draining target");
+    var s = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(s.EffectiveWindowMs).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FireBornRow_NullWatermark_NeverSelfSuppresses_NoMatterHowRapidAsync() {
+    // The #677 part-1 invariant, now type-enforced: a doorbell FIRE records rate state but leaves
+    // last_work_at NULL (claim_work alone arms it). So even back-to-back fires (rapid_run climbs)
+    // cannot suppress a later doorbell — a NULL watermark can never satisfy the freshness gate.
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var inst = (Guid)TrackedGuid.NewMedo();
+    var stream = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(conn, inst, TimeSpan.Zero);
+    await _ownStreamAsync(conn, stream, inst);
+    // No prior row and no claim_work arming: the controller must create the row on the fire.
+
+    var first = await _captureNotificationsAsync(conn, [inst], async () =>
+      await _notifyAsync(conn, "inbox", stream));
+    await Assert.That(first.Any(r => r.Channel == $"wh_work_i_{inst}")).IsTrue();
+    var afterFirst = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(afterFirst.LastWorkIsNull).IsTrue()
+      .Because("a fire must never arm suppression — the fire-born row carries a NULL watermark");
+
+    // Immediately again (no delay): the gap is tiny, so rapid_run climbs past churn — yet with a
+    // NULL watermark, suppression is impossible. The doorbell fires.
+    var second = await _captureNotificationsAsync(conn, [inst], async () =>
+      await _notifyAsync(conn, "inbox", stream));
+    await Assert.That(second.Any(r => r.Channel == $"wh_work_i_{inst}")).IsTrue()
+      .Because("a fire-born row (NULL last_work_at) can never suppress a later doorbell no matter "
+             + "how rapid the run — claim_work must arm the watermark first (#677 part 1)");
+    var afterSecond = await _readNotifyStateAsync(conn, inst);
+    await Assert.That(afterSecond.LastWorkIsNull).IsTrue();
+    await Assert.That(afterSecond.FiredCount).IsEqualTo(2L);
+  }
+
   // ============================================================================
   // helpers
   // ============================================================================
@@ -336,6 +475,55 @@ public class NotifyDebounceSqlTests : EFCoreTestBase {
     cmd.Parameters.AddWithValue("kind", kind);
     var v = await cmd.ExecuteScalarAsync();
     return v is null or DBNull ? double.MaxValue : Convert.ToDouble(v, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  // Prime a wh_notify_state row with an explicit watermark + rate state — no sleeps: ages are
+  // set directly. lastWorkAgeSeconds = null means the found-work watermark is NULL (never armed).
+  private static async Task _primeRowAsync(NpgsqlConnection conn, Guid inst, string kind,
+      int? lastWorkAgeSeconds, int lastAttemptMsAgo, int rapidRun) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      INSERT INTO wh_notify_state (instance_id, payload_kind, last_work_at, last_attempt_at, rapid_run)
+      VALUES (@id, @kind,
+              CASE WHEN @lwNull THEN NULL ELSE NOW() - make_interval(secs => @lwAge) END,
+              NOW() - make_interval(secs => @laMs / 1000.0),
+              @rr)
+      ON CONFLICT (instance_id, payload_kind) DO UPDATE
+        SET last_work_at = EXCLUDED.last_work_at,
+            last_attempt_at = EXCLUDED.last_attempt_at,
+            rapid_run = EXCLUDED.rapid_run";
+    cmd.Parameters.AddWithValue("id", inst);
+    cmd.Parameters.AddWithValue("kind", kind);
+    cmd.Parameters.AddWithValue("lwNull", lastWorkAgeSeconds is null);
+    cmd.Parameters.AddWithValue("lwAge", (double)(lastWorkAgeSeconds ?? 0));
+    cmd.Parameters.AddWithValue("laMs", (double)lastAttemptMsAgo);
+    cmd.Parameters.AddWithValue("rr", rapidRun);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task _setSettingAsync(NpgsqlConnection conn, string key, string value) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "UPDATE wh_settings SET setting_value = @v WHERE setting_key = @k";
+    cmd.Parameters.AddWithValue("k", key);
+    cmd.Parameters.AddWithValue("v", value);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
+  private static async Task<(long FiredCount, long SuppressedCount, int RapidRun,
+      int EffectiveWindowMs, bool LastWorkIsNull)> _readNotifyStateAsync(
+      NpgsqlConnection conn, Guid inst, string kind = "inbox") {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"SELECT fired_count, suppressed_count, rapid_run, effective_window_ms,
+                               (last_work_at IS NULL)
+                        FROM wh_notify_state WHERE instance_id = @id AND payload_kind = @kind";
+    cmd.Parameters.AddWithValue("id", inst);
+    cmd.Parameters.AddWithValue("kind", kind);
+    await using var reader = await cmd.ExecuteReaderAsync();
+    if (!await reader.ReadAsync()) {
+      return (0L, 0L, 0, 0, true);
+    }
+    return (reader.GetInt64(0), reader.GetInt64(1), reader.GetInt32(2), reader.GetInt32(3),
+            reader.GetBoolean(4));
   }
 
   private static async Task _notifyAsync(NpgsqlConnection conn, string payload, Guid streamId) {
