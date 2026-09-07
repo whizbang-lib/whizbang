@@ -3357,3 +3357,46 @@ means something. Line 73 now covered, and 75/76 with it.
 
 Worth noting what caught each: the first was caught by a line number that could not move, the
 second by a line that did not move. Neither would have been visible from the test's own result.
+
+## CP. Final measurement — and how to measure this repo when a full sweep will not run
+
+**97.8% (117,912 / 120,501), 29 assemblies, 74 merged cobertura reports.** Directly comparable to
+the 98.7% baseline: same 29 assemblies, same assembly list, same `-filefilters`.
+
+```
+coverable  117,622 -> 120,501   (+2,879)
+covered    116,110 -> 117,912   (+1,802)
+uncovered    1,512 ->   2,589   (+1,077)
+percent       98.7 ->    97.8
+```
+
+**The percentage fell because the denominator grew, not because coverage regressed.** Merging
+develop brought 46 commits of new production code — 2,879 newly coverable lines, of which 63%
+arrive covered. This round closed roughly 350 previously-uncovered lines; the merge added about
+1,400 new uncovered ones. Both facts are true at once and neither should be quoted without the
+other.
+
+### The measurement recipe, since five full sweeps were OOM-killed
+
+1. **Shut down the build server first.** `VBCSCompiler` reached 4.86 GB, was cleared, and had
+   regrown to 4.18 GB hours later. It accumulates across a session of repeated builds and nothing
+   reclaims it.
+2. **Run in the foreground, chunked.** Background jobs get reaped under memory pressure — even a
+   30-second sleep loop was killed — while every foreground build and scoped run survived.
+3. **Slice per project**, then merge with the same `reportgenerator` invocation and `-filefilters`
+   the script uses. The merge is file-based (`MultiReport (Nx Cobertura)`), so it does not care
+   whether one process or forty produced the inputs.
+4. **For a project too large for the foreground window**, slice by CLASS-NAME PREFIX:
+   `--treenode-filter "/*/*/C*/*"`. Twenty-six letter runs covered
+   `Whizbang.Data.EFCore.Postgres.Tests` (2,883 tests) that no single run could finish.
+
+### Two filter traps, both of which produce a green run and no coverage
+
+- **`[Category=ShardN]` filters run the tests and collect NOTHING** — a 178-byte cobertura against a
+  real one's 13 MB. All four shards passed, 2,833 tests, zero measured.
+- **Character-class prefixes (`[A-C]*`) match no tests at all.** This one nearly fooled me twice:
+  the resulting file is still ~13 MB, because a cobertura lists every source line whether hit or
+  not. **File size is not evidence of coverage.** The check that works is counting lines with
+  `hits > 0` — three "different" slices each reported exactly 1,541, which is what exposed it.
+
+Plain single-letter prefixes (`C*`) work correctly.
