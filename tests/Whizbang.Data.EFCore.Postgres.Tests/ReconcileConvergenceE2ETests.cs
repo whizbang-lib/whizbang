@@ -144,6 +144,7 @@ public class ReconcileConvergenceE2ETests : EFCoreTestBase {
     var consumerTransport = new _captureTransport();
     var originId2 = await _localServiceIdAsync(DbContextOptions, jsonOptions);
     var consumerOptions = new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,   // the loop under test repairs; ReportOnly is the default
       AuditSettleWindowMinutes = 0,
       MaxDigestsPerManifest = 2,    // 3 streams → 2 pages: cursor-following must fire
       PublishReportEvents = false,
