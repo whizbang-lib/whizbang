@@ -3243,3 +3243,83 @@ set, and the clearest: the type exists to do nothing.
 Closing brace after `throw;`. The agent confirmed the catch's own lines (632-637) are already
 executed by the existing `SagaBackfillTests.BaseSagaService_TryRunHookAsync_WorkThrows_PublishesFailedThenRethrowsAsync`
 before declining — the check applied correctly rather than the heuristic assumed.
+
+## CM. The repo already has a coverage-exclusions doc — read it first next round
+
+`ai-docs/coverage-exclusions.md` exists and I did not read it until an agent cited it in the final
+round. It is the project's own rule for telling a real gap from a genuine exception, and two lines
+this round were targeted that it already documents as unreachable by worked example
+(`TemplateUtilities._consumeLineEnding`'s guard, and the mutation generators' single-arity
+`CommandEndpointAttribute` guard). Those were cycles spent rediscovering a decision already made.
+
+What it says that matters here:
+
+- **The goal is 100%**, and the doc states plainly that a small number of lines are unreachable so
+  the achievable figure sits just under it — "contorting a test to fake one of those is worse than
+  leaving it red." That is the same conclusion this round reached empirically, arrived at from the
+  other direction.
+- **`[ExcludeFromCodeCoverage]` is member-level only.** That single fact decides most cases: a
+  branch inside an otherwise-tested method cannot be expressed, and applying the attribute at
+  method level would suppress genuinely tested code including future regressions in it. This is the
+  same constraint the standing instruction states as "never member-level on a member with covered
+  lines".
+- **Never delete a defensive guard because it is uncovered** — "unreachable today is not
+  unreachable after the next refactor."
+- **Never assert an unreachable branch via reflection to force the line green** — which is exactly
+  why the two `DbContextNotificationConnectionStringFallback` tests were removed this round, and
+  why three reflection-into-internal-record tests were deleted earlier. Both decisions were made on
+  first principles and both are already written down here.
+
+### What this implies for the residue catalogue
+
+The categories now split three ways for whoever acts on them:
+
+1. **Whole-member unreachable** — the doc's rule 2 says `[ExcludeFromCodeCoverage]` with a
+   `Justification` is the correct treatment. `SharedSelfTest`'s failure-recording arm (whose own
+   remarks already say it is unreachable "in any build whose merged copies agree, which is the only
+   build that ships") is the clearest candidate.
+2. **One branch inside a covered member** — the attribute cannot express it, so these stay red by
+   design: every closing-brace artifact, every contract guard sitting inside a tested method, every
+   dead-by-enclosing-condition line. Documenting them, which is what this file is, IS the treatment.
+3. **Write-only members** — eleven sets now. These are the one category the doc does NOT cover,
+   because they are not defensive code and not unreachable by construction: they are members
+   nothing reads. Suppressing them would hide the fact; the honest fix is deletion, and that is an
+   owner decision rather than a coverage action.
+
+I should have read this file in the first cycle. The lesson generalizes past this repo: **before
+building a worklist of uncovered lines, look for the project's own record of which lines it has
+already decided are unreachable.**
+
+## CN. PRODUCTION BUG on develop: a signal wire-name longer than 20 characters cannot publish
+
+Found by merging develop into this branch and running the suite.
+
+`wh_notify_state.payload_kind` is declared `VARCHAR(20)` in migration
+`130_NotifyDebounce.sql`. Migration `137_AdaptiveNotifyDebounce.sql` — which arrived with the
+merge — rewrites `_notify_debounced` so the fire path does:
+
+```sql
+INSERT INTO wh_notify_state (instance_id, payload_kind, ...)
+VALUES (p_instance_id, p_payload, ...)
+```
+
+For work doorbells `p_payload` is a short kind: `'inbox'`, `'outbox'`, `'receptor'`,
+`'perspective_stream'` — all inside 20. But `PostgresSignalTransport.PublishAsync` on the
+`SignalTarget.Streams` path calls `notify_instance_owners(@payload, @stream_ids)` with the
+signal's **wire name** as the payload, and a wire name is arbitrary length.
+
+**Consequence:** publishing any `SignalTargeting.Targeted` signal whose wire name exceeds 20
+characters throws `22001: value too long for type character varying(20)` out of `PublishAsync`.
+Real names are routinely longer — `PerspectiveCoverageGapDetected` is 30.
+
+Evidence it is the merge and not this branch: the same test passed on the pre-merge tree
+(`Shard1` reported 760 passed / 0 failed during the sliced measurement) and fails immediately after,
+with `130` present in both trees and `137` arriving only with the merge.
+
+Not fixed here — this is production SQL owned by the coordinator work, and the right fix is a
+judgement call for its author: widen `payload_kind`, hash or truncate the payload for the state key,
+or keep the debounce key separate from the notify payload. Flagged rather than patched.
+
+The test that caught it (`PostgresSignalTransportStreamsTargetTests`) exists to verify Streams
+ROUTING, so its wire name was shortened to 17 characters to keep it testing what it was written to
+test. It is deliberately not doubling as the reproduction for this defect.

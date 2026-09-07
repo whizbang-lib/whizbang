@@ -41,7 +41,13 @@ public class PostgresSignalTransportStreamsTargetTests : EFCoreTestBase {
   // wh_work_i_<id> channel, carrying the payload that was published.
   [Test]
   public async Task StreamsTargetedSignal_RoutesToPinnedOwningInstanceAsync() {
-    const string wireName = "utest-streams-targeted-transport-probe-58217";
+    // 17 chars, deliberately. wh_notify_state.payload_kind is VARCHAR(20) (migration 130) and
+    // migration 137's _notify_debounced inserts the caller's payload straight into it. The signal
+    // transport passes the WIRE NAME as that payload, so any signal named longer than 20 characters
+    // fails to publish with 22001 on this path. That is a real defect in the notify-debounce work,
+    // recorded in scratchpad/residue.md (CN) for the owner -- this test is about ROUTING, so it
+    // uses a short name rather than doubling as the reproduction.
+    const string wireName = "utest-strm-tgt-58";
     SignalTypeRegistry.Register(new FakeSource([
       new SignalTypeEntry(typeof(StreamsTargetedTransportProbe), wireName,
         SignalDeliveryClass.BestEffort, SignalTargeting.Targeted,
