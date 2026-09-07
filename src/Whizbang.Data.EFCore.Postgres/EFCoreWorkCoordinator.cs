@@ -5002,13 +5002,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public Task<long> DiscardPendingInboxMessagesAsync(
       IReadOnlyList<string> messageTypeNames,
       CancellationToken cancellationToken = default)
-    => _discardPendingAsync("wh_inbox", typeof(InboxRecord), messageTypeNames, cancellationToken);
+    => _discardPendingAsync(
+      "wh_inbox", _dbContext.Model.FindEntityType(typeof(InboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
 
   /// <inheritdoc />
   public Task<long> DiscardPendingOutboxMessagesAsync(
       IReadOnlyList<string> messageTypeNames,
       CancellationToken cancellationToken = default)
-    => _discardPendingAsync("wh_outbox", typeof(OutboxRecord), messageTypeNames, cancellationToken);
+    => _discardPendingAsync(
+      "wh_outbox", _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
 
   /// <summary>
   /// The maintenance sweep behind "a feature that is off leaves nothing behind", for one table.
@@ -5017,14 +5019,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// (the dispatch worker for the inbox, the publisher for the outbox) applies the same mode check.
   /// </summary>
   private async Task<long> _discardPendingAsync(
-      string table, System.Type recordType, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
+      string table, string? entitySchema, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
     ArgumentNullException.ThrowIfNull(messageTypeNames);
     if (messageTypeNames.Count == 0) {
       return 0;
     }
-    var schema = GetSchemaWithFallback(
-      _dbContext.Model.FindEntityType(recordType)?.GetSchema(),
-      DEFAULT_SCHEMA, _logger);
+    var schema = GetSchemaWithFallback(entitySchema, DEFAULT_SCHEMA, _logger);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var connection = __scope.Connection;

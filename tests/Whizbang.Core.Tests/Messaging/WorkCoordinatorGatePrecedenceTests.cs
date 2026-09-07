@@ -25,7 +25,7 @@ public class WorkCoordinatorGatePrecedenceTests {
 
   private static IConfiguration _section(int maxConcurrent) =>
     new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
-      ["Whizbang:WorkCoordinatorGate:MaxConcurrent"] = maxConcurrent.ToString(),
+      ["Whizbang:WorkCoordinatorGate:MaxConcurrent"] = maxConcurrent.ToString(System.Globalization.CultureInfo.InvariantCulture),
     }).Build();
 
   [Test]
