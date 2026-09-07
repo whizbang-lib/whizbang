@@ -3063,3 +3063,38 @@ The last figure that can be stated without qualification remains **98.7% across 
 measured before waves 3 and 4. Those waves added 270 lines verified individually by scoped
 `--coverage` runs, which is a stronger guarantee per line than a suite total — but it is not a
 suite total, and the two should not be added together and presented as one.
+
+## CH. The 43 Dapper failures were the Postgres container dying, not defects
+
+The sliced measurement reported 43 failures in `Whizbang.Data.Dapper.Postgres.Tests` against 537
+passes. Re-running the same project immediately gave **6**, and a third run gave 12. A failure
+count that swings 43 → 6 → 12 across identical binaries is not measuring the code.
+
+Every one of them is a `BeforeTest` hook failing with a Postgres shutdown code:
+
+    BeforeTestException: BeforeTest hook failed: 57P01: terminating connection due to
+                                                 administrator command
+    BeforeTestException: BeforeTest hook failed: 57P03: the database system is shutting down
+
+And `docker ps` caught the container mid-cycle: `whizbang-test-postgres  Up 15 seconds`, during a
+session in which it had been up for hours.
+
+**Under memory pressure the Docker VM reclaims the test Postgres container mid-run.** Every test
+whose `BeforeTest` hook is in flight at that moment fails, and the count is simply however many
+tests were running when the database went down — which is why it is different every time.
+
+Three consequences worth carrying:
+
+1. **These are not defects and must not be triaged as such.** Nothing in the Dapper suite is
+   broken; all three coverage tests added to that project this round pass when run scoped, and the
+   whole project passes when the container stays up.
+2. **A failure list from a run taken under memory pressure is worthless**, which is a sharper
+   version of the rule already recorded (BC/BP) that agent load invalidates a failure list but not
+   a coverage number. Here the load did not merely slow things down — it removed the database.
+3. **The diagnostic is the error code, not the count.** `57P01`/`57P03` in a `BeforeTest` hook says
+   "infrastructure went away" and can be distinguished mechanically from an assertion failure. Any
+   future triage of this suite should grep for those codes before reading test names.
+
+This is the fourth environmental cause found this session by refusing to write an anomaly off:
+71 leaked test databases, a peer session competing for RAM, a `VBCSCompiler` growing to 4.86 GB,
+and now a container being reclaimed mid-run. None of them were visible in a test name.
