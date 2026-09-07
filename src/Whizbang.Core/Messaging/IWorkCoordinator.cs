@@ -3287,6 +3287,18 @@ public record StreamEventData {
   /// </summary>
   /// <docs>operations/dead-letter-queue/perspective-events</docs>
   public int Attempts { get; init; }
+
+  /// <summary>
+  /// <c>wh_perspective_events.failures</c> for this work row: the number of apply failures
+  /// recorded by <c>process_perspective_event_failures</c>. This, not <see cref="Attempts"/>, is
+  /// the input to the dead-letter decision. <see cref="Attempts"/> counts leases (dispatch starts),
+  /// and a lease can lapse without an apply when the worker skips the row, dies mid-batch, or
+  /// classifies it as recently processed; counting those toward dead-lettering turned lease churn
+  /// under a backlog into thrash-casualty dead letters for perfectly good events. Default 0 for
+  /// legacy fakes and drivers that predate the column.
+  /// </summary>
+  /// <docs>operations/dead-letter-queue/perspective-events</docs>
+  public int Failures { get; init; }
 }
 
 /// <summary>

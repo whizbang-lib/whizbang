@@ -4595,6 +4595,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // claim_orphaned_perspective_events path will eventually dead-letter them via
       // FailureFlushWorker once that path also lands).
     }
+    var hasFailuresColumn = false;
+    var failuresOrdinal = -1;
+    try {
+      failuresOrdinal = reader.GetOrdinal("out_failures");
+      hasFailuresColumn = true;
+    } catch (IndexOutOfRangeException) {
+      // Pre-139 SQL function: no failure counter. Field stays 0, so the dead-letter check
+      // never fires off a lease count (the safe direction; attempts is still tracked for diagnostics).
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       // AOT-safe: read columns by ordinal, parse event_data as string
       var metadataOrdinal = reader.GetOrdinal("out_metadata");
@@ -4615,6 +4624,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
           : null,
         Attempts = hasAttemptsColumn && !await reader.IsDBNullAsync(attemptsOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetInt32(attemptsOrdinal)
+          : 0,
+        Failures = hasFailuresColumn && !await reader.IsDBNullAsync(failuresOrdinal, cancellationToken).ConfigureAwait(false)
+          ? reader.GetInt32(failuresOrdinal)
           : 0,
       });
     }
