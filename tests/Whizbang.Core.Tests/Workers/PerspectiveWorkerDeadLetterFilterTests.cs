@@ -78,7 +78,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
   }
 
-  private static StreamEventData _row(int attempts) {
+  private static StreamEventData _row(int attempts, int failures = 0) {
     return new StreamEventData {
       StreamId = (Guid)TrackedGuid.NewMedo(),
       EventId = (Guid)TrackedGuid.NewMedo(),
@@ -86,7 +86,44 @@ public class PerspectiveWorkerDeadLetterFilterTests {
       EventData = "{}",
       EventWorkId = (Guid)TrackedGuid.NewMedo(),
       Attempts = attempts,
+      Failures = failures,
     };
+  }
+
+  // -------------------------------------------------------------------------------------------
+  // Issue #700: the decision reads failures, never the lease count. attempts is bumped by every
+  // claim, and a lease can lapse without an apply (the worker skipped the row, died mid-batch, or
+  // classified it as recently processed). Under a backlog that turned lease churn into thrash-
+  // casualty dead letters for perfectly good events.
+  // -------------------------------------------------------------------------------------------
+
+  [Test]
+  public async Task LeaseCountAboveMax_WithNoFailures_SurvivesAsync() {
+    var store = new CapturingDeadLetterStore();
+    var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("g"),
+      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+    var churned = _row(attempts: 99, failures: 0);
+
+    var survivors = await worker.FilterDeadLetteredAsync([churned], CancellationToken.None);
+
+    await Assert.That(survivors.Count).IsEqualTo(1)
+      .Because("ninety-nine leases with no failed apply is scheduling churn, not poison");
+    await Assert.That(store.Moves.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task FailuresExceedMax_WithFewLeases_MovesToDeadLetterAsync() {
+    var store = new CapturingDeadLetterStore();
+    var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("g"),
+      metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
+    var poison = _row(attempts: 1, failures: 11);
+
+    var survivors = await worker.FilterDeadLetteredAsync([poison], CancellationToken.None);
+
+    await Assert.That(survivors.Count).IsEqualTo(0)
+      .Because("eleven failed applies is the threshold crossing, whatever the lease count says");
+    await Assert.That(store.Moves.Count).IsEqualTo(1);
+    await Assert.That(store.Moves[0].SourceId).IsEqualTo(poison.EventWorkId);
   }
 
   [Test]
@@ -133,8 +170,8 @@ public class PerspectiveWorkerDeadLetterFilterTests {
     var instanceId = (Guid)TrackedGuid.NewMedo();
     var worker = _buildWorker(maxAttempts: 10, store: store, gen: new FixedGeneration("whizbang/test-gen"),
       metrics: null, instanceId: instanceId);
-    var doomed = _row(attempts: 11);
-    var keeper = _row(attempts: 3);
+    var doomed = _row(attempts: 11, failures: 11);
+    var keeper = _row(attempts: 3, failures: 3);
     var rows = new List<StreamEventData> { doomed, keeper };
 
     var survivors = await worker.FilterDeadLetteredAsync(rows, CancellationToken.None);
@@ -153,7 +190,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
     var store = new CapturingDeadLetterStore { Throw = true };
     var worker = _buildWorker(maxAttempts: 5, store: store, gen: new FixedGeneration("g"),
       metrics: null, instanceId: (Guid)TrackedGuid.NewMedo());
-    var doomed = _row(attempts: 99);
+    var doomed = _row(attempts: 99, failures: 99);
     var rows = new List<StreamEventData> { doomed };
 
     var survivors = await worker.FilterDeadLetteredAsync(rows, CancellationToken.None);
@@ -170,7 +207,7 @@ public class PerspectiveWorkerDeadLetterFilterTests {
     var metrics = new DeadLetterMetrics(new WhizbangMetrics());
     var worker = _buildWorker(maxAttempts: 5, store: store, gen: new FixedGeneration("g"),
       metrics: metrics, instanceId: (Guid)TrackedGuid.NewMedo());
-    var rows = new List<StreamEventData> { _row(attempts: 11) };
+    var rows = new List<StreamEventData> { _row(attempts: 11, failures: 11) };
 
     // Smoke check: counter is wired so Add(1, ...) is reached on the dead-letter path.
     // Full metric-value assertion would require a MeterListener; the store + metrics-not-null

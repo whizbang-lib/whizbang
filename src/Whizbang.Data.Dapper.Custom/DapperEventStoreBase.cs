@@ -124,6 +124,22 @@ public abstract class DapperEventStoreBase : IEventStore {
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Perspective row retention, the resurrection-on-wake history probe. Declared here (virtual,
+  /// interface default) so a derived store's override takes part in the interface mapping: a
+  /// method added on the derived class alone would never be reached through
+  /// <see cref="IEventStore"/>, and the interface default (false) would silently disable
+  /// resurrection.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>The perspective-aware form of the probe (issue #696); see the untyped overload.</summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  public virtual Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
   /// Database-specific SQL for querying events between two checkpoint IDs (exclusive start, inclusive end).
   /// </summary>
   protected abstract string GetEventsBetweenSql();

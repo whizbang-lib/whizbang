@@ -20,9 +20,11 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <strong>Targeting.</strong> Broadcast signals go to <c>wh_signal_broadcast</c> — every instance
 /// LISTENs and receives. Targeted signals go to <c>wh_work_i_&lt;instanceId&gt;</c> — one channel per
 /// instance, listened to by that instance only, so only the owner wakes.
-/// <see cref="SignalTarget.Streams"/> resolves owners via <c>notify_instance_owners(payload, uuid[])</c>
+/// <see cref="SignalTarget.Streams"/> resolves owners via <c>notify_instance_owners_with_payload(kind, payload, uuid[])</c>
 /// (same helper the SQL store procs use, so the routing rule is unified: pinned owner from
-/// <c>wh_active_streams</c>, or deterministic partition-modulo target for unclaimed streams).
+/// <c>wh_active_streams</c>, or deterministic partition-modulo target for unclaimed streams). The
+/// wire name is both the debounce key and the payload; the doorbell form the store procs call takes
+/// only a kind from the closed doorbell vocabulary.
 /// <see cref="SignalTarget.Instance"/> emits <c>pg_notify</c> directly to that one instance's channel.
 /// </para>
 /// </remarks>
@@ -163,8 +165,13 @@ public sealed partial class PostgresSignalTransport(
     // Reuse the same notify_instance_owners helper the SQL store procs already call — one NOTIFY
     // per unique owner across the input streams, with deterministic partition-modulo fallback for
     // streams not yet pinned in wh_active_streams. See migration 045_NotifyInstanceOwners.sql.
+    // The general form, notify_instance_owners_with_payload: the debounce key and the NOTIFY payload are
+    // separate arguments (migration 141, issue #702). A signal's key is its wire name, which is
+    // also what the wire carries; the two-argument form is the doorbell form and accepts only the
+    // doorbell vocabulary.
     await using var cmd = new NpgsqlCommand(
-      "SELECT notify_instance_owners(@payload, @stream_ids)", conn);
+      "SELECT notify_instance_owners_with_payload(@kind, @payload, @stream_ids)", conn);
+    cmd.Parameters.AddWithValue("kind", wireName);
     cmd.Parameters.AddWithValue("payload", wireName);
     var streamArray = new Guid[streamIds.Count];
     for (var i = 0; i < streamIds.Count; i++) {

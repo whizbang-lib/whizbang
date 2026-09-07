@@ -112,6 +112,23 @@ public interface IEventStore {
     Task.FromResult(false);
 
   /// <summary>
+  /// Perspective row retention (resurrection-on-wake), the perspective-aware probe: true when the
+  /// stream holds an event ordered before <paramref name="beforeEventId"/> whose stored type is one
+  /// of <paramref name="eventTypes"/>. This is the probe the generated runner uses, with the event
+  /// types the perspective folds. The untyped overload asks "any history at all", which is the wrong
+  /// question on a stream shared by several contracts: history the perspective never folded read as
+  /// "reaped and woken" and every first contact re-folded (issue #696). A genuinely reaped row still
+  /// has prior events of the handled types, so real resurrection is unaffected. Stored type names are
+  /// matched through <see cref="EventTypeMatchingHelper"/> only, never by a hand-built string. Default
+  /// impl returns false.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
+    Task.FromResult(false);
+
+  /// <summary>
   /// Appends an event to the specified stream using a raw message (AOT-compatible).
   /// If the message was dispatched through IDispatcher, its envelope is automatically
   /// retrieved from IEnvelopeRegistry, preserving tracing context (hops, correlation, causation).

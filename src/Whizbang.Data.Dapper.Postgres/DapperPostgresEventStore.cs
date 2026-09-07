@@ -225,6 +225,54 @@ public class DapperPostgresEventStore(
     FROM wh_event_store
     WHERE stream_id = @StreamId";
 
+  /// <summary>
+  /// Perspective row retention, the resurrection-on-wake history probe: does this stream hold any
+  /// event ordered before the given id? An indexed EXISTS over the stream's pointer rows; uuid
+  /// ordering is the store's own ordering (UUIDv7 ids), the same comparison the EF Core driver uses.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  public override async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var exists = await Executor.ExecuteScalarAsync<bool?>(
+      connection,
+      "SELECT EXISTS (SELECT 1 FROM wh_event_store WHERE stream_id = @StreamId AND event_id < @BeforeEventId)",
+      new { StreamId = streamId, BeforeEventId = beforeEventId },
+      cancellationToken: cancellationToken);
+    return exists == true;
+  }
+
+  /// <summary>
+  /// The perspective-aware history probe (issue #696): the stream's distinct pre-batch
+  /// <c>event_type</c> values are read and matched in process through
+  /// <see cref="EventTypeMatchingHelper"/>, the one strategy every read path shares, so a name a
+  /// producer wrote in the decorated assembly-qualified form still matches. Mirrors the EF Core
+  /// driver.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperEventStoreHistoryProbeTests.cs</tests>
+  public override async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    if (eventTypes.Count == 0) {
+      return false;
+    }
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var storedTypes = await Executor.QueryAsync<string>(
+      connection,
+      "SELECT DISTINCT event_type FROM wh_event_store WHERE stream_id = @StreamId AND event_id < @BeforeEventId",
+      new { StreamId = streamId, BeforeEventId = beforeEventId },
+      cancellationToken: cancellationToken);
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    foreach (var stored in storedTypes) {
+      if (EventTypeMatchingHelper.TryResolveType(lookup, stored, out _)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // --- Private helper methods ---
 
   /// <summary>

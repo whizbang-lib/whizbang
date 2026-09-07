@@ -614,7 +614,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
       registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
       dispatcher: dispatcher,
       drainStreamIds: [streamId],
-      streamEvents: [_raw(streamId, eventId, attempts: 5, eventWorkId: workId)],
+      // Poison means every apply failed: the failure counter, not the lease count, crosses the max (#700).
+      streamEvents: [_raw(streamId, eventId, attempts: 5, eventWorkId: workId, failures: 5)],
       maxPerspectiveEventAttempts: 2,
       deadLetterStore: deadLetters);
 
@@ -652,7 +653,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
     DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
   };
 
-  private static StreamEventData _raw(Guid streamId, Guid eventId, int attempts = 0, Guid? eventWorkId = null) => new() {
+  private static StreamEventData _raw(Guid streamId, Guid eventId, int attempts = 0, Guid? eventWorkId = null, int failures = 0) => new() {
     StreamId = streamId,
     EventId = eventId,
     EventType = "collective",
@@ -661,7 +662,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
     Scope = null,
     EventWorkId = eventWorkId ?? Guid.CreateVersion7(),
     PerspectiveName = CollectiveRouting.SINK_PERSPECTIVE_NAME,
-    Attempts = attempts
+    Attempts = attempts,
+    Failures = failures
   };
 
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness, _coordinator Coordinator) _createWorker(

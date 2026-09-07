@@ -73,6 +73,15 @@ public class TableRewriteJourneyE2ETests : EFCoreTestBase {
   private async Task _manufactureBloatAsync(CancellationToken ct) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync(ct);
+    // Issue #671: the carve deletes the heap TAIL, and plain autovacuum can truncate that tail
+    // between the request-time measure and the winner's re-measure, collapsing the before-ratio so
+    // even a perfect VACUUM FULL cannot beat it and the step reports "ineffective". The product is
+    // right to say so; the test must own the heap it measures, so autovacuum is switched off for
+    // this table for the test's lifetime (the database is per test).
+    await using (var pin = conn.CreateCommand()) {
+      pin.CommandText = "ALTER TABLE wh_settings SET (autovacuum_enabled = false)";
+      await pin.ExecuteNonQueryAsync(ct);
+    }
     await using (var fill = conn.CreateCommand()) {
       fill.CommandText = @"
         INSERT INTO wh_settings (setting_key, setting_value, value_type)

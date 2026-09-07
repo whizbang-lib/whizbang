@@ -323,6 +323,7 @@ public partial class DapperWorkCoordinator(
       Scope = r.out_scope,
       EventWorkId = r.out_event_work_id,
       Attempts = r.out_attempts,
+      Failures = r.out_failures,
     })];
   }
 
@@ -1049,6 +1050,10 @@ internal class StreamEventRow {
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
     Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
   public int out_attempts { get; set; }
+  // 139 — wh_perspective_events.failures: apply failures only, the dead-letter decision's input.
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3459:Unassigned members should be removed",
+    Justification = "Hydrated by Dapper at runtime via column name mapping; not visible to static analysis.")]
+  public int out_failures { get; set; }
 }
 
 /// <summary>

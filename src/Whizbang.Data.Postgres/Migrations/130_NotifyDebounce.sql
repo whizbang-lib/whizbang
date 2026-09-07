@@ -76,7 +76,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__._notify_debounced IS
+COMMENT ON FUNCTION __SCHEMA__._notify_debounced(UUID, TEXT, INTEGER) IS
 'Debounced doorbell for one target (130): while the target''s watermark is fresher than p_window seconds AND the target is live, the notify is suppressed and the watermark slides (the store is work the linger poll will find). Otherwise pg_notify fires and stamps a predicted-awake watermark. p_window <= 0 always fires — the off switch.';
 
 -- ============================================================================

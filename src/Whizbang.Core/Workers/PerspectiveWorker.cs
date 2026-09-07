@@ -325,7 +325,8 @@ public partial class PerspectiveWorker(
     Dictionary<Type, string> TypeNameCache,
     ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> BatchProcessedEvents,
     ConcurrentDictionary<Guid, bool> BatchIsNewByEventId,
-    ILifecycleCoordinator? LifecycleCoordinator);
+    ILifecycleCoordinator? LifecycleCoordinator,
+    ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> AppliedGroups);
 
   // Metrics tracking
   private int _consecutiveEmptyPolls;
@@ -1026,12 +1027,22 @@ public partial class PerspectiveWorker(
     // forwarded SQL-detected drain stream IDs, batch-fetch + RunWithEventsAsync them.
     // If drain processed nothing, fall through to the per-event path so events don't
     // stay claimed forever.
+    //
+    // The two sources overlap only per (stream, perspective): a stream the drain pass actually
+    // APPLIED has had its pending rows fetched and completed, so its claimed copy is redundant.
+    // Every other claimed group still runs. The decision is keyed on applies, never on the
+    // batch's processed-event bookkeeping: cooled events (skipped because their work id is in
+    // the recently-processed cache) are signaled into that bookkeeping for lifecycle purposes
+    // and are not progress. Gating on the bookkeeping discarded every claimed item whenever a
+    // single cooled event was present, and the rows behind them stayed leased until the lease
+    // lapsed, were re-claimed, and were discarded again (issue #700).
+    var drainAppliedGroups = new ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte>();
     if (workBatch.PerspectiveStreamIds.Count > 0) {
       await _processDrainModeStreamsAsync(
         scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, batchIsNewByEventId,
-        lifecycleCoordinator, cancellationToken).ConfigureAwait(false);
-      if (!batchProcessedEvents.IsEmpty) {
-        groupedWork = [];
+        lifecycleCoordinator, drainAppliedGroups, cancellationToken).ConfigureAwait(false);
+      if (!drainAppliedGroups.IsEmpty) {
+        groupedWork = groupedWork.Where(g => !drainAppliedGroups.ContainsKey(g.Key)).ToList();
       }
     }
 
@@ -1530,6 +1541,7 @@ public partial class PerspectiveWorker(
       ConcurrentDictionary<Guid, (MessageEnvelope<IEvent> Envelope, Guid StreamId)> batchProcessedEvents,
       ConcurrentDictionary<Guid, bool> batchIsNewByEventId,
       ILifecycleCoordinator? lifecycleCoordinator,
+      ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte> appliedGroups,
       CancellationToken cancellationToken) {
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
@@ -1546,7 +1558,7 @@ public partial class PerspectiveWorker(
     await _prefetchMissingDrainModeCursorsAsync(scope, eventsByStream.Keys, cancellationToken);
 
     var drainBatchContext = new DrainBatchContext(
-      rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator);
+      rawByEventId, typeNameCache, batchProcessedEvents, batchIsNewByEventId, lifecycleCoordinator, appliedGroups);
     await Parallel.ForEachAsync(
       eventsByStream,
       new ParallelOptions {
@@ -1649,18 +1661,29 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// v0.502 slice C.4c — splits the just-fetched <paramref name="rawEvents"/> into rows that
-  /// stay in the apply set vs rows whose attempts exceeded
+  /// stay in the apply set vs rows whose recorded apply failures exceeded
   /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>. For exceeded rows,
   /// calls <see cref="IDeadLetterStore.MoveAsync"/> (which atomically inserts into
   /// <c>wh_dead_letters</c> and deletes from <c>wh_perspective_events</c>). Returns the
   /// surviving rows for downstream deserialization + apply.
   /// </summary>
   /// <remarks>
+  /// <para>
+  /// The decision reads <see cref="StreamEventData.Failures"/>, never
+  /// <see cref="StreamEventData.Attempts"/> (issue #700). Attempts counts leases: every claim
+  /// bumps it, and a lease can lapse without an apply when the worker skips the row, dies
+  /// mid-batch, or classifies it as recently processed. Under a backlog that is scheduling churn,
+  /// and counting it toward the threshold dead-lettered perfectly good events as thrash
+  /// casualties. Failures moves only when <c>process_perspective_event_failures</c> records a
+  /// failed apply, so the threshold means what its name says.
+  /// </para>
+  /// <para>
   /// No-ops to a pass-through when <see cref="_deadLetterStore"/> or
   /// <see cref="_generationProvider"/> aren't wired (legacy v0.501 path) or when
   /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/> is null. If MoveAsync
   /// throws for a given row, the row stays in the apply set — best-effort, same fallback
   /// policy as <see cref="InboxDispatchWorker"/>.
+  /// </para>
   /// </remarks>
   internal async Task<List<StreamEventData>> FilterDeadLetteredAsync(
       List<StreamEventData> rawEvents,
@@ -1672,14 +1695,14 @@ public partial class PerspectiveWorker(
     var survivors = new List<StreamEventData>(rawEvents.Count);
     var generation = _generationProvider.GetGeneration();
     foreach (var raw in rawEvents) {
-      if (raw.Attempts > maxAttempts.Value) {
+      if (raw.Failures > maxAttempts.Value) {
         try {
           await _deadLetterStore.MoveAsync(
             deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
             sourceTable: DeadLetterSourceTable.PERSPECTIVE_EVENTS,
             sourceId: raw.EventWorkId,
             failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,
-            errorText: $"PerspectiveWorker dead-lettered perspective event: attempts={raw.Attempts} > max={maxAttempts.Value} perspective={raw.PerspectiveName} stream={raw.StreamId} event={raw.EventId}",
+            errorText: $"PerspectiveWorker dead-lettered perspective event: failures={raw.Failures} > max={maxAttempts.Value} (leases={raw.Attempts}) perspective={raw.PerspectiveName} stream={raw.StreamId} event={raw.EventId}",
             instanceId: _instanceProvider.InstanceId,
             generation: generation,
             ct: cancellationToken).ConfigureAwait(false);
@@ -1688,8 +1711,8 @@ public partial class PerspectiveWorker(
             new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
 #pragma warning disable CA1848
           _logger.LogWarning(
-            "PerspectiveWorker dead-lettered perspective event {EventWorkId} perspective={Perspective} stream={StreamId} event={EventId} attempts={Attempts} > max={Max}",
-            raw.EventWorkId, raw.PerspectiveName, raw.StreamId, raw.EventId, raw.Attempts, maxAttempts.Value);
+            "PerspectiveWorker dead-lettered perspective event {EventWorkId} perspective={Perspective} stream={StreamId} event={EventId} failures={Failures} > max={Max} (leases={Leases})",
+            raw.EventWorkId, raw.PerspectiveName, raw.StreamId, raw.EventId, raw.Failures, maxAttempts.Value, raw.Attempts);
 #pragma warning restore CA1848
           // Row was DELETEd by move_to_dead_letters() inside the SQL function; do not
           // include it in survivors.
@@ -1932,7 +1955,8 @@ public partial class PerspectiveWorker(
       typeNameCache,
       sharedContext.BatchProcessedEvents,
       sharedContext.BatchIsNewByEventId,
-      sharedContext.LifecycleCoordinator);
+      sharedContext.LifecycleCoordinator,
+      sharedContext.AppliedGroups);
     return (eventsForStream, nextContext);
   }
 
@@ -2028,6 +2052,7 @@ public partial class PerspectiveWorker(
         .ToArray();
       _markAffinityPhase(streamId, perspectiveName, "collective");
       await _processCollectiveSinkAsync(groupScope, groupWorkCoordinator, streamId, sinkWorkIds, ct);
+      batchContext.AppliedGroups.TryAdd((streamId, perspectiveName), 0);
       return;
     }
 
@@ -2171,6 +2196,10 @@ public partial class PerspectiveWorker(
           result = await runner.RunWithEventsAsync(
             streamId, perspectiveName, lastProcessedEventId, filteredEvents, leaseCt);
         }
+        // The runner ran for this (stream, perspective): the batch's claimed copy of the same
+        // group is redundant. Only a real runner invocation records here; a pass that cooled
+        // everything returned above and left the group unrecorded on purpose (issue #700).
+        batchContext.AppliedGroups.TryAdd((streamId, perspectiveName), 0);
 
         // Slice 29 instrumentation: capture per-drain wall time partitioned into the three
         // dominant phases — runner (read + apply + save), completion (cursor update + lifecycle),
@@ -4692,15 +4721,22 @@ public class PerspectiveWorkerOptions {
   public int NotifyHealthyPollingIntervalMilliseconds { get; set; } = 1_000;
 
   /// <summary>
-  /// Dead-letter threshold for wh_perspective_events rows. Total number of apply attempts
+  /// Dead-letter threshold for wh_perspective_events rows. Number of recorded apply failures
   /// permitted before the row is moved into wh_dead_letters via IDeadLetterStore.MoveAsync.
   /// </summary>
   /// <remarks>
   /// <para>
   /// Default <c>10</c> (v0.502). Prior versions had no max — failed perspective_event rows
   /// accumulated indefinitely. Set to <c>null</c> explicitly to restore the prior no-limit
-  /// behavior. Wire-up at the apply boundary lands in a follow-up slice; this option is
-  /// surfaced now so configuration is forward-compatible with the imminent DLQ integration.
+  /// behavior.
+  /// </para>
+  /// <para>
+  /// Compared against <c>wh_perspective_events.failures</c> (migration 139), which only a failed
+  /// apply moves, not against <c>attempts</c>, which every lease bumps. A lease that lapses
+  /// without an apply is scheduling, not evidence that the event is poison; counting it here
+  /// dead-lettered good events under a backlog (issue #700). The reactive orphan disposal for
+  /// rows whose source event is missing still keys on <c>attempts</c>, because such a row never
+  /// reaches an apply and its lease count is the only signal it has.
   /// </para>
   /// </remarks>
   public int? MaxPerspectiveEventAttempts { get; set; } = 10;

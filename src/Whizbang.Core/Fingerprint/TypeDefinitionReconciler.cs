@@ -104,8 +104,12 @@ public sealed partial class TypeDefinitionReconciler {
     if (registered.Count > 0) {
       var retention = new List<PerspectiveRetentionDeclaration>(registered.Count);
       foreach (var (modelType, ttlSeconds) in registered) {
-        var clrTypeName = modelType.FullName;
-        if (clrTypeName is null) {
+        // The registry key form (Outer+Model for a nested model), through the shared helper: the
+        // generator writes the row with TypeNameUtilities.BuildClrTypeName, and the two helpers
+        // are documented mirrors. A local rendering on either side is how issue #697 happened.
+        // A type with no CLR full name (a generic parameter registered by mistake) is skipped: a
+        // null key would corrupt the lookup for every legitimately named perspective sharing it.
+        if (!TypeNameFormatter.TryFormatClrTypeName(modelType, out var clrTypeName)) {
           continue;
         }
         // A registered perspective is enrolled by construction — the declaration IS the enrolment.

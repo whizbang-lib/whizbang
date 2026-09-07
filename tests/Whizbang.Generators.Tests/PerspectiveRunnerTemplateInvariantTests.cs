@@ -162,4 +162,20 @@ public class PerspectiveRunnerTemplateInvariantTests {
     await Assert.That(acquisitions).IsEqualTo(2)
       .Because("only the two public entry points acquire the apply lock; the shared core assumes it is held");
   }
+
+  [Test]
+  public async Task RowNullBranch_ProbesHistoryOfTheHandledEventTypesOnlyAsync() {
+    // Issue #696: "does this stream have any earlier event" is the wrong question on a stream
+    // shared by several contracts — history the perspective never folded read as "reaped and
+    // woken", and every first contact re-folded. The probe must carry the event types this
+    // perspective folds, which the generator emits as a static array.
+    var template = _loadTemplate();
+
+    await Assert.That(template).Contains("#region HANDLED_EVENT_TYPES")
+      .Because("the generator fills the perspective's handled event types into a static array");
+    await Assert.That(template).Contains("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)")
+      .Because("the resurrection probe asks about the handled event types only");
+    await Assert.That(template).DoesNotContain("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, cancellationToken)")
+      .Because("the untyped probe is the false positive");
+  }
 }

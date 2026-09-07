@@ -66,5 +66,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__._notify_debounced IS
+COMMENT ON FUNCTION __SCHEMA__._notify_debounced(UUID, TEXT, INTEGER) IS
 'Debounced doorbell for one target (131 supersedes 130): while the target''s watermark is fresher than p_window seconds AND the target is live, the notify is suppressed and the watermark slides (the store is work the linger poll will find). Otherwise pg_notify fires. The watermark is armed ONLY by claim_work finding work (126) — never by the fire itself — so SQL suppression and the C# drain linger arm on the same condition and a woken-but-empty claim can''t swallow the follow-up ring (issue #677). p_window <= 0 always fires — the off switch.';

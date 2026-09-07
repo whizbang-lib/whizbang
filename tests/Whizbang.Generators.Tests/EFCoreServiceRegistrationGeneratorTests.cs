@@ -77,6 +77,57 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Issue #697: the perspective registry key for a NESTED model is the CLR form (Outer+Model),
+  /// from TypeNameUtilities.BuildClrTypeName, which the runtime mirrors with
+  /// TypeNameFormatter.FormatClrTypeName. The display-string form (Outer.Model) matched nothing
+  /// at startup and left row retention silently un-enrolled for every nested model.
+  /// </summary>
+  [Test]
+  public async Task Generator_NestedModel_RegistryKeyIsTheClrFormAsync() {
+    // Arrange
+    const string source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record OwnedEvent : IEvent;
+
+      public static class Owner {
+        public record Model {
+          public string Id { get; init; } = "";
+        }
+      }
+
+      public class OwnerPerspective : IPerspectiveFor<Owner.Model, OwnedEvent> {
+        public Owner.Model Apply(Owner.Model currentData, OwnedEvent eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("TestDbContext_SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+    var registryLine = schemaExtensions!.SourceText.ToString()
+      .Split('\n')
+      .FirstOrDefault(l => l.Contains("PerspectiveRegistryJson =", StringComparison.Ordinal));
+    await Assert.That(registryLine).IsNotNull();
+    await Assert.That(registryLine!).Contains("TestApp.Owner+Model")
+      .Because("the registry key is the CLR form, '+' for the nesting, the form the runtime looks up");
+    await Assert.That(registryLine!).DoesNotContain("TestApp.Owner.Model")
+      .Because("a display-string key matches nothing at runtime (issue #697)");
+  }
+
+  /// <summary>
   /// Test that a DbContext WITHOUT [WhizbangDbContext] attribute is NOT discovered.
   /// Explicit opt-in is required - no attribute = no participation.
   /// </summary>

@@ -85,6 +85,16 @@ public class EventStoreDecoratorForwardingTests {
       .Because($"{decorated.GetType().Name} must forward to the inner store's override, not serve the interface default (false) — a swallowed probe disables resurrection-on-wake");
   }
 
+  [Test]
+  [MethodDataSource(nameof(Decorators))]
+  public async Task Decorator_ForwardsTypedHasStreamEventsBefore_ToInnerStoreAsync(IEventStore decorated) {
+    // Issue #696: the generated runner probes with the perspective's handled event types. A
+    // decorator that forwards only the untyped overload leaves the typed one on the interface
+    // default (false), which silently disables resurrection-on-wake through that decoration.
+    await Assert.That(await decorated.HasStreamEventsBeforeAsync(Guid.NewGuid(), Guid.NewGuid(), [typeof(string)])).IsTrue()
+      .Because($"{decorated.GetType().Name} must forward the typed probe to the inner store's override");
+  }
+
   /// <summary>
   /// An inner store whose probe methods return sentinel values distinguishable from the
   /// interface defaults (null / false) — forwarding is proven iff the sentinel surfaces
@@ -122,6 +132,9 @@ public class EventStoreDecoratorForwardingTests {
       Task.FromResult<long?>(42L);
 
     public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, CancellationToken cancellationToken = default) =>
+      Task.FromResult(true);
+
+    public Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) =>
       Task.FromResult(true);
   }
 

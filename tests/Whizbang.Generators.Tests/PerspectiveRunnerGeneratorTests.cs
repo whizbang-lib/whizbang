@@ -294,6 +294,55 @@ namespace TestNamespace {
   }
 
   [Test]
+  public async Task PerspectiveRunnerGenerator_Runner_ProbesHistoryWithItsHandledEventTypesAsync() {
+    // Issue #696: the resurrection-on-wake probe must ask about the event types THIS perspective
+    // folds. The generator already knows them (they drive the Apply overloads); it emits them as
+    // a static array and passes it to the typed probe.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Attributes;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ThreadArchived : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record ThreadRenamed : IEvent {
+    public string ThreadId { get; init; } = "";
+  }
+
+  public record ProbedThreadModel {
+    [StreamId]
+    public string ThreadId { get; init; } = "";
+  }
+
+  [RowTtl(Days = 60)]
+  public class ProbedThreadPerspective : IPerspectiveFor<ProbedThreadModel, ThreadArchived, ThreadRenamed> {
+    public ProbedThreadModel Apply(ProbedThreadModel currentData, ThreadArchived @event) => currentData;
+    public ProbedThreadModel Apply(ProbedThreadModel currentData, ThreadRenamed @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProbedThreadPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    var arrayStart = runnerSource!.IndexOf("_handledEventTypes = new global::System.Type[]", StringComparison.Ordinal);
+    await Assert.That(arrayStart).IsGreaterThanOrEqualTo(0)
+      .Because("the runner declares the handled event types once, as a static array");
+    var arrayEnd = runnerSource.IndexOf("};", arrayStart, StringComparison.Ordinal);
+    var array = runnerSource[arrayStart..arrayEnd];
+    await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadArchived)");
+    await Assert.That(array).Contains("typeof(global::TestNamespace.ThreadRenamed)");
+
+    await Assert.That(runnerSource).Contains("HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)")
+      .Because("the probe asks about the handled event types only (issue #696)");
+  }
+
+  [Test]
   public async Task PerspectiveRunnerGenerator_StreamGroup_RegistersEachMembershipWithItsDialsAsync() {
     // Stream groups follow the same turnkey chain as the TTL and the cap: attribute -> generated
     // [ModuleInitializer] -> registry. A perspective in TWO groups (the case the dials exist for)

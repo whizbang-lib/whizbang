@@ -1176,12 +1176,13 @@ public class PostgresFunctionTests : PostgresTestBase {
 
   [Test]
   public async Task ProcessPerspectiveEventFailures_CapsExponentialBackoffAt5MinutesAsync() {
-    // Arrange - Event with high attempts count that would overflow without cap
+    // Arrange - Event with a high failure count that would overflow without cap. Migration 139:
+    // the perspective backoff escalates on failures (apply failures), never on attempts (leases).
     var workId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
     var now = DateTimeOffset.UtcNow;
-    const int highAttempts = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
+    const int highFailures = 100; // POWER(2, 101) would overflow PostgreSQL interval without cap
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
@@ -1191,11 +1192,11 @@ public class PostgresFunctionTests : PostgresTestBase {
       VALUES (@eventId, @streamId, @streamId, 'Test', 'TestEvent', nextval('wh_event_sequence'), @now)",
       new { eventId, streamId, now });
 
-    // Insert perspective event with high attempt count
+    // Insert perspective event with a high failure count and a single lease
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at)
-      VALUES (@workId, @streamId, 'TestPerspective', @eventId, 1, @highAttempts, @now)",
-      new { workId, streamId, eventId, highAttempts, now });
+      INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, failures, created_at)
+      VALUES (@workId, @streamId, 'TestPerspective', @eventId, 1, 1, @highFailures, @now)",
+      new { workId, streamId, eventId, highFailures, now });
 
     // Prepare failure
     var failures = JsonSerializer.Serialize(new[] {
