@@ -233,6 +233,28 @@ public class TypeNameFormatterTests {
   // ========================================
 
   [Test]
+  public async Task TryFormatClrTypeName_WithANamedType_ReturnsTheClrFormAsync() {
+    var ok = TypeNameFormatter.TryFormatClrTypeName(typeof(TypeNameFormatterTests), out var name);
+
+    await Assert.That(ok).IsTrue();
+    await Assert.That(name).IsEqualTo(TypeNameFormatter.FormatClrTypeName(typeof(TypeNameFormatterTests)))
+      .Because("the non-throwing form yields the same key as the throwing one");
+  }
+
+  [Test]
+  public async Task TryFormatClrTypeName_WithAGenericParameter_ReturnsFalseAsync() {
+    // A generic type parameter has no CLR full name; a registry walker skips it instead of
+    // forwarding a null key (the throwing form raises here).
+    var parameter = typeof(List<>).GetGenericArguments()[0];
+
+    var ok = TypeNameFormatter.TryFormatClrTypeName(parameter, out var name);
+
+    await Assert.That(ok).IsFalse();
+    await Assert.That(name).IsNull();
+    await Assert.That(() => TypeNameFormatter.FormatClrTypeName(parameter)).Throws<InvalidOperationException>();
+  }
+
+  [Test]
   public async Task GetFullName_WithAssemblyQualified_ExtractsFullNameAsync() {
     var result = TypeNameFormatter.GetFullName("MyApp.Events.OrderCreated, MyApp");
     await Assert.That(result).IsEqualTo("MyApp.Events.OrderCreated");

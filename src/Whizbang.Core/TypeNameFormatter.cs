@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace Whizbang.Core;
@@ -66,6 +67,20 @@ public static class TypeNameFormatter {
     ArgumentNullException.ThrowIfNull(type);
     return type.FullName
       ?? throw new InvalidOperationException($"Type {type.Name} does not have a FullName");
+  }
+
+  /// <summary>
+  /// The non-throwing form of <see cref="FormatClrTypeName"/> for callers that walk a registry
+  /// of types they did not construct: a generic type parameter, an open generic's argument, or an
+  /// array of one has no CLR full name and must be skipped, never forwarded as a null key.
+  /// </summary>
+  /// <param name="type">The type to format.</param>
+  /// <param name="clrTypeName">The CLR full type name when the type has one.</param>
+  /// <returns><c>true</c> when the type has a CLR full name.</returns>
+  public static bool TryFormatClrTypeName(Type type, [NotNullWhen(true)] out string? clrTypeName) {
+    ArgumentNullException.ThrowIfNull(type);
+    clrTypeName = type.FullName;
+    return clrTypeName is not null;
   }
 
   /// <summary>
