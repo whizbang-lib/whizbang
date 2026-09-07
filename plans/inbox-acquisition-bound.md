@@ -166,6 +166,9 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
 * Gate precedence (cycle 5d): `WorkCoordinatorGateOptions.MaxConcurrent` is nullable; the section wins, a
   driver's `MaxInFlightCommands` only fills the gap (`??=`), `DefaultMaxConcurrent` (50) otherwise. The
   cycle 5 post-configuration had overwritten the section on every deployment with a Postgres driver.
+* Reliability (cycle 8a): `InMemoryRequestResponseStore` observed a waiter's token by canceling the shared
+  completion source, so one waiter giving up canceled every waiter on the correlation and the response that
+  followed was dropped; the token now governs the wait (`Task.WaitAsync`).
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
