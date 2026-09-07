@@ -96,7 +96,50 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
     await tx.RollbackAsync();
   }
 
+  [Test]
+  public async Task ClaimTick_WhileAPendingPerspectiveRowIsBeingCompleted_DoesNotWaitAsync() {
+    // The inbox and outbox claims already skip locked rows; the perspective claim did not, so a
+    // completion holding a row it wanted to lease made the whole tick wait.
+    await using var holder = await _openAsync();
+    await using var claimer = await _openAsync();
+    var instance = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var eventId = (Guid)TrackedGuid.NewMedo();
+    var workId = (Guid)TrackedGuid.NewMedo();
+    await _registerInstanceAsync(holder, instance);
+    await _seedPendingPerspectiveRowAsync(holder, streamId, eventId, workId);
+
+    await using var tx = await holder.BeginTransactionAsync();
+    await _execAsync(holder, "UPDATE wh_perspective_events SET processed_at = NOW() WHERE event_work_id = @w", ("w", workId), tx);
+
+    await _setStatementTimeoutAsync(claimer);
+    await using var cmd = claimer.CreateCommand();
+    cmd.CommandText = "SELECT count(*) FROM claim_work(@i, 'test', 'test-host', 1, 10, 1, 300)";
+    cmd.Parameters.AddWithValue("i", instance);
+    _ = await cmd.ExecuteScalarAsync();   // must return: the held row is skipped, not waited for
+
+    await tx.RollbackAsync();
+  }
+
   // -------------------------------------------------------------------------------------------
+
+  private static async Task _seedPendingPerspectiveRowAsync(NpgsqlConnection conn, Guid streamId, Guid eventId, Guid workId) {
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText =
+        "INSERT INTO wh_event_store (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, commit_sequence, flags, created_at) " +
+        "VALUES (@e, @s, @s, 'TestAggregate', 'TestNamespace.ProbeEvent', 'null'::jsonb, 1, nextval('wh_commit_seq'), 0, NOW() - INTERVAL '1 minute')";
+      cmd.Parameters.AddWithValue("e", eventId);
+      cmd.Parameters.AddWithValue("s", streamId);
+      await cmd.ExecuteNonQueryAsync();
+    }
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "INSERT INTO wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, status, attempts, created_at) VALUES (@w, @s, 'ProbePerspective', @e, 1, 0, NOW() - INTERVAL '1 minute')";
+      cmd.Parameters.AddWithValue("w", workId);
+      cmd.Parameters.AddWithValue("s", streamId);
+      cmd.Parameters.AddWithValue("e", eventId);
+      await cmd.ExecuteNonQueryAsync();
+    }
+  }
 
   private async Task<NpgsqlConnection> _openAsync() {
     var conn = new NpgsqlConnection(ConnectionString);
