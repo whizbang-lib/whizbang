@@ -3204,3 +3204,42 @@ BR is `CacheAgeMinutes`/`ServerUptime` on `StatusInfo`, a different gap. Lines 3
 `case "message"` arm that no existing entry reached because none had both `IsCommand` and `IsEvent`
 false. Second time this wave a residue pointer of mine named the wrong thing (see CI), and both
 times the agent checked rather than accepting the decline.
+
+## CL. Wave 5 Core/data: the eighth brace artifact, and two provably dead lines
+
+### `NotificationConnectionPlan` 89 — eighth confirmed closing-brace artifact
+
+`OpenAsync`'s catch disposes the connection and rethrows. From the same cobertura file: 86
+(`} catch {`), 87 (the dispose) and 88 (`throw;`) are all HIT; only 89, the closing brace, is not.
+85 (`return connection;`) is also MISS, which confirms the connection genuinely failed rather than
+succeeding.
+
+So the test works and the line is the artifact. Eighth instance. The check is now routine and
+should be the FIRST thing done with any uncovered `}`: read the block's other lines out of the same
+coverage file. If the catch header and its statements ran, the brace is noise.
+
+### `DapperWorkCoordinator` 232 — dead by both call sites
+
+`_serializePerspectiveCompletions` has exactly two call sites in the file, and both pre-guard with
+`cursors.Count == 0 ? "[]" : …`, so its own empty-collection short-circuit can never run. Notably
+its sibling `_serializeFailures` (line 202) has NO such pre-guard at its call site, which is why
+that one IS reachable and now covered. Two near-identical helpers, one live and one dead, decided
+entirely by what the callers do.
+
+### `PhysicalFieldExpressionVisitor` 63 and 73
+
+63 guards `PropertyInfo.DeclaringType == null`, a CLR state that does not occur for property
+members. 73 is provably dead by its enclosing condition: `_isPerspectiveRowType(dataAccess.Expression?.Type)`
+already requires `dataAccess.Expression` to be non-null, so the `entityExpression == null` test
+inside it can never be true. No file created.
+
+### `NullScopeContextAccessor` 16-17 — null-object properties
+
+Plain `{ get; set; }` on a null-object implementation, no decision logic. Tenth write-only-shaped
+set, and the clearest: the type exists to do nothing.
+
+### `BaseSagaService` 638
+
+Closing brace after `throw;`. The agent confirmed the catch's own lines (632-637) are already
+executed by the existing `SagaBackfillTests.BaseSagaService_TryRunHookAsync_WorkThrows_PublishesFailedThenRethrowsAsync`
+before declining — the check applied correctly rather than the heuristic assumed.
