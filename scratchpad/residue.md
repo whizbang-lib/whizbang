@@ -3005,3 +3005,61 @@ Guard against inputs the code itself produced. Same category as CD.
   `MultiPassMessageTypeBinder` bug (residue BT): a malformed `Version=` segment raises
   `FileLoadException` out of `TypeNameParser` before any lookup. The same finding that produced a
   production fix also unblocked a coverage gap three waves later.
+
+## CG. Measuring when the machine will not host a full sweep
+
+Five consecutive `pwsh scripts/Run-Tests.ps1 -Mode Ai -Coverage` runs were killed for low memory,
+including one at `-MaxParallel 3` and one started from a freshly reset build server. What worked,
+what did not, and what the resulting number is worth.
+
+### The build server is the recurring memory sink
+
+`VBCSCompiler` reached **4.86 GB**, was shut down, and had regrown to **4.18 GB** a few hours later.
+It accumulates across a long session of repeated project builds and nothing reclaims it.
+`dotnet build-server shutdown` frees it cleanly and it respawns on demand. This belongs BEFORE a
+measurement, not after a failure — and the first full sweep of the session succeeded precisely
+because it ran before dozens of builds had gone through.
+
+### Background jobs are reaped; foreground commands are not
+
+Every background command — the sweeps, a sliced script, even a 30-second `sleep` loop — was killed
+under memory pressure. Every foreground command in the same period succeeded: builds, scoped test
+runs, per-project coverage runs. The practical rule for this machine: **run measurement work in the
+foreground, chunked to fit the timeout**, rather than backgrounding it and hoping.
+
+### `[Category=...]` treenode filters silently collect no coverage
+
+`--treenode-filter "/*/*/*/*[Category=ShardN]"` RUNS the tests correctly — all four shards passed,
+2,833 tests, zero failures — and writes a **178-byte empty cobertura**. Per-class filters
+(`/*/*/ClassName/*`) preserve coverage normally; every scoped verification this session relied on
+that and produced 13-15 MB files. So the property-filter form is the broken one.
+
+This is a trap of the same family as the vacuity ones: the run reports success, a cobertura file
+exists, and it contains nothing. Checking the file SIZE is the cheap guard — the empty one is
+178 bytes against a real one's 13+ MB.
+
+### What the sliced number is, and what it is not
+
+34 of 35 projects measured cleanly, plus per-project pass/fail counts the banner never gave:
+
+    Whizbang.Core.Tests                     11,384 passed   1 failed
+    Whizbang.Data.EFCore.Postgres.Tests      2,833 passed   0 failed  (4 shards, coverage LOST)
+    Whizbang.Data.Dapper.Postgres.Tests        537 passed  43 failed
+    Whizbang.Core.Integration.Tests            149 passed   1 failed
+    ...29 further projects                                  0 failed
+
+Merged: **96.6% over 28 assemblies** (99,213 / 102,680).
+
+**This is NOT comparable to the 98.7% baseline**, which covered 29 assemblies and 117,622 coverable
+lines. `Whizbang.Data.EFCore.Postgres` is absent entirely — its full run exceeds the foreground
+window and its shard-filtered runs emit empty coverage.
+
+Nor is the gap fully explained by that one assembly. The missing assembly accounts for ~14,942
+coverable lines, but the covered count differs by ~16,897 — roughly 2,100 lines more than the
+missing assembly can explain. I have not chased that remainder, so the correct statement is that
+the sliced figure measures a DIFFERENT population, not that coverage fell.
+
+The last figure that can be stated without qualification remains **98.7% across 35/35 projects**,
+measured before waves 3 and 4. Those waves added 270 lines verified individually by scoped
+`--coverage` runs, which is a stronger guarantee per line than a suite total — but it is not a
+suite total, and the two should not be added together and presented as one.
