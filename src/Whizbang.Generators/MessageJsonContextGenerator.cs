@@ -404,18 +404,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// </summary>
   /// <param name="symbol">The type symbol</param>
   /// <returns>CLR-format type name without global:: prefix</returns>
-  private static string _getClrTypeName(INamedTypeSymbol symbol) {
-    if (symbol.ContainingType != null) {
-      // Nested type - use + separator (CLR format)
-      return _getClrTypeName(symbol.ContainingType) + "+" + symbol.Name;
-    }
-
-    if (!symbol.ContainingNamespace.IsGlobalNamespace) {
-      return symbol.ContainingNamespace.ToDisplayString() + "." + symbol.Name;
-    }
-
-    return symbol.Name;
-  }
+  /// <summary>
+  /// The CLR type name, through the shared helper only. This was a private re-implementation of
+  /// the <c>+</c> rendering (issue #697 audit): same output for non-generic types, a second place
+  /// to drift, and no generic arity, where the runtime mirror (<c>Type.FullName</c>) carries it.
+  /// </summary>
+  private static string _getClrTypeName(INamedTypeSymbol symbol) => TypeNameUtilities.BuildClrTypeName(symbol);
 
   /// <summary>
   /// Determines the message kind for diagnostic reporting.

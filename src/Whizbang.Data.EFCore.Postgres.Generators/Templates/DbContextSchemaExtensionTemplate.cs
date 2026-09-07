@@ -1272,6 +1272,12 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
             renamedCount++;
             logger?.LogWarning("Renamed perspective table: {ClrType} from {OldTable} → {NewTable}", clrType, oldTable, newTable);
             break;
+          case "renamed_key":
+            // Migration 142 (issue #697): the row was keyed in the previous display-string form and
+            // has been adopted under the CLR key; its enrollment columns are intact.
+            renamedCount++;
+            logger?.LogInformation("Perspective registry key adopted to the CLR form: {ClrType} ({Table})", clrType, newTable);
+            break;
           case "drift_detected":
             driftCount++;
             logger?.LogWarning("Schema drift detected for perspective: {ClrType} ({Table})", clrType, newTable);

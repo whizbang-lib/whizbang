@@ -104,10 +104,10 @@ public sealed partial class TypeDefinitionReconciler {
     if (registered.Count > 0) {
       var retention = new List<PerspectiveRetentionDeclaration>(registered.Count);
       foreach (var (modelType, ttlSeconds) in registered) {
-        var clrTypeName = modelType.FullName;
-        if (clrTypeName is null) {
-          continue;
-        }
+        // The registry key form (Outer+Model for a nested model), through the shared helper: the
+        // generator writes the row with TypeNameUtilities.BuildClrTypeName, and the two helpers
+        // are documented mirrors. A local rendering on either side is how issue #697 happened.
+        var clrTypeName = TypeNameFormatter.FormatClrTypeName(modelType);
         // A registered perspective is enrolled by construction — the declaration IS the enrolment.
         // A negative window means enrolled with no default rule, which is distinct from zero.
         var cap = Whizbang.Core.Perspectives.PerspectiveRowCapRegistry.Resolve(modelType);

@@ -580,12 +580,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var conn = __scope.Connection;
+    var registry = BuildSchemaQualifiedName(schema, "wh_perspective_registry");
     foreach (var declaration in declarations) {
       await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
-      cmd.CommandText =
-        $"SELECT {fn}(@clr, @enrolled, @ttl, @maxage, @cap, @capkey); " +
-        "UPDATE " + BuildSchemaQualifiedName(schema, "wh_perspective_registry") +
-        " SET row_cap_per_scope = @cap, row_cap_scope_key = @capkey WHERE clr_type_name = @clr";
+      // The function returns the rows it matched. A declaration that matches no registry row is a
+      // key drift (issue #697: the registry was keyed in a display-string form the runtime never
+      // looked up, and every nested model sat silently un-enrolled), so zero is a warning that
+      // names the declaration and the key, never a swallowed result.
+      cmd.CommandText = $"SELECT {fn}(@clr, @enrolled, @ttl, @maxage, @cap, @capkey)";
       cmd.Parameters.Add(new NpgsqlParameter("clr", declaration.ClrTypeName));
       cmd.Parameters.Add(new NpgsqlParameter("enrolled", declaration.Enrolled));
       cmd.Parameters.Add(new NpgsqlParameter("ttl", NpgsqlTypes.NpgsqlDbType.Integer) {
@@ -600,7 +602,26 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new NpgsqlParameter("capkey", NpgsqlTypes.NpgsqlDbType.Text) {
         Value = (object?)declaration.CapScopeKey ?? DBNull.Value
       });
-      await cmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      var matched = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
+      var matchedRows = matched is int n ? n : 0;
+      if (matchedRows == 0) {
+        if (_logger is not null) {
+          EFCoreWorkCoordinatorLog.RetentionDeclarationMatchedNoRegistryRow(_logger, declaration.ClrTypeName);
+        }
+        continue;
+      }
+
+      await using var capCmd = conn.CreateCommand().WithCoordinatorTimeout();
+      capCmd.CommandText = "UPDATE " + registry +
+        " SET row_cap_per_scope = @cap, row_cap_scope_key = @capkey WHERE clr_type_name = @clr";
+      capCmd.Parameters.Add(new NpgsqlParameter("clr", declaration.ClrTypeName));
+      capCmd.Parameters.Add(new NpgsqlParameter("cap", NpgsqlTypes.NpgsqlDbType.Integer) {
+        Value = (object?)declaration.CapPerScope ?? DBNull.Value
+      });
+      capCmd.Parameters.Add(new NpgsqlParameter("capkey", NpgsqlTypes.NpgsqlDbType.Text) {
+        Value = (object?)declaration.CapScopeKey ?? DBNull.Value
+      });
+      await capCmd.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
   }
 
@@ -5196,4 +5217,9 @@ internal static partial class EFCoreWorkCoordinatorLog {
     Message = "Handler-commit batch of {HandlerCount} fell back from the bulk tier to per-handler savepoints: {BulkError} — "
             + "sustained fallbacks mean every commit pays the slow path; the SQLSTATE names why")]
   public static partial void CommitBulkTierFellBack(ILogger logger, int handlerCount, string bulkError);
+
+  [LoggerMessage(EventId = 75, Level = LogLevel.Warning,
+    Message = "Row-retention declaration for {ClrTypeName} matched no wh_perspective_registry row: the perspective is NOT enrolled. "
+            + "The registry key is the CLR type name (Outer+Model for a nested model); a row keyed in another form is a key drift")]
+  public static partial void RetentionDeclarationMatchedNoRegistryRow(ILogger logger, string clrTypeName);
 }

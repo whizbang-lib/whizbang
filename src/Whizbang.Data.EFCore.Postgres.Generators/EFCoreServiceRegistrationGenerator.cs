@@ -482,6 +482,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return new PerspectiveModelCandidate(
         PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
         DbSetPropertyName: dbSetPropertyName,
         TableBaseName: tableBaseName,
         NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
@@ -508,6 +509,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return new PerspectiveModelInfo(
         PerspectiveClassName: candidate.PerspectiveClassName,
         ModelTypeName: candidate.ModelTypeName,
+        ModelClrTypeName: candidate.ModelClrTypeName,
         DbSetPropertyName: candidate.DbSetPropertyName,
         TableName: tableName,
         NamespaceHint: candidate.NamespaceHint,
@@ -2586,8 +2588,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var schemaHash = SchemaHashUtilities.ComputeSchemaHash(tableSchema);
 
     sb.Append('{');
-    var dbClrTypeName = perspective.ModelTypeName.Replace(PLACEHOLDER_GLOBAL, "");
-    sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(dbClrTypeName)}\",");
+    // The registry key is the CLR form (Outer+Model), the same form the runtime looks it up by
+    // (TypeNameFormatter.FormatClrTypeName). A display-string rendering (Outer.Model) matched
+    // nothing for nested models and left row retention silently un-enrolled (issue #697).
+    sb.Append($"\"ClrTypeName\":\"{_escapeJsonString(perspective.ModelClrTypeName)}\",");
     sb.Append($"\"TableName\":\"{_escapeJsonString(perspective.TableName)}\",");
     sb.Append($"\"SchemaJson\":{schemaJson},");
     sb.Append($"\"SchemaHash\":\"{schemaHash}\",");
@@ -2689,7 +2693,10 @@ internal sealed record DbContextInfo(
 /// Information about a discovered perspective and its TModel type.
 /// </summary>
 /// <param name="PerspectiveClassName">Fully qualified perspective class name</param>
-/// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
+/// <param name="ModelTypeName">Fully qualified model type name (TModel), the form code generation needs</param>
+/// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c> for nested types) from
+/// <c>TypeNameUtilities.BuildClrTypeName</c>: the registry key, mirrored at runtime by
+/// <c>TypeNameFormatter.FormatClrTypeName</c></param>
 /// <param name="DbSetPropertyName">Property name for DbSet (e.g., "ActiveJobTemplateModels" for nested Model classes)</param>
 /// <param name="TableName">Snake_case table name</param>
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
@@ -2698,6 +2705,7 @@ internal sealed record DbContextInfo(
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
+    string ModelClrTypeName,
     string DbSetPropertyName,
     string TableName,
     string NamespaceHint,
@@ -2711,6 +2719,7 @@ internal sealed record PerspectiveModelInfo(
 /// </summary>
 /// <param name="PerspectiveClassName">Fully qualified perspective class name</param>
 /// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
+/// <param name="ModelClrTypeName">The model's CLR type name (<c>Outer+Model</c> for nested types), the registry key</param>
 /// <param name="DbSetPropertyName">Property name for DbSet</param>
 /// <param name="TableBaseName">Base name for table generation (before suffix stripping and prefix)</param>
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
@@ -2721,6 +2730,7 @@ internal sealed record PerspectiveModelInfo(
 internal sealed record PerspectiveModelCandidate(
     string PerspectiveClassName,
     string ModelTypeName,
+    string ModelClrTypeName,
     string DbSetPropertyName,
     string TableBaseName,
     string NamespaceHint,
