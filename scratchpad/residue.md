@@ -2857,3 +2857,151 @@ expected that file to land in that project. `ShardCoverageGuardTests` failed the
 exactly why: "a class with no shard category runs in NO slice and silently stops being tested."
 That is the vacuity failure mode expressed as a build guard, and it is worth more than the
 convention it protects.
+
+## CB. A new residue shape: dead by C# generic covariance
+
+`src/Whizbang.Core/Internal/MessageExtractor.cs` lines 72, 73, 77, 78 are the
+`IEnumerable<IEvent>` and `IEnumerable<ICommand>` arms of `_tryExtractFromTypedEnumerable`. They
+cannot be reached by any input.
+
+`IEvent : IMessage` and `ICommand : IMessage`, and `IEnumerable<out T>` is covariant. So any
+`IEnumerable<IEvent>` value ALREADY satisfies the `IEnumerable<IMessage>` test on line 66, which is
+checked first and always wins. The two later arms are unreachable not because no caller passes such
+a value, but because the type system converts every such value into the earlier case.
+
+This is a distinct category from the Roslyn/BCL contract guards already catalogued — same "cannot
+fire" conclusion, different mechanism, and worth naming separately because the check that settles
+it is different: for a contract guard you read the API's documented invariant, but here you read
+the ORDER of the type tests and the variance of the interfaces involved. A type test that is
+strictly weaker than an earlier one is dead regardless of what callers do.
+
+Whether the arms should be deleted or the order changed is the owner's call. If the intent was to
+distinguish an event sequence from a command sequence, the check has to precede the
+`IEnumerable<IMessage>` one, and the fact that it does not is arguably the real finding here.
+
+## CC. Eighth write-only set: WorkCoordinatorFlushHelper's FlushContext
+
+`src/Whizbang.Core/Messaging/WorkCoordinatorFlushHelper.cs` lines 21, 23, 30, 34 are the
+`InstanceProvider`, `StrategyName`, `Flags` and `Metrics` fields of the `FlushContext` record
+struct. Nothing reads any of them.
+
+Unusually, the production code says so itself: the type's own doc comment states that most fields
+are "kept for source compatibility with strategy call sites; the new-path helper only consumes the
+ones documented below." So this is a deliberate, documented carry-over rather than an oversight —
+which makes it residue with a known owner decision behind it, and the cleanest of the eight
+instances to act on when someone chooses to.
+
+Running total of write-only sets: BD, BE, BJ, BR, BX, BY (ScopedLensFactoryGenerator),
+BZ (CategoryBatch/MigrationItem), CA (AnalysisTypes.FilePath ×4), and now CC.
+
+## CD. Guards against inputs the code itself produced — three more
+
+`src/Whizbang.Core/Security/DefaultMessageSecurityContextProvider.cs` 51, 55 and 121.
+
+- 51 and 55 throw when `_options` or `_extractors` is null. The primary constructor already does
+  `options ?? throw`, and `_extractors` is built with `[.. extractors.OrderBy(...)]`, an eager
+  materialization. Neither field can be null after construction, so neither throw can fire.
+- 121 is `if (extractor is null) continue;` over that same materialized list. A null element would
+  have thrown inside the constructor's `OrderBy(e => e.Priority)` before the field was ever
+  assigned, so the loop cannot observe one.
+
+Same category as the entries already recorded, but worth logging because all three sit in security
+code, where a defensive guard reads as prudent rather than dead. The distinguishing question is not
+"could this be null in principle" but "could it be null HERE, given what the constructor
+guarantees" — and the answer is set by the construction path, not by the field's type.
+
+## CE. Expression-tree API contract guard, and a brace-artifact hint of mine that was wrong
+
+### `CollectivePredicateSqlCompiler` 394-395 — cannot fire
+
+`_readMember`'s default switch arm throws for a `MemberExpression.Member` that is neither a
+`FieldInfo` nor a `PropertyInfo`. `Expression.MakeMemberAccess` validates at construction time that
+the member is a field or a property, and there is no public route to an instance that violates it.
+Same category as the Roslyn contract guards — a BCL invariant rather than a Roslyn one — and
+verified against the framework's factory rather than assumed.
+
+### `PgCommitOrderStamperWorker` 247 — NOT the brace artifact I predicted
+
+I flagged 247 and 303 in the brief as "strong candidates" for the
+closing-brace-after-unconditional-transfer artifact. 303 was one. **247 was not**, and the agent
+was right to check rather than take the hint.
+
+247 is the outer worker loop's closing brace, and it is genuinely reachable — but only by falling
+through the loop body's retry tail rather than exiting via `break`/`continue`. Every existing
+integration test leaves that loop through a `break` or a `continue`, so none of them ever reach the
+fall-through. Driving it needed a non-cancellation exception on each iteration, produced in-process
+with a syntactically invalid connection string so `new NpgsqlConnection(...)` throws before any
+network I/O, and the loop-back was proven by waiting for a SECOND error log rather than by
+inspecting state.
+
+A scoped `--coverage` run confirms 247 now covered. The lesson is about the heuristic, not the
+line: "closing brace on the uncovered list" is a HYPOTHESIS to check against the block's other
+lines, not a classification. When the enclosing statements are covered and only the brace is not,
+it is an artifact; when the whole tail is uncovered, the block genuinely never ran and there is real
+behavior behind it. I gave that check to the agents for catch blocks and should have stated it for
+loop bodies too.
+
+### `SplitModeChangeTrackerHydrator` 102-104 — covered, with a constraint worth copying
+
+`Clear()` empties a `private static` dictionary that two other test files register into inside
+their own test bodies. Rather than decline it as a cross-test hazard (the treatment
+`IntegrityManifestReceptors` got), the agent tagged the class with
+`[NotInParallel("EFCorePostgresTests")]` — the SAME key those files already carry — which serializes
+it against that whole fleet without needing a database. That is the better outcome, and it is only
+available because the key already existed; inventing a new one would have serialized against
+nothing.
+
+## CF. Wave 4 verification: 114/118, and a test that passed via the wrong branch
+
+### `AuditJsonSerializer` 46-48 — reported covered, was not
+
+The runtime-type fallback. The test declared the value as `object`, reasoning that `object` is
+unregistered so the compile-time lookup would fail. It does not fail: `GetTypeInfo(typeof(object))`
+SUCCEEDS, the string serialized in the FIRST block at line 37, and the test's assertions — value
+kind is String, content matches — were satisfied without the fallback ever executing.
+
+This is the sharpest example this session of a test that passes for the wrong reason. Both
+assertions were about the OUTPUT, and the output is identical whichever block produces it. Nothing
+about the test was wrong except that it could not distinguish the two paths.
+
+Fixed by making the two lookups genuinely disagree: a private interface with a
+`DefaultJsonTypeInfoResolver` that returns null for that interface and delegates everything else, so
+the compile-time type truly fails to resolve and the concrete record truly resolves. 46-48 now
+covered.
+
+The general lesson: when two code paths produce the same observable output, an output assertion
+cannot tell you which one ran. Either assert something only one path can produce, or construct the
+input so only one path is possible. A scoped `--coverage` run is what caught it.
+
+### `DefaultMessageSecurityContextProvider` 193 — unreachable from its only caller
+
+Line 193 closes `if (envelopeType.IsGenericType && ...GetGenericArguments() is { Length: 1 })`, and
+is reached only when that outer test passes AND the inner
+`typeof(IMessageEnvelope).IsAssignableFrom(envelopeType)` fails.
+
+The method has exactly one caller (line 176), which passes `current.GetType()` where `current` is
+an `IMessageEnvelope` being walked through nested payloads. So a generic-with-one-argument type
+arriving here is always assignable to `IMessageEnvelope` and returns at 191. Reaching 193 needs a
+generic single-argument type that is NOT an envelope, which the caller cannot construct.
+
+Guard against inputs the code itself produced. Same category as CD.
+
+### Confirmed reachable this wave, worth noting because the shapes look like residue
+
+- **`SlidingWindowBatcher` 86, 101, 125** — the fourth encounter with this family, and the first
+  where the race lines were driven DETERMINISTICALLY rather than declined: a custom
+  `ChannelReader<T>` controls `WaitToReadAsync`/`TryRead` directly (phantom-ready signal, an
+  already-cancelled task), and `SlidingWindow = TimeSpan.Zero` makes the elapsed check go negative
+  on the first synchronous pass. No `FakeTimeProvider`, no real threads. Where the sibling classes'
+  equivalent lines were declined as unconstructable races, these were constructable because the
+  batcher takes its reader as a dependency. **The seam decides, not the shape.**
+- **`SecurityContextHelper` 536** — an abandoned task's fault-observing continuation, proven with
+  the `TaskScheduler.UnobservedTaskException` + forced-GC technique already established in
+  `UnobservedExceptionDiagnosticsTests.cs`, with a unique marker string so a concurrent unrelated
+  fault cannot produce a false pass.
+- **`AuditOutboxMessageBuilder` 147-151** — an agent declined this as needing a `Type.GetType` input
+  that throws rather than returns null, noting correctly that nothing in the repo constructs one.
+  It was closable because THIS session had already proven the trigger while fixing the
+  `MultiPassMessageTypeBinder` bug (residue BT): a malformed `Version=` segment raises
+  `FileLoadException` out of `TypeNameParser` before any lookup. The same finding that produced a
+  production fix also unblocked a coverage gap three waves later.
