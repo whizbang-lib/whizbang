@@ -103,6 +103,21 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
   }
 
+  [Test]
+  public async Task DrainWidth_IsClampedToHalfTheGate_AndLoggedOnceAsync() {
+    await using var f = await _Fixture.StartAsync(longHoldWarning: TimeSpan.FromSeconds(60), gateMaxConcurrent: 8);
+    await f.Harness.EnqueueDrainStreamAsync(f.StreamId);
+    await f.Registry.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    f.Registry.Release.TrySetResult();
+    await f.Coordinator.WaitForCompletionReportedAsync(TimeSpan.FromSeconds(5));
+
+    var clamps = f.Logger.Snapshot().Where(e => e.Level == LogLevel.Warning && e.Message.Contains("clamped", StringComparison.Ordinal)).ToList();
+    await Assert.That(clamps.Count).IsEqualTo(1)
+      .Because("the default consumers times the default width against an 8-slot gate leaves one per consumer, and the clamp is said once");
+    await Assert.That(clamps[0].Message).Contains("MaxConcurrent=8")
+      .Because("the warning names the gate it clamped against");
+  }
+
   #region Fixture
 
   private sealed record WatchdogTestEvent(string Data) : IEvent;
@@ -118,7 +133,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     private Task _workerTask = Task.CompletedTask;
     private bool _stopped;
 
-    public static async Task<_Fixture> StartAsync(TimeSpan longHoldWarning) {
+    public static async Task<_Fixture> StartAsync(TimeSpan longHoldWarning, int gateMaxConcurrent = 0) {
       var f = new _Fixture();
       var eventId = (Guid)TrackedGuid.NewMedo();
       f.Coordinator.StreamEventsToReturn = [
@@ -173,7 +188,8 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
         perspectiveCompletionChannel: f.Harness.CompletionCapture,
         failureChannel: f.Harness.FailureCapture,
         perspectiveDrainChannel: f.Harness.DrainChannel,
-        schemaReadyGate: SchemaReadyGate.AlreadyReady());
+        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
+        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null);
       f._workerTask = f.Worker.StartAsync(f._cts.Token);
       return f;
     }

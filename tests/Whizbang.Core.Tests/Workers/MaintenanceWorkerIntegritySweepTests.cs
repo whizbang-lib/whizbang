@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -5,6 +6,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Tests.Helpers;
 using Whizbang.Core.Workers;
 
@@ -69,11 +71,14 @@ public class MaintenanceWorkerIntegritySweepTests {
   };
 
   private static (MaintenanceWorker Worker, CapturingLogger<MaintenanceWorker> Logger) _build(
-      SweepCoordinator coord, StreamIntegrityOptions? integrity) {
+      SweepCoordinator coord, StreamIntegrityOptions? integrity, StreamIntegrityMetrics? metrics = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     if (integrity is not null) {
       services.AddSingleton(Options.Create(integrity));
+    }
+    if (metrics is not null) {
+      services.AddSingleton(metrics);
     }
     var sp = services.BuildServiceProvider();
     var gate = new SchemaReadyGate();
@@ -188,5 +193,37 @@ public class MaintenanceWorkerIntegritySweepTests {
       .Because("a canceled cycle stops; nothing after the sweep runs");
     await Assert.That(logger.Snapshot().Any(e => e.Message.Contains("sweep failed", StringComparison.Ordinal))).IsFalse()
       .Because("shutdown is not reported as a failure");
+  }
+
+  [Test]
+  public async Task ReportOnly_CountsTheDiscardsOnTheMetric_PerTableAsync() {
+    var metrics = new StreamIntegrityMetrics(new WhizbangMetrics());
+    var counts = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (ReferenceEquals(instrument, metrics.RepairTrafficDiscarded)) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, measurement, tags, state) => {
+      var table = "?";
+      foreach (var tag in tags) {
+        if (tag.Key == "table") {
+          table = tag.Value?.ToString() ?? "?";
+        }
+      }
+      counts.AddOrUpdate(table, measurement, (_, v) => v + measurement);
+    });
+    listener.Start();
+    var coord = new SweepCoordinator { InboxDiscarded = 3, OutboxDiscarded = 2 };
+    var options = _everythingOn();
+    options.RepairMode = IntegrityRepairMode.ReportOnly;
+    var (worker, _) = _build(coord, options, metrics);
+
+    await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    await Assert.That(counts.GetValueOrDefault("inbox")).IsEqualTo(3L)
+      .Because("the metric is what a dashboard sees; it counts rows per table");
+    await Assert.That(counts.GetValueOrDefault("outbox")).IsEqualTo(2L);
   }
 }

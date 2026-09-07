@@ -1358,6 +1358,24 @@ public partial class PerspectiveWorker(
     }
   }
 
+  /// <summary>The held gates aged against <paramref name="now"/>, longest first, with their entries.</summary>
+  private List<(StreamAffinityGateEntry Entry, AffinityHold Hold)> _affinityHoldsOlderThan(long olderThanTicks, long now) {
+    var holds = new List<(StreamAffinityGateEntry Entry, AffinityHold Hold)>();
+    foreach (var (key, entry) in _streamAffinityGates) {
+      var since = Interlocked.Read(ref entry.HeldSinceTicks);
+      if (since == 0) {
+        continue;
+      }
+      var held = now - since;
+      if (held < olderThanTicks) {
+        continue;
+      }
+      holds.Add((entry, new AffinityHold(key.StreamId, key.PerspectiveName, entry.Path, entry.Phase, TimeSpan.FromTicks(Math.Max(0L, held)))));
+    }
+    holds.Sort(static (a, b) => b.Hold.Held.CompareTo(a.Hold.Held));
+    return holds;
+  }
+
   /// <summary>
   /// The affinity gates held for at least <paramref name="olderThan"/>, longest first. A live stall
   /// read as one drain consumer holding a gate against an idle database, with nothing in the logs to
@@ -1368,20 +1386,7 @@ public partial class PerspectiveWorker(
   /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerAffinityHoldWatchdogTests.cs</tests>
   internal IReadOnlyList<AffinityHold> SnapshotAffinityHolds(TimeSpan olderThan, long? nowUtcTicks = null) {
     var now = nowUtcTicks ?? _timeProvider.GetUtcNow().UtcTicks;
-    var holds = new List<AffinityHold>();
-    foreach (var (key, entry) in _streamAffinityGates) {
-      var since = Interlocked.Read(ref entry.HeldSinceTicks);
-      if (since == 0) {
-        continue;
-      }
-      var held = now - since;
-      if (held < olderThan.Ticks) {
-        continue;
-      }
-      holds.Add(new AffinityHold(key.StreamId, key.PerspectiveName, entry.Path, entry.Phase, TimeSpan.FromTicks(Math.Max(0, held))));
-    }
-    holds.Sort(static (a, b) => b.Held.CompareTo(a.Held));
-    return holds;
+    return _affinityHoldsOlderThan(olderThan.Ticks, now).Select(static h => h.Hold).ToList();
   }
 
   /// <summary>
@@ -1397,10 +1402,7 @@ public partial class PerspectiveWorker(
     }
     var now = nowUtcTicks ?? _timeProvider.GetUtcNow().UtcTicks;
     var reported = 0;
-    foreach (var hold in SnapshotAffinityHolds(threshold, now)) {
-      if (!_streamAffinityGates.TryGetValue((hold.StreamId, hold.PerspectiveName), out var entry)) {
-        continue;
-      }
+    foreach (var (entry, hold) in _affinityHoldsOlderThan(threshold.Ticks, now)) {
       var lastWarned = Interlocked.Read(ref entry.LastWarnedTicks);
       if (lastWarned != 0 && now - lastWarned < threshold.Ticks) {
         continue;
@@ -1423,12 +1425,11 @@ public partial class PerspectiveWorker(
     }
     var interval = TimeSpan.FromTicks(Math.Max(TimeSpan.FromSeconds(5).Ticks, threshold.Ticks / 2));
     using var timer = new PeriodicTimer(interval, _timeProvider);
-    try {
-      while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false)) {
-        ReportLongAffinityHolds();
-      }
-    } catch (OperationCanceledException) {
-      // shutdown
+    // Cancellation disposes the timer, which completes a pending tick with false and ends the loop on
+    // its normal path: no exception to catch, and a token already canceled ends it before the first tick.
+    using var stop = ct.Register(static state => ((PeriodicTimer)state!).Dispose(), timer);
+    while (await timer.WaitForNextTickAsync(CancellationToken.None).ConfigureAwait(false)) {
+      ReportLongAffinityHolds();
     }
   }
 
