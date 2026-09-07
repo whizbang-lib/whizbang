@@ -87,7 +87,8 @@ public partial class PerspectiveWorker(
   WorkCompletionMeter? completionMeter = null,
   // Optional, defaulted below: with none supplied the width is the configured option exactly,
   // so adopting the seam changes no scheduling behavior.
-  Whizbang.Core.Execution.IConcurrencyGovernor? governor = null
+  Whizbang.Core.Execution.IConcurrencyGovernor? governor = null,
+  Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
@@ -96,6 +97,8 @@ public partial class PerspectiveWorker(
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly WorkCompletionMeter? _completionMeter = completionMeter;
+  private readonly Whizbang.Core.Messaging.WorkCoordinatorGate? _gate = gate;
+  private int _widthClampLogged;
   private readonly IOptionsMonitor<TracingOptions>? _tracingOptions = tracingOptions;
   private IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly IPerspectiveSyncSignaler? _syncSignaler = syncSignaler;
@@ -126,6 +129,35 @@ public partial class PerspectiveWorker(
   /// shares a database budget with every other worker, so the ability to give width back under
   /// pressure is what keeps it from starving the rest of the system during a bulk replay.
   /// </remarks>
+  /// <summary>
+  /// The drain may use at most half of the coordinator gate, split across its consumer loops, so
+  /// the completion flusher and lease renewal (which queue for the same gate behind a pinned
+  /// connection) always find a slot. With the default 4 consumers x 30 wide against a 50-slot gate
+  /// the drain used to hold every slot: nothing completed, leases lapsed, the claim loop re-offered
+  /// the same rows. A gate at or below zero is disabled and imposes nothing.
+  /// </summary>
+  internal static int ClampWidthToGate(int consumers, int width, int gateMaxConcurrent) {
+    var requested = Math.Max(1, width);
+    if (gateMaxConcurrent <= 0) {
+      return requested;
+    }
+    var perConsumer = gateMaxConcurrent / 2 / Math.Max(1, consumers);
+    return Math.Max(1, Math.Min(requested, perConsumer));
+  }
+
+  private int _effectiveWidth() {
+    var width = Math.Max(1, _governor.CurrentWidth);
+    if (_gate is null || _gate.MaxConcurrent <= 0) {
+      return width;
+    }
+    var consumers = Math.Max(1, _options.MaxConcurrentDrainConsumers);
+    var capped = ClampWidthToGate(consumers, width, _gate.MaxConcurrent);
+    if (capped < width && Interlocked.Exchange(ref _widthClampLogged, 1) == 0) {
+      LogWidthClampedToGate(_logger, consumers, width, _gate.MaxConcurrent, capped);
+    }
+    return capped;
+  }
+
   internal static Whizbang.Core.Execution.IConcurrencyGovernor CreateDefaultGovernor(PerspectiveWorkerOptions options) {
     ArgumentNullException.ThrowIfNull(options);
     var configured = Math.Max(1, options.MaxConcurrentPerspectives);
@@ -1011,7 +1043,7 @@ public partial class PerspectiveWorker(
     await Parallel.ForEachAsync(
       groupedWork,
       new ParallelOptions {
-        MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
+        MaxDegreeOfParallelism = _effectiveWidth(),
         CancellationToken = cancellationToken
       },
       async (group, ct) => {
@@ -1389,7 +1421,7 @@ public partial class PerspectiveWorker(
     await Parallel.ForEachAsync(
       eventsByStream,
       new ParallelOptions {
-        MaxDegreeOfParallelism = Math.Max(1, _governor.CurrentWidth),
+        MaxDegreeOfParallelism = _effectiveWidth(),
         CancellationToken = cancellationToken
       },
       (streamGroup, ct) => new ValueTask(_processDrainModeStreamAsync(
@@ -4031,6 +4063,10 @@ public partial class PerspectiveWorker(
     Message = "Error processing perspective cursor: {PerspectiveName} for stream {StreamId}"
   )]
   static partial void LogErrorProcessingPerspectiveCursor(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
+    Message = "PerspectiveWorker MaxConcurrentDrainConsumers={Consumers} x drain width {Width} exceeds half of WorkCoordinatorGate.MaxConcurrent={GateMaxConcurrent}; per-consumer width clamped to {Effective} so the drain cannot hold every gate slot while the completion flusher and lease renewal wait behind it")]
+  static partial void LogWidthClampedToGate(ILogger logger, int consumers, int width, int gateMaxConcurrent, int effective);
 
   [LoggerMessage(
     EventId = 15,

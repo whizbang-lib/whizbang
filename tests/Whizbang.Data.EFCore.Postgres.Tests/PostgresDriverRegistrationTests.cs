@@ -3,7 +3,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Whizbang.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -25,6 +27,29 @@ public class PostgresDriverRegistrationTests {
 
   private const string OFFLINE_CONNECTION_STRING =
     "Host=localhost;Port=5432;Database=whizbang_registration_probe;Username=probe;Password=probe";
+
+  [Test]
+  public async Task Postgres_CarriesMaxInFlightCommandsIntoTheWorkCoordinatorGateAsync() {
+    // PostgresOptions.MaxInFlightCommands is the documented cap on concurrent coordinator calls; it
+    // used to reach nothing because the worker pipeline built its gate with a literal 50.
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
+    services.Configure<PostgresOptions>(o => o.MaxInFlightCommands = 7);
+    services.AddWhizbang();
+    await using var dataSource = new NpgsqlDataSourceBuilder(OFFLINE_CONNECTION_STRING).Build();
+    services.AddSingleton(dataSource);
+    services.AddDbContext<DriverSelectorTestDbContext>(o => o.UseNpgsql(dataSource));
+    _ = new WhizbangPerspectiveBuilder(services)
+      .WithEFCore<DriverSelectorTestDbContext>()
+      .WithDriver.Postgres;
+
+    await using var provider = services.BuildServiceProvider();
+    var gate = provider.GetRequiredService<WorkCoordinatorGate>();
+
+    await Assert.That(gate.MaxConcurrent).IsEqualTo(7)
+      .Because("the documented option is the one that takes effect, whichever registration ran first");
+  }
 
   [Test]
   public async Task Postgres_EveryServiceItRegistersCanBeResolvedAsync() {

@@ -156,6 +156,11 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
   `PerspectiveCoverageGapDetected` / `IntegrityDivergenceDetected` rows for weeks (unclaimable anyway
   because their partition numbers no longer matched the service's partition count: a separate stuck-row
   case for the sentinel). Never swept: peers' manifest requests, `RebuildPerspectiveCommand`.
+* Gate plumbing (cycle 5): `WorkCoordinatorGateOptions` (bound from `Whizbang:WorkCoordinatorGate`) builds
+  the process gate, both Postgres drivers carry `MaxInFlightCommands` into it (the option was inert), the
+  perspective drain clamps consumers x width to half the gate (`PerspectiveWorker.ClampWidthToGate`), and
+  `BatchFlusher` retries a failed batch with a backoff and drops it only after `MaxFlushAttempts`, at
+  Error, naming the consequence (the old "items lost" discard is how one timeout became lease churn).
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
@@ -186,7 +191,7 @@ per tenant. No time bucket by default; a bucket or a small shard count is an opt
 bulk phases only. No migration: audit rows are never event-stored. Lands in its own PR after the
 hold-and-wait fix (audit builder + coalesce fold + sink routing, red/green).
 
-## Perspective drain hold-and-wait (next PR, red/green)
+## Perspective drain hold-and-wait (this PR, cycle 7b, red/green)
 
 Mapped from source (file:line in the worktree at the time of writing):
 
@@ -202,6 +207,14 @@ Mapped from source (file:line in the worktree at the time of writing):
   claim loop re-offers the same set. Pinned on adds the Size-1 wire and `BatchFlusher.cs:91-100`
   discarding a batch on a borrow timeout (fatal); pinned off leaves S -> gate -> channel -> S (milder).
   One consumer keeps demand under the gate.
+* Reproduced with ONE drain consumer and the pinned pool off: 71,355 perspective rows leased by one live
+  instance (39k with expired leases re-offered to the same instance), both pods at gate 50/50, the
+  database completely idle (0 active backends), pods at ~16 millicores, 122 fat streams. Gate slots held
+  by callers waiting in-process, not on SQL. First reading (SUPERSEDED, see the corrected diagnosis
+  below): `ReportPerspectiveCompletionAsync` is gated and enqueues into the bounded completion channel (capacity 10k, FullMode.Wait); with 71k rows in
+  flight the channel is full, gate holders block on the channel, and the channel's drainer
+  (`PerspectiveCompletionFlushWorker`) cannot get a gate slot: gate -> channel -> gate. The RED test must
+  model that edge (a completion channel whose drain needs the gate), not only S -> gate.
 * `PostgresOptions.MaxInFlightCommands` has no consumer in `src/`; the gate is hard-coded at 50
   (`WorkerPipelineExtensions.cs:543`). The gate's acquire timeout (30 s) does not throw: it logs and
   returns a no-slot releaser; a timeout of 0 waits forever.
@@ -216,6 +229,25 @@ Mapped from source (file:line in the worktree at the time of writing):
   on one (stream, perspective) with two consumers; assert the completion capture stays empty while a
   gate wait is outstanding under S (hook `OnStreamAffinityGateContended`, `1263`). GREEN: the cursor
   completes with the gate at 1 because nothing gated runs under S.
+
+### Corrected diagnosis (design pass on the source, after the run-3 snapshot)
+
+No gated coordinator call runs under the affinity semaphore: the perspective hot path
+(`ReportPerspectiveCompletionAsync`, `GetPerspectiveCursorAsync`, `CompletePerspectiveEventsAsync`,
+`GetStreamEventsAsync`) is ungated, and the only bounded-channel write under S is the collective sink's
+lease-renewal enqueue (`_processCollectiveSinkAsync`, `__collective__` only). The edge that fits the
+snapshot is the CONNECTION POOL: `CoordinatorConnectionScope.AcquireForEfCoreAsync` opens the scoped
+DbContext's connection when it finds it closed and never closes it (`ownsConnection: false`, dispose is a
+no-op), and EF Core only auto-closes connections it opened itself, so every DI scope that made one
+coordinator call holds a pooled Npgsql connection for the scope's whole life. The perspective group scope
+spans the runner apply and the receptors, the drain scope spans a whole perspective, so ~30-wide bodies
+per pod hold the 50-connection pool with idle connections while the gated workers (claim, commit, the
+flushers) hold gate slots parked in `OpenAsync` waiting for the pool. Gate 50/50, database idle, pods
+idle, one consumer sufficient, pinned pool irrelevant. The S -> gate restructure is therefore NOT the
+fix; the fix is (1) the scope returns the connection it opened to the pool when the coordinator call
+ends, unless the caller had it open already or a transaction is active on it, and (2) the collective
+sink runs outside S. The gate-holder diagnostics (cycle 7a) will confirm the holders are parked in the
+pool wait.
 
 ### Load-sensitive test (to make deterministic)
 

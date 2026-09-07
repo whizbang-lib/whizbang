@@ -540,11 +540,26 @@ public static class WorkerPipelineExtensions {
     // semaphore wait so a saturated gate logs + degrades gracefully instead of hanging
     // every caller silently. Users can register their own gate before calling
     // AddWhizbang to override either the cap or the deadline.
-    services.TryAddSingleton(sp => new WorkCoordinatorGate(
-      maxConcurrent: 50,
-      acquireTimeoutMilliseconds: 30000,
-      logger: sp.GetService<ILogger<WorkCoordinatorGate>>(),
-      metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>()));
+    services.AddOptions<WorkCoordinatorGateOptions>();
+    services.AddSingleton<IConfigureOptions<WorkCoordinatorGateOptions>>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new ConfigureOptions<WorkCoordinatorGateOptions>(options => {
+        if (configuration is not null) {
+#pragma warning disable IL2026 // intercepted: the binder source generator compiles this call to typed assignments (BindingExtensions.g.cs)
+          Microsoft.Extensions.Configuration.ConfigurationBinder.Bind(
+            configuration.GetSection("Whizbang:WorkCoordinatorGate"), options);
+#pragma warning restore IL2026
+        }
+      });
+    });
+    services.TryAddSingleton(sp => {
+      var gateOptions = sp.GetRequiredService<IOptions<WorkCoordinatorGateOptions>>().Value;
+      return new WorkCoordinatorGate(
+        maxConcurrent: gateOptions.MaxConcurrent,
+        acquireTimeoutMilliseconds: gateOptions.AcquireTimeoutMilliseconds,
+        logger: sp.GetService<ILogger<WorkCoordinatorGate>>(),
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>());
+    });
 
     // AddOptions<T>() is idempotent (uses TryAdd internally for IOptions<T>).
     services.AddOptions<HeartbeatWorkerOptions>();

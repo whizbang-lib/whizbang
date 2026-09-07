@@ -107,6 +107,9 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
     services.AddSingleton(options);
+    // The documented cap on concurrent coordinator calls; the worker pipeline builds its gate from
+    // WorkCoordinatorGateOptions, so carry it over (it used to reach nothing).
+    services.PostConfigure<WorkCoordinatorGateOptions>(gate => gate.MaxConcurrent = options.MaxInFlightCommands);
     services.AddSingleton(jsonOptions);
 
     services.TryAddSingleton<IPolicyEngine, PolicyEngine>();
@@ -235,6 +238,9 @@ public static class ServiceCollectionExtensions {
 
     // Register PostgresOptions for components that need retry settings
     services.AddSingleton(options);
+    // The documented cap on concurrent coordinator calls; the worker pipeline builds its gate from
+    // WorkCoordinatorGateOptions, so carry it over (it used to reach nothing).
+    services.PostConfigure<WorkCoordinatorGateOptions>(gate => gate.MaxConcurrent = options.MaxInFlightCommands);
 
     // Register JSON serialization options
     services.AddSingleton(jsonOptions);

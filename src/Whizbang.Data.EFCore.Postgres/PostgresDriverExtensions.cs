@@ -169,6 +169,11 @@ public static class PostgresDriverExtensions {
         // if a worker's StartAsync runs first, it blocks on the gate until the initializer
         // calls MarkReady() at the end of migrations.
         selector.Services.TryAddSingleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>();
+        // PostgresOptions.MaxInFlightCommands is the documented cap on concurrent coordinator calls; carry
+        // it into the gate the worker pipeline builds (it used to reach nothing: the gate was a literal 50).
+        selector.Services.AddOptions<WorkCoordinatorGateOptions>()
+          .PostConfigure<Microsoft.Extensions.Options.IOptions<PostgresOptions>>(
+            (gate, postgres) => gate.MaxConcurrent = postgres.Value.MaxInFlightCommands);
         selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
 
         // Message type registry populator — reconciles wh_message_type_registry against the
