@@ -555,7 +555,7 @@ public static class WorkerPipelineExtensions {
     services.TryAddSingleton(sp => {
       var gateOptions = sp.GetRequiredService<IOptions<WorkCoordinatorGateOptions>>().Value;
       return new WorkCoordinatorGate(
-        maxConcurrent: gateOptions.MaxConcurrent,
+        maxConcurrent: gateOptions.MaxConcurrent ?? WorkCoordinatorGateOptions.DefaultMaxConcurrent,
         acquireTimeoutMilliseconds: gateOptions.AcquireTimeoutMilliseconds,
         logger: sp.GetService<ILogger<WorkCoordinatorGate>>(),
         metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>());

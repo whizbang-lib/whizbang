@@ -163,6 +163,9 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
   Error, naming the consequence (the old "items lost" discard is how one timeout became lease churn).
 * Dedupe (cycle 5x, refactor): one `_discardPendingAsync` helper per driver behind both interface methods,
   one parameterized SQL test class per driver, one shared `CapturingLogger<T>` for the Core tests.
+* Gate precedence (cycle 5d): `WorkCoordinatorGateOptions.MaxConcurrent` is nullable; the section wins, a
+  driver's `MaxInFlightCommands` only fills the gap (`??=`), `DefaultMaxConcurrent` (50) otherwise. The
+  cycle 5 post-configuration had overwritten the section on every deployment with a Postgres driver.
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order

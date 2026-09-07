@@ -171,9 +171,10 @@ public static class PostgresDriverExtensions {
         selector.Services.TryAddSingleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>();
         // PostgresOptions.MaxInFlightCommands is the documented cap on concurrent coordinator calls; carry
         // it into the gate the worker pipeline builds (it used to reach nothing: the gate was a literal 50).
+        // Fill the gap only: a cap the Whizbang:WorkCoordinatorGate section set is the operator's word.
         selector.Services.AddOptions<WorkCoordinatorGateOptions>()
           .PostConfigure<Microsoft.Extensions.Options.IOptions<PostgresOptions>>(
-            (gate, postgres) => gate.MaxConcurrent = postgres.Value.MaxInFlightCommands);
+            (gate, postgres) => gate.MaxConcurrent ??= postgres.Value.MaxInFlightCommands);
         selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
 
         // Message type registry populator — reconciles wh_message_type_registry against the
