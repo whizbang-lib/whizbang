@@ -52,6 +52,8 @@ public static class PostgresDriverExtensions {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_DoesNotOverrideExistingClaimedEmissionStore_Async</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/LibraryVersionRegistrationTests.cs:Postgres_WhenTheConsumerRegisteredItsOwnDbContext_StillRegistersTheLibraryVersionAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionByoDataSourceE2ETests.cs:Elector_UnderUseNpgsqlDataSource_WithNoNotificationConfiguration_AcquiresTheDutyAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverRegistrationTests.cs:Postgres_CarriesMaxInFlightCommandsIntoTheWorkCoordinatorGateAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PostgresGatePrecedenceTests.cs:ASectionValue_WinsOverMaxInFlightCommandsAsync</tests>
     /// <docs>data/drivers#bring-your-own-dbcontext</docs>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension property - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup logging doesn't need high performance optimization")]
@@ -169,6 +171,12 @@ public static class PostgresDriverExtensions {
         // if a worker's StartAsync runs first, it blocks on the gate until the initializer
         // calls MarkReady() at the end of migrations.
         selector.Services.TryAddSingleton<ISchemaInitializationRunner, DbContextSchemaInitializationRunner>();
+        // PostgresOptions.MaxInFlightCommands is the documented cap on concurrent coordinator calls; carry
+        // it into the gate the worker pipeline builds (it used to reach nothing: the gate was a literal 50).
+        // Fill the gap only: a cap the Whizbang:WorkCoordinatorGate section set is the operator's word.
+        selector.Services.AddOptions<WorkCoordinatorGateOptions>()
+          .PostConfigure<Microsoft.Extensions.Options.IOptions<PostgresOptions>>(
+            (gate, postgres) => gate.MaxConcurrent ??= postgres.Value.MaxInFlightCommands);
         selector.Services.AddHostedService<WhizbangDatabaseInitializerService>();
 
         // Message type registry populator — reconciles wh_message_type_registry against the

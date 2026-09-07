@@ -661,9 +661,12 @@ public sealed partial class InboxDrainWorker : BackgroundService {
     }
 
     var settings = new PoisonAdmissionPolicy.Settings();
+    // Attempts spent on expired leases are the framework's doing, not the message's: the acquisition SQL
+    // stamps those rows, and they must neither raise the high-attempt share nor be deferred by it.
+    static int effective(InboxBatchRow row) => PoisonAdmissionPolicy.IsLeaseExpiryCasualty(row.Error) ? 0 : row.Attempts;
     var high = 0;
     for (var i = 0; i < rows.Count; i++) {
-      if (rows[i].Attempts >= settings.HighAttemptThreshold) {
+      if (effective(rows[i]) >= settings.HighAttemptThreshold) {
         high++;
       }
     }
@@ -671,7 +674,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
 
     var admitted = 0;
     for (var i = 0; i < rows.Count; i++) {
-      var d = _poisonPolicy.Evaluate(rows[i].Attempts, rows.Count, share);
+      var d = _poisonPolicy.Evaluate(effective(rows[i]), rows.Count, share);
       plan[i] = d.Admit;
       if (d.Admit) {
         admitted++;
@@ -683,7 +686,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       // stop all progress is worse than the starvation it prevents.
       var best = 0;
       for (var i = 1; i < rows.Count; i++) {
-        if (rows[i].Attempts < rows[best].Attempts) {
+        if (effective(rows[i]) < effective(rows[best])) {
           best = i;
         }
       }

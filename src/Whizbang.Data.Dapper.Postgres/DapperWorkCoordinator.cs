@@ -616,6 +616,47 @@ public partial class DapperWorkCoordinator(
     return rows;
   }
 
+  /// <inheritdoc />
+  public Task<long> DiscardPendingInboxMessagesAsync(
+      IReadOnlyList<string> messageTypeNames,
+      CancellationToken cancellationToken = default)
+    => _discardPendingAsync(DISCARD_PENDING_INBOX_SQL, messageTypeNames, cancellationToken);
+
+  /// <inheritdoc />
+  public Task<long> DiscardPendingOutboxMessagesAsync(
+      IReadOnlyList<string> messageTypeNames,
+      CancellationToken cancellationToken = default)
+    => _discardPendingAsync(DISCARD_PENDING_OUTBOX_SQL, messageTypeNames, cancellationToken);
+
+  private const string DISCARD_PENDING_WHERE =
+    "WHERE r.processed_at IS NULL AND r.instance_id IS NULL " +
+    "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
+  private const string DISCARD_PENDING_INBOX_SQL = "DELETE FROM public.wh_inbox r " + DISCARD_PENDING_WHERE;
+  private const string DISCARD_PENDING_OUTBOX_SQL = "DELETE FROM public.wh_outbox r " + DISCARD_PENDING_WHERE;
+
+  /// <summary>
+  /// The maintenance sweep behind "a feature that is off leaves nothing behind", for one table.
+  /// Containment, not equality: a stored message_type may carry assembly version metadata or an envelope
+  /// wrapper around the normalized name. Unleased only: a leased row is mid-flight and its own seam
+  /// (the dispatch worker for the inbox, the publisher for the outbox) applies the same mode check.
+  /// </summary>
+  private async Task<long> _discardPendingAsync(
+      string sql, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(messageTypeNames);
+    if (messageTypeNames.Count == 0) {
+      return 0;
+    }
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
+    var connection = __scope.Connection;
+    await using var command = connection.CreateCommand();
+    command.CommandText = sql;
+    command.CommandTimeout = 30;
+    var param = Whizbang.Data.Postgres.PostgresArrayHelper.ToVarcharArray([.. messageTypeNames]);
+    param.ParameterName = "type_names";
+    command.Parameters.Add(param);
+    return await command.ExecuteNonQueryAsync(cancellationToken);
+  }
+
   #region LoggerMessage Declarations
 
   [LoggerMessage(

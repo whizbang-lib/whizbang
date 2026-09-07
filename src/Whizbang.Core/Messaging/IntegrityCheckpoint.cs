@@ -278,9 +278,11 @@ public sealed class StreamIntegrityOptions {
   /// <summary>Verify received counts against other origins' checkpoints (default true).</summary>
   public bool GapDetectionEnabled { get; set; } = true;
 
-  /// <summary>What to do with a CONFIRMED gap (default <see cref="IntegrityRepairMode.AutoRepairCapped"/>
-  /// — self-healing out of the box; <see cref="IntegrityRepairMode.ReportOnly"/> is the opt-down).</summary>
-  public IntegrityRepairMode RepairMode { get; set; } = IntegrityRepairMode.AutoRepairCapped;
+  /// <summary>What to do with a CONFIRMED gap (default <see cref="IntegrityRepairMode.ReportOnly"/>:
+  /// detect and report, let an operator decide; <see cref="IntegrityRepairMode.AutoRepairCapped"/> is the
+  /// opt-in to self-healing with storm caps). A default that mutates data unasked is not a default a
+  /// consumer can trust out of the box; repair re-delivery has looped under a misconfigured consumer.</summary>
+  public IntegrityRepairMode RepairMode { get; set; } = IntegrityRepairMode.ReportOnly;
 
   /// <summary>Storm cap: at most this many auto-repair requests per received checkpoint (default 10).</summary>
   public int MaxAutoRepairRequestsPerCheckpoint { get; set; } = 10;

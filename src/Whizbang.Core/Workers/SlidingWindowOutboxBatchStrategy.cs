@@ -94,7 +94,7 @@ public sealed class SlidingWindowOutboxBatchStrategy : IOutboxBatchStrategy {
     try {
       await Task.WhenAll(workers).WaitAsync(cancellationToken).ConfigureAwait(false);
     } catch (OperationCanceledException) {
-      _stopCts.Cancel();
+      await _stopCts.CancelAsync().ConfigureAwait(false);
     }
     _stopCts.Dispose();
   }

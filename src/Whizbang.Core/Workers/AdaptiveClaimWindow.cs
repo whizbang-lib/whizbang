@@ -85,11 +85,21 @@ public sealed class AdaptiveClaimWindow {
   /// Whether the outstanding budget has actually MEASURED drain yet. Growth is gated on it;
   /// shrinking never is.
   /// </param>
+  /// <docs>operations/workers/claim-backpressure</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveClaimWindowTests.cs</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveClaimWindowSampleSizeTests.cs</tests>
   public void Observe(int claimedRows, int reclaimedRows, bool drainMeasured = true) {
     // An empty claim says nothing about capacity — the queue was simply empty. Treating it as a
     // clean cycle would inflate the window during idle periods and guarantee an overshoot the
     // moment work arrived.
     if (claimedRows <= 0) {
+      return;
+    }
+    // A sample narrower than the floor says nothing about the window either. One re-offered row is
+    // 100 % churn on paper, and a loop that halved on it walked a 1000-stream window to the floor in
+    // under a second while the queue held a single row (observed under a bulk import). The floor is the
+    // smallest claim the window ever makes, so a smaller sample cannot have been limited by the window.
+    if (claimedRows < _floor) {
       return;
     }
 

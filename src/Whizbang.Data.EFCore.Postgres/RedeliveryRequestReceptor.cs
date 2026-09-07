@@ -49,6 +49,16 @@ public sealed partial class RedeliveryRequestReceptor(
 
     var metrics = services.GetService<Whizbang.Core.Observability.StreamIntegrityMetrics>();
     metrics?.RedeliveryRequestsReceived.Add(1);
+
+    // Report-only is bilateral: serving a re-delivery request is the repair act on the origin side (and
+    // the memory-heavy one), so an origin that opted down declines. Returning completes the inbox row; a
+    // declined request is discarded, never retried.
+    var integrity = services.GetService<Microsoft.Extensions.Options.IOptions<StreamIntegrityOptions>>()?.Value;
+    if (!RepairTraffic.IsRepairEnabled(integrity)) {
+      metrics?.RepairTrafficDiscarded.Add(1, new KeyValuePair<string, object?>("role", "origin_request"));
+      LogRepairRequestDeclined(logger, message.RequesterService, message.Topic);
+      return;
+    }
     var buildTimer = System.Diagnostics.Stopwatch.StartNew();
     var options = services.GetService<RedeliveryPumpOptions>() ?? new RedeliveryPumpOptions();
     var cap = options.MaxEventsPerRequest;
@@ -123,4 +133,8 @@ public sealed partial class RedeliveryRequestReceptor(
   [LoggerMessage(EventId = 49, Level = LogLevel.Information,
     Message = "Re-delivered {EventCount} events as {CompositeCount} composites to {RequesterService} on {Topic}")]
   static partial void LogRedeliveryPublished(ILogger logger, int eventCount, int compositeCount, string requesterService, string topic);
+
+  [LoggerMessage(EventId = 50, Level = LogLevel.Information,
+    Message = "Re-delivery request from {RequesterService} on {Topic} declined: RepairMode is ReportOnly, so this origin serves no repair (the request is discarded, not retried)")]
+  static partial void LogRepairRequestDeclined(ILogger logger, string requesterService, string topic);
 }

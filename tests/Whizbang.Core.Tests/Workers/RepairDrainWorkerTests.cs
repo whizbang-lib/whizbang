@@ -41,6 +41,7 @@ public class RepairDrainWorkerTests {
   public async Task DrainTick_DispatchesGroupedPerType_WithTheUnionWindowAsync() {
     var origin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
     var s1 = TrackedGuid.NewMedo().Value;
@@ -74,6 +75,7 @@ public class RepairDrainWorkerTests {
     // burned backoff budget across buckets that never even reached the wire.
     var origin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
     transport.FailFirst = 1;
@@ -99,6 +101,7 @@ public class RepairDrainWorkerTests {
     // is disconnecting from.
     var origin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
     transport.FailFirst = 1;
@@ -142,6 +145,7 @@ public class RepairDrainWorkerTests {
   public async Task DrainTick_TokensGateTheClaimBudget_AndSpendOnClaimAsync() {
     var origin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, _, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 2,
     }, origin, learnTopic: true);
     coordinator.Eligible.AddRange([
@@ -164,6 +168,7 @@ public class RepairDrainWorkerTests {
   public async Task DrainTick_UnlearnedOrigins_AreNeverClaimedAsync() {
     var origin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: false);
     coordinator.Eligible.Add(
@@ -180,6 +185,7 @@ public class RepairDrainWorkerTests {
   public async Task DrainTick_PreStampRows_WidenTheAskToWholeHistoryAsync() {
     var origin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, transport, _) = _build(new StreamIntegrityOptions {
+      RepairMode = IntegrityRepairMode.AutoRepairCapped,
       RepairDrainRatePerSecond = 10,
     }, origin, learnTopic: true);
     coordinator.Eligible.AddRange([
@@ -232,7 +238,7 @@ public class RepairDrainWorkerTests {
     // which matters here because the drain being off is a supported configuration.
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, _) = _buildForLoop(
-      new StreamIntegrityOptions { RepairDrainEnabled = false },
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = false },
       clock,
       SchemaReadyGate.AlreadyReady());
 
@@ -253,7 +259,7 @@ public class RepairDrainWorkerTests {
     // spinning a loop that can never grant a token.
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, _) = _buildForLoop(
-      new StreamIntegrityOptions { RepairDrainEnabled = true, RepairDrainRatePerSecond = rate },
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = rate },
       clock,
       SchemaReadyGate.AlreadyReady());
 
@@ -271,7 +277,7 @@ public class RepairDrainWorkerTests {
     // restart.
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, _) = _buildForLoop(
-      new StreamIntegrityOptions { RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
       clock,
       new SchemaReadyGate());   // never marked ready
 
@@ -287,7 +293,7 @@ public class RepairDrainWorkerTests {
     // real delay, so the test cannot flake on a loaded machine.
     var clock = new FakeTimeProvider(new DateTimeOffset(2026, 07, 13, 12, 00, 00, TimeSpan.Zero));
     var (worker, coordinator) = _buildForLoop(
-      new StreamIntegrityOptions { RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, RepairDrainEnabled = true, RepairDrainRatePerSecond = 1 },
       clock,
       SchemaReadyGate.AlreadyReady());
 
