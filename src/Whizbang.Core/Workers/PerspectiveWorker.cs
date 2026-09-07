@@ -1661,18 +1661,29 @@ public partial class PerspectiveWorker(
 
   /// <summary>
   /// v0.502 slice C.4c — splits the just-fetched <paramref name="rawEvents"/> into rows that
-  /// stay in the apply set vs rows whose attempts exceeded
+  /// stay in the apply set vs rows whose recorded apply failures exceeded
   /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/>. For exceeded rows,
   /// calls <see cref="IDeadLetterStore.MoveAsync"/> (which atomically inserts into
   /// <c>wh_dead_letters</c> and deletes from <c>wh_perspective_events</c>). Returns the
   /// surviving rows for downstream deserialization + apply.
   /// </summary>
   /// <remarks>
+  /// <para>
+  /// The decision reads <see cref="StreamEventData.Failures"/>, never
+  /// <see cref="StreamEventData.Attempts"/> (issue #700). Attempts counts leases: every claim
+  /// bumps it, and a lease can lapse without an apply when the worker skips the row, dies
+  /// mid-batch, or classifies it as recently processed. Under a backlog that is scheduling churn,
+  /// and counting it toward the threshold dead-lettered perfectly good events as thrash
+  /// casualties. Failures moves only when <c>process_perspective_event_failures</c> records a
+  /// failed apply, so the threshold means what its name says.
+  /// </para>
+  /// <para>
   /// No-ops to a pass-through when <see cref="_deadLetterStore"/> or
   /// <see cref="_generationProvider"/> aren't wired (legacy v0.501 path) or when
   /// <see cref="PerspectiveWorkerOptions.MaxPerspectiveEventAttempts"/> is null. If MoveAsync
   /// throws for a given row, the row stays in the apply set — best-effort, same fallback
   /// policy as <see cref="InboxDispatchWorker"/>.
+  /// </para>
   /// </remarks>
   internal async Task<List<StreamEventData>> FilterDeadLetteredAsync(
       List<StreamEventData> rawEvents,
@@ -1684,14 +1695,14 @@ public partial class PerspectiveWorker(
     var survivors = new List<StreamEventData>(rawEvents.Count);
     var generation = _generationProvider.GetGeneration();
     foreach (var raw in rawEvents) {
-      if (raw.Attempts > maxAttempts.Value) {
+      if (raw.Failures > maxAttempts.Value) {
         try {
           await _deadLetterStore.MoveAsync(
             deadLetterId: (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo(),
             sourceTable: DeadLetterSourceTable.PERSPECTIVE_EVENTS,
             sourceId: raw.EventWorkId,
             failureReason: Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded,
-            errorText: $"PerspectiveWorker dead-lettered perspective event: attempts={raw.Attempts} > max={maxAttempts.Value} perspective={raw.PerspectiveName} stream={raw.StreamId} event={raw.EventId}",
+            errorText: $"PerspectiveWorker dead-lettered perspective event: failures={raw.Failures} > max={maxAttempts.Value} (leases={raw.Attempts}) perspective={raw.PerspectiveName} stream={raw.StreamId} event={raw.EventId}",
             instanceId: _instanceProvider.InstanceId,
             generation: generation,
             ct: cancellationToken).ConfigureAwait(false);
@@ -1700,8 +1711,8 @@ public partial class PerspectiveWorker(
             new KeyValuePair<string, object?>("reason", "MaxAttemptsExceeded"));
 #pragma warning disable CA1848
           _logger.LogWarning(
-            "PerspectiveWorker dead-lettered perspective event {EventWorkId} perspective={Perspective} stream={StreamId} event={EventId} attempts={Attempts} > max={Max}",
-            raw.EventWorkId, raw.PerspectiveName, raw.StreamId, raw.EventId, raw.Attempts, maxAttempts.Value);
+            "PerspectiveWorker dead-lettered perspective event {EventWorkId} perspective={Perspective} stream={StreamId} event={EventId} failures={Failures} > max={Max} (leases={Leases})",
+            raw.EventWorkId, raw.PerspectiveName, raw.StreamId, raw.EventId, raw.Failures, maxAttempts.Value, raw.Attempts);
 #pragma warning restore CA1848
           // Row was DELETEd by move_to_dead_letters() inside the SQL function; do not
           // include it in survivors.
@@ -4710,15 +4721,22 @@ public class PerspectiveWorkerOptions {
   public int NotifyHealthyPollingIntervalMilliseconds { get; set; } = 1_000;
 
   /// <summary>
-  /// Dead-letter threshold for wh_perspective_events rows. Total number of apply attempts
+  /// Dead-letter threshold for wh_perspective_events rows. Number of recorded apply failures
   /// permitted before the row is moved into wh_dead_letters via IDeadLetterStore.MoveAsync.
   /// </summary>
   /// <remarks>
   /// <para>
   /// Default <c>10</c> (v0.502). Prior versions had no max — failed perspective_event rows
   /// accumulated indefinitely. Set to <c>null</c> explicitly to restore the prior no-limit
-  /// behavior. Wire-up at the apply boundary lands in a follow-up slice; this option is
-  /// surfaced now so configuration is forward-compatible with the imminent DLQ integration.
+  /// behavior.
+  /// </para>
+  /// <para>
+  /// Compared against <c>wh_perspective_events.failures</c> (migration 139), which only a failed
+  /// apply moves, not against <c>attempts</c>, which every lease bumps. A lease that lapses
+  /// without an apply is scheduling, not evidence that the event is poison; counting it here
+  /// dead-lettered good events under a backlog (issue #700). The reactive orphan disposal for
+  /// rows whose source event is missing still keys on <c>attempts</c>, because such a row never
+  /// reaches an apply and its lease count is the only signal it has.
   /// </para>
   /// </remarks>
   public int? MaxPerspectiveEventAttempts { get; set; } = 10;
