@@ -304,6 +304,40 @@ public sealed class EFCoreEventStore<TDbContext>(
   }
 
   /// <summary>
+  /// The perspective-aware history probe (issue #696): does this stream hold an event ordered
+  /// before the given id whose stored type is one the perspective folds? The stream's distinct
+  /// pre-batch <c>event_type</c> values are read (an indexed range over the stream's pointer rows;
+  /// a stream carries few distinct types) and matched in process through
+  /// <see cref="EventTypeMatchingHelper"/>, the one strategy every read path shares, so a name a
+  /// producer wrote in the decorated assembly-qualified form still matches.
+  /// </summary>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EventStoreHistoryProbeSqlTests.cs</tests>
+  public async Task<bool> HasStreamEventsBeforeAsync(Guid streamId, Guid beforeEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(eventTypes);
+    if (eventTypes.Count == 0) {
+      return false;
+    }
+    var storedTypes = await _context.Set<EventStoreRecord>()
+      .AsNoTracking()
+      .Where(e => e.StreamId == streamId && e.Id.CompareTo(beforeEventId) < 0)
+      .Select(e => e.EventType)
+      .Distinct()
+      .ToListAsync(cancellationToken);
+    return _anyStoredTypeIsHandled(storedTypes, eventTypes);
+  }
+
+  private static bool _anyStoredTypeIsHandled(IEnumerable<string> storedTypes, IReadOnlyList<Type> eventTypes) {
+    var lookup = EventTypeMatchingHelper.BuildTypeLookup(eventTypes);
+    foreach (var stored in storedTypes) {
+      if (EventTypeMatchingHelper.TryResolveType(lookup, stored, out _)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// <summary>
   /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
   /// Uses the EventType column to determine which concrete type to deserialize to.
   /// </summary>

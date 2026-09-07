@@ -60,6 +60,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private const bool _isEphemeralPerspective = false;
   #endregion
 
+  /// <summary>
+  /// The event types this perspective folds. The resurrection-on-wake probe asks the event store
+  /// about these only (issue #696): history of other contracts on a shared stream is not a reaped
+  /// row. Same list the polymorphic reads use.
+  /// </summary>
+  private static readonly global::System.Type[] _handledEventTypes = new global::System.Type[] {
+      #region HANDLED_EVENT_TYPES
+      // Generated event type list goes here (same as EVENT_TYPES)
+      #endregion
+  };
+
   #region TTL_REGISTRATION
   // Generated: for a TransientStorage.TtlRow perspective, a [ModuleInitializer] registers the row TTL so the
   // EF Core upsert stamps expires_at = now + ttl. Empty for non-TtlRow perspectives (their rows never expire).
@@ -250,16 +261,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       // Resurrection-on-wake (perspective row retention): for a row-TTL SOURCED perspective a
       // missing row is ambiguous — a brand-new stream OR a reaped row whose stream just woke.
       // A Sourced row is the fold of ALL its events, so applying only this batch onto a fresh
-      // model would silently build a corrupt partial row. Probe the log: pre-batch history
-      // means reaped-and-woken — re-fold via the rewind CORE (snapshot floor + tail; the
-      // incoming events are already stored, so the replay includes them). The core variant is
+      // model would silently build a corrupt partial row. Probe the log for pre-batch history OF
+      // THE EVENT TYPES THIS PERSPECTIVE FOLDS: that means reaped-and-woken — re-fold via the
+      // rewind CORE (snapshot floor + tail; the incoming events are already stored, so the
+      // replay includes them). The probe is perspective-aware on purpose (issue #696): a stream
+      // shared by several contracts holds history this perspective never folded, and "any
+      // earlier event" read that as a reaped row on every first contact. The core variant is
       // required because RunAsync already holds the apply lock the public RewindAndRunAsync
       // acquires. Ephemeral perspectives are excluded (rebuild refused; snapshot-floor
       // semantics govern them) and non-TTL perspectives never reap, so neither ever probes.
       if (!_isEphemeralPerspective
           && global::Whizbang.Core.Perspectives.PerspectiveTtlRegistry.ResolveSeconds(typeof(__MODEL_TYPE_NAME__)) >= 0
           && events.Count > 0
-          && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, cancellationToken)) {
+          && await _eventStore.HasStreamEventsBeforeAsync(streamId, events[0].MessageId.Value, _handledEventTypes, cancellationToken)) {
         _logger.LogInformation(
             "Row for stream {StreamId} in {PerspectiveName} is missing but the stream has history — resurrecting via re-fold",
             streamId,
