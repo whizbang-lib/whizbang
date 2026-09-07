@@ -303,6 +303,153 @@ public class ApplyCommandTests {
     }
   }
 
+  [Test]
+  public async Task ExecuteAsync_HandlersAndProjectionsSkippedWithJsonMigrationOff_LeavesFileUntouchedAsync() {
+    // If the "every category was declined" short-circuit stops firing, a developer who opts out
+    // of handlers, projections, and JSON dead-import removal still gets their file rewritten --
+    // e.g. the handler conversion or the always-on dead-import removal runs anyway, so "skip
+    // everything" silently stops meaning "leave my source alone."
+    var tempDir = Path.Combine(Path.GetTempPath(), $"whizbang-apply-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempDir);
+
+    try {
+      var sourceFile = Path.Combine(tempDir, "Handler.cs");
+      const string originalContent = """
+        using Wolverine;
+        using Newtonsoft.Json;
+
+        public class CreateOrderHandler : IHandle<CreateOrderCommand> {
+          public Task Handle(CreateOrderCommand command) => Task.CompletedTask;
+        }
+
+        public record CreateOrderCommand(string OrderId);
+        """;
+      await File.WriteAllTextAsync(sourceFile, originalContent);
+
+      var decisions = DecisionFile.Create(tempDir);
+      decisions.Decisions.Handlers.Default = DecisionChoice.Skip;
+      decisions.Decisions.Projections.Default = DecisionChoice.Skip;
+      decisions.Decisions.JsonMigration.RemoveDeadImports = false;
+
+      var result = await new ApplyCommand().ExecuteAsync(tempDir, decisionFile: decisions);
+
+      await Assert.That(result.Success).IsTrue();
+      await Assert.That(result.SkippedFileCount).IsEqualTo(1)
+        .Because("the only file in the project declined every category and must count as skipped");
+      await Assert.That(result.TransformedFileCount).IsEqualTo(0)
+        .Because("a skipped file must not also be reported as transformed");
+
+      var currentContent = await File.ReadAllTextAsync(sourceFile);
+      await Assert.That(currentContent).IsEqualTo(originalContent)
+        .Because("declining handlers, projections, and JSON dead-import removal must leave the file byte-for-byte as written");
+    } finally {
+      Directory.Delete(tempDir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task ExecuteAsync_GlobalUsingAliasTargetsMartenType_RewritesAliasInPlaceAsync() {
+    // If the pipeline computes the global-using-alias transformer's rewrite but discards it, a
+    // project-wide alias such as "global using X = Marten.IDocumentStore;" keeps compiling
+    // against a package the migration is meant to remove, and nothing downstream ever sees the
+    // Whizbang equivalent it should have been pointed at.
+    var tempDir = Path.Combine(Path.GetTempPath(), $"whizbang-apply-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempDir);
+
+    try {
+      var sourceFile = Path.Combine(tempDir, "GlobalAlias.cs");
+      await File.WriteAllTextAsync(sourceFile, """
+        global using MartenStoreAlias = Marten.IDocumentStore;
+
+        public class PlaceholderService {
+        }
+        """);
+
+      var result = await new ApplyCommand().ExecuteAsync(tempDir);
+
+      await Assert.That(result.Success).IsTrue();
+      await Assert.That(result.TransformedFileCount).IsEqualTo(1)
+        .Because("the alias transformer's output must count as a real file transformation");
+
+      var transformed = await File.ReadAllTextAsync(sourceFile);
+      await Assert.That(transformed).Contains("global using MartenStoreAlias = Whizbang.Core.Messaging.IEventStore;")
+        .Because("the alias must be rewritten to the Whizbang equivalent on disk, not just reported in the result");
+      await Assert.That(transformed).DoesNotContain("Marten.IDocumentStore")
+        .Because("the original Marten target must not survive the rewrite");
+    } finally {
+      Directory.Delete(tempDir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task ExecuteAsync_MarkerInterfaceWithWolverineUsingAndNoOtherPatterns_SwapsUsingToWhizbangCoreAsync() {
+    // If the marker-interface transformer's rewrite is computed but never applied to the file
+    // handed to the next stage, a record implementing IEvent keeps "using Wolverine;" and stops
+    // compiling the moment the Wolverine package is removed from the migrated project.
+    var tempDir = Path.Combine(Path.GetTempPath(), $"whizbang-apply-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempDir);
+
+    try {
+      var sourceFile = Path.Combine(tempDir, "MarkerOnly.cs");
+      await File.WriteAllTextAsync(sourceFile, """
+        using Wolverine;
+
+        public record OrderPlacedEvent(string OrderId) : IEvent;
+        """);
+
+      var result = await new ApplyCommand().ExecuteAsync(tempDir);
+
+      await Assert.That(result.Success).IsTrue();
+      await Assert.That(result.TransformedFileCount).IsEqualTo(1)
+        .Because("the marker-interface rewrite must count as a real file transformation");
+
+      var transformed = await File.ReadAllTextAsync(sourceFile);
+      await Assert.That(transformed).Contains("using Whizbang.Core;")
+        .Because("the Wolverine import must be swapped to Whizbang.Core on disk");
+      await Assert.That(transformed).DoesNotContain("using Wolverine;")
+        .Because("the old import must not survive alongside the new one");
+      await Assert.That(transformed).Contains(": IEvent")
+        .Because("the marker interface name itself is untouched -- only its import moves");
+    } finally {
+      Directory.Delete(tempDir, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task ExecuteAsync_UnusedNewtonsoftImportWithNoDecisionFile_RemovesDeadImportAsync() {
+    // If the JSON transformer's dead-import removal is computed but never written back to the
+    // file, every migrated project keeps a reference to Newtonsoft.Json it no longer needs -- an
+    // unused import that compiles fine today but breaks the build the moment the package
+    // reference is dropped, which is exactly what a "completed" migration implies happened.
+    var tempDir = Path.Combine(Path.GetTempPath(), $"whizbang-apply-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempDir);
+
+    try {
+      var sourceFile = Path.Combine(tempDir, "UnusedImport.cs");
+      await File.WriteAllTextAsync(sourceFile, """
+        using Newtonsoft.Json;
+
+        public class SampleService {
+          public void DoWork() {
+          }
+        }
+        """);
+
+      var result = await new ApplyCommand().ExecuteAsync(tempDir);
+
+      await Assert.That(result.Success).IsTrue();
+      await Assert.That(result.TransformedFileCount).IsEqualTo(1)
+        .Because("removing a dead import must still count as a file transformation");
+
+      var transformed = await File.ReadAllTextAsync(sourceFile);
+      await Assert.That(transformed).DoesNotContain("Newtonsoft")
+        .Because("the unused import must actually be removed from the file on disk, not just reported in the result");
+      await Assert.That(transformed).Contains("public class SampleService")
+        .Because("removing the dead import must not disturb the rest of the file");
+    } finally {
+      Directory.Delete(tempDir, recursive: true);
+    }
+  }
 
   private static int _countOccurrences(string haystack, string needle) {
     var count = 0;

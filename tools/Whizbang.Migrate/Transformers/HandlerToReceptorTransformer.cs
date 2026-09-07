@@ -57,12 +57,28 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
     // 6. Transform LocalMessage patterns (H04)
     newRoot = _transformLocalMessagePatterns(newRoot, changes);
 
+    // Post-process: update COMMENTS that reference LocalMessage so they name the new API.
+    // This must touch comments only. _transformLocalMessagePatterns above already emits
+    // LocalInvokeAsync<T> for every call it converts, and it deliberately declines calls it
+    // cannot restructure -- a null-conditional invocation, for one, whose expression is a
+    // member-binding node rather than a member access. A text replace over the whole file
+    // rewrote those declined call sites too, turning `new LocalMessage<T>(...)` into
+    // `new LocalInvokeAsync<T>(...)`: a method name used as a constructed type, emitted with no
+    // warning and no recorded change. Leaving the original call intact is the correct outcome --
+    // it still compiles, and the developer can see what was not migrated.
+    newRoot = _renameLocalMessageInComments(newRoot);
+
     var transformedCode = newRoot.ToFullString();
 
-    // Post-process: Update comments that reference LocalMessage to reference LocalInvokeAsync
-    if (transformedCode.Contains("LocalMessage<")) {
-      transformedCode = transformedCode.Replace("LocalMessage<T>", "LocalInvokeAsync<T>");
-      transformedCode = transformedCode.Replace("LocalMessage<", "LocalInvokeAsync<");
+    // LocalMessage<T> has no Whizbang equivalent as a TYPE -- only the call form
+    // dispatcher.LocalInvokeAsync<T>(message) does. Anything still naming it after the rewrite is
+    // a use the transform could not restructure: a parameter or field type, or a call shape it
+    // declined. Leaving it alone is correct; leaving it alone silently is not. The file will not
+    // build against Whizbang, and a report with no warning tells the developer nothing was needed.
+    if (transformedCode.Contains("LocalMessage<", StringComparison.Ordinal)) {
+      warnings.Add("LocalMessage<T> is still present after migration. It has no Whizbang equivalent "
+          + "as a type -- only the call form dispatcher.LocalInvokeAsync<T>(message). These uses "
+          + "need to be rewritten by hand.");
     }
 
     return Task.FromResult(new TransformationResult(
@@ -300,6 +316,23 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
   private static SyntaxNode _transformMessageContext(SyntaxNode root, List<CodeChange> changes) {
     var rewriter = new MessageContextRewriter(changes);
     return rewriter.Visit(root);
+  }
+
+  /// <summary>
+  /// Renames LocalMessage references inside comment trivia only, leaving code untouched.
+  /// </summary>
+  private static SyntaxNode _renameLocalMessageInComments(SyntaxNode root) {
+    var comments = root.DescendantTrivia()
+        .Where(t => (t.IsKind(SyntaxKind.SingleLineCommentTrivia) || t.IsKind(SyntaxKind.MultiLineCommentTrivia))
+                    && t.ToFullString().Contains("LocalMessage<", StringComparison.Ordinal))
+        .ToList();
+    if (comments.Count == 0) {
+      return root;
+    }
+    return root.ReplaceTrivia(comments, (original, _) => SyntaxFactory.Comment(
+        original.ToFullString()
+            .Replace("LocalMessage<T>", "LocalInvokeAsync<T>", StringComparison.Ordinal)
+            .Replace("LocalMessage<", "LocalInvokeAsync<", StringComparison.Ordinal)));
   }
 
   private static SyntaxNode _transformLocalMessagePatterns(SyntaxNode root, List<CodeChange> changes) {

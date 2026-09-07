@@ -77,7 +77,12 @@ public static class TestConstants {
   ///     (ErrorBranchCommandReceptor — target for RoutedNone rejection and Routed&lt;T&gt;
   ///     unwrap tests on the IMessageContext-taking dispatcher overloads)</para>
   ///
-  /// <para>Total: 121 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  /// <para>- 1 receptor from Workers/OrphanInboxJanitorExtensionsCoverageTests.cs
+  ///     (FakeVoidReceptor — a real IReceptor&lt;&gt; registration the janitor's snapshot must
+  ///     keep, pinning that a generic NON-receptor registration alongside it contributes
+  ///     nothing)</para>
+  ///
+  /// <para>Total: 122 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 121;
+  public const int EXPECTED_RECEPTOR_COUNT = 122;
 }

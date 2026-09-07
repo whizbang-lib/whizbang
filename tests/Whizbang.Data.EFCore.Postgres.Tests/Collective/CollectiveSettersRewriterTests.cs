@@ -146,6 +146,47 @@ public class CollectiveSettersRewriterTests {
 
   // ── Inline test types ──────────────────────────────────────────────────
 
+  [Test]
+  public async Task CollectAssignments_ObjectTypedSelector_StillResolvesTheUnderlyingPropertyAsync() {
+    // SetProperty infers TProp, so a selector normally arrives unwrapped. Written with an explicit
+    // object type argument — which a shared helper or a loop over heterogeneous setters produces —
+    // the compiler boxes the value-type access into Convert(j.ViewCount, object). Without stripping
+    // that, the body is a UnaryExpression rather than a MemberExpression and the property lookup
+    // fails, so a legal call reports that it could not find a property that is plainly there.
+    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+      s => s.SetProperty<object>(j => j.ViewCount, 42);
+
+    var assignments = CollectiveSettersRewriter.CollectAssignments(source);
+
+    await Assert.That(assignments.Count).IsEqualTo(1);
+    await Assert.That(assignments[0].PathName).IsEqualTo("ViewCount")
+      .Because("the boxing conversion is the compiler's, not the caller's intent — the property "
+             + "being set is the same one either way, and it is the jsonb path element");
+    await Assert.That(assignments[0].JsonValue).IsEqualTo("42")
+      .Because("the value survives the boxing as the number it was, not as a quoted string");
+  }
+
+  [Test]
+  public async Task CollectAssignments_ValueThatCannotBeResolved_SaysWhatToUseInsteadAsync() {
+    // Values are read out of the expression tree, which works for a literal or a captured local
+    // and cannot work for something the database would have to compute. The failure has to name
+    // the alternative: this runs while building an UPDATE, and an operator who only learns that
+    // "an expression node kind is unsupported" has no way to know RawSql is the way through.
+    Expression<Action<ICollectiveSetters<_jobModel>>> source =
+      s => s.SetProperty(j => j.Status, string.Concat("a", "b"));
+
+    await Assert.That(() => CollectiveSettersRewriter.CollectAssignments(source))
+      .Throws<NotSupportedException>()
+      .Because("a value the rewriter cannot read is a hard stop, not something to guess at and "
+             + "write into an UPDATE");
+
+    var error = Assert.Throws<NotSupportedException>(
+      () => CollectiveSettersRewriter.CollectAssignments(source));
+    await Assert.That(error!.Message).Contains("RawSql")
+      .Because("the message is the only place the caller is told which spec kind accepts richer "
+             + "value sources, and without it the next step is guesswork");
+  }
+
   private sealed class _jobModel {
     public string? Status { get; set; } = string.Empty;
     public int ViewCount { get; set; }

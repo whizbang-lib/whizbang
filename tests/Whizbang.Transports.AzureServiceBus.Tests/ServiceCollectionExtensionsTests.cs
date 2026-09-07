@@ -7,6 +7,7 @@ using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -183,6 +184,30 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(adminClient).IsTypeOf<ServiceBusAdminClientWrapper>();
   }
 
+  // --- namespace client factory (IServiceBusNamespaceClientFactory) ---
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_ResolvingNamespaceClientFactory_ReturnsTheDefaultSingletonAsync() {
+    // Registering this factory is unconditional so single- and multi-namespace hosts share one
+    // container shape, but the lambda itself is only PROVEN by resolving it: if the default
+    // implementation cannot be constructed, a host adding its first traffic-class namespace
+    // fails at that resolution instead of at today's single-client path.
+    var services = new ServiceCollection();
+    services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
+    services.AddLogging();
+    services.AddAzureServiceBusTransport(EMULATOR_CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+
+    // Act
+    var factory1 = provider.GetRequiredService<IServiceBusNamespaceClientFactory>();
+    var factory2 = provider.GetRequiredService<IServiceBusNamespaceClientFactory>();
+
+    // Assert
+    await Assert.That(factory1).IsTypeOf<ServiceBusNamespaceClientFactory>();
+    await Assert.That(ReferenceEquals(factory1, factory2)).IsTrue()
+      .Because("TryAddSingleton must hand every namespace's client-open call the SAME factory instance");
+  }
+
   // --- options configuration callback ---
 
   [Test]
@@ -353,6 +378,62 @@ public class ServiceCollectionExtensionsTests {
     await Assert.That(services.Count(sd => sd.ServiceType == typeof(IServiceBusAdminClient))).IsEqualTo(1);
   }
 
+  // --- per-namespace observability sources (backlog peek / ops-rate gauge) ---
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_RegistersBacklogPeekOverTheResolvedTransportAsSingletonAsync() {
+    // If IBacklogPeek fails to resolve, or resolves to a fresh instance on every duty tick, the
+    // backlog-age sampler either never starts or silently loses the transport reference it
+    // samples through — the exact "invisible while healthy" failure mode this peek exists to
+    // close would stay invisible, just one layer further down.
+    var services = new ServiceCollection();
+    services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
+    services.AddLogging();
+    services.AddAzureServiceBusTransport(EMULATOR_CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+
+    // Act
+    var peek1 = provider.GetRequiredService<IBacklogPeek>();
+    var peek2 = provider.GetRequiredService<IBacklogPeek>();
+
+    // Assert
+    await Assert.That(peek1).IsTypeOf<AsbBacklogPeek>();
+    await Assert.That(ReferenceEquals(peek1, peek2)).IsTrue()
+      .Because("a non-singleton peek would silently disconnect from whatever the duty accumulated between ticks");
+    await Assert.That(peek1.TransportName).IsEqualTo("asb");
+
+    // Usable end to end, not just constructible: a transport with nothing subscribed yet
+    // reports zero samples rather than throwing.
+    var samples = await peek1.PeekAsync(CancellationToken.None);
+    await Assert.That(samples.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_RegistersTrafficClassOpsRateSourceOverTheResolvedTransportAsSingletonAsync() {
+    // If this source fails to resolve, the per-namespace ops-rate gauge goes dark on startup —
+    // an operator loses the graph the self-check's degrade decision is based on, with no error
+    // to point at because nothing downstream ever calls it.
+    var services = new ServiceCollection();
+    services.AddSingleton(new ServiceBusClient(EMULATOR_CONNECTION_STRING));
+    services.AddLogging();
+    services.AddAzureServiceBusTransport(EMULATOR_CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+
+    // Act
+    var source1 = provider.GetRequiredService<ITrafficClassOpsRateSource>();
+    var source2 = provider.GetRequiredService<ITrafficClassOpsRateSource>();
+
+    // Assert
+    await Assert.That(source1).IsTypeOf<AsbTrafficClassOpsRateSource>();
+    await Assert.That(ReferenceEquals(source1, source2)).IsTrue()
+      .Because("a non-singleton source would silently disconnect the gauge from the self-check's live projection");
+    await Assert.That(source1.TransportName).IsEqualTo("asb");
+
+    // Usable end to end: no self-check tick has run yet, so there is nothing to project.
+    var rates = source1.Project();
+    await Assert.That(rates.Count).IsEqualTo(0);
+  }
+
   // --- transport factory: offline initialization paths ---
 
   [Test]
@@ -500,6 +581,121 @@ public class ServiceCollectionExtensionsTests {
       .Because("a strategy outside the seam wires no flip hook — commands ride the default inbox topic");
   }
 
+  // --- multi-namespace composition: peer-namespace init logging + active-consume projection ---
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_MultiNamespaceMap_LogsEachPeerNamespaceInitializationAsync() {
+    // If this log line regressed or silently stopped firing, an operator watching a
+    // multi-namespace rollout come up would have no boot-time confirmation that a traffic-class
+    // namespace's client actually initialized — the first sign of trouble would be a stuck
+    // consumer on that namespace, not a log line at startup.
+    var services = new ServiceCollection();
+    var defaultClient = new RaisableServiceBusClient();
+    services.AddSingleton<ServiceBusClient>(defaultClient);
+    var recordingLogger = new RecordingTransportLogger();
+    services.AddSingleton<ILogger<AzureServiceBusTransport>>(recordingLogger);
+    services.AddSingleton<IServiceBusNamespaceClientFactory>(new RaisableNamespaceClientFactory());
+
+    services.AddAzureServiceBusTransport(
+      new Dictionary<string, string> {
+        [TransportNamespaces.DefaultKey] = FAKE_CONNECTION_STRING,
+        ["bulk"] = FAKE_CONNECTION_STRING
+      },
+      o => o.AutoProvisionInfrastructure = false);
+    var provider = services.BuildServiceProvider();
+
+    // Act
+    var transport = provider.GetRequiredService<ITransport>();
+
+    // Assert
+    await Assert.That(transport).IsTypeOf<NamespaceRoutingTransport>();
+    await Assert.That(recordingLogger.Contains(LogLevel.Information, "Transport initialized for TransportNamespace 'bulk'"))
+      .IsTrue()
+      .Because("this is the only boot-time signal an operator has that the 'bulk' traffic-class connection came up healthy");
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_MultiNamespaceMap_SubscribeProjectsZeroMirrorsWithNothingHandledAsync() {
+    // The consume-side mirror is supposed to subscribe a namespace ONLY when this service
+    // actively handles a type routed there — a namespace it merely publishes to must cost zero
+    // broker entities. If the active-namespace projection broke (threw, or mirrored
+    // unconditionally), a class this service never consumes would either crash every subscribe
+    // call or pick up a subscription — and an idle acceptor slot — it should never have opened.
+    var services = new ServiceCollection();
+    var defaultClient = new RaisableServiceBusClient();
+    services.AddSingleton<ServiceBusClient>(defaultClient);
+    var clientFactory = new RaisableNamespaceClientFactory();
+    services.AddSingleton<IServiceBusNamespaceClientFactory>(clientFactory);
+
+    // A routing binding exists (HasBindings = true) but nothing is reported as handled — the
+    // projection must degrade to "nothing active" rather than mirror unconditionally.
+    var tagOptions = new Whizbang.Core.Tags.TagOptions();
+    tagOptions.RouteNamespace("stub-tag", "bulk");
+    services.AddSingleton(new Whizbang.Core.Tags.TransportNamespaceResolver(tagOptions));
+
+    services.AddAzureServiceBusTransport(
+      new Dictionary<string, string> {
+        [TransportNamespaces.DefaultKey] = FAKE_CONNECTION_STRING,
+        ["bulk"] = FAKE_CONNECTION_STRING
+      },
+      o => o.AutoProvisionInfrastructure = false);
+    var provider = services.BuildServiceProvider();
+    var transport = provider.GetRequiredService<ITransport>();
+    var peerClient = clientFactory.CreatedClients.Single();
+
+    // Act - subscribing on the composed router must invoke the active-namespace projection
+    var subscription = await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask,
+      new TransportDestination("stub-topic"),
+      new TransportBatchOptions());
+
+    // Assert - the default subscription is opened, but the 'bulk' peer never sees one
+    await Assert.That(subscription).IsNotNull();
+    await Assert.That(peerClient.CreatedProcessors.Count).IsEqualTo(0)
+      .Because("nothing resolves to 'bulk' as actively handled, so the mirror must stay off");
+    await Assert.That(peerClient.LastSessionProcessor).IsNull()
+      .Because("neither the session nor the non-session subscribe path may reach an inactive namespace");
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusTransport_MultiNamespaceMap_NoRoutingBindings_SkipsTheProjectionEntirelyAsync() {
+    // The sibling test above configures a binding and finds nothing handled. This is the case
+    // before any routing is configured at all -- the overwhelmingly common one, since a service
+    // that names a second namespace for publishing only never routes a tag to it. The projection
+    // has to short-circuit on "no bindings" rather than ask the receptor registry what it handles:
+    // that query runs on every subscribe call, and answering it to reach a conclusion that the
+    // absent bindings already determined is work every such service would pay for forever.
+    var services = new ServiceCollection();
+    services.AddSingleton<ServiceBusClient>(new RaisableServiceBusClient());
+    var clientFactory = new RaisableNamespaceClientFactory();
+    services.AddSingleton<IServiceBusNamespaceClientFactory>(clientFactory);
+
+    // A resolver with no RouteNamespace call at all -- HasBindings is false.
+    services.AddSingleton(new Whizbang.Core.Tags.TransportNamespaceResolver(
+      new Whizbang.Core.Tags.TagOptions()));
+
+    services.AddAzureServiceBusTransport(
+      new Dictionary<string, string> {
+        [TransportNamespaces.DefaultKey] = FAKE_CONNECTION_STRING,
+        ["bulk"] = FAKE_CONNECTION_STRING
+      },
+      o => o.AutoProvisionInfrastructure = false);
+    var provider = services.BuildServiceProvider();
+    var transport = provider.GetRequiredService<ITransport>();
+    var peerClient = clientFactory.CreatedClients.Single();
+
+    var subscription = await transport.SubscribeBatchAsync(
+      (_, _) => Task.CompletedTask,
+      new TransportDestination("stub-topic"),
+      new TransportBatchOptions());
+
+    await Assert.That(subscription).IsNotNull()
+      .Because("an unrouted second namespace must not stop the default subscription from opening");
+    await Assert.That(peerClient.CreatedProcessors.Count).IsEqualTo(0)
+      .Because("with nothing routed to 'bulk', mirroring it would open a subscription and hold an "
+             + "acceptor slot for traffic that can never arrive");
+  }
+
   // --- AddAzureServiceBusProvisioner ---
 
   [Test]
@@ -528,6 +724,31 @@ public class ServiceCollectionExtensionsTests {
 
     var provisioner = provider.GetRequiredService<IInfrastructureProvisioner>();
     await Assert.That(provisioner).IsTypeOf<ServiceBusInfrastructureProvisioner>();
+  }
+
+  [Test]
+  public async Task AddAzureServiceBusProvisioner_ConfigurationOnlyNamespace_ComposesAnExtraProvisionerAsync() {
+    // An operator can add a traffic-class namespace purely through configuration (no code
+    // redeploy) — the same seam AddAzureServiceBusTransport honors. If the provisioner factory
+    // stopped merging configuration OVER the code map, that namespace's entities would never
+    // get provisioned even though the transport happily opens a client for it.
+    var configuration = new ConfigurationBuilder()
+      .AddInMemoryCollection(new Dictionary<string, string?> {
+        ["Whizbang:Transports:AzureServiceBus:Namespaces:bulk"] = FAKE_CONNECTION_STRING
+      })
+      .Build();
+    var services = new ServiceCollection();
+    services.AddSingleton<IConfiguration>(configuration);
+    services.AddLogging();
+
+    // Act - single-connection-string overload: the code map carries only 'default'
+    services.AddAzureServiceBusProvisioner(FAKE_CONNECTION_STRING);
+    var provider = services.BuildServiceProvider();
+    var provisioner = provider.GetRequiredService<IInfrastructureProvisioner>();
+
+    // Assert - the configuration-only 'bulk' entry must still compose into the provisioner
+    await Assert.That(provisioner).IsTypeOf<CompositeInfrastructureProvisioner>()
+      .Because("a namespace added purely via configuration must get its own provisioner composed in, not dropped");
   }
 
   // --- AddAzureServiceBusHealthChecks ---
@@ -583,5 +804,23 @@ public class ServiceCollectionExtensionsTests {
         "_namespaceRouting field not found on TransportPublishStrategy - was it renamed?");
 
     return (Whizbang.Core.Routing.ICommandInboxAddressResolver?)field.GetValue(strategy);
+  }
+
+  /// <summary>
+  /// IServiceBusNamespaceClientFactory stand-in that mints a RaisableServiceBusClient (never a
+  /// real connection) per TransportNamespace it is asked to open — the offline registration
+  /// idiom this file's multi-namespace tests use to compose a router without a broker.
+  /// </summary>
+  private sealed class RaisableNamespaceClientFactory : IServiceBusNamespaceClientFactory {
+    public List<RaisableServiceBusClient> CreatedClients { get; } = [];
+
+    public ServiceBusClient CreateClient(string namespaceKey, string connectionString, AzureServiceBusOptions options) {
+      var client = new RaisableServiceBusClient($"{namespaceKey}.unit-test.servicebus.windows.net");
+      CreatedClients.Add(client);
+      return client;
+    }
+
+    public IServiceBusAdminClient? CreateAdminClient(
+      string namespaceKey, string connectionString, AzureServiceBusOptions options) => null;
   }
 }

@@ -15,7 +15,6 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// </summary>
 internal class FakeConnection(Func<Task<IChannel>> channelFactory, bool isOpen = true) : IConnection {
   private readonly Func<Task<IChannel>> _channelFactory = channelFactory;
-  private readonly bool _isOpen = isOpen;
 
   public Task<IChannel> CreateChannelAsync(CreateChannelOptions? options = null, CancellationToken cancellationToken = default) {
     return _channelFactory();
@@ -28,7 +27,11 @@ internal class FakeConnection(Func<Task<IChannel>> channelFactory, bool isOpen =
   public AmqpTcpEndpoint Endpoint => throw new NotImplementedException();
   public uint FrameMax => 0;
   public TimeSpan Heartbeat => TimeSpan.Zero;
-  public bool IsOpen => _isOpen;
+
+  // Settable (not just constructor-fixed) so a test can simulate a connection transitioning
+  // from closed to open (or back) between two readiness checks — RabbitMQReadinessCheck's
+  // recovery-logging branch only fires on that transition.
+  public bool IsOpen { get; set; } = isOpen;
   public AmqpTcpEndpoint[] KnownHosts => [];
   public IProtocol Protocol => throw new NotImplementedException();
   public IDictionary<string, object?>? ServerProperties => null;
@@ -104,7 +107,17 @@ internal class FakeChannel : IChannel {
 
   // Members actually used by RabbitMQChannelPool
   public bool IsOpen => !IsDisposed;
-  public void Dispose() => IsDisposed = true;
+
+  /// <summary>Optional: makes <see cref="Dispose"/> throw instead of completing normally.</summary>
+  public Exception? ExceptionToThrowOnDispose { get; set; }
+
+  public void Dispose() {
+    if (ExceptionToThrowOnDispose != null) {
+      throw ExceptionToThrowOnDispose;
+    }
+    IsDisposed = true;
+  }
+
   public ValueTask DisposeAsync() {
     IsDisposed = true;
     return ValueTask.CompletedTask;
@@ -126,10 +139,22 @@ internal class FakeChannel : IChannel {
   public event AsyncEventHandler<CallbackExceptionEventArgs>? CallbackExceptionAsync;
   public event AsyncEventHandler<FlowControlEventArgs>? FlowControlAsync;
 
+  /// <summary>
+  /// When true, the <c>remove</c> accessor below silently ignores unsubscription. Lets a test
+  /// reproduce the narrow production race where a shutdown event is already in flight when
+  /// <c>Dispose()</c> unsubscribes — the handler must still see it fire and honor its own
+  /// disposed-guard, rather than the fake's real unsubscription masking that guard entirely.
+  /// </summary>
+  public bool SuppressChannelShutdownUnsubscribe { get; set; }
+
   private AsyncEventHandler<ShutdownEventArgs>? _channelShutdownAsync;
   public event AsyncEventHandler<ShutdownEventArgs>? ChannelShutdownAsync {
     add => _channelShutdownAsync += value;
-    remove => _channelShutdownAsync -= value;
+    remove {
+      if (!SuppressChannelShutdownUnsubscribe) {
+        _channelShutdownAsync -= value;
+      }
+    }
   }
 
   /// <summary>

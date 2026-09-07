@@ -460,4 +460,201 @@ public class NewtonsoftToSystemTextJsonTransformerTests {
       .Because("the attributes keep their names but move namespace, so the import has to arrive");
   }
 
+
+  // ── Detection edge cases: the type-usage scan and the qualified-name path ──
+
+  [Test]
+  public async Task TransformAsync_NonJsonAttributeAndInvocationWithJTokenField_DetectsUsageViaTheIdentifierArmAsync() {
+    // The Newtonsoft-type-usage scan checks attributes, then invocations, then bare type
+    // identifiers, returning as soon as one matches. A file with a non-Json attribute and a
+    // non-Json invocation forces the first two checks to run to completion without matching,
+    // leaving only a JToken-typed field to be caught by the third. If that identifier check ever
+    // stopped being reached, a file whose only Newtonsoft signal is a field/variable typed
+    // JObject/JArray/JToken/etc. would be misclassified as "no real usage" and its import would
+    // be silently deleted -- along with the fact that a manual JObject/JArray/JToken migration
+    // was actually needed.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using System;
+      using Newtonsoft.Json.Linq;
+
+      public class OrderService {
+        private JToken _payload = null!;
+
+        [Obsolete]
+        public void Log() {
+          Console.WriteLine("logging");
+        }
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "OrderService.cs");
+
+    // The transformer only warns about JObject/JArray/JToken when it decided the file has real
+    // Newtonsoft type usage (the dead-import-removal path emits no warnings at all) -- so seeing
+    // this warning is proof the scan fell through both loops and matched on the JToken field.
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("JObject/JArray/JToken from Newtonsoft.Json.Linq", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("this warning only fires on the real-usage path, so it proves the identifier arm caught the JToken field after both other loops fell through unmatched");
+    // What the scan does not recognize must survive completely untouched.
+    await Assert.That(result.TransformedCode).Contains("[Obsolete]")
+      .Because("an attribute the scan does not recognize must be left alone byte-for-byte");
+    await Assert.That(result.TransformedCode).Contains("Console.WriteLine(\"logging\")")
+      .Because("an invocation the scan does not recognize must be left alone byte-for-byte");
+  }
+
+  [Test]
+  public async Task TransformAsync_QualifiedJsonIgnoreAttribute_IsRecognizedAndPreservedAsync() {
+    // Some codebases spell attributes out in full (`Newtonsoft.Json.JsonIgnore`) to avoid an
+    // ambiguous short name. The attribute-name resolver has a dedicated branch for that qualified
+    // form, but no fixture exercised it before now. If that branch regressed, a file whose only
+    // Newtonsoft signal is a fully-qualified attribute would look like it has no Newtonsoft usage
+    // at all, and the migration would silently skip it -- the attribute still compiles (it is
+    // fully qualified), so nothing would fail loudly to reveal the miss.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+
+      public class Order {
+        [Newtonsoft.Json.JsonIgnore]
+        public string Secret { get; set; } = "";
+
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.TransformedCode).Contains("[Newtonsoft.Json.JsonIgnore]")
+      .Because("JsonIgnore is spelled the same in both libraries, so the qualified form is kept exactly as written rather than rewritten or dropped");
+    await Assert.That(result.TransformedCode).Contains("using System.Text.Json.Serialization;")
+      .Because("recognizing the qualified attribute must still trigger the same STJ import the short form would");
+    await Assert.That(result.Changes.Any(c => c.ChangeType == ChangeType.UsingReplaced)).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_StjImportInsertion_LandsAfterASurvivingSystemUsingAsync() {
+    // The System.Text.Json.Serialization import is inserted right after the last using that
+    // starts with "System" -- but every existing fixture that reaches this code path imports
+    // only `using Newtonsoft.Json.Linq;`, which gets removed, leaving no using directives for the
+    // search to run against. That let an insert-at-front bug hide behind an always-empty list.
+    // Here `using System;` survives the Newtonsoft.Json.Linq removal, so the search has a real
+    // entry to find. If the search regressed to always missing, the new import would jump to the
+    // very top of the file, ahead of the System usings, silently reordering every migrated file's
+    // import block.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using System;
+      using Newtonsoft.Json.Linq;
+
+      public class Order {
+        [JsonProperty("order_id")]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.TransformedCode.TrimStart().StartsWith("using System;", StringComparison.Ordinal))
+      .IsTrue()
+      .Because("System must remain the first using in the file");
+    var systemIndex = result.TransformedCode.IndexOf("using System;", StringComparison.Ordinal);
+    var stjIndex = result.TransformedCode.IndexOf("using System.Text.Json.Serialization;", StringComparison.Ordinal);
+    await Assert.That(stjIndex).IsGreaterThan(systemIndex)
+      .Because("the insertion point search found the surviving System using, so the new import must land right after it rather than at the front of the file");
+  }
+
+  [Test]
+  public async Task TransformAsync_JsonPropertyWithSingleNamedArgument_IsFlaggedAsComplexAsync() {
+    // A single-argument [JsonProperty] is not automatically "simple": it is only convertible when
+    // that argument is Required = Required.Always or a bare positional literal. An argument such
+    // as NullValueHandling = NullValueHandling.Ignore is neither, and STJ has no per-property
+    // attribute for it (null handling is configured globally via JsonSerializerOptions), so
+    // converting or dropping it would silently change the property's null-handling behavior. The
+    // only safe outcome is to leave it intact and tell the developer to migrate it by hand.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+
+      public class Order {
+        [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.Warnings.Any(w => w.Contains("Complex", StringComparison.Ordinal)))
+      .IsTrue()
+      .Because("a single-argument JsonProperty that is neither Required.Always nor a bare literal is still an unconvertible attribute and must be reported");
+    await Assert.That(result.TransformedCode).Contains("NullValueHandling")
+      .Because("the original attribute must survive intact for the developer to convert by hand");
+  }
+
+  [Test]
+  public async Task TransformAsync_NonGenericDeserializeObject_IsLeftUnrewrittenAsync() {
+    // The non-generic JsonConvert.DeserializeObject(json) overload returns `object?` -- there is
+    // no type argument for the transformer to carry over to JsonSerializer.Deserialize, so it has
+    // no safe rewrite to offer. The only existing fixture uses the generic overload, which always
+    // takes the early-return path above this one; a non-generic call has to fall through
+    // untouched instead of being guessed at.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+
+      public class OrderService {
+        public object? Load(string json) {
+          return JsonConvert.DeserializeObject(json);
+        }
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "OrderService.cs");
+
+    await Assert.That(result.TransformedCode).Contains("JsonConvert.DeserializeObject(json)")
+      .Because("with no type argument to translate, rewriting this call would mean guessing a target type -- leaving it alone is the only safe outcome");
+    await Assert.That(result.TransformedCode).DoesNotContain("JsonSerializer.Deserialize");
+    await Assert.That(result.Warnings).IsEmpty()
+      .Because("unlike the other unconvertible constructs this transformer knows about, the non-generic call path emits no warning today -- pinning that down so a future change to it is a deliberate choice rather than a silent regression");
+  }
+
+
+  [Test]
+  public async Task TransformAsync_AttributeNamesTheResolverCannotClassify_DoNotStopTheScanAsync() {
+    // The attribute-name resolver runs over every attribute in the file before the migration
+    // decides anything, and C# has attribute spellings that fit neither of its two shapes: a
+    // root-aliased name (`global::`) is not a plain identifier and not a qualified name, and a
+    // qualified name whose last segment is generic ends in something other than an identifier.
+    // Both fall to arms that just stringify whatever they were handed.
+    //
+    // What matters is that they stringify rather than throw. This resolver runs against attributes
+    // the transformer has no opinion about at all -- attributes from any library in the file --
+    // so an unhandled shape here would abort the migration of an entire file over an attribute
+    // that has nothing to do with Newtonsoft.
+    var transformer = new NewtonsoftToSystemTextJsonTransformer();
+    const string source = """
+      using Newtonsoft.Json;
+
+      public class Order {
+        [global::Serializable]
+        public string Legacy { get; set; } = "";
+
+        [Contracts.Legacy.Marker<int>]
+        public string Tagged { get; set; } = "";
+
+        [JsonProperty("order_id")]
+        public string Id { get; set; } = "";
+      }
+      """;
+
+    var result = await transformer.TransformAsync(source, "Order.cs");
+
+    await Assert.That(result.TransformedCode).Contains("[global::Serializable]")
+      .Because("an attribute the resolver cannot classify is not the transformer's business and must come back exactly as written");
+    await Assert.That(result.TransformedCode).Contains("[Contracts.Legacy.Marker<int>]")
+      .Because("a generic attribute belongs to some other library; stringifying its name must not become rewriting it");
+    await Assert.That(result.TransformedCode).Contains("JsonPropertyName(\"order_id\")")
+      .Because("the scan has to walk past the shapes it cannot classify and still find the Newtonsoft attribute after them -- otherwise one unusual attribute earlier in the file silently costs the whole migration");
+  }
 }
