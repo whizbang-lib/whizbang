@@ -123,6 +123,17 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     if (_semaphore is null) {
       return default;
     }
+    // A pinned-pool borrow already caps concurrency at the pool size, so gating it double-counts; and
+    // the workers that borrow one (claim, lease renewal, the completion and failure flushers) are the
+    // ones that must never queue behind the un-pinned drain bodies holding the gate. While they did,
+    // nothing completed, leases lapsed at their full length and the claim loop re-offered the same
+    // rows: the gate -> pinned wire -> flush -> gate edge of the perspective hold-and-wait.
+    if (Whizbang.Core.Workers.PinnedConnectionContext.Current is not null) {
+      if (_logger is not null) {
+        LogAcquireExemptPinned(_logger, caller);
+      }
+      return default;
+    }
     var currentCount = _semaphore.CurrentCount;
     if (_logger is not null) {
       LogAcquireEntry(_logger, currentCount, MaxConcurrent, AcquireTimeoutMilliseconds);
@@ -196,6 +207,10 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
     Message = "WorkCoordinatorGate.AcquireAsync timed out after {TimeoutMilliseconds} ms (MaxConcurrent={MaxConcurrent}) — gate is saturated; this call proceeds WITHOUT holding a slot. Persistent saturation indicates pool pressure or callers leaking slots; investigate the gated call site.")]
   static partial void LogAcquireTimedOut(ILogger logger, int timeoutMilliseconds, int maxConcurrent);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Debug,
+    Message = "WorkCoordinatorGate.AcquireAsync exempt: {Caller} runs on a pinned connection, which already bounds its concurrency; no slot taken")]
+  static partial void LogAcquireExemptPinned(ILogger logger, string caller);
 
   // v0.656 forensic Debug instrumentation: surface per-call gate decisions so
   // operators can see whether the silent two-minute spin is being absorbed by the gate's

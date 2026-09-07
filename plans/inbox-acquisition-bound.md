@@ -172,6 +172,9 @@ What a consumer gets with no configuration must be the safe thing. Changed, each
 * Reliability (cycle 8b): the sliding-window batch strategies and the per-stream serializer cancel their
   stop token with `CancelAsync`; the affinity fast path probes with a zero-timeout `WaitAsync`. No behavior
   change.
+* Pinned borrows pass the gate (cycle 6): a caller with a pinned connection in context takes no gate slot
+  (a borrow already caps concurrency at the pool size, and the borrowing workers are the ones that must
+  never queue behind the drain bodies); logged at Debug.
 
 Not changed: `PinnedPool.Enabled` already defaults to false in the framework (the observed inversion came
 from a consumer opt-in); `Perspective.MaxConcurrentDrainConsumers` stays 4 (the deadlock is a lock-order
