@@ -618,6 +618,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: write   # the uncovered-new-lines gate comments the list on the PR
     uses: ./.github/workflows/reusable-quality.yml
     with:
       # unit, postgres, inmemory, rabbitmq, azureblob + 2 servicebus shards

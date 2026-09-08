@@ -127,7 +127,9 @@ Write-Host "Reports merged: $($reports.Count). Changed library files with covera
 foreach ($u in $uncovered) { Write-Host "  $u" }
 
 if ($OutFile) {
-  $uncovered | Set-Content -Path $OutFile
+  # Always write the file, even when the list is empty: an empty list is the evidence of 100%, and a
+  # missing file reads as "the gate did not run". Set-Content on an empty pipeline writes nothing.
+  [System.IO.File]::WriteAllLines($OutFile, [string[]]$uncovered.ToArray())
 }
 
 if ($FailOnAny -and $uncovered.Count -gt 0) {

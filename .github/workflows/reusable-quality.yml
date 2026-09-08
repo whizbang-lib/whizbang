@@ -27,6 +27,11 @@ jobs:
   quality:
     name: Quality Analysis
     runs-on: ubuntu-latest
+    # pull-requests: write lets the uncovered-new-lines gate comment on the PR; the caller must grant it too.
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
     timeout-minutes: 60
 
     steps:
