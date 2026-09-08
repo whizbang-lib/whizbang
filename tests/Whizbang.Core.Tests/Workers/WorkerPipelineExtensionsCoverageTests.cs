@@ -129,6 +129,14 @@ public class WorkerPipelineExtensionsCoverageTests {
     // Filtered by level and message only, deliberately not by exception type: the two failures this
     // test is about carry whatever the deserializer threw, and pinning that would couple the test to
     // an unrelated implementation detail while silently dropping the very entries it looks for.
+    // Wait for the post-store entry before reading the log. It is emitted from a stage the
+    // callback does not await, so reading immediately on return was a race: the assertion below
+    // failed whenever that stage had not yet logged.
+    await loggerProvider
+      .WaitForAsync(e => e.Level == LogLevel.Error
+                      && e.Message.Contains("after store", StringComparison.Ordinal))
+      .WaitAsync(TimeSpan.FromSeconds(10));
+
     var errors = loggerProvider.Entries
       .Where(e => e.Level == LogLevel.Error)
       .Select(e => e.Message)
@@ -226,15 +234,62 @@ public class WorkerPipelineExtensionsCoverageTests {
   /// Real ILoggerFactory backed by an in-memory ILoggerProvider so tests can assert on the exact
   /// error entries recorded — proving a failure was actually logged, not just "did not throw".
   /// </summary>
+  /// <summary>
+  /// Records every log entry and lets a test wait for one.
+  /// </summary>
+  /// <remarks>
+  /// Both pieces are load-bearing. Some pipeline stages log from work the caller does not await,
+  /// so entries arrive on other threads: the list is guarded rather than handed out raw, and
+  /// <see cref="WaitForAsync"/> replaces reading the list the instant the callback returns — which
+  /// passed or failed on whether the detached stage had gotten there yet.
+  /// </remarks>
   private sealed class RecordingLoggerProvider : ILoggerProvider {
-    public List<(string Category, LogLevel Level, Exception? Exception, string Message)> Entries { get; } = [];
+    internal readonly record struct Entry(string Category, LogLevel Level, Exception? Exception, string Message);
 
-    public ILogger CreateLogger(string categoryName) => new _RecordingLogger(categoryName, Entries);
+    private readonly Lock _lock = new();
+    private readonly List<Entry> _entries = [];
+    private readonly List<(Func<Entry, bool> Match, TaskCompletionSource Signal)> _waiters = [];
+
+    /// <summary>A snapshot of what has been recorded so far.</summary>
+    public IReadOnlyList<Entry> Entries {
+      get { lock (_lock) { return [.. _entries]; } }
+    }
+
+    /// <summary>
+    /// Completes once an entry matching <paramref name="predicate"/> has been recorded — including
+    /// one recorded before this call.
+    /// </summary>
+    public Task WaitForAsync(Func<Entry, bool> predicate) {
+      lock (_lock) {
+        foreach (var existing in _entries) {
+          if (predicate(existing)) { return Task.CompletedTask; }
+        }
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiters.Add((predicate, signal));
+        return signal.Task;
+      }
+    }
+
+    public ILogger CreateLogger(string categoryName) => new _RecordingLogger(categoryName, _record);
 
     public void Dispose() { }
 
-    private sealed class _RecordingLogger(string category,
-        List<(string Category, LogLevel Level, Exception? Exception, string Message)> entries) : ILogger {
+    private void _record(Entry entry) {
+      List<TaskCompletionSource> ready = [];
+      lock (_lock) {
+        _entries.Add(entry);
+        for (var i = _waiters.Count - 1; i >= 0; i--) {
+          if (_waiters[i].Match(entry)) {
+            ready.Add(_waiters[i].Signal);
+            _waiters.RemoveAt(i);
+          }
+        }
+      }
+      // Completed outside the lock: a continuation must never run while holding it.
+      foreach (var signal in ready) { signal.TrySetResult(); }
+    }
+
+    private sealed class _RecordingLogger(string category, Action<Entry> record) : ILogger {
       public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
       public bool IsEnabled(LogLevel logLevel) => true;
@@ -245,7 +300,7 @@ public class WorkerPipelineExtensionsCoverageTests {
         TState state,
         Exception? exception,
         Func<TState, Exception?, string> formatter) {
-        entries.Add((category, logLevel, exception, formatter(state, exception)));
+        record(new Entry(category, logLevel, exception, formatter(state, exception)));
       }
     }
   }

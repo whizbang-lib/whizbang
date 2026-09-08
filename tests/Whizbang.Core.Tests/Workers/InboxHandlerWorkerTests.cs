@@ -28,12 +28,38 @@ public sealed class InboxHandlerWorkerTests {
 
   private sealed class _visibilityLogger : Microsoft.Extensions.Logging.ILogger<InboxHandlerWorker> {
     public List<string> Messages { get; } = [];
+
+    private readonly TaskCompletionSource _matched = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private string? _fragment;
+
+    /// <summary>
+    /// Returns a task that completes on the first message containing <paramref name="fragment"/>.
+    /// The killswitch log is ExecuteAsync's first statement on the disabled path, so waiting for it
+    /// is a deterministic "the body actually ran" signal: on .NET 10 the base class dispatches
+    /// ExecuteAsync through Task.Run, and StartAsync returning proves only that it was scheduled.
+    /// </summary>
+    public Task WaitFor(string fragment) {
+      lock (Messages) {
+        _fragment = fragment;
+        if (Messages.Any(m => m.Contains(fragment, StringComparison.OrdinalIgnoreCase))) {
+          _matched.TrySetResult();
+        }
+      }
+      return _matched.Task;
+    }
+
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
     public void Log<TState>(
         Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
         TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
-      lock (Messages) { Messages.Add(formatter(state, exception)); }
+      var message = formatter(state, exception);
+      lock (Messages) {
+        Messages.Add(message);
+        if (_fragment is not null && message.Contains(_fragment, StringComparison.OrdinalIgnoreCase)) {
+          _matched.TrySetResult();
+        }
+      }
     }
   }
 
@@ -165,18 +191,28 @@ public sealed class InboxHandlerWorkerTests {
     var opts = _enabledOptions();
     opts.Enabled = false;
     var coordinator = new StubCoordinator();
+    var log = new _visibilityLogger();
+    var reachedDisabledArm = log.WaitFor("disabled via options");
     var worker = new InboxHandlerWorker(
       new StubScopeFactory(coordinator), new CapturingFailureChannel(), _markedReadyGate(),
-      Options.Create(opts), NullLogger<InboxHandlerWorker>.Instance);
+      Options.Create(opts), log);
 
-    // Act - Start (invokes ExecuteAsync -> disabled arm), enqueue a request, then stop.
+    // Act - Start, wait for ExecuteAsync's disabled arm to actually log (the body's first
+    // statement on this path), enqueue a request, then stop. Without that wait a zero-commit
+    // assertion is satisfied just as well by a body the thread pool never started.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    await reachedDisabledArm.WaitAsync(TimeSpan.FromSeconds(10));
     await worker.EnqueueAsync(_request(Guid.NewGuid(), Guid.NewGuid()), cts.Token);
-    await worker.StopAsync(cts.Token);
+    await worker.StopAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - the disabled flush-callback early-returns; coordinator never invoked.
-    await Assert.That(coordinator.CallCount).IsEqualTo(0);
+    await Assert.That(coordinator.CallCount).IsEqualTo(0)
+      .Because("a disabled worker that still committed would make the operator's killswitch a lie");
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a parked, disabled worker must unpark and return cleanly on stop rather than "
+             + "surfacing the shutdown cancellation as a crashed hosted service");
   }
 
   // ==========================================================================

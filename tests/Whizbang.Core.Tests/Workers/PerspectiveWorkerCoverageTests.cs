@@ -500,6 +500,25 @@ public class PerspectiveWorkerCoverageTests {
 
   #region Startup Diagnostics Tests
 
+  // These three tests exist for the startup-diagnostics branches in
+  // _initializePerspectiveRegistryAsync, whose only observable effect is a log line. All three
+  // used to sleep 200 ms, cancel, and then assert ConsecutiveEmptyPolls >= 0 — an int counter
+  // that starts at zero and only ever increments, so the assertion is a tautology that no
+  // regression, and no failure to start the worker at all, can break. Each now waits on the exact
+  // log EventId its branch emits and asserts on that line, so the branch is genuinely required.
+
+  /// <summary>EventId of <c>LogRegisteredPerspectivesHeader</c> — "Registered N perspective(s):".</summary>
+  private const int REGISTERED_PERSPECTIVES_HEADER_EVENT_ID = 33;
+
+  /// <summary>EventId of <c>LogRegisteredPerspective</c> — one line per registered perspective.</summary>
+  private const int REGISTERED_PERSPECTIVE_EVENT_ID = 34;
+
+  /// <summary>EventId of <c>LogNoPerspectivesRegistered</c> — registry present but empty.</summary>
+  private const int NO_PERSPECTIVES_REGISTERED_EVENT_ID = 35;
+
+  /// <summary>EventId of <c>LogPerspectiveRegistryNotAvailableAtStartup</c> — no registry at all.</summary>
+  private const int REGISTRY_NOT_AVAILABLE_EVENT_ID = 36;
+
   [Test]
   public async Task Worker_StartupWithNoPerspectiveRegistry_LogsDiagnosticsAsync() {
     // Arrange - No registry registered at startup covers LogPerspectiveRegistryNotAvailableAtStartup
@@ -513,6 +532,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    using var logger = new _CapturingLogger();
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
@@ -520,23 +540,35 @@ public class PerspectiveWorkerCoverageTests {
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
+      logger: logger,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
-    // Act
+    // Act - wait for the diagnostic the branch itself emits. StartAsync only queues ExecuteAsync
+    // via Task.Run, so a fixed delay could not tell "the branch ran" from "the body was never
+    // dequeued"; the log line can.
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+    await logger.WaitForEventIdCountAsync(REGISTRY_NOT_AVAILABLE_EVENT_ID, 1, TimeSpan.FromSeconds(10));
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    // A host with no registry must park entirely rather than run startup repair against a
+    // database it was never a perspective host for — and the read-model barrier must still be
+    // released, since there are no read models to protect.
+    await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
 
-    // Assert - Worker started without crash (startup diagnostics exercised);
-    // empty-poll counter advancing proves the consumer loop ran.
-    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(logger.Entries.Count(e => e.EventId == REGISTRY_NOT_AVAILABLE_EVENT_ID)).IsEqualTo(1)
+      .Because("a host with no perspective registry has to say so once at startup — it is the only "
+             + "trace explaining why the worker then does nothing at all");
+    await Assert.That(logger.Entries.Any(e => e.EventId == NO_PERSPECTIVES_REGISTERED_EVENT_ID)).IsFalse()
+      .Because("'no perspectives registered' is the empty-registry diagnostic — reporting it here "
+             + "would tell an operator to call AddPerspectiveRunners on a host that has no registry");
   }
 
   [Test]
@@ -554,6 +586,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    using var logger = new _CapturingLogger();
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
@@ -561,6 +594,7 @@ public class PerspectiveWorkerCoverageTests {
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
+      logger: logger,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -569,15 +603,22 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+    await logger.WaitForEventIdCountAsync(NO_PERSPECTIVES_REGISTERED_EVENT_ID, 1, TimeSpan.FromSeconds(10));
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    // A registry that exists but is empty is NOT the turnkey park: the startup scan still runs so
+    // leftover rows from removed perspectives get serviced.
+    await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
 
-    // Assert - Worker started without crash (empty registry diagnostics exercised);
-    // empty-poll counter advancing proves the consumer loop ran.
-    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    // Assert
+    await Assert.That(logger.Entries.Count(e => e.EventId == NO_PERSPECTIVES_REGISTERED_EVENT_ID)).IsEqualTo(1)
+      .Because("an empty registry is almost always a missing AddPerspectiveRunners call, and this "
+             + "warning is the only thing that names the cause");
+    await Assert.That(logger.Entries.Any(e => e.EventId == REGISTERED_PERSPECTIVE_EVENT_ID)).IsFalse()
+      .Because("nothing is registered, so nothing may be listed as registered");
   }
 
   [Test]
@@ -595,6 +636,7 @@ public class PerspectiveWorkerCoverageTests {
 
     var serviceProvider = services.BuildServiceProvider();
 
+    using var logger = new _CapturingLogger();
     var harness = new PerspectiveWorkerTestHarness();
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
@@ -602,6 +644,7 @@ public class PerspectiveWorkerCoverageTests {
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
+      logger: logger,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
@@ -610,15 +653,29 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+    await logger.WaitForEventIdCountAsync(REGISTERED_PERSPECTIVE_EVENT_ID, 1, TimeSpan.FromSeconds(10));
+    await worker.StartupScanComplete.WaitAsync(TimeSpan.FromSeconds(10));
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
-    // Assert - Worker started without crash (perspective listing exercised);
-    // empty-poll counter advancing proves the consumer loop ran.
-    await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThanOrEqualTo(0);
+    // Assert - the header plus one line per registered perspective. This inventory is what an
+    // operator reads to confirm the perspectives they expect are actually wired on this host;
+    // the per-perspective line is also the only place the event types behind each one are named.
+    var registered = registry.GetRegisteredPerspectives();
+    await Assert.That(logger.Entries.Count(e => e.EventId == REGISTERED_PERSPECTIVES_HEADER_EVENT_ID)).IsEqualTo(1)
+      .Because("the header states how many perspectives were found — one line, once, at startup");
+    await Assert.That(logger.Entries.Count(e => e.EventId == REGISTERED_PERSPECTIVE_EVENT_ID))
+      .IsEqualTo(registered.Count)
+      .Because("every registered perspective must be listed; a short list reads as a perspective "
+             + "that failed to register");
+    await Assert.That(logger.Entries.Any(e =>
+        e.EventId == REGISTERED_PERSPECTIVE_EVENT_ID
+        && e.Message.Contains(registered[0].ClrTypeName, StringComparison.Ordinal))).IsTrue()
+      .Because("the listing has to name the perspective, not just count it");
+    await Assert.That(logger.Entries.Any(e => e.EventId == NO_PERSPECTIVES_REGISTERED_EVENT_ID)).IsFalse()
+      .Because("perspectives are registered, so the 'none registered' warning must not fire");
   }
 
   #endregion

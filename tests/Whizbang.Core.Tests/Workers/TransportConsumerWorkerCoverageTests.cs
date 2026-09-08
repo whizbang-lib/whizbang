@@ -259,9 +259,16 @@ public class TransportConsumerWorkerCoverageTests {
     using var cts = new CancellationTokenSource();
 
     // Act
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+
+    // StartAsync returning only proves ExecuteAsync was queued -- .NET 10 dispatches it with
+    // Task.Run(_, stoppingToken), which skips the delegate entirely when the token is already
+    // canceled by the time the work item is dequeued. Canceling after a fixed sleep therefore
+    // could not tell "the worker ran and correctly declined to subscribe" apart from "the worker
+    // never ran at all". The readiness-false branch settles SubscriptionsReady on its way out
+    // (so readiness waiters don't hang), which is a signal only the body can emit.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert - should not have subscribed because readiness check returned false
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)
@@ -785,9 +792,15 @@ public class TransportConsumerWorkerCoverageTests {
     var worker = _createWorker(transport, options);
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+
+    // With no destinations the body still runs through _subscribeToAllDestinationsAsync and
+    // settles SubscriptionsReady, so awaiting that signal is what makes the two "count is zero"
+    // assertions below discriminating. Sleeping instead left them satisfied by a worker that
+    // never ran -- Task.Run(_, stoppingToken) never invokes the delegate when the token is
+    // already canceled as the work item is dequeued.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert - no subscriptions attempted
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0);
@@ -1098,26 +1111,30 @@ public class TransportConsumerWorkerCoverageTests {
   // waiter never exits either.
   [Test]
   public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_ReturnsWithoutSettlingSubscriptionsReadyAsync() {
-    var neverReady = new Whizbang.Core.Workers.SchemaReadyGate();
+    var neverReady = new EnteredSignalingSchemaGate();
     var worker = _createWorkerWithSchemaGate(new CoverageTransport(), neverReady);
 
     using var stopping = new CancellationTokenSource();
     await worker.StartAsync(stopping.Token);
+
+    // Wait until the worker is provably parked on the gate before canceling. StartAsync returning
+    // only proves ExecuteAsync was queued: .NET 10 dispatches it with Task.Run(_, stoppingToken),
+    // which never invokes the delegate when the token is already canceled as the work item is
+    // dequeued -- the task then settles Canceled and nothing below was exercised at all. Canceling
+    // straight after StartAsync left it to thread-pool timing whether this test measured the gate
+    // path or measured nothing.
+    await neverReady.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Only now can cancellation resolve the gate await via OperationCanceledException, which the
+    // ExecuteAsync call site catches and returns from.
     await stopping.CancelAsync();
 
-    // ExecuteTask reaching a terminal state on its own is the deterministic signal that the early
-    // return fired, rather than the host launching ExecuteAsync on the thread pool and the test
-    // racing it. SuppressThrowing because the task may finish either RanToCompletion (the catch
-    // swallowed the cancellation) or Canceled (the token was already canceled when ExecuteAsync
-    // first ran) depending on how quickly the thread pool picks it up -- both are graceful exits,
-    // and rethrowing one of them would make this test fail only under load.
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
-      .Because("a host shutting down mid-migration must not leave this worker parked on the gate");
-    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
-      .Because("canceling the schema wait is a graceful shutdown path, not a failure");
+    await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
+      .Because("a host shutting down mid-migration must return cleanly from the gate wait, not " +
+               "fault, and not leave this worker parked on the gate");
     await Assert.That(worker.SubscriptionsReady.IsCompleted).IsFalse()
       .Because("today, returning here leaves SubscriptionsReady unsettled — pinning this so a fix " +
                "that adds the missing TrySetCanceled/TrySetResult call must consciously update this test");
@@ -1314,6 +1331,31 @@ public class TransportConsumerWorkerCoverageTests {
   // ========================================
   // Helper Methods
   // ========================================
+
+  /// <summary>
+  /// Schema gate that never opens, but publishes the moment a worker starts waiting on it.
+  /// </summary>
+  /// <remarks>
+  /// Needed because <c>StartAsync</c> returning does not mean <c>ExecuteAsync</c> reached the
+  /// gate: .NET 10 queues it with <c>Task.Run</c>. Canceling before it is dequeued skips the body
+  /// entirely, so a test that cancels straight after starting can pass or fail on scheduling luck.
+  /// </remarks>
+  private sealed class EnteredSignalingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes the moment a worker begins waiting on this gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _ready.Task.IsCompleted;
+
+    public void MarkReady() => _ready.TrySetResult();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
+    }
+  }
 
   private static TransportConsumerWorker _createWorkerWithSchemaGate(
       ITransport transport, ISchemaReadyGate schemaReadyGate) {

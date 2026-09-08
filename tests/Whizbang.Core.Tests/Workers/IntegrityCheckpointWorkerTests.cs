@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -24,6 +25,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Workers/IntegrityCheckpointWorker.cs</code-under-test>
 public class IntegrityCheckpointWorkerTests {
+
+  /// <summary>
+  /// Upper bound on every wait for a worker-emitted signal. Generous on purpose: it is a deadlock
+  /// guard, not a timing assumption — the signals themselves are what the tests synchronize on.
+  /// </summary>
+  private static readonly TimeSpan _wait = TimeSpan.FromSeconds(20);
 
   [Test]
   public async Task RunCheckpointOnce_PublishesWindowWithOriginIdentityAsync() {
@@ -299,33 +306,62 @@ public class IntegrityCheckpointWorkerTests {
     // as a crashed worker. Parking keeps a deliberately-disabled checkpointer distinguishable from
     // one that died — and checkpoints are what let a consumer prove it has seen everything an
     // origin published, so the difference matters.
+    //
+    // The disabled branch's first statement is a log, which is the only thing it does before
+    // parking; waiting on it is what makes "parked" distinguishable from "never scheduled", since
+    // StartAsync merely dispatches ExecuteAsync to the thread pool.
+    var logSignal = new _firstLogSignal();
     var worker = _buildWorker(
       new _checkpointCoordinator(), new _captureDispatcher(), "svc",
-      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = false });
+      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = false },
+      logger: logSignal);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    await logSignal.Logged.WaitAsync(_wait);
+
+    // The claim in the name, asserted directly: the worker is still running here, not finished.
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("a disabled checkpointer must PARK — a BackgroundService that completes on its own "
+             + "is indistinguishable, to the host, from one that crashed");
+
     await worker.StopAsync(CancellationToken.None);
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("unparking on shutdown is an ordinary stop, not a fault to report");
   }
 
   [Test]
   public async Task ShutdownBeforeTheSchemaIsReady_ExitsQuietlyAsync() {
     // The worker parks on the schema gate before its first checkpoint. A pod stopped while waiting
     // has no integrity tables to write to, so this must not report an error on every fast restart.
+    //
+    // The gate reports when the worker reaches it. Without that, StopAsync's cancellation could
+    // beat the body to the barrier and this would assert on a worker that never waited at all.
+    var gate = new _parkedGate();
     var worker = _buildWorker(
       new _checkpointCoordinator(), new _captureDispatcher(), "svc",
-      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = true });
+      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = true },
+      gate: gate);
 
     using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);   // the gate in _buildWorker is never marked ready
+    await worker.StartAsync(cts.Token);
+    await gate.Entered.WaitAsync(_wait);
+
     await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue()
+      .Because("a canceled gate wait must settle the hosted service rather than hang shutdown");
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("stopping while migrations are still running is a routine deploy, so it must not "
+             + "log a crash on every fast restart");
   }
 
   private static IntegrityCheckpointWorker _buildWorker(
       _checkpointCoordinator coordinator, _captureDispatcher dispatcher, string serviceName,
       _captureTransport? transport = null, IMessageTypeCatalog? catalog = null,
       bool outboxRouting = true, ITopicRegistry? topicRegistry = null,
-      ControlClassOptions? controlClass = null, StreamIntegrityOptions? integrityOptions = null) {
+      ControlClassOptions? controlClass = null, StreamIntegrityOptions? integrityOptions = null,
+      ISchemaReadyGate? gate = null, ILogger<IntegrityCheckpointWorker>? logger = null) {
     var services = new ServiceCollection();
     services.AddSingleton<ICheckpointMint>(new CheckpointMint(
       Options.Create(controlClass ?? new ControlClassOptions())));
@@ -351,9 +387,9 @@ public class IntegrityCheckpointWorkerTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
+      gate ?? new SchemaReadyGate(),
       Options.Create(integrityOptions ?? new StreamIntegrityOptions()),
-      NullLogger<IntegrityCheckpointWorker>.Instance);
+      logger ?? NullLogger<IntegrityCheckpointWorker>.Instance);
   }
 
   private sealed class _checkpointCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
@@ -431,19 +467,29 @@ public class IntegrityCheckpointWorkerTests {
     // than a worker that quietly still runs.
     var coordinator = new _checkpointCoordinator();
     var dispatcher = new _captureDispatcher();
+    // The disabled-path log is ExecuteAsync's first statement, so it is the proof the body ran.
+    // Cancelling straight after StartAsync — which only SCHEDULES ExecuteAsync — can leave the
+    // work item never dequeued at all, and the empty-dispatcher assertion below would then be
+    // satisfied by a worker that never existed rather than one that declined to publish.
+    var logSignal = new _firstLogSignal();
     var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
-      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = false });
+      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = false },
+      logger: logSignal);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    var executeTask = worker.ExecuteTask;
+    await logSignal.Logged.WaitAsync(testToken);
+    var executeTask = worker.ExecuteTask!;
     await cts.CancelAsync();
+    await executeTask.WaitAsync(_wait, testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     await worker.StopAsync(CancellationToken.None);
 
-    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsCompleted).IsTrue();
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("parking is not an error — a faulted worker reads as a crash on shutdown");
-    await Assert.That(dispatcher.Published).IsEmpty();
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("the worker demonstrably entered its body and still published nothing, which is "
+             + "what the disabled flag has to mean");
   }
 
   [Test]
@@ -454,16 +500,24 @@ public class IntegrityCheckpointWorkerTests {
     // fails during migration must get a clean shutdown, not a fault.
     var coordinator = new _checkpointCoordinator();
     var dispatcher = new _captureDispatcher();
+    // The gate announces the worker's arrival, so the cancellation provably lands ON the wait
+    // rather than before ExecuteAsync was ever dequeued.
+    var gate = new _parkedGate();
     var worker = _buildWorker(coordinator, dispatcher, "origin-svc",
-      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = true });
+      integrityOptions: new StreamIntegrityOptions { CheckpointsEnabled = true },
+      gate: gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    var executeTask = worker.ExecuteTask;
+    await gate.Entered.WaitAsync(testToken);
+    var executeTask = worker.ExecuteTask!;
     await cts.CancelAsync();
+    // Exiting through a cancellation catch settles RanToCompletion or Canceled by thread-pool
+    // timing, so suppress and assert completion rather than success.
+    await executeTask.WaitAsync(_wait, testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     await worker.StopAsync(CancellationToken.None);
 
-    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsCompleted).IsTrue();
     await Assert.That(executeTask.IsFaulted).IsFalse();
     await Assert.That(dispatcher.Published).IsEmpty()
       .Because("nothing may publish before the tables the watermarks live in exist");
@@ -562,7 +616,8 @@ public class IntegrityCheckpointWorkerTests {
   }
 
   private static IntegrityCheckpointWorker _loopWorker(
-      _countingCoordinator coordinator, ISchemaReadyGate gate, StreamIntegrityOptions options) {
+      _countingCoordinator coordinator, ISchemaReadyGate gate, StreamIntegrityOptions options,
+      ILogger<IntegrityCheckpointWorker>? logger = null) {
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
     services.AddSingleton<IDispatcher>(new _captureDispatcher());
@@ -573,7 +628,43 @@ public class IntegrityCheckpointWorkerTests {
       sp.GetRequiredService<IServiceScopeFactory>(),
       gate,
       Options.Create(options),
-      NullLogger<IntegrityCheckpointWorker>.Instance);
+      logger ?? NullLogger<IntegrityCheckpointWorker>.Instance);
+  }
+
+  /// <summary>
+  /// A schema gate that never opens and announces the moment a worker begins waiting on it.
+  /// <see cref="Entered"/> is the deterministic "the worker is parked at the barrier" signal; the
+  /// infinite delay then observes the stopping token exactly as the real gate's
+  /// <c>Task.WaitAsync</c> does.
+  /// </summary>
+  private sealed class _parkedGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
+  /// Completes on the worker's first log call. On the checkpoints-disabled path that log is
+  /// <c>ExecuteAsync</c>'s very first statement, so it is a deterministic "the body ran" signal for
+  /// a branch whose only other observable is that nothing happens.
+  /// </summary>
+  private sealed class _firstLogSignal : ILogger<IntegrityCheckpointWorker> {
+    private readonly TaskCompletionSource _logged = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Logged => _logged.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+      _logged.TrySetResult();
   }
 
   [Test]
@@ -624,12 +715,18 @@ public class IntegrityCheckpointWorkerTests {
     await Assert.That(enabledCoordinator.Calls).IsGreaterThanOrEqualTo(1);
 
     var disabledCoordinator = new _countingCoordinator();
+    // The disabled worker's first act is its "checkpoints disabled" log; waiting on it is what
+    // makes the zero-cycle assertion below mean "the worker ran and declined to checkpoint"
+    // instead of "StopAsync canceled the stopping token before the body was ever dequeued".
+    var disabledLog = new _firstLogSignal();
     var disabled = _loopWorker(
       disabledCoordinator,
       SchemaReadyGate.AlreadyReady(),
-      new StreamIntegrityOptions { CheckpointsEnabled = false, CheckpointIntervalSeconds = 1 });
+      new StreamIntegrityOptions { CheckpointsEnabled = false, CheckpointIntervalSeconds = 1 },
+      logger: disabledLog);
 
     await disabled.StartAsync(testToken);
+    await disabledLog.Logged.WaitAsync(testToken);
     await disabled.StopAsync(CancellationToken.None);
 
     await Assert.That(disabledCoordinator.Calls).IsEqualTo(0)
@@ -643,15 +740,23 @@ public class IntegrityCheckpointWorkerTests {
     // Checkpointing before the schema exists would query tables that are not there yet. The
     // worker waits on the gate, and a shutdown while still waiting has to return rather than
     // hang -- StopAsync completing is what proves it did.
+    //
+    // The gate reports the worker's arrival, so the shutdown provably interrupts a wait that was
+    // actually entered. A plain never-ready gate cannot distinguish that from a body the thread
+    // pool never dequeued, and both would satisfy the zero-cycle assertion below.
     var coordinator = new _countingCoordinator();
+    var gate = new _parkedGate();
     var worker = _loopWorker(
       coordinator,
-      new SchemaReadyGate(),
+      gate,
       new StreamIntegrityOptions { CheckpointIntervalSeconds = 1 });
 
     await worker.StartAsync(testToken);
+    await gate.Entered.WaitAsync(testToken);
     await worker.StopAsync(CancellationToken.None);
 
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a shutdown that lands on the gate wait must return, not fault the hosted service");
     await Assert.That(coordinator.Calls).IsEqualTo(0)
       .Because("nothing may be checkpointed until the schema is ready");
   }

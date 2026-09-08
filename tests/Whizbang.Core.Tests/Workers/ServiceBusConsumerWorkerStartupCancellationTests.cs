@@ -30,17 +30,29 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
       CancellationToken cancellationToken) {
     // A host whose schema step never completes: the gate is never marked ready, so the worker is
     // still parked on it when shutdown arrives.
-    var neverReady = new SchemaReadyGate();
+    var neverReady = new SignallingSchemaGate();
     var worker = _worker(new StubTransport(), neverReady);
 
     using var stopping = new CancellationTokenSource();
     await worker.StartAsync(stopping.Token);
+
+    // Park on the gate first, exactly as the sibling test waits for SubscribeEntered. StartAsync
+    // only queues ExecuteAsync via Task.Run(_, stoppingToken), and Task.Run skips the delegate
+    // entirely when the token is already canceled at dequeue time — so canceling straight after
+    // StartAsync could leave _subscriptionsReady untouched. This assertion still "passed" then,
+    // because a signal nobody ever settles throws OperationCanceledException off the test's own
+    // timeout token instead of off the worker's TrySetCanceled — the opposite of what it claims
+    // to prove, and only after burning the whole timeout.
+    await neverReady.Entered.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
     await stopping.CancelAsync();
 
     await Assert.That(async () => await worker.SubscriptionsReady.WaitAsync(cancellationToken))
       .Throws<OperationCanceledException>()
       .Because("returning from startup without settling the signal parks every waiter forever — "
              + "during shutdown that is a host that never exits");
+    await Assert.That(worker.SubscriptionsReady.IsCanceled).IsTrue()
+      .Because("the worker has to settle the signal itself; a wait that only ends on the waiter's "
+             + "own timeout is precisely the hang under test, and reads identically from outside");
     await worker.StopAsync(CancellationToken.None);
   }
 
@@ -80,6 +92,30 @@ public class ServiceBusConsumerWorkerStartupCancellationTests {
         Subscriptions = [new TopicSubscription("startup-topic", "startup-sub")]
       },
       schemaReadyGate: gate);
+  }
+
+  /// <summary>
+  /// A never-ready schema gate that publishes when a waiter arrives.
+  /// </summary>
+  /// <remarks>
+  /// The gate-stage counterpart of <see cref="StubTransport.SubscribeEntered"/>: it marks the
+  /// moment the worker is provably inside the window the first test is about, so shutdown can be
+  /// aimed at that window instead of at whenever the thread pool got around to the body.
+  /// </remarks>
+  private sealed class SignallingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _ready.Task.IsCompleted;
+    public void MarkReady() => _ready.TrySetResult();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
+    }
   }
 
   /// <summary>

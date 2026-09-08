@@ -71,6 +71,28 @@ public class IntegrityAuditWorkerCoverageTests {
   // ── ExecuteAsync lifecycle: the schema-gate exit ────────────────────────
 
   /// <summary>
+  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
+  /// deterministic "the worker is parked at the barrier" signal: since .NET 10,
+  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
+  /// <c>Task.Run(action, stoppingToken)</c>, so StartAsync returning proves only that the body was
+  /// scheduled, and a token canceled before the work item is dequeued settles the task Canceled
+  /// without ever invoking the delegate. A "nothing was claimed" assertion is satisfied by that
+  /// too, so the wait is what makes the assertion mean anything.
+  /// </summary>
+  private sealed class _blockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  /// <summary>
   /// If this regressed to running (or faulting) instead of returning, the audit could fire SQL
   /// against integrity tables migrations haven't created yet, or a routine shutdown-before-ready
   /// would read as a crash.
@@ -79,12 +101,14 @@ public class IntegrityAuditWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_StoppedWhileWaitingOnTheSchemaGate_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
     var coordinator = new _claimCountingCoordinator();
-    // No gate marked ready — a host stopped mid-migration.
-    var worker = _buildWorker(coordinator, new StreamIntegrityOptions { AuditEnabled = true }, gate: new SchemaReadyGate());
+    // A gate that never opens — a host stopped mid-migration.
+    var gate = new _blockingGate();
+    var worker = _buildWorker(coordinator, new StreamIntegrityOptions { AuditEnabled = true }, gate: gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     var executeTask = worker.ExecuteTask;
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     await worker.StopAsync(CancellationToken.None);
 
     await executeTask!.WaitAsync(TimeSpan.FromSeconds(5), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);

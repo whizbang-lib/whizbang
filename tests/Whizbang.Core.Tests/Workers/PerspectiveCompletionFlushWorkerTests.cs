@@ -298,8 +298,14 @@ public class PerspectiveCompletionFlushWorkerTests {
     // perspective work that is safe to repeat — and it is the reason the flush must stay
     // idempotent. If this ever needs to change, it changes here first.
     var coordinator = new RecordingCoordinator();
-    var worker = _worker(coordinator);
+    // Wait on the worker's own "started" line before stopping it: since .NET 10,
+    // BackgroundService.StartAsync dispatches ExecuteAsync with Task.Run(action, stoppingToken),
+    // so StartAsync returning proves only that the body was scheduled. A "no more than one
+    // completion" assertion is satisfied by a body that never ran at all.
+    var logger = new _eventIdWaiter(1); // LogStarted
+    var worker = _worker(coordinator, logger: logger);
     await worker.StartAsync(testToken);
+    await logger.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
     await worker.EnqueueEventWorkIdAsync((Guid)TrackedGuid.NewMedo(), testToken);
     await worker.StopAsync(CancellationToken.None);
@@ -309,18 +315,27 @@ public class PerspectiveCompletionFlushWorkerTests {
     // that a second stop is still safe.
     await worker.StopAsync(CancellationToken.None);
     await Assert.That(coordinator.Completions.Count).IsLessThanOrEqualTo(1);
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("dropping the tail of the channel is the documented shutdown behavior, not a fault "
+             + "— a faulted hosted service turns every deploy into a reported crash");
   }
 
   [Test]
   [Timeout(30000)]
   public async Task StopIsSafeWithNothingEnqueuedAsync(CancellationToken testToken) {
     var coordinator = new RecordingCoordinator();
-    var worker = _worker(coordinator);
+    var logger = new _eventIdWaiter(1); // LogStarted — proof the body reached the enabled path
+    var worker = _worker(coordinator, logger: logger);
     await worker.StartAsync(testToken);
+    await logger.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
     await worker.StopAsync(CancellationToken.None);
 
-    await Assert.That(coordinator.Completions).IsEmpty();
+    await Assert.That(coordinator.Completions).IsEmpty()
+      .Because("an idle service still shuts down; flushing an empty batch would cost a round trip "
+             + "on every deployment");
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("stopping a running-but-idle flusher must be a clean exit");
   }
 
   [Test]

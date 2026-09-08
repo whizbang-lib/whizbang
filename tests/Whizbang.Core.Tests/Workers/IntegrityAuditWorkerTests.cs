@@ -729,6 +729,48 @@ public class IntegrityAuditWorkerTests {
   // ones: opting out, and shutting down before the schema exists. Neither may fault — a hosted
   // service whose ExecuteAsync throws turns an ordinary shutdown into a reported crash, and on
   // startup it takes the whole host down with it.
+  //
+  // Both cases wait on a signal the body itself emits before stopping the worker. Since .NET 10
+  // `BackgroundService.StartAsync` dispatches ExecuteAsync with `Task.Run(action, stoppingToken)`,
+  // so StartAsync returning proves only that the body was scheduled — and a token canceled before
+  // the work item is dequeued settles the task Canceled without ever invoking the delegate. Both
+  // assertions below are "the coordinator was never touched", which a body that never ran also
+  // satisfies; without the wait these tests pass on a worker that did nothing at all.
+
+  /// <summary>
+  /// Completes when a chosen <c>EventId</c> is logged — the deterministic "ExecuteAsync reached
+  /// this branch" signal for a worker whose branch has no other observable effect.
+  /// </summary>
+  private sealed class _eventIdSignalLogger(int eventId) : ILogger<IntegrityAuditWorker> {
+    private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Seen => _seen.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (id.Id == eventId) { _seen.TrySetResult(); }
+    }
+  }
+
+  /// <summary>
+  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
+  /// "the worker is parked at the barrier" signal; the infinite delay then observes the stopping
+  /// token exactly as the real gate's wait does.
+  /// </summary>
+  private sealed class _blockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
 
   [Test]
   [Timeout(30000)]
@@ -736,18 +778,27 @@ public class IntegrityAuditWorkerTests {
     // Disabled means disabled: the worker still runs as a hosted service (so the host's service
     // list is the same either way) but must never reach the coordinator.
     var coordinator = new _auditCoordinator();
+    var logger = new _eventIdSignalLogger(81);  // LogDisabled — the disabled branch's first act
     var worker = _buildWorker(
       coordinator, new _captureDispatcher(), new _captureTransport(),
       new StreamIntegrityOptions { AuditEnabled = false },
-      gate: _readyGate());
+      gate: _readyGate(), logger: logger);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     var executeTask = worker.ExecuteTask;
+    await logger.Seen.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    await Assert.That(executeTask!.IsCompleted).IsFalse()
+      .Because("the disabled audit parks rather than returning — a completed ExecuteAsync tells "
+             + "the host this service finished, which is how a crashed worker looks too");
+
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+    await executeTask.WaitAsync(TimeSpan.FromSeconds(10), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsCompleted).IsTrue();
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("parking is not an error — a faulted ExecuteAsync reads as a crash on shutdown");
     await Assert.That(coordinator.AuditClaimCalls).IsEqualTo(0)
@@ -760,17 +811,23 @@ public class IntegrityAuditWorkerTests {
     // A host that fails during migration stops everything it built. The audit reads integrity
     // tables that do not exist yet, so it must return rather than run or fault.
     var coordinator = new _auditCoordinator();
+    var gate = new _blockingGate();
     var worker = _buildWorker(
       coordinator, new _captureDispatcher(), new _captureTransport(),
-      new StreamIntegrityOptions { AuditEnabled = true });
+      new StreamIntegrityOptions { AuditEnabled = true },
+      gate: gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     var executeTask = worker.ExecuteTask;
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsCompleted).IsTrue();
     await Assert.That(executeTask.IsFaulted).IsFalse();
     await Assert.That(coordinator.AuditClaimCalls).IsEqualTo(0)
       .Because("nothing may run before the schema the integrity tables live in exists");

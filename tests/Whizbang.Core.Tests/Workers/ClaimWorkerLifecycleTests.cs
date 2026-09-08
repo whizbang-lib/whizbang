@@ -92,11 +92,48 @@ public class ClaimWorkerLifecycleTests {
 
     public TaskCompletionSource HeartbeatAttempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>Completes on the first claim, so a test can tell "has not claimed yet" from
+    /// "never will".</summary>
+    public TaskCompletionSource ClaimAttempted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private int _claimCount;
+
+    /// <summary>How many claims the worker made. Written from the worker thread.</summary>
+    public int ClaimCount => Volatile.Read(ref _claimCount);
+
+    private readonly Lock _operationLock = new();
+    private readonly List<string> _operations = [];
+
+    /// <summary>
+    /// The order the worker called this coordinator in — "register" for the startup heartbeat,
+    /// "claim" for a claim. Written from the worker thread, read from the test thread, so it is
+    /// guarded and handed out as a copy.
+    /// </summary>
+    public IReadOnlyList<string> Operations {
+      get { lock (_operationLock) { return [.. _operations]; } }
+    }
+
+    private void _record(string operation) {
+      lock (_operationLock) { _operations.Add(operation); }
+    }
+
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) {
+      _record("register");
       HeartbeatAttempted.TrySetResult();
       return HeartbeatThrows
         ? Task.FromException<bool>(new InvalidOperationException("wh_service_instances unavailable"))
         : Task.FromResult(true);
+    }
+
+    public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) {
+      _record("claim");
+      Interlocked.Increment(ref _claimCount);
+      ClaimAttempted.TrySetResult();
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = [],
+      });
     }
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
@@ -281,9 +318,22 @@ public class ClaimWorkerLifecycleTests {
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
-    await coordinator.HeartbeatAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+    // Wait for a CLAIM, not just the registration. The recorded order only means something once
+    // both operations have happened: waiting on the heartbeat alone would let a worker that
+    // registered *after* its first claim pass, which is precisely the regression this test names.
+    await coordinator.ClaimAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+
+    // Previously this test asserted nothing at all — it started the worker, waited, and stopped,
+    // so it passed whatever order the two calls happened in.
+    var operations = coordinator.Operations;
+    await Assert.That(operations.Count).IsGreaterThanOrEqualTo(2)
+      .Because("the order is only evidence once both the registration and a claim were observed");
+    await Assert.That(operations[0]).IsEqualTo("register")
+      .Because("registering after the first claim leaves the registry briefly carrying no row for "
+             + "this pod, which skews every peer's rank denominator and delays instance-lifecycle "
+             + "signals");
     worker.Dispose();
   }
 
@@ -298,10 +348,26 @@ public class ClaimWorkerLifecycleTests {
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
+
+    // StartAsync only proves the body was queued to the thread pool, so wait for something the
+    // body itself produces before judging it. The startup registration is the last step before
+    // the perspective-only fork, so observing it puts the loop at the fork.
+    await coordinator.HeartbeatAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    // Past that fork a claiming worker claims immediately — there is no delay before the first
+    // cycle — so a window several poll intervals wide (the fixture polls at 50 ms) is enough to
+    // separate "parked" from "about to claim".
+    _ = await Task.WhenAny(
+      coordinator.ClaimAttempted.Task,
+      Task.Delay(TimeSpan.FromMilliseconds(500), testToken));
+
     var executeTask = worker.ExecuteTask;
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
+    await Assert.That(coordinator.ClaimCount).IsEqualTo(0)
+      .Because("parking is the whole behavior — claiming here races the legacy publisher for "
+             + "orphan rows and breaks the event-store auto-create chain");
     await Assert.That(executeTask!.IsCompleted).IsTrue();
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("parking is the intended state — a faulted worker reads as a crash on shutdown");

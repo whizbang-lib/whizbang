@@ -4807,3 +4807,65 @@ writing anything for it**: the merged CI cobertura can list a line that is alrea
 this batch's sixty-one were. The reverse also happens — the same merge listed
 `IntegrityCheckpointWorker:47` and `SubscriptionExpansionWorker:134-136` as uncovered, which was
 correct, and each had a *named, passing test* that did not reach them.
+
+## DB. The vacuous-worker-test sweep: two shapes, 46 tests, and 59 sleeps still to go
+
+Not residue — a test-correctness record, filed here because section CT is where the cause is
+documented and a future round will look for the follow-up.
+
+CT established that .NET 10 changed `BackgroundService.StartAsync` to
+`_executeTask = Task.Run(() => ExecuteAsync(_stoppingCts.Token), _stoppingCts.Token)`. This sweep
+acted on it. **Two distinct shapes**, and the second was missed on the first pass:
+
+1. `StartAsync` → `StopAsync` → assert something did NOT happen. Produces **false passes**: the
+   assertion is equally true of a body that never ran. 67 candidates found structurally.
+2. `StartAsync` → `CancelAsync` → assert `IsCompletedSuccessfully`. Produces **false passes AND
+   intermittent failures**: `Task.Run(action, token)` never invokes the delegate when the token is
+   already canceled, and the task settles `Canceled`, so the assertion is false. 24 candidates,
+   found only after one of them failed in a full-suite run while passing in isolation.
+
+**Result: 46 fixed, 34 verdicts of legitimate.** Legitimate mostly meant "not a `BackgroundService`
+at all" — a plain `IHostedService` runs `StartAsync` inline, so the defect cannot apply — or a
+method *declaration* on an `IHost` test double that the structural scan matched by name.
+
+**Evidence, and its limits.** A measured "green run, 0 lines of `ExecuteAsync` hit" was obtained for
+6 sites naturally (one needed 14 CPU hogs to surface; another 16-way load) and for 2 more by
+simulating the lost race (`CancelAsync` before `StartAsync`). The rest are diagnosed by
+construction — every assertion satisfiable by a body that never ran — NOT by an observed zero. On
+an idle machine the thread pool usually wins, which is exactly why these survived for so long.
+
+**Tests found broken for reasons unrelated to the defect**, while in these files:
+- `TheStartupRegistrationRunsBeforeClaimingAsync` had **no assertion at all** despite its name
+  promising an ordering check. Now records the coordinator call order and asserts registration first.
+- Three `PerspectiveWorkerCoverageTests` startup tests asserted `ConsecutiveEmptyPolls >= 0` — a
+  **tautology** on a counter that starts at 0 and only increments. They also passed `NullLogger`,
+  whose `IsEnabled` returns false, so the logging branches they existed to cover were dark.
+- `WhenRebuilderThrowsAndStatusUpdateFails_SwallowsBoth`'s only assertion was
+  `var completed = true; Assert.That(completed).IsTrue()`.
+- Two more `RepairMode`-defaults-to-`ReportOnly` fixtures (see CX) — the count is now three rounds
+  running. `RepairDrainWorkerCoverageTests:153` fixed here.
+- `MaintenanceWorkerLifecycleTests`: deleting the early `return` in the cancellation catch still
+  passed, because the `while` loop is skipped when cancellation is already requested.
+
+**Two flakes fixed at the root** (standing rule: fix a flake on sight, whatever file it is in):
+- `ClaimWorkerDoorbellLivenessTests.FreshWorkOnEmptyEdge_DoorbellPreceded_...` rang the doorbell
+  from the test thread, racing the claim loop's nap decision. `ClaimWorker`'s own comment admits a
+  ring landing between the `doorbellPending` check and `Volatile.Write(ref _napCts, napCts)` is
+  lost — and this test parks polling at 60s, longer than its own 30s wait. The doorbell is now rung
+  from inside claim #1, so the flag is set before the nap decision and the nap is skipped outright.
+- `WorkerPipelineExtensionsCoverageTests.OutboxBulkFlushCallback_WhenLifecycleStagesThrow_...` read
+  an unsynchronized `List<>` the instant the callback returned, while a stage the callback does not
+  await was still logging into it. The recorder is now guarded and exposes `WaitForAsync`.
+Both verified 6/6 under a load average of ~35.
+
+**FOLLOW-UP, not done: 59 `await Task.Delay(...)` sleeps remain** in the six
+`TransportConsumerWorker*` test files (Deep 20, Coverage 19, AdditionalCoverage 14, BatchHandler 5,
+Tests 1), mostly `StartAsync` → sleep → `SimulateMessageReceivedAsync`. Same flake shape, same fix.
+
+**Collector hazards, beyond the 178-byte `<packages />` artifact.** Two more ways to get a
+plausible-looking but empty report, both from a concurrent session rebuilding the project:
+a ~950 KB cobertura containing only `Whizbang.Testing` with `Whizbang.Core` **absent** (reads as
+"0 hits", not "no data"), caused by a mismatched or missing `Whizbang.Core.pdb`. **Gate on the XML
+containing `name="Whizbang.Core"`, not on file size.** Also: a busy-check that counts `MSBuild.dll`
+or `VBCSCompiler` never reports quiet, because those worker nodes linger after every build — match
+the `dotnet build|run|test` command line instead.

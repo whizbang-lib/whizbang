@@ -320,9 +320,14 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+
+    // Await the transport's own subscribe signal rather than sleeping. A 300 ms delay decided by
+    // thread-pool timing whether ExecuteAsync had been dequeued at all, so this test could fail
+    // under load with the worker perfectly healthy -- and would also have passed had the body
+    // never run, if the assertion had been "no subscribe" instead of "one subscribe".
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
@@ -367,9 +372,13 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+
+    // Provisioning happens before the first subscribe, so the transport's subscribe signal proves
+    // the provisioning decision below is already settled. Sleeping instead made this test a bet
+    // on the thread pool having dequeued ExecuteAsync within 300 ms.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert
     await Assert.That(provisioner.WasCalled).IsTrue()
@@ -1165,6 +1174,18 @@ public class TransportConsumerWorkerDeepCoverageTests {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly List<DeepCoverageSubscription> _subscriptions = [];
+    private readonly TaskCompletionSource _firstSubscribe =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes the moment the worker issues its first subscribe against this transport.
+    /// </summary>
+    /// <remarks>
+    /// A body-emitted signal to await instead of sleeping: .NET 10 dispatches
+    /// <c>ExecuteAsync</c> via <c>Task.Run</c>, so a fixed delay is a bet on the thread pool
+    /// rather than proof the subscribe path ran.
+    /// </remarks>
+    public Task FirstSubscribe => _firstSubscribe.Task;
 
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
@@ -1188,6 +1209,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       _handler = handler;
       var subscription = new DeepCoverageSubscription();
       _subscriptions.Add(subscription);
+      _firstSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(subscription);
     }
 
@@ -1200,6 +1222,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       _batchHandler = batchHandler;
       var subscription = new DeepCoverageSubscription();
       _subscriptions.Add(subscription);
+      _firstSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(subscription);
     }
 

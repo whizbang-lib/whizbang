@@ -34,11 +34,17 @@ public class IntegrityCheckpointWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_CanceledWhileWaitingForSchemaReady_ReturnsQuietlyAsync(
       CancellationToken testToken) {
-    var worker = _buildWorker(new _checkpointCoordinator(), new _captureDispatcher(), "origin-svc");
-    // gate is never marked ready — the worker must still be parked on it when we stop.
+    var dispatcher = new _captureDispatcher();
+    // A gate that never opens AND reports when a waiter arrives. A plain never-ready gate could not
+    // say whether the worker had reached the barrier: StartAsync only SCHEDULES ExecuteAsync, so
+    // StopAsync's cancellation can beat the body to the gate entirely and every assertion below
+    // would be answered by a worker that never waited on anything.
+    var gate = new _parkedGate();
+    var worker = _buildWorker(new _checkpointCoordinator(), dispatcher, "origin-svc", gate: gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    await gate.Entered.WaitAsync(testToken);
     var executeTask = worker.ExecuteTask;
     await worker.StopAsync(CancellationToken.None);
 
@@ -46,6 +52,9 @@ public class IntegrityCheckpointWorkerCoverageTests {
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("a shutdown while still waiting for the schema must read as a clean exit, not a "
              + "crashed worker — a pod stopped mid-migration is a routine, not exceptional, event");
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("nothing may be dispatched before the tables the checkpoint watermarks live in "
+             + "have been created");
   }
 
   // Target: line 54 — `break;` in the `catch (OperationCanceledException)` around
@@ -191,7 +200,8 @@ public class IntegrityCheckpointWorkerCoverageTests {
   private static IntegrityCheckpointWorker _buildWorker(
       _checkpointCoordinator coordinator, _captureDispatcher dispatcher, string serviceName,
       _captureTransport? transport = null, IMessageTypeCatalog? catalog = null,
-      bool outboxRouting = true, ITopicRegistry? topicRegistry = null) {
+      bool outboxRouting = true, ITopicRegistry? topicRegistry = null,
+      ISchemaReadyGate? gate = null) {
     var services = new ServiceCollection();
     services.AddSingleton<ICheckpointMint>(new CheckpointMint(Options.Create(new ControlClassOptions())));
     services.AddScoped<IWorkCoordinator>(_ => coordinator);
@@ -213,7 +223,7 @@ public class IntegrityCheckpointWorkerCoverageTests {
     var sp = services.BuildServiceProvider();
     return new IntegrityCheckpointWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),
+      gate ?? new SchemaReadyGate(),
       Options.Create(new StreamIntegrityOptions()),
       NullLogger<IntegrityCheckpointWorker>.Instance);
   }

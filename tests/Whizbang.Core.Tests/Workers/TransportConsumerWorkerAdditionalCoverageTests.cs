@@ -398,9 +398,13 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+
+    // Await the transport's own subscribe signal rather than sleeping. StartAsync returning only
+    // proves ExecuteAsync was queued (.NET 10 dispatches it via Task.Run), so a 200 ms delay left
+    // this test failing under load whenever the thread pool was slower than the sleep.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert - subscriptions should still be created even without logging
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);
@@ -893,6 +897,18 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
     private readonly List<AdditionalCoverageSubscription> _subscriptions = [];
+    private readonly TaskCompletionSource _firstSubscribe =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes the moment the worker issues its first subscribe against this transport.
+    /// </summary>
+    /// <remarks>
+    /// A body-emitted signal to await instead of sleeping: .NET 10 dispatches
+    /// <c>ExecuteAsync</c> via <c>Task.Run</c>, so a fixed delay is a bet on the thread pool
+    /// rather than proof the subscribe path ran.
+    /// </remarks>
+    public Task FirstSubscribe => _firstSubscribe.Task;
 
     public int SubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
@@ -916,6 +932,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       _handler = handler;
       var subscription = new AdditionalCoverageSubscription();
       _subscriptions.Add(subscription);
+      _firstSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(subscription);
     }
 
@@ -928,6 +945,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       _batchHandler = batchHandler;
       var subscription = new AdditionalCoverageSubscription();
       _subscriptions.Add(subscription);
+      _firstSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(subscription);
     }
 
