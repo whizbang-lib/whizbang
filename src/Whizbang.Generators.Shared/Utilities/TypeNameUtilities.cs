@@ -139,11 +139,14 @@ public static class TypeNameUtilities {
     // Build the CLR-format type name with '+' for nested types
     var typeName = BuildClrTypeName(typeSymbol);
 
-    // Get assembly name (simple name only, no version/culture/publicKeyToken)
-    // For array types, get assembly from the element type (array types don't have ContainingAssembly)
-    var assemblyName = typeSymbol is IArrayTypeSymbol arrayType
-        ? arrayType.ElementType.ContainingAssembly.Name
-        : typeSymbol.ContainingAssembly.Name;
+    // Get assembly name (simple name only, no version/culture/publicKeyToken). Array types have
+    // no ContainingAssembly, and a jagged array's element is itself an array (issue #706), so
+    // unwrap every level: the innermost element's assembly is the array's assembly.
+    var elementType = typeSymbol;
+    while (elementType is IArrayTypeSymbol arrayType) {
+      elementType = arrayType.ElementType;
+    }
+    var assemblyName = elementType.ContainingAssembly.Name;
 
     // Format: "TypeName, AssemblyName"
     return $"{typeName}, {assemblyName}";
