@@ -51,15 +51,38 @@ public static class MessageEnvelopeExtensions {
   /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeExtensionsTests.cs:ReconstructWithPayload_Generic_SharesHopsReferenceAsync</tests>
   public static IMessageEnvelope ReconstructWithPayload(
       this IMessageEnvelope<JsonElement> jsonEnvelope,
-      object deserializedPayload) {
+      object deserializedPayload) =>
+    ReconstructWithPayload(jsonEnvelope, deserializedPayload, handlerName: null);
+
+  /// <summary>
+  /// Reconstructs the envelope for one handler row of an inbound message, stamping the handler's name on
+  /// the dispatch context so emissions made while handling it derive an identity that names the handler
+  /// (see <see cref="Messaging.EmissionIdentity"/>). Everything else is preserved as in
+  /// <see cref="ReconstructWithPayload(IMessageEnvelope{JsonElement}, object)"/>.
+  /// </summary>
+  /// <param name="jsonEnvelope">The original envelope containing a JsonElement payload.</param>
+  /// <param name="deserializedPayload">The deserialized message object.</param>
+  /// <param name="handlerName">The inbox handler this reconstruction is for, or null to leave the context untouched.</param>
+  /// <returns>An envelope with the deserialized payload and, when given, the handler name on its dispatch context.</returns>
+  /// <docs>fundamentals/security/message-security#envelope-reconstruction</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeHandlerNameTests.cs</tests>
+  public static IMessageEnvelope ReconstructWithPayload(
+      this IMessageEnvelope<JsonElement> jsonEnvelope,
+      object deserializedPayload,
+      string? handlerName) {
     ArgumentNullException.ThrowIfNull(jsonEnvelope);
     ArgumentNullException.ThrowIfNull(deserializedPayload);
+
+    var context = jsonEnvelope.DispatchContext;
+    if (handlerName is not null) {
+      context = context with { HandlerName = handlerName };
+    }
 
     return new MessageEnvelope<object> {
       MessageId = jsonEnvelope.MessageId,
       Payload = deserializedPayload,
       Hops = jsonEnvelope.Hops,
-      DispatchContext = jsonEnvelope.DispatchContext
+      DispatchContext = context
     };
   }
 

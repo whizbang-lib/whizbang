@@ -216,6 +216,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     // Slice 26.6b: resolve local service identity once for the worker lifetime. Used
     // when injecting envelope SourceServiceId at publish-time; falls back to Guid.Empty
     // for legacy coordinators that don't track service identity.
+    var startupLookupFailed = false;
     try {
       await using var initScope = _scopeFactory.CreateAsyncScope();
       var initCoordinator = initScope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -229,7 +230,15 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
       // the consequence — every envelope this instance publishes carries an empty SourceServiceId —
       // is invisible everywhere else (issue #630).
       _localServiceId = Guid.Empty;
+      startupLookupFailed = true;
       LogLocalServiceIdLookupFailed(_logger, ex);
+    }
+    if (!startupLookupFailed && _localServiceId == Guid.Empty) {
+      // A lookup that returned nothing is as invisible as one that threw, and until now it was also
+      // permanent: the worker never asked again, so an empty answer at startup stamped an empty
+      // source id on every envelope for the life of the process (issue #727). Say so here; the
+      // batch loop retries. The throwing case above already warned, so it is not repeated.
+      LogLocalServiceIdEmptyAtStartup(_logger);
     }
 
     var batcher = new SlidingWindowBatcher<Guid>(_drainChannel.Reader, _options.Batcher);
@@ -238,6 +247,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         // Idle → active: each non-empty batch represents work.
         _setIdleState(active: true);
         try {
+          await _ensureLocalServiceIdAsync(stoppingToken);
           // Dedupe within the batch — ClaimWorker may emit the same stream_id multiple times in
           // one window (rapid heartbeats during burst load). Each unique stream is drained once.
           //
@@ -1191,6 +1201,49 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     Message = "OutboxDrainWorker: batched fetch failed for {StreamCount} streams; " +
               "falling back to per-stream fetches to isolate the failure")]
   static partial void LogBatchFetchFellBackToPerStream(ILogger logger, int streamCount, Exception ex);
+
+  /// <summary>
+  /// Resolves the local service identity again when the startup lookup left it empty. A transient
+  /// failure at startup (the schema not yet reachable, the database saturated) used to stamp an empty
+  /// <c>SourceServiceId</c> on every envelope for the life of the process, which downstream consumers
+  /// record as-is: the producing service becomes unattributable. Retried before each batch until it
+  /// resolves; failures stay at Debug because the startup warning already named the consequence. A
+  /// cancellation surfaces here as a logged failure too: the batch drain that follows observes the same
+  /// token and stops the loop, so nothing is lost by not rethrowing.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupFailsOnceAtStartup_ResolvesBeforeTheNextBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdResolvedAtStartup_DoesNotLookItUpAgainAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdEmptyAtStartup_WarnsAndRetriesBeforeEachBatchAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerTests.cs:OutboxDrainWorker_LocalServiceIdLookupKeepsFailing_RecordsEachRetryAtDebugAsync</tests>
+  private async Task _ensureLocalServiceIdAsync(CancellationToken ct) {
+    if (_localServiceId != Guid.Empty) {
+      return;
+    }
+    try {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var resolved = await coordinator.GetLocalServiceIdAsync(ct);
+      if (resolved != Guid.Empty) {
+        _localServiceId = resolved;
+        LogLocalServiceIdResolvedLate(_logger, resolved);
+      }
+    } catch (Exception ex) {
+      LogLocalServiceIdRetryFailed(_logger, ex);
+    }
+  }
+
+  [LoggerMessage(EventId = 50, Level = LogLevel.Warning,
+    Message = "OutboxDrainWorker: local service identity is empty after startup; envelopes publish with an empty " +
+              "SourceServiceId until a later batch resolves it (retried before each batch)")]
+  static partial void LogLocalServiceIdEmptyAtStartup(ILogger logger);
+
+  [LoggerMessage(EventId = 51, Level = LogLevel.Information,
+    Message = "OutboxDrainWorker: local service identity resolved to {ServiceId}; envelopes from here on carry it")]
+  static partial void LogLocalServiceIdResolvedLate(ILogger logger, Guid serviceId);
+
+  [LoggerMessage(EventId = 52, Level = LogLevel.Debug,
+    Message = "OutboxDrainWorker: local service identity lookup failed again; will retry before the next batch")]
+  static partial void LogLocalServiceIdRetryFailed(ILogger logger, Exception ex);
 
   /// <summary>Issue #630: the lookup is best-effort, but its failure must not be silent.</summary>
   /// <docs>messaging/work-coordinator#local-service-identity</docs>

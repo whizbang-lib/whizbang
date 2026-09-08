@@ -47,6 +47,17 @@ public sealed record MessageDispatchContext {
   public bool IsDefaultDispatch { get; init; }
 
   /// <summary>
+  /// The inbox handler this envelope is being dispatched for, when the dispatch is one handler row of an
+  /// inbound message. Two handlers of the same message in one service run as separate rows; naming the
+  /// handler here lets an emission derive an identity that cannot collide with the sibling handler's
+  /// (see <see cref="Messaging.EmissionIdentity"/>). In-process only: the inbox worker stamps it from the
+  /// row it is dispatching, and it is never serialized, so persisted and transported envelopes are
+  /// unchanged. Null for root dispatches.
+  /// </summary>
+  [System.Text.Json.Serialization.JsonIgnore]
+  public string? HandlerName { get; init; }
+
+  /// <summary>
   /// Returns a copy of this context with <see cref="IsDefaultDispatch"/> set to true.
   /// Used by cascade paths to signal that only default-stage receptors should fire.
   /// </summary>
