@@ -185,7 +185,7 @@ public sealed partial class PostgresSignalTransport(
     // #720: stream-targeted signals go through the debounced helper, which now queues instead of
     // notifying inside the caller's transaction; ring on this autocommit connection right away so a
     // signal is delivered as promptly as before.
-    await DoorbellRinger.RingAsync(conn, "ring_doorbells", logger: null, ct);
+    await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, logger: null, ct);
   }
 
   private void _onNotification(string payload) {

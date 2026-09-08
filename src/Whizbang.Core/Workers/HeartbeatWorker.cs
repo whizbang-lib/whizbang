@@ -33,6 +33,7 @@ namespace Whizbang.Core.Workers;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/HeartbeatWorkerTickPlanTests.cs</tests>
+#pragma warning disable WHIZ501 // signalBus: the bus exists only where the notification stack is registered; a host without it must still heartbeat, and there is then neither a bus to publish the joined/leaving announcements on nor a subscriber to hear them.
 public partial class HeartbeatWorker(
   IServiceScopeFactory scopeFactory,
   IServiceInstanceProvider instanceProvider,
@@ -47,6 +48,7 @@ public partial class HeartbeatWorker(
   TimeProvider? timeProvider = null,
   InstanceLivenessMetrics? metrics = null
 ) : BackgroundService {
+#pragma warning restore WHIZ501
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));

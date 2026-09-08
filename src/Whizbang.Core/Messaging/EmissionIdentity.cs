@@ -94,7 +94,7 @@ public static class EmissionIdentity {
 /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/EmissionIdentityTests.cs</tests>
 public static class EmissionSequence {
-  private static readonly ConditionalWeakTable<object, Counter> _counters = new();
+  private static readonly ConditionalWeakTable<object, Counter> _counters = [];
 
   /// <summary>Returns the next zero-based ordinal for <paramref name="handlingKey"/>.</summary>
   public static int Next(object handlingKey) {

@@ -78,6 +78,7 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
   /// <param name="probeMetrics">Optional probe cadence meters.</param>
   /// <param name="timeProvider">Optional clock; the system clock when null.</param>
   /// <exception cref="ArgumentNullException">Thrown when a required dependency is null.</exception>
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
   public BacklogAgeWorker(
       IEnumerable<IBacklogPeek> peeks,
       IEnumerable<ITrafficClassOpsRateSource> opsRateSources,
@@ -87,6 +88,7 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
       ILogger<BacklogAgeWorker> logger,
       ProbeCadenceMetrics? probeMetrics = null,
       TimeProvider? timeProvider = null) {
+#pragma warning restore S107
     ArgumentNullException.ThrowIfNull(peeks);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(opsRateSources);

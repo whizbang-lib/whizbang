@@ -36,17 +36,26 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
-public sealed partial class InboxDrainWorker : BackgroundService {
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly ClaimChurnFeedback? _churnFeedback;
+public sealed partial class InboxDrainWorker(
+  IServiceScopeFactory scopeFactory,
+  IServiceInstanceProvider instanceProvider,
+  IInboxDrainChannel drainChannel,
+  IInboxChannelWriter inboxChannelWriter,
+  ISchemaReadyGate schemaReadyGate,
+  IOptions<InboxDrainWorkerOptions> options,
+  JsonSerializerOptions jsonOptions,
+  ILogger<InboxDrainWorker> logger,
+  ClaimChurnFeedback? churnFeedback = null) : BackgroundService {
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+  private readonly ClaimChurnFeedback? _churnFeedback = churnFeedback;
   private readonly PoisonAdmissionPolicy _poisonPolicy = new(new PoisonAdmissionPolicy.Settings());
-  private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly IInboxDrainChannel _drainChannel;
-  private readonly IInboxChannelWriter _inboxChannelWriter;
-  private readonly ISchemaReadyGate _schemaReadyGate;
-  private readonly InboxDrainWorkerOptions _options;
-  private readonly JsonSerializerOptions _jsonOptions;
-  private readonly ILogger<InboxDrainWorker> _logger;
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly IInboxDrainChannel _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
+  private readonly IInboxChannelWriter _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
+  private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
+  private readonly InboxDrainWorkerOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
+  private readonly ILogger<InboxDrainWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   // Idle-state tracking for fixture cleanup-between-tests coordination. Mirrors the
   // sibling OutboxDrainWorker contract so fixtures can wait deterministically for the
   // inbox drain pipeline to quiesce before truncating tables.
@@ -69,28 +78,6 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   /// </summary>
   /// <docs>operations/workers/inbox-dispatch-worker</docs>
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
-
-  /// <summary>Constructor.</summary>
-  public InboxDrainWorker(
-    IServiceScopeFactory scopeFactory,
-    IServiceInstanceProvider instanceProvider,
-    IInboxDrainChannel drainChannel,
-    IInboxChannelWriter inboxChannelWriter,
-    ISchemaReadyGate schemaReadyGate,
-    IOptions<InboxDrainWorkerOptions> options,
-    JsonSerializerOptions jsonOptions,
-    ILogger<InboxDrainWorker> logger,
-    ClaimChurnFeedback? churnFeedback = null) {
-    _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-    _churnFeedback = churnFeedback;
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _drainChannel = drainChannel ?? throw new ArgumentNullException(nameof(drainChannel));
-    _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
-    _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -122,7 +109,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
           // setup (parse + plan + window-sort) dominated. Batching streams amortizes that.
           var distinctStreams = new HashSet<Guid>(batch);
           if (distinctStreams.Count > 0) {
-            await _drainStreamBatchAsync(distinctStreams.ToList(), stoppingToken);
+            await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
           }
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
           throw;
@@ -642,7 +629,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
   /// </para>
   /// </remarks>
 
-  private readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, bool[]> _plans = new();
+  private readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, bool[]> _plans = [];
 
   /// <summary>Applies the admission plan for the row's containing fetch, computing it once.</summary>
   private bool _admitRow(InboxBatchRow row, IReadOnlyList<InboxBatchRow> fetch) {

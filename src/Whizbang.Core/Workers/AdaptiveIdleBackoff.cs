@@ -16,8 +16,6 @@ namespace Whizbang.Core.Workers;
 /// <docs>fundamentals/workers/idle-footprint</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveIdleBackoffTests.cs</tests>
 public sealed class AdaptiveIdleBackoff {
-  private readonly TimeSpan _floor;
-  private readonly TimeSpan _ceiling;
   private readonly double _multiplier;
 
   /// <summary>Creates the controller.</summary>
@@ -37,8 +35,8 @@ public sealed class AdaptiveIdleBackoff {
     if (multiplier <= 1.0) {
       throw new ArgumentOutOfRangeException(nameof(multiplier), multiplier, "The multiplier must be above 1.");
     }
-    _floor = floor;
-    _ceiling = ceiling;
+    Floor = floor;
+    Ceiling = ceiling;
     _multiplier = multiplier;
     Current = floor;
   }
@@ -47,10 +45,10 @@ public sealed class AdaptiveIdleBackoff {
   public TimeSpan Current { get; private set; }
 
   /// <summary>The floor cadence.</summary>
-  public TimeSpan Floor => _floor;
+  public TimeSpan Floor { get; }
 
   /// <summary>The ceiling cadence.</summary>
-  public TimeSpan Ceiling => _ceiling;
+  public TimeSpan Ceiling { get; }
 
   /// <summary>
   /// Records the outcome of the probe that just ran and returns the delay to wait before the next.
@@ -59,15 +57,15 @@ public sealed class AdaptiveIdleBackoff {
   /// <returns>The floor when work was found; otherwise the current idle delay, which then grows.</returns>
   public TimeSpan Next(bool foundWork) {
     if (foundWork) {
-      Current = _floor;
-      return _floor;
+      Current = Floor;
+      return Floor;
     }
     var wait = Current;
-    var grown = TimeSpan.FromTicks((long)Math.Min(Current.Ticks * _multiplier, _ceiling.Ticks));
-    Current = grown > _ceiling ? _ceiling : grown;
+    var grown = TimeSpan.FromTicks((long)Math.Min(Current.Ticks * _multiplier, Ceiling.Ticks));
+    Current = grown > Ceiling ? Ceiling : grown;
     return wait;
   }
 
   /// <summary>Snaps the cadence back to the floor, for an external wake (a signal, a doorbell).</summary>
-  public void Reset() => Current = _floor;
+  public void Reset() => Current = Floor;
 }

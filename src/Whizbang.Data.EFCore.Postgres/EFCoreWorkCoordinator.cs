@@ -349,7 +349,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var due = result is int n ? n : 0;
     if (due > 0) {
       // #720: the probe queued a doorbell per due stream; ring them after its commit.
-      await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+      await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
     }
     return due;
   }
@@ -528,7 +528,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     IReadOnlyList<Guid> streamIds, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
-      return Array.Empty<Guid>();
+      return [];
     }
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     var schema = GetSchemaWithFallback(
@@ -1892,7 +1892,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
     // #720: the hot call queued its doorbells instead of notifying inside its transaction; ring them now,
     // after the commit, on their own autocommit so no notifying commit waits on another.
-    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -1931,7 +1931,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_fail", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = failuresJson });
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
     // #720: ring the doorbells the flush queued, after its commit.
-    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
   }
 
   private string _buildFailuresByCategoryJson(IReadOnlyList<CategoryFailures>? failures) {
@@ -2099,7 +2099,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     if (rows.Count > 0) {
       // #720: a claim that leased or re-emitted work may have queued ownership doorbells; ring them
       // after its commit. An empty claim queued nothing and skips the round trip.
-      await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+      await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
     }
 
     // Phase H step 5d: claim_work no longer projects outbox or inbox bodies — only
@@ -2148,7 +2148,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_request", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = payload });
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
     // #720: ring the doorbells the commit queued, after the commit.
-    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -2200,7 +2200,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       }
     }
     // #720: ring the doorbells the commits queued, after the commits and with the reader closed.
-    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
     if (fellBack) {
       // #573: the fallback is legitimate; the silence was not. One warning per batch with
       // the Tier-1 SQLSTATE (the diagnosis), and a counter the operator can alert on when
@@ -2370,8 +2370,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = $"SELECT inbox_released, perspective_released FROM {functionName}(@p_instance, @p_inbox, @p_persp)";
     cmd.Parameters.Add(new NpgsqlParameter("p_instance", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
-    cmd.Parameters.Add(new NpgsqlParameter("p_inbox", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = inboxArray });
-    cmd.Parameters.Add(new NpgsqlParameter("p_persp", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = perspectiveArray });
+    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("p_inbox", inboxArray));
+    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("p_persp", perspectiveArray));
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     // release_unstarted_leases RETURNS TABLE and always emits exactly one row (RETURN QUERY SELECT of
     // two locals), so the read cannot come back empty; a missing row would be a broken function and
@@ -3632,7 +3632,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       if (_dbContext.Database.CurrentTransaction is null) {
         await using var ringScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
             (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-        await DoorbellRinger.RingAsync(ringScope.Connection, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+        await DoorbellRinger.RingAsync(ringScope.Connection, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
       }
     }, logger: _logger, cancellationToken: cancellationToken);
   }
@@ -3692,7 +3692,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         }
       }
       // #720: ring the doorbells the store queued, after its commit.
-      await DoorbellRinger.RingAsync(scope.Connection, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+      await DoorbellRinger.RingAsync(scope.Connection, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
 
     return Whizbang.Core.Messaging.InboxRedeliveryObservation.ParseProjection(projection);
@@ -3739,22 +3739,23 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_messages", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = json });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = now });
       cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_partition_count", NpgsqlTypes.NpgsqlDbType.Integer) { Value = partitionCount });
-      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-      while (await reader.ReadAsync(cancellationToken)) {
-        if (reader.GetBoolean(1)) {
-          continue;
+      // The reader is closed before the ring so the ring can use the same connection.
+      await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
+        while (await reader.ReadAsync(cancellationToken)) {
+          if (reader.GetBoolean(1)) {
+            continue;
+          }
+          var skippedId = reader.GetGuid(0);
+          // The store echoes exactly the ids it was given; an unknown id here is a schema bug worth a loud failure.
+          var messageType = messages.First(m => m.MessageId == skippedId).MessageType;
+          _metrics?.OutboxEmissionDeduplicated.Add(1, new KeyValuePair<string, object?>("message_type", messageType));
+          _logOutboxEmissionDeduplicated(_logger, skippedId, messageType);
         }
-        var skippedId = reader.GetGuid(0);
-        // The store echoes exactly the ids it was given; an unknown id here is a schema bug worth a loud failure.
-        var messageType = messages.First(m => m.MessageId == skippedId).MessageType;
-        _metrics?.OutboxEmissionDeduplicated.Add(1, new KeyValuePair<string, object?>("message_type", messageType));
-        _logOutboxEmissionDeduplicated(_logger, skippedId, messageType);
       }
-      await reader.DisposeAsync();
       // #720: ring after the store. Inside an ambient transaction the queued rows commit with it and
       // the ring below finds nothing yet; the next hot call on this connection rings them.
       if (cmd.Transaction is null) {
-        await DoorbellRinger.RingAsync(connectionScope.Connection, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+        await DoorbellRinger.RingAsync(connectionScope.Connection, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
       }
     }, logger: _logger, cancellationToken: cancellationToken);
   }
@@ -3766,7 +3767,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreOutboxEmissionDedupTests.cs</tests>
   private static void _logOutboxEmissionDeduplicated(ILogger? logger, Guid messageId, string messageType) {
-    if (logger is null || !logger.IsEnabled(LogLevel.Debug)) {
+    if (logger?.IsEnabled(LogLevel.Debug) != true) {
       return;
     }
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
@@ -3926,7 +3927,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       // #720: ring the doorbells the fold queued, after the commit.
       await using var ringScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
           (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
-      await DoorbellRinger.RingAsync(ringScope.Connection, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+      await DoorbellRinger.RingAsync(ringScope.Connection, BuildSchemaQualifiedName(schema, DoorbellRinger.FUNCTION_NAME), _logger, cancellationToken);
     });
   }
 

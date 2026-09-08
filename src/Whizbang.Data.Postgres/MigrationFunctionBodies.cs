@@ -103,7 +103,7 @@ public static partial class MigrationFunctionBodies {
         continue; // no dollar-quoted body before the next definition (single-quoted or dynamic SQL)
       }
 
-      var header = sql.Substring(create.Index, opener.Index - create.Index);
+      var header = sql[create.Index..opener.Index];
       if (header.Contains('%', StringComparison.Ordinal)) {
         continue; // a format() template, not a definition the database will hold verbatim
       }
@@ -116,7 +116,7 @@ public static partial class MigrationFunctionBodies {
       }
 
       var name = create.Groups["name"].Value.ToLowerInvariant();
-      results.Add((create.Index, new MigrationFunctionBody(name, Normalize(sql.Substring(bodyStart, bodyEnd - bodyStart)))));
+      results.Add((create.Index, new MigrationFunctionBody(name, Normalize(sql[bodyStart..bodyEnd]))));
     }
     return results;
   }
@@ -134,8 +134,8 @@ public static partial class MigrationFunctionBodies {
       // Definitions and retirements are applied in the order they appear in the file, so a drop that
       // precedes a recreation is superseded and a drop with no later definition retires the function.
       var events = new List<(int Position, bool IsDrop, string FunctionName, string Body)>();
-      foreach (var body in ExtractWithPositions(sql)) {
-        events.Add((body.Position, false, body.Body.Name, body.Body.NormalizedBody));
+      foreach (var (Position, Body) in ExtractWithPositions(sql)) {
+        events.Add((Position, false, Body.Name, Body.NormalizedBody));
       }
       foreach (Match drop in _dropFunction().Matches(sql)) {
         var dropped = drop.Groups["name"].Success ? drop.Groups["name"].Value : drop.Groups["name2"].Value;
@@ -191,7 +191,7 @@ public static partial class MigrationFunctionBodies {
       files.Add(fileName);
     }
     if (!stale.TryGetValue(fileName, out var names)) {
-      names = new List<string>();
+      names = [];
       stale[fileName] = names;
     }
     names.Add(functionName);

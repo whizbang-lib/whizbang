@@ -129,8 +129,8 @@ public sealed partial class PgCommitOrderStamperWorker(
     //     version pre-dates the RelationalOptionsExtension fix, or the DbContext was
     //     configured with NpgsqlDataSource which doesn't expose the original string)
     //   - explicit option (WhizbangNotificationOptions.DirectConnectionString missing password)
-    var summary = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
-    LogConnectionDiagnostics(_logger, resolution.Source, keyForDiagnostics, summary.HasUsername, summary.HasSecret);
+    var (HasUsername, HasSecret) = ConnectionStringCredentialMarkerSummary.Summarize(resolution.ConnectionString);
+    LogConnectionDiagnostics(_logger, resolution.Source, keyForDiagnostics, HasUsername, HasSecret);
 
     // Loud-and-early warning mirroring PgSharedNotifyConnection: PooledKeyFallback
     // means the leader-lock connection routes through pgbouncer in tx-pooling mode.
@@ -154,7 +154,7 @@ public sealed partial class PgCommitOrderStamperWorker(
     // let the next loop iteration recompute the effective interval. When the gate
     // flips back to true, wake too — if we were mid-sleep in floor cadence, the
     // next iteration picks up the relaxed cadence right away.
-    Action<bool> handleGateChange = _ => Wake();
+    void handleGateChange(bool _) => Wake();
     if (_notifySignalingGate is not null) {
       _notifySignalingGate.OnAvailabilityChanged += handleGateChange;
     }
@@ -329,7 +329,7 @@ public sealed partial class PgCommitOrderStamperWorker(
     var stamped = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     if (notifyOwners && stamped > 0) {
       // #720: the make-up doorbells were queued inside the stamp's transaction; ring them after it commits.
-      await DoorbellRinger.RingAsync(conn, "ring_doorbells", _logger, ct);
+      await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, ct);
     }
     return stamped;
   }

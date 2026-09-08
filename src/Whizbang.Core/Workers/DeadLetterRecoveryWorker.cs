@@ -32,6 +32,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterRecoveryWorkerTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/RecoveryLifecycleHardeningTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/DeadLetterCanaryCampaignTests.cs</tests>
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public partial class DeadLetterRecoveryWorker(
   IServiceScopeFactory scopeFactory,
   ISchemaReadyGate schemaReadyGate,
@@ -45,6 +46,7 @@ public partial class DeadLetterRecoveryWorker(
   Whizbang.Core.Observability.HousekeepingMetrics? metricsRollup = null,
   TimeProvider? timeProvider = null
 ) : BackgroundService {
+#pragma warning restore S107
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
   private readonly DeadLetterRecoveryOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));

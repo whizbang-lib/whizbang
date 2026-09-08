@@ -33,7 +33,7 @@ namespace Whizbang.Core.Observability;
 /// <docs>fundamentals/observability</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/WhizbangMetersTests.cs</tests>
 public static class WhizbangMeters {
-  private static readonly object _lock = new();
+  private static readonly Lock _lock = new();
 
   // Core's own meters, by reference to each owner's METER_NAME — a rename cannot desync this
   // list, and the reflection drift-lock test catches an addition that forgets it.

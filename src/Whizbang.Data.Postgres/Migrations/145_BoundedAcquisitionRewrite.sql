@@ -419,6 +419,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   perspective_name VARCHAR(200)
 ) AS $$
 DECLARE
+  c_source_outbox CONSTANT VARCHAR(20) := 'outbox';
+  c_source_inbox CONSTANT VARCHAR(20) := 'inbox';
   v_has_any_work BOOLEAN;
 BEGIN
   -- Empty-call short-circuit: cheap indexed EXISTS lookups on partial indexes.
@@ -607,7 +609,7 @@ BEGIN
     -- on demand via fetch_outbox_batch. Body columns are NULL — keeps the bytes-on-the-wire
     -- proportional to the active stream set, not the leased-row count × payload size.
     SELECT
-      'outbox'::VARCHAR(20)         AS source,
+      c_source_outbox               AS source,
       oo.message_id                 AS work_id,
       oo.stream_id                  AS work_stream_id,
       oo.partition_number,
@@ -692,7 +694,7 @@ BEGIN
     -- via fetch_inbox_batch. Body columns are NULL — keeps claim_work's bytes-on-the-wire
     -- proportional to active stream count.
     SELECT
-      'inbox'::VARCHAR(20)          AS source,
+      c_source_inbox                AS source,
       oi.message_id                 AS work_id,
       oi.stream_id                  AS work_stream_id,
       oi.partition_number,
@@ -791,9 +793,9 @@ BEGIN
     -- that exist and are free are stamped in place.
     WITH kinds AS (
       SELECT k.kind
-      FROM (VALUES ('outbox'), ('inbox'), ('perspective')) AS k(kind)
-    WHERE (k.kind = 'outbox' AND v_outbox_rows > 0)
-       OR (k.kind = 'inbox' AND (v_inbox_rows > 0 OR v_receptor_rows > 0))
+      FROM (VALUES (c_source_outbox), (c_source_inbox), ('perspective')) AS k(kind)
+    WHERE (k.kind = c_source_outbox AND v_outbox_rows > 0)
+       OR (k.kind = c_source_inbox AND (v_inbox_rows > 0 OR v_receptor_rows > 0))
        -- 133: the perspective watermark must reflect DRAINABLE progress, not merely a
        -- claimed Stored-but-fence-held row. claim_work returns a perspective_stream row for
        -- any leased unprocessed perspective_event, but a row whose underlying event is still
