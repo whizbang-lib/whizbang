@@ -96,12 +96,17 @@ public class PerspectiveWorkerDrainModeTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
-
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
+    // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it was no barrier at all
+    // and the assertions below could read counters the drain consumer had not finished writing.
+    // SuppressThrowing because a body leaving through a cancellation catch settles
+    // RanToCompletion or Canceled depending on thread-pool timing, and either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — drain mode should have been used
     await Assert.That(coordinator.GetStreamEventsCallCount).IsGreaterThanOrEqualTo(1)
@@ -152,11 +157,12 @@ public class PerspectiveWorkerDrainModeTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.WaitForReapAsync(TimeSpan.FromSeconds(5));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     (Guid InstanceId, List<Guid> StreamIds, int MaxAttempts)[] calls;
     lock (coordinator.ReapCalls) { calls = [.. coordinator.ReapCalls]; }
