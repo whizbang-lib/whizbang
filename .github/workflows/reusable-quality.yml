@@ -267,6 +267,62 @@ jobs:
             echo "✅ Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"
           fi
 
+      # Every new library line is covered before a PR merges. The list Sonar shows as "uncovered new
+      # lines" is computed here from the same merged reports and the diff against the base branch,
+      # published as an artifact and a PR comment, and fails the job when it is not empty.
+      - name: Uncovered New Lines Gate
+        if: github.event_name == 'pull_request'
+        id: uncovered
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          $result = & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -BaseRef "origin/${{ github.base_ref }}" -OutFile coverage/uncovered-new-lines.txt
+          $code = $LASTEXITCODE
+          $result | Write-Host
+          $count = (Get-Content coverage/uncovered-new-lines.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
+          "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if ($code -ne 0) { exit $code }
+
+      - name: Upload Uncovered New Lines
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncovered-new-lines
+          path: coverage/uncovered-new-lines.txt
+          if-no-files-found: ignore
+
+      - name: Comment Uncovered New Lines on PR
+        if: github.event_name == 'pull_request' && always() && steps.uncovered.outputs.count != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.uncovered.outputs.count }}
+        run: |
+          MARKER="<!-- uncovered-new-lines -->"
+          if [ "${COUNT}" = "0" ]; then
+            BODY="${MARKER}
+          **Coverage of new lines: 100%.** Every library line this PR adds is executed by a test."
+          else
+            BODY="${MARKER}
+          **${COUNT} new line(s) have no test coverage.** Every new line is covered before a PR merges.
+
+          \`\`\`
+          $(cat coverage/uncovered-new-lines.txt)
+          \`\`\`"
+          fi
+          EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" --paginate --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -1)
+          if [ -n "${EXISTING}" ]; then
+            gh api --method PATCH "repos/${{ github.repository }}/issues/comments/${EXISTING}" -f body="${BODY}" >/dev/null
+          else
+            gh api --method POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="${BODY}" >/dev/null
+          fi
+
+      - name: Fail on Uncovered New Lines
+        if: github.event_name == 'pull_request' && steps.uncovered.outputs.count != '' && steps.uncovered.outputs.count != '0'
+        run: |
+          echo "::error::${{ steps.uncovered.outputs.count }} new line(s) have no test coverage (see the uncovered-new-lines artifact and the PR comment)."
+          exit 1
+
       - name: SonarScanner End
         if: (github.event_name != 'push' || github.ref == 'refs/heads/main') && github.event_name != 'merge_group'
         env:
