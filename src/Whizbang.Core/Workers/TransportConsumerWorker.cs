@@ -240,6 +240,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       try {
         await _schemaReadyGate.WaitForReadyAsync(stoppingToken);
       } catch (OperationCanceledException) {
+        // Settle readiness before leaving, for the same reason the catch further down surfaces a
+        // startup failure: a waiter on SubscriptionsReady must observe an outcome rather than hang
+        // forever on a signal that can never arrive. This return is the one exit that used to
+        // leave it unsettled, so a host shutting down while migrations were still pending parked
+        // every readiness waiter — including any that gate shutdown itself — indefinitely.
+        _subscriptionsReadyTcs.TrySetCanceled(stoppingToken);
         return;
       }
     }

@@ -1111,7 +1111,7 @@ public class TransportConsumerWorkerCoverageTests {
   // stopped, which during a canceled startup means the host never reports ready and the readiness
   // waiter never exits either.
   [Test]
-  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_ReturnsWithoutSettlingSubscriptionsReadyAsync() {
+  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_SettlesSubscriptionsReadyAsCanceledAsync() {
     var neverReady = new EnteredSignalingSchemaGate();
     var worker = _createWorkerWithSchemaGate(new CoverageTransport(), neverReady);
 
@@ -1136,9 +1136,16 @@ public class TransportConsumerWorkerCoverageTests {
     await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
       .Because("a host shutting down mid-migration must return cleanly from the gate wait, not " +
                "fault, and not leave this worker parked on the gate");
-    await Assert.That(worker.SubscriptionsReady.IsCompleted).IsFalse()
-      .Because("today, returning here leaves SubscriptionsReady unsettled — pinning this so a fix " +
-               "that adds the missing TrySetCanceled/TrySetResult call must consciously update this test");
+    // The point of the fix (#716). Awaiting readiness must produce an outcome rather than park:
+    // a bounded wait that throws is the caller's-eye view, and a wait that hung would fail here
+    // instead of hanging the suite.
+    await Assert.That(async () => await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5)))
+      .Throws<OperationCanceledException>()
+      .Because("a readiness waiter must observe shutdown; leaving the signal unsettled parked it "
+             + "forever, including any waiter that itself gates shutdown");
+    await Assert.That(worker.SubscriptionsReady.IsCanceled).IsTrue()
+      .Because("nothing subscribed, so readiness reports cancellation — TrySetResult here would "
+             + "tell a readiness probe the consumer is receiving when it never subscribed at all");
 
     await worker.StopAsync(CancellationToken.None);
   }
