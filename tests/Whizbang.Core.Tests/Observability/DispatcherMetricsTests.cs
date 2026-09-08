@@ -55,10 +55,10 @@ public class DispatcherMetricsTests {
     metrics.PublishOnceClaimsWon.Add(1, new KeyValuePair<string, object?>("message_type", "SagaCompletedEvent"));
 
     var measurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won");
-    await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Value).IsEqualTo(1);
-    await Assert.That(measurements[0].Tags["message_type"]).IsEqualTo("SagaCompletedEvent")
+    var won = measurements.Where(m => m.Tags.GetValueOrDefault("message_type") == "SagaCompletedEvent").ToList();
+    await Assert.That(won).Count().IsEqualTo(1)
       .Because("The event_type tag lets ops slice the claim-lost rate by event type — concentrated losses on a single event type point at a specific race source.");
+    await Assert.That(won[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -70,9 +70,9 @@ public class DispatcherMetricsTests {
     metrics.PublishOnceClaimsLost.Add(1, new KeyValuePair<string, object?>("message_type", "SagaCompletedEvent"));
 
     var measurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost");
-    await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Value).IsEqualTo(1);
-    await Assert.That(measurements[0].Tags["message_type"]).IsEqualTo("SagaCompletedEvent");
+    var lost = measurements.Where(m => m.Tags.GetValueOrDefault("message_type") == "SagaCompletedEvent").ToList();
+    await Assert.That(lost).Count().IsEqualTo(1);
+    await Assert.That(lost[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -234,7 +234,9 @@ public class DispatcherMetricsTests {
 
     // Assert
     var measurements = helper.GetByName("whizbang.dispatcher.messages_dispatched");
-    await Assert.That(measurements[0].Tags["pattern"]).IsEqualTo("send");
+    var send = measurements.Where(m => m.Tags.GetValueOrDefault("pattern") == "send").ToList();
+    await Assert.That(send).Count().IsEqualTo(1);
+    await Assert.That(send[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -250,7 +252,9 @@ public class DispatcherMetricsTests {
 
     // Assert
     var measurements = helper.GetByName("whizbang.dispatcher.events_cascaded");
-    await Assert.That(measurements[0].Tags["destination"]).IsEqualTo("outbox");
+    var outbox = measurements.Where(m => m.Tags.GetValueOrDefault("destination") == "outbox").ToList();
+    await Assert.That(outbox).Count().IsEqualTo(1);
+    await Assert.That(outbox[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -298,7 +302,9 @@ public class DispatcherMetricsTests {
 
     // Assert
     var measurements = helper.GetByName("whizbang.dispatcher.errors");
-    await Assert.That(measurements[0].Tags["error_type"]).IsEqualTo("InvalidOperationException");
+    var errors = measurements.Where(m => m.Tags.GetValueOrDefault("error_type") == "InvalidOperationException").ToList();
+    await Assert.That(errors).Count().IsEqualTo(1);
+    await Assert.That(errors[0].Value).IsEqualTo(1);
   }
 
   [Test]

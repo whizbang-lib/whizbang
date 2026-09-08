@@ -86,10 +86,13 @@ public class MaintenanceWorkerRetentionAdoptionTests {
 
   [Test]
   public async Task Adoption_RecordsTheBacklogOnTheMaintenanceMeter_TaggedByPerspectiveAsync() {
+    var metrics = new MaintenanceMetrics(new WhizbangMetrics());
     var readings = new List<(string Name, long Value, string? Perspective)>();
     using var listener = new MeterListener();
+    // Pin to THIS test's instrument, not the meter name: parallel tests build MaintenanceMetrics
+    // on the same meter name, and a passive counter reports every instance's series at collection.
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == MaintenanceMetrics.METER_NAME) {
+      if (ReferenceEquals(instrument, metrics.RetentionAdopted.Instrument)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
@@ -105,11 +108,12 @@ public class MaintenanceWorkerRetentionAdoptionTests {
       }
     });
     listener.Start();
-    var metrics = new MaintenanceMetrics(new WhizbangMetrics());
     var coord = new AdoptionCoordinator { Adoptions = [new PerspectiveRetentionAdoption(PERSPECTIVE, 3600)] };
     var (worker, _) = _build(coord, metrics: metrics);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    // Passive counter: the perspective-tagged series reports its cumulative backlog at collection.
+    listener.RecordObservableInstruments();
 
     await Assert.That(readings.Any(r => r.Name == "whizbang.maintenance.retention_adopted" && r.Value == 3600 && r.Perspective == PERSPECTIVE)).IsTrue()
       .Because("the backlog is the number a dashboard shows for the first day of a retroactive window");

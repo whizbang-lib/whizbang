@@ -93,7 +93,7 @@ public class EventCategoryMetricsTests {
   public async Task EventCategoryMetrics_Dispatched_RecordedWithTagsAsync() {
     using var factory = new TestMeterFactory();
     var metrics = new EventCategoryMetrics(new WhizbangMetrics(factory));
-    using var helper = new MetricAssertionHelper(EventCategoryMetrics.METER_NAME);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     metrics.Dispatched.Add(1,
       new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
@@ -101,11 +101,11 @@ public class EventCategoryMetricsTests {
       new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.SCOPE_KIND, "tenant"));
 
     var measurements = helper.GetByName("whizbang.event_category.dispatched");
-    await Assert.That(measurements).IsNotEmpty();
-    await Assert.That(measurements[0].Value).IsEqualTo(1.0);
-    await Assert.That(measurements[0].Tags["category"]).IsEqualTo("collective");
-    await Assert.That(measurements[0].Tags["event_type"]).IsEqualTo("MyApp.ArchiveJobsCollectiveEvent");
-    await Assert.That(measurements[0].Tags["scope_kind"]).IsEqualTo("tenant");
+    var dispatched = measurements.Where(m => m.Tags.GetValueOrDefault("event_type") == "MyApp.ArchiveJobsCollectiveEvent").ToList();
+    await Assert.That(dispatched).Count().IsEqualTo(1);
+    await Assert.That(dispatched[0].Value).IsEqualTo(1.0);
+    await Assert.That(dispatched[0].Tags["category"]).IsEqualTo("collective");
+    await Assert.That(dispatched[0].Tags["scope_kind"]).IsEqualTo("tenant");
   }
 
   [Test]
@@ -128,14 +128,16 @@ public class EventCategoryMetricsTests {
   public async Task EventCategoryMetrics_Errors_RecordedWithErrorClassTagAsync() {
     using var factory = new TestMeterFactory();
     var metrics = new EventCategoryMetrics(new WhizbangMetrics(factory));
-    using var helper = new MetricAssertionHelper(EventCategoryMetrics.METER_NAME);
+    using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     metrics.Errors.Add(1,
       new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.CATEGORY, EventCategoryMetrics.Categories.COLLECTIVE),
       new KeyValuePair<string, object?>(EventCategoryMetrics.Tags.ERROR_CLASS, EventCategoryMetrics.ErrorClasses.RESOLVER_MISSING));
 
     var measurements = helper.GetByName("whizbang.event_category.errors");
-    await Assert.That(measurements).IsNotEmpty();
-    await Assert.That(measurements[0].Tags["error_class"]).IsEqualTo("resolver_missing");
+    var errors = measurements.Where(m => m.Tags.GetValueOrDefault("error_class") == "resolver_missing").ToList();
+    await Assert.That(errors).Count().IsEqualTo(1);
+    await Assert.That(errors[0].Value).IsEqualTo(1.0);
+    await Assert.That(errors[0].Tags["category"]).IsEqualTo("collective");
   }
 }

@@ -63,7 +63,7 @@ public sealed class EventCategoryMetrics {
   /// <c>event_type</c>, <c>event_namespace</c>, and (collective only)
   /// <c>scope_kind</c>.
   /// </summary>
-  public Counter<long> Dispatched { get; }
+  public PassiveCounter<long> Dispatched { get; }
 
   /// <summary>
   /// Counter of dispatch failures. Tags: <c>category</c>,
@@ -72,7 +72,9 @@ public sealed class EventCategoryMetrics {
   /// <c>handler_missing</c>, <c>expansion_limit_exceeded</c>,
   /// <c>sql_exception</c>, <c>unknown</c>).
   /// </summary>
-  public Counter<long> Errors { get; }
+  public PassiveCounter<long> Errors { get; }
+
+  private static readonly string[] _categories = [Categories.COLLECTIVE, Categories.COMPOSITE];
 
   /// <summary>
   /// Initializes the metrics group.
@@ -91,13 +93,17 @@ public sealed class EventCategoryMetrics {
       "whizbang.event_category.fanout",
       description: "Fan-out factor — affected rows for collective, inner-event count for composite");
 
-    Dispatched = meter.CreateCounter<long>(
+    Dispatched = meter.CreatePassiveCounter<long>(
       "whizbang.event_category.dispatched",
       description: "Dispatches per category");
 
-    Errors = meter.CreateCounter<long>(
+    Errors = meter.CreatePassiveCounter<long>(
       "whizbang.event_category.errors",
       description: "Dispatch failures per category");
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    Dispatched.Touch(Tags.CATEGORY, _categories);
+    Errors.Touch(Tags.CATEGORY, _categories);
   }
 
   /// <summary>

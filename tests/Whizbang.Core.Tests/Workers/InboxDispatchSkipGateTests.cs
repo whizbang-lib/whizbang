@@ -60,6 +60,8 @@ public class InboxDispatchSkipGateTests {
       discardPolicy: policy,
       messageType: "Test.Contracts.Foo",
       messageId: Guid.Parse("11111111-1111-1111-1111-111111111111"));
+    // Passive counter: series report only at collection (the declared gate series at zero).
+    listener.RecordObservableInstruments();
 
     await Assert.That(shouldSkip).IsTrue();
     // RegistryChanged → Information level per policy
@@ -86,6 +88,8 @@ public class InboxDispatchSkipGateTests {
       discardPolicy: policy,
       messageType: "Test.Contracts.Foo",
       messageId: Guid.Parse("22222222-2222-2222-2222-222222222222"));
+    // Passive counter: collect so the zero below is every series' real count, not silence.
+    listener.RecordObservableInstruments();
 
     await Assert.That(shouldSkip).IsFalse();
     await Assert.That(policyLogger.Entries.Count).IsEqualTo(0);

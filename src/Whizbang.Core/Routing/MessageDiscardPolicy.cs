@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Routing;
 
@@ -84,7 +85,7 @@ public interface IMessageDiscardPolicy {
 public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
   private readonly IReceptorRegistryQuery _registry;
   private readonly ILogger<MessageDiscardPolicy> _logger;
-  private readonly Counter<long> _skippedCounter;
+  private readonly PassiveCounter<long> _skippedCounter;
   private readonly IReadOnlySet<string> _absorbedNamespaces;
   private readonly IEventMarkerResolver? _markerResolver;
 
@@ -126,10 +127,14 @@ public sealed class MessageDiscardPolicy : IMessageDiscardPolicy {
     _markerResolver = markerResolver;
     _absorbedNamespaces = routingOptions?.Value.AbsorbedNamespaces
       ?? (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    _skippedCounter = meter.CreateCounter<long>(
+    _skippedCounter = meter.CreatePassiveCounter<long>(
       COUNTER_NAME,
       unit: "{message}",
       description: "Count of messages intentionally skipped at a discard gate (receive | inbox | outbox).");
+    // Issue #711: one series per gate exists at zero from construction (see PassiveCounter).
+    foreach (var gate in Enum.GetValues<MessageDiscardGate>()) {
+      _skippedCounter.Touch(new KeyValuePair<string, object?>("gate", _gateTag(gate)));
+    }
   }
 
   /// <inheritdoc />

@@ -185,8 +185,10 @@ public class DispatcherPublishOnceTests {
     var won = await dispatcher.PublishOnceAsync("once:metric-win", new PublishOnceTestEvent(Guid.NewGuid()), CancellationToken.None);
     await Assert.That(won).IsTrue();
 
-    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won");
-    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost");
+    // Passive counters: the untagged series of each always reports (at zero); only a series that
+    // counted a claim outcome is a measurement of it.
+    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won").Where(m => m.Value > 0).ToList();
+    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost").Where(m => m.Value > 0).ToList();
 
     await Assert.That(winMeasurements).Count().IsEqualTo(1)
       .Because("Winning the claim records exactly one win measurement; ops dashboards count this to compute the won-vs-lost race rate.");
@@ -205,8 +207,10 @@ public class DispatcherPublishOnceTests {
     var second = await dispatcher.PublishOnceAsync("once:metric-loss", new PublishOnceTestEvent(Guid.NewGuid()), CancellationToken.None);
     await Assert.That(second).IsFalse();
 
-    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won");
-    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost");
+    // Passive counters: the untagged series of each always reports (at zero); only a series that
+    // counted a claim outcome is a measurement of it.
+    var winMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_won").Where(m => m.Value > 0).ToList();
+    var lostMeasurements = helper.GetByName("whizbang.dispatcher.publish_once.claims_lost").Where(m => m.Value > 0).ToList();
 
     await Assert.That(winMeasurements).Count().IsEqualTo(1)
       .Because("First call wins; only one win recorded.");

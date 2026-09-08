@@ -13,13 +13,26 @@ public sealed class MetricAssertionHelper : IDisposable {
   private readonly HashSet<Meter> _trackedMeters = [];
   // MeterListener measurement callbacks fire on whatever thread records the metric — which can
   // be concurrent with (and across from) a test enumerating results. Guard every read and write
-  // of _measurements with _sync, otherwise a concurrent Add throws "Collection was modified"
+  // of the lists with _sync, otherwise a concurrent Add throws "Collection was modified"
   // inside GetByName/Measurements enumeration.
   private readonly System.Threading.Lock _sync = new();
-  private readonly List<RecordedMeasurement> _measurements = [];
+  // Pushed measurements (histograms, plain counters) accumulate as they happen. Observed ones
+  // (passive counters, gauges) are a snapshot: every collection replaces the previous snapshot,
+  // so a read never sees the same cumulative series twice.
+  private readonly List<RecordedMeasurement> _pushed = [];
+  private readonly List<RecordedMeasurement> _observed = [];
+  private bool _collecting;
 
+  /// <summary>
+  /// Every measurement observed so far. Passive counters (see <c>PassiveCounter</c>) report only
+  /// at collection, so a read collects the observable instruments first: the current cumulative
+  /// value of every passive series, once, plus everything that was pushed.
+  /// </summary>
   public IReadOnlyList<RecordedMeasurement> Measurements {
-    get { lock (_sync) { return _measurements.ToArray(); } }
+    get {
+      _collect();
+      lock (_sync) { return [.. _pushed, .. _observed]; }
+    }
   }
 
   /// <summary>
@@ -69,20 +82,41 @@ public sealed class MetricAssertionHelper : IDisposable {
   private void _record(string instrumentName, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags) {
     var measurement = new RecordedMeasurement(instrumentName, value, _extractTags(tags));
     lock (_sync) {
-      _measurements.Add(measurement);
+      (_collecting ? _observed : _pushed).Add(measurement);
     }
   }
 
   public List<RecordedMeasurement> GetByName(string instrumentName) {
+    _collect();
     var results = new List<RecordedMeasurement>();
     lock (_sync) {
-      foreach (var m in _measurements) {
+      foreach (var m in _pushed) {
+        if (m.InstrumentName == instrumentName) {
+          results.Add(m);
+        }
+      }
+      foreach (var m in _observed) {
         if (m.InstrumentName == instrumentName) {
           results.Add(m);
         }
       }
     }
     return results;
+  }
+
+  /// <summary>What an exporter does: ask every observable instrument for its current values, replacing the last snapshot.</summary>
+  private void _collect() {
+    lock (_sync) {
+      _observed.Clear();
+      _collecting = true;
+    }
+    try {
+      _listener.RecordObservableInstruments();
+    } finally {
+      lock (_sync) {
+        _collecting = false;
+      }
+    }
   }
 
   public void Dispose() {

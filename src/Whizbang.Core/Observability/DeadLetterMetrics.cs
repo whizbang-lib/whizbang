@@ -35,22 +35,22 @@ public sealed class DeadLetterMetrics {
 #pragma warning restore CA1707
 
   /// <summary>Rows moved into wh_dead_letters (incremented per atomic Move). Tagged by source_table + reason.</summary>
-  public Counter<long> Added { get; }
+  public PassiveCounter<long> Added { get; }
 
   /// <summary>Successful recoveries — row re-emitted into source table. Tagged by source_table.</summary>
-  public Counter<long> Recovered { get; }
+  public PassiveCounter<long> Recovered { get; }
 
   /// <summary>Transitions to HoldForReview. Tagged by policy_name + reason.</summary>
-  public Counter<long> Held { get; }
+  public PassiveCounter<long> Held { get; }
 
   /// <summary>Transitions to PermanentlyFailed. Tagged by policy_name + reason.</summary>
-  public Counter<long> PermanentlyFailed { get; }
+  public PassiveCounter<long> PermanentlyFailed { get; }
 
   /// <summary>Recovery attempts dispatched (success or fail). Tagged by reason.</summary>
-  public Counter<long> RecoveryAttempts { get; }
+  public PassiveCounter<long> RecoveryAttempts { get; }
 
   /// <summary>Rows scheduled by the generation-replay sweep. Tagged by generation.</summary>
-  public Counter<long> GenerationReplayScheduled { get; }
+  public PassiveCounter<long> GenerationReplayScheduled { get; }
 
   /// <summary>
   /// Per-process cap on distinct <c>stack_id</c> tag values. Stack dedup bounds any one
@@ -59,13 +59,20 @@ public sealed class DeadLetterMetrics {
   /// </summary>
 #pragma warning disable CA1707
   public const int MAX_DISTINCT_STACK_TAGS = 500;
+
+  private static readonly string[] _sourceTables = [
+    Whizbang.Core.Messaging.DeadLetterSourceTable.OUTBOX,
+    Whizbang.Core.Messaging.DeadLetterSourceTable.INBOX,
+    Whizbang.Core.Messaging.DeadLetterSourceTable.PERSPECTIVE_EVENTS,
+  ];
+  private static readonly string[] _releaseOutcomes = ["clean", "halted"];
 #pragma warning restore CA1707
 
-  private readonly Counter<long> _arrivalsByStack;
-  private readonly Counter<long> _cohortVerdicts;
-  private readonly Counter<long> _releaseWaves;
-  private readonly Counter<long> _stackHistoryPruned;
-  private readonly Counter<long> _newStacks;
+  private readonly PassiveCounter<long> _arrivalsByStack;
+  private readonly PassiveCounter<long> _cohortVerdicts;
+  private readonly PassiveCounter<long> _releaseWaves;
+  private readonly PassiveCounter<long> _stackHistoryPruned;
+  private readonly PassiveCounter<long> _newStacks;
   private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _seenStacks = new();
 
   /// <summary>Initializes a new instance of <see cref="DeadLetterMetrics"/>.</summary>
@@ -73,41 +80,51 @@ public sealed class DeadLetterMetrics {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    Added = meter.CreateCounter<long>(
+    Added = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.added",
       description: "Rows moved into wh_dead_letters; tagged by source_table + reason");
-    Recovered = meter.CreateCounter<long>(
+    Recovered = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.recovered",
       description: "Successful recovery re-emits; tagged by source_table");
-    Held = meter.CreateCounter<long>(
+    Held = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.held",
       description: "Transitions to HoldForReview; tagged by policy_name + reason");
-    PermanentlyFailed = meter.CreateCounter<long>(
+    PermanentlyFailed = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.permanently_failed",
       description: "Transitions to PermanentlyFailed; tagged by policy_name + reason");
-    RecoveryAttempts = meter.CreateCounter<long>(
+    RecoveryAttempts = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.recovery_attempts",
       description: "Recovery attempts dispatched (any outcome); tagged by reason");
-    GenerationReplayScheduled = meter.CreateCounter<long>(
+    GenerationReplayScheduled = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.generation_replay_scheduled",
       description: "Rows scheduled by the generation-replay sweep on worker startup");
-    _arrivalsByStack = meter.CreateCounter<long>(
+    _arrivalsByStack = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.arrivals_by_stack",
       description: "Dead-letter arrivals tagged by normalized stack_id + reason — the real-time "
                  + "half of the stack telemetry contract; a stack_id with no prior history right "
                  + "after a deploy is the new-failure-mode alarm");
-    _cohortVerdicts = meter.CreateCounter<long>(
+    _cohortVerdicts = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.cohort_verdicts",
       description: "Canary campaign verdicts tagged by cohort + verdict (Pass/Fail/Mixed)");
-    _releaseWaves = meter.CreateCounter<long>(
+    _releaseWaves = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.release_waves",
       description: "Trickle release waves for Mixed cohorts, tagged by cohort + outcome (clean/halted)");
-    _stackHistoryPruned = meter.CreateCounter<long>(
+    _stackHistoryPruned = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.stack_history_pruned",
       description: "Rolling stack-history rows pruned by the recovery worker's idle-gated cleanup — the maintenance facet of the stack layer");
-    _newStacks = meter.CreateCounter<long>(
+    _newStacks = meter.CreatePassiveCounter<long>(
       "whizbang.dead_letters.new_stacks",
       description: "Never-before-seen normalized stack ids first recorded — the new-failure-mode alarm; a spike right after a deploy is a new bug shipped");
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    Added.Touch("source_table", _sourceTables);
+    Recovered.Touch("source_table", _sourceTables);
+    Held.Touch("reason", Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
+    PermanentlyFailed.Touch("reason", Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
+    RecoveryAttempts.Touch("reason", Enum.GetNames<Whizbang.Core.Messaging.MessageFailureReason>());
+    _arrivalsByStack.Touch("source_table", _sourceTables);
+    _cohortVerdicts.Touch("verdict", Enum.GetNames<Whizbang.Core.Messaging.CanaryVerdictKind>());
+    _releaseWaves.Touch("outcome", _releaseOutcomes);
   }
 
   /// <summary>Counts never-before-seen stack ids first recorded in a backfill batch.</summary>

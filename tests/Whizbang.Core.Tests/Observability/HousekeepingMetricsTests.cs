@@ -53,14 +53,15 @@ public class HousekeepingMetricsTests {
     var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings(), metrics);
     c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery,
       new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 1 });
+    listener.RecordObservableInstruments();
 
+    bool counted;
     lock (seen) {
-      var d = seen.Single(m => m.Name == "whizbang.housekeeping.decisions");
-      _ = d;
+      counted = seen.Any(m =>
+        m.Name == "whizbang.housekeeping.decisions" && m.Value == 1
+        && m.Activity == "DeadLetterRecovery" && m.Verdict == "ServiceBusy");
     }
-    await Assert.That(seen.Any(m =>
-        m.Name == "whizbang.housekeeping.decisions"
-        && m.Activity == "DeadLetterRecovery" && m.Verdict == "ServiceBusy")).IsTrue()
+    await Assert.That(counted).IsTrue()
       .Because("a deferred recovery must be visible as a fact on a dashboard, not a log grep");
   }
 
@@ -72,15 +73,17 @@ public class HousekeepingMetricsTests {
     var settled = new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
 
     c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, settled);
+    listener.RecordObservableInstruments();
     c.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
+    listener.RecordObservableInstruments();
 
     List<long> running;
     lock (seen) {
       running = [.. seen.Where(m => m.Name == "whizbang.housekeeping.running" && m.Activity == "DeadLetterRecovery").Select(m => m.Value)];
     }
-    await Assert.That(running).IsEquivalentTo(new long[] { 1, -1 })
-      .Because("the running gauge answers WHAT is holding the slot right now; it must sum to zero "
-             + "when nothing is");
+    await Assert.That(running).IsEquivalentTo(new long[] { 1, 0 })
+      .Because("the running gauge answers WHAT is holding the slot right now; it must read one while "
+             + "the slot is held and zero when nothing is");
   }
 
   [Test]
@@ -91,12 +94,13 @@ public class HousekeepingMetricsTests {
 
     c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery,
       new ServiceBacklog { UnprocessedInboxRows = 9, ActiveLeasedRows = 0 });
+    listener.RecordObservableInstruments();
 
+    bool anyRunning;
     lock (seen) {
-      var running = seen.Count(m => m.Name == "whizbang.housekeeping.running");
-      _ = running;
+      anyRunning = seen.Any(m => m.Name == "whizbang.housekeeping.running" && m.Value != 0);
     }
-    await Assert.That(seen.Any(m => m.Name == "whizbang.housekeeping.running")).IsFalse()
+    await Assert.That(anyRunning).IsFalse()
       .Because("a refused slot was never held; counting it would make the gauge drift negative");
   }
 

@@ -46,11 +46,12 @@ public class HousekeepingMetricsCoverageTests {
 
     metrics.RecordItems(HousekeepingCoordinator.Activity.DeadLetterRecovery, 37);
     metrics.RecordItems(HousekeepingCoordinator.Activity.Maintenance, 0);
+    listener.RecordObservableInstruments();
 
     await Assert.That(readings.Any(r =>
       r.Name == "whizbang.housekeeping.items" && r.Value == 37 && r.Activity == "DeadLetterRecovery"))
       .IsTrue().Because("the volume rollup must attribute items processed to the activity that did the work");
-    await Assert.That(readings.Any(r => r.Name == "whizbang.housekeeping.items" && r.Activity == "Maintenance"))
-      .IsFalse().Because("a zero-count cycle is not activity; recording it would inflate the rollup on every idle tick");
+    await Assert.That(readings.Any(r => r.Name == "whizbang.housekeeping.items" && r.Activity == "Maintenance" && r.Value != 0))
+      .IsFalse().Because("a zero-count cycle is not activity; recording it would inflate the rollup on every idle tick, so the Maintenance series stays at zero");
   }
 }

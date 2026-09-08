@@ -31,7 +31,7 @@ public sealed class MaintenanceMetrics {
 #pragma warning restore CA1707
 
   /// <summary>Rows affected by a maintenance task in one cycle. Tagged by <c>task</c>.</summary>
-  public Counter<long> RowsAffected { get; }
+  public PassiveCounter<long> RowsAffected { get; }
 
   /// <summary>A maintenance task's per-cycle duration in milliseconds. Tagged by <c>task</c>.</summary>
   public Histogram<double> TaskDuration { get; }
@@ -40,21 +40,21 @@ public sealed class MaintenanceMetrics {
   /// Rows past a declared retention window at the moment the maintenance cycle adopted it (opened
   /// the adoption gate). Tagged by <c>perspective</c>; the first day of a retroactive window.
   /// </summary>
-  public Counter<long> RetentionAdopted { get; }
+  public PassiveCounter<long> RetentionAdopted { get; }
 
   /// <summary>Initializes a new instance of <see cref="MaintenanceMetrics"/>.</summary>
   public MaintenanceMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    RowsAffected = meter.CreateCounter<long>(
+    RowsAffected = meter.CreatePassiveCounter<long>(
       "whizbang.maintenance.rows_affected",
       description: "Rows affected by a maintenance task in one cycle; tagged by task");
     TaskDuration = meter.CreateHistogram<double>(
       "whizbang.maintenance.task_duration",
       unit: "ms",
       description: "A maintenance task's per-cycle duration in milliseconds; tagged by task");
-    RetentionAdopted = meter.CreateCounter<long>(
+    RetentionAdopted = meter.CreatePassiveCounter<long>(
       "whizbang.maintenance.retention_adopted",
       description: "Rows past the window when the maintenance cycle adopted a perspective's declared retention; tagged by perspective");
   }

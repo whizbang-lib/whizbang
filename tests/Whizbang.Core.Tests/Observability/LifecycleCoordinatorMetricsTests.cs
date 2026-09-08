@@ -40,12 +40,13 @@ public class LifecycleCoordinatorMetricsTests {
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     metrics.ActiveTrackedEvents.Add(1);
-    metrics.ActiveTrackedEvents.Add(-1);
+    var afterIncrement = helper.GetByName("whizbang.lifecycle_coordinator.active_tracked_events");
+    await Assert.That(afterIncrement).Count().IsEqualTo(1);
+    await Assert.That(afterIncrement[0].Value).IsEqualTo(1);
 
-    var measurements = helper.GetByName("whizbang.lifecycle_coordinator.active_tracked_events");
-    await Assert.That(measurements).Count().IsEqualTo(2);
-    await Assert.That(measurements[0].Value).IsEqualTo(1);
-    await Assert.That(measurements[1].Value).IsEqualTo(-1);
+    metrics.ActiveTrackedEvents.Add(-1);
+    var afterDecrement = helper.GetByName("whizbang.lifecycle_coordinator.active_tracked_events");
+    await Assert.That(afterDecrement[^1].Value).IsEqualTo(0);
   }
 
   [Test]
@@ -151,8 +152,9 @@ public class LifecycleCoordinatorMetricsTests {
       new KeyValuePair<string, object?>("stage", "PostAllPerspectivesDetached"));
 
     var measurements = helper.GetByName("whizbang.lifecycle_coordinator.stage_transitions");
-    await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Tags["stage"]).IsEqualTo("PostAllPerspectivesDetached");
+    var transitions = measurements.Where(m => m.Tags.GetValueOrDefault("stage") == "PostAllPerspectivesDetached").ToList();
+    await Assert.That(transitions).Count().IsEqualTo(1);
+    await Assert.That(transitions[0].Value).IsEqualTo(1);
   }
 
   [Test]

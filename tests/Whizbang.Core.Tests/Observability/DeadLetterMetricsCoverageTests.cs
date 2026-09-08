@@ -45,6 +45,10 @@ public class DeadLetterMetricsCoverageTests {
     metrics.RecordReleaseWave("order-timeout-fingerprint", clean: true);
     metrics.RecordReleaseWave("order-timeout-fingerprint", clean: false);
 
+    // Passive counter (#711): the listener sees one cumulative reading per series only when it
+    // collects -- the constructor's outcome seeds (no cohort, zero) plus one per cohort+outcome.
+    listener.RecordObservableInstruments();
+
     await Assert.That(readings.Any(r =>
       r.Name == "whizbang.dead_letters.release_waves" && r.Value == 1
       && r.Cohort == "order-timeout-fingerprint" && r.Outcome == "clean"))

@@ -129,7 +129,7 @@ public class WorkerPipelineExtensionsCoverageTests {
     // Filtered by level and message only, deliberately not by exception type: the two failures this
     // test is about carry whatever the deserializer threw, and pinning that would couple the test to
     // an unrelated implementation detail while silently dropping the very entries it looks for.
-    var errors = loggerProvider.Entries
+    var errors = loggerProvider.Snapshot()
       .Where(e => e.Level == LogLevel.Error)
       .Select(e => e.Message)
       .ToList();
@@ -227,14 +227,29 @@ public class WorkerPipelineExtensionsCoverageTests {
   /// error entries recorded — proving a failure was actually logged, not just "did not throw".
   /// </summary>
   private sealed class RecordingLoggerProvider : ILoggerProvider {
-    public List<(string Category, LogLevel Level, Exception? Exception, string Message)> Entries { get; } = [];
+    // The fire-and-forget detached lifecycle stages log from background threads while the inline
+    // stages log on the test's thread. An unsynchronized List<T>.Add racing across threads can
+    // drop an entry, which read here as "the post-store failure was never logged".
+    private readonly Lock _sync = new();
+    private readonly List<(string Category, LogLevel Level, Exception? Exception, string Message)> _entries = [];
 
-    public ILogger CreateLogger(string categoryName) => new _RecordingLogger(categoryName, Entries);
+    public List<(string Category, LogLevel Level, Exception? Exception, string Message)> Snapshot() {
+      lock (_sync) {
+        return [.. _entries];
+      }
+    }
+
+    public ILogger CreateLogger(string categoryName) => new _RecordingLogger(categoryName, this);
 
     public void Dispose() { }
 
-    private sealed class _RecordingLogger(string category,
-        List<(string Category, LogLevel Level, Exception? Exception, string Message)> entries) : ILogger {
+    private void _record(string category, LogLevel level, Exception? exception, string message) {
+      lock (_sync) {
+        _entries.Add((category, level, exception, message));
+      }
+    }
+
+    private sealed class _RecordingLogger(string category, RecordingLoggerProvider provider) : ILogger {
       public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
       public bool IsEnabled(LogLevel logLevel) => true;
@@ -245,7 +260,7 @@ public class WorkerPipelineExtensionsCoverageTests {
         TState state,
         Exception? exception,
         Func<TState, Exception?, string> formatter) {
-        entries.Add((category, logLevel, exception, formatter(state, exception)));
+        provider._record(category, logLevel, exception, formatter(state, exception));
       }
     }
   }

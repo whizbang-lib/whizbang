@@ -182,7 +182,9 @@ public class PerspectiveMetricsTests {
     metrics.Errors.Add(1, new KeyValuePair<string, object?>("error_type", "ConcurrencyException"));
 
     var measurements = helper.GetByName("whizbang.perspective.errors");
-    await Assert.That(measurements[0].Tags["error_type"]).IsEqualTo("ConcurrencyException");
+    var errors = measurements.Where(m => m.Tags.GetValueOrDefault("error_type") == "ConcurrencyException").ToList();
+    await Assert.That(errors).Count().IsEqualTo(1);
+    await Assert.That(errors[0].Value).IsEqualTo(1);
   }
 
   [Test]

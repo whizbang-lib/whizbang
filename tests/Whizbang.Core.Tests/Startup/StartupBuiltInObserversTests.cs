@@ -53,9 +53,10 @@ public class StartupBuiltInObserversTests {
     // Pin to THIS test's instrument instances, not the meter NAME: InstrumentPublished fires for
     // every meter in the process, and other tests create meters with the same name — a name-based
     // filter collects their concurrent measurements too (observed as an intermittent
-    // "expected 1 duration, found 2" under parallel test execution).
+    // "expected 1 duration, found 2" under parallel test execution). The outcome counter is
+    // passive, so its instrument is the observable one it registered.
     listener.InstrumentPublished = (instrument, l) => {
-      if (ReferenceEquals(instrument, metrics.StepDuration) || ReferenceEquals(instrument, metrics.StepOutcomes)) {
+      if (ReferenceEquals(instrument, metrics.StepDuration) || ReferenceEquals(instrument, metrics.StepOutcomes.Instrument)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
@@ -79,13 +80,19 @@ public class StartupBuiltInObserversTests {
 
     var observer = new MetricsStartupStepObserver(metrics);
     await observer.OnStepCompletedAsync(_result("Migrate", StartupStepOutcome.Skipped, "done elsewhere"), CancellationToken.None);
+    // The outcome counter is passive: its series (one per declared outcome at zero, plus the
+    // step-tagged one this completion counted) report only at collection.
+    listener.RecordObservableInstruments();
 
     await Assert.That(durations.Count).IsEqualTo(1);
     await Assert.That(durations[0].Value).IsEqualTo(42.0);
     await Assert.That(durations[0].Step).IsEqualTo("Migrate");
     await Assert.That(durations[0].Outcome).IsEqualTo("Skipped");
-    await Assert.That(outcomes.Count).IsEqualTo(1);
-    await Assert.That(outcomes[0].Step).IsEqualTo("Migrate");
+    var counted = outcomes.Where(o => o.Value != 0).ToList();
+    await Assert.That(counted.Count).IsEqualTo(1);
+    await Assert.That(counted[0].Value).IsEqualTo(1L);
+    await Assert.That(counted[0].Step).IsEqualTo("Migrate");
+    await Assert.That(counted[0].Outcome).IsEqualTo("Skipped");
   }
 
   // ── logging ─────────────────────────────────────────────────────────────

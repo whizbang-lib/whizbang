@@ -103,7 +103,8 @@ public class WorkCoordinatorMetricsTests {
 
     // Assert
     var measurements = helper.GetByName("whizbang.work_coordinator.process_batch.calls");
-    await Assert.That(measurements).Count().IsEqualTo(2);
+    await Assert.That(measurements).Count().IsEqualTo(1);
+    await Assert.That(measurements[0].Value).IsEqualTo(2);
   }
 
   [Test]
@@ -119,8 +120,9 @@ public class WorkCoordinatorMetricsTests {
 
     // Assert
     var measurements = helper.GetByName("whizbang.work_coordinator.process_batch.errors");
-    await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Tags["error_type"]).IsEqualTo("NpgsqlException");
+    var errors = measurements.Where(m => m.Tags.GetValueOrDefault("error_type") == "NpgsqlException").ToList();
+    await Assert.That(errors).Count().IsEqualTo(1);
+    await Assert.That(errors[0].Value).IsEqualTo(1);
   }
 
   [Test]

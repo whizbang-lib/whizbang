@@ -34,7 +34,10 @@ public class PoisonMessageDetectorCoverageTests {
         }
       },
     };
-    listener.SetMeasurementEventCallback<long>((_, _, tags, _) => {
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      // Passive counter: the declared receive/inbox series report at zero alongside the series
+      // this quarantine counted — only the counted one carries the fallback tag.
+      if (value == 0) { return; }
       foreach (var tag in tags) {
         if (tag.Key == "gate") {
           capturedGateTag = tag.Value;
@@ -54,6 +57,7 @@ public class PoisonMessageDetectorCoverageTests {
       Now: DateTimeOffset.UtcNow);
 
     detector.RecordQuarantine(unknownGate, verdict, context);
+    listener.RecordObservableInstruments();
     listener.Dispose();
 
     await Assert.That(capturedGateTag?.ToString()).IsEqualTo(unknownGate.ToString())

@@ -115,11 +115,12 @@ public class GovernorMetricsTests {
 
     metrics.RecordAdjustment(SERIES, from: 4, to: 5);
     metrics.RecordAdjustment(SERIES, from: 5, to: 3);
+    listener.RecordObservableInstruments();
 
     var adjustments = captured.Where(c => c.Name.Contains("adjust", StringComparison.Ordinal)).ToList();
     await Assert.That(adjustments.Count).IsGreaterThanOrEqualTo(2);
-    await Assert.That(adjustments.Any(a => a.Direction == "grew")).IsTrue();
-    await Assert.That(adjustments.Any(a => a.Direction == "shrank")).IsTrue()
+    await Assert.That(adjustments.Any(a => a.Direction == "grew" && a.Value == 1)).IsTrue();
+    await Assert.That(adjustments.Any(a => a.Direction == "shrank" && a.Value == 1)).IsTrue()
       .Because("direction is the whole diagnostic: a governor shrinking far more often than it "
              + "grows is oscillating, and an undirected count cannot show that");
 

@@ -47,8 +47,10 @@ public class LifecycleInvocationHelperCoverageTests {
 
     // Assert - the error metric was recorded with real tag content (not just a short-circuited
     // null-conditional) before the exception was rethrown.
+    // Passive counter: every series reports at collection — the untagged one and the declared
+    // per-stage series at zero — so select the series that actually counted for the inline stage.
     var errorMeasurements = metricHelper.GetByName("whizbang.lifecycle.receptor.errors")
-      .Where(m => m.Tags["stage"] == "PostDistributeInline")
+      .Where(m => m.Value > 0 && m.Tags.TryGetValue("stage", out var stage) && stage == "PostDistributeInline")
       .ToList();
     await Assert.That(errorMeasurements.Count).IsGreaterThanOrEqualTo(1)
       .Because("the catch block records a receptor error for the inline stage before rethrowing");

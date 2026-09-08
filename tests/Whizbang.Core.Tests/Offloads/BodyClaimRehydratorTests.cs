@@ -246,7 +246,9 @@ public class BodyClaimRehydratorTests {
 
     await Assert.That(result.IsDeadLetter).IsFalse();
 
-    var counts = helper.GetByName("whizbang.transport.body_claim.rehydrated.count");
+    // Passive counter: the untagged series always reports (at zero); the type-tagged series is
+    // the one this rehydration counted.
+    var counts = helper.GetByName("whizbang.transport.body_claim.rehydrated.count").Where(m => m.Value > 0).ToList();
     await Assert.That(counts.Count).IsEqualTo(1);
     await Assert.That(counts[0].Value).IsEqualTo(1d);
 
