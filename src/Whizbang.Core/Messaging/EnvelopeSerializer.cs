@@ -28,9 +28,9 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       throw new InvalidOperationException(
         "DOUBLE SERIALIZATION DETECTED: Payload is JsonElement, which means the envelope was already serialized. " +
         $"MessageId: {envelope.MessageId}. " +
-        $"Envelope type: {envelope.GetType().FullName}. " +
-        $"TMessage type parameter: {typeof(TMessage).FullName}. " +
-        $"Payload runtime type: {payloadType.FullName}. " +
+        $"Envelope type: {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
+        $"TMessage type parameter: {TypeNameFormatter.DisplayName(typeof(TMessage))}. " +
+        $"Payload runtime type: {TypeNameFormatter.DisplayName(payloadType)}. " +
         "This is a bug - envelopes should only be serialized once before storage. " +
         "Check if Dispatcher is being passed a JsonElement instead of a strongly-typed message.");
     }
@@ -40,7 +40,7 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       throw new InvalidOperationException(
         "WRONG TYPE PARAMETER: TMessage is JsonElement. " +
         $"MessageId: {envelope.MessageId}. " +
-        $"Envelope type: {envelope.GetType().FullName}. " +
+        $"Envelope type: {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
         "This indicates SerializeEnvelope was called with wrong type parameter. " +
         "The envelope should be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), not MessageEnvelope<JsonElement>.");
     }
@@ -50,16 +50,15 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
     // MessageEnvelope<IEvent> instead of MessageEnvelope<ConcreteEvent>. The receiving service
     // won't have JsonTypeInfo for MessageEnvelope<IEvent>, only for concrete types.
     // FIX: Always use the payload's runtime type to construct the envelope type name.
-    var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{payloadType.AssemblyQualifiedName}]], Whizbang.Core";
-
-    var messageTypeName = payloadType.AssemblyQualifiedName
+    var messageTypeName = TypeNameFormatter.AssemblyQualifiedNameOrNull(payloadType)
       ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
+    var envelopeTypeName = EnvelopeTypeNameHelper.Format(messageTypeName);
 
     // Convert the envelope to MessageEnvelope<JsonElement> for AOT-compatible storage
     // Get type info to serialize the payload to JsonElement
     var payloadTypeInfo = _jsonOptions.GetTypeInfo(payloadType)
       ?? throw new InvalidOperationException(
-        $"No JSON type info found for payload type '{payloadType.FullName}'. " +
+        $"No JSON type info found for payload type '{TypeNameFormatter.DisplayName(payloadType)}'. " +
         $"Ensure the type is registered in a JsonSerializerContext. MessageId: {envelope.MessageId}");
 
     // Serialize the payload to JsonElement

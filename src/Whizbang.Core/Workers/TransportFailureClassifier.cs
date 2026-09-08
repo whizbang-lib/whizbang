@@ -40,7 +40,7 @@ public static class TransportFailureClassifier {
       return MessageFailureReason.Throttled;
     }
     // Match by type name to avoid taking direct references on transport libs from Core.
-    var typeName = ex.GetType().FullName ?? string.Empty;
+    var typeName = TypeNameFormatter.FormatClrTypeName(ex.GetType());
     if (typeName.StartsWith("Azure.Messaging.ServiceBus.", StringComparison.Ordinal)
         || typeName.StartsWith("RabbitMQ.Client.", StringComparison.Ordinal)
         || typeName.StartsWith("Whizbang.Transports.", StringComparison.Ordinal)
@@ -59,7 +59,7 @@ public static class TransportFailureClassifier {
     //   "... is being throttled. Error code : 50009 ... (ServiceBusy) ..."
     // Both the human-readable name and the numeric code are present in the message,
     // so either match path is robust to message-format tweaks across SDK versions.
-    var typeName = ex.GetType().FullName;
+    var typeName = TypeNameFormatter.FormatClrTypeName(ex.GetType());
     if (typeName != "Azure.Messaging.ServiceBus.ServiceBusException") {
       return false;
     }
@@ -74,7 +74,7 @@ public static class TransportFailureClassifier {
     //   - publisher confirms with basic.nack carrying a flow-control reason
     // Both bubble up as OperationInterruptedException or AlreadyClosedException; the
     // shutdown reason text mentions "connection.blocked" or "flow". Match on message.
-    var typeName = ex.GetType().FullName ?? string.Empty;
+    var typeName = TypeNameFormatter.FormatClrTypeName(ex.GetType());
     if (!typeName.StartsWith("RabbitMQ.Client.", StringComparison.Ordinal)) {
       return false;
     }

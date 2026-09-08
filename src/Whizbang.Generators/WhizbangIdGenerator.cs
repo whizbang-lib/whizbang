@@ -116,8 +116,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     var whizbangIdAttr = structSymbol.GetAttributes().FirstOrDefault(a =>
         a.AttributeClass?.Name == "WhizbangIdAttribute" ||
         a.AttributeClass?.Name == "WhizbangId" ||
-        a.AttributeClass?.ToDisplayString() == WHIZBANGID_ATTRIBUTE ||
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANGID_ATTRIBUTE}");
+        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
+        (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"));
 
     if (whizbangIdAttr is null) {
       return null;
@@ -130,7 +130,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     // Extract namespace - either from attribute or containing namespace
-    string targetNamespace = structSymbol.ContainingNamespace?.ToDisplayString() ?? "Global";
+    string targetNamespace = structSymbol.ContainingNamespace is null ? "Global" : TypeNameUtilities.Display(structSymbol.ContainingNamespace);
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
@@ -179,8 +179,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     var whizbangIdAttr = propertySymbol.GetAttributes().FirstOrDefault(a =>
         a.AttributeClass?.Name == "WhizbangIdAttribute" ||
         a.AttributeClass?.Name == "WhizbangId" ||
-        a.AttributeClass?.ToDisplayString() == WHIZBANGID_ATTRIBUTE ||
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANGID_ATTRIBUTE}");
+        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
+        (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"));
 
     if (whizbangIdAttr is null) {
       return null;
@@ -191,7 +191,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Extract namespace - either from attribute or containing type's namespace
     var containingType = propertySymbol.ContainingType;
-    string targetNamespace = containingType?.ContainingNamespace?.ToDisplayString() ?? "Global";
+    string targetNamespace = containingType?.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : "Global";
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
@@ -240,8 +240,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     var whizbangIdAttr = parameterSymbol.GetAttributes().FirstOrDefault(a =>
         a.AttributeClass?.Name == "WhizbangIdAttribute" ||
         a.AttributeClass?.Name == "WhizbangId" ||
-        a.AttributeClass?.ToDisplayString() == WHIZBANGID_ATTRIBUTE ||
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANGID_ATTRIBUTE}");
+        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANGID_ATTRIBUTE) ||
+        (a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == $"global::{WHIZBANGID_ATTRIBUTE}"));
 
     if (whizbangIdAttr is null) {
       return null;
@@ -253,7 +253,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Extract namespace - either from attribute or containing type's namespace
     var containingMethod = parameterSymbol.ContainingSymbol as IMethodSymbol;
     var containingType = containingMethod?.ContainingType;
-    string targetNamespace = containingType?.ContainingNamespace?.ToDisplayString() ?? "Global";
+    string targetNamespace = containingType?.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : "Global";
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");

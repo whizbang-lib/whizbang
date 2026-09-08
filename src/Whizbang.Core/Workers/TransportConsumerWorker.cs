@@ -1138,14 +1138,9 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   /// Extracts message type from envelope type name.
   /// </summary>
   private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
-    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
-    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
-
-    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-      throw new InvalidOperationException($"Invalid envelope type name format: '{envelopeTypeName}'");
-    }
-
-    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
+    // The one parser of envelope type names (issue #698).
+    var messageTypeName = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeTypeName)
+      ?? throw new InvalidOperationException($"Invalid envelope type name format: '{envelopeTypeName}'");
 
     if (string.IsNullOrWhiteSpace(messageTypeName)) {
       throw new InvalidOperationException($"Failed to extract message type from envelope type: '{envelopeTypeName}'");

@@ -3,6 +3,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -80,7 +81,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
     }
 
     // Match on type name — works for both the interface and the concrete class
-    var typeName = containingType.ToDisplayString();
+    var typeName = TypeNameUtilities.Display(containingType);
     if (!typeName.Contains("PerspectiveSyncAwaiter") && !typeName.Contains("IPerspectiveSyncAwaiter")) {
       return;
     }
@@ -127,7 +128,7 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
 
   private static bool _isReceptor(INamedTypeSymbol classSymbol) {
     foreach (var iface in classSymbol.AllInterfaces) {
-      var display = iface.OriginalDefinition.ToDisplayString();
+      var display = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (display.StartsWith(RECEPTOR_INTERFACE_PREFIX, System.StringComparison.Ordinal) || display.StartsWith(SYNC_RECEPTOR_INTERFACE_PREFIX, System.StringComparison.Ordinal)) {
         return true;
       }
@@ -144,12 +145,12 @@ public class PerspectiveSyncInReceptorAnalyzer : DiagnosticAnalyzer {
     var fireAtStages = new System.Collections.Generic.List<string>();
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() != FIRE_AT_ATTRIBUTE) {
+      if (attribute.AttributeClass is not { } attributeClass || !TypeNameUtilities.IsNamed(attributeClass, FIRE_AT_ATTRIBUTE)) {
         continue;
       }
 
       if (attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is int stageValue) {
-        var stageType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
+        var stageType = attributeClass.GetMembers().OfType<IMethodSymbol>()
             .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
             ?.Parameters.FirstOrDefault()?.Type;
 

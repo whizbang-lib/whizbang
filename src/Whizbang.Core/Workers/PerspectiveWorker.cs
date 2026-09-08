@@ -2880,7 +2880,10 @@ public partial class PerspectiveWorker(
     }
 
     // DIAGNOSTIC: Log registry resolution details
-    LogRunnerRegistryResolved(_logger, perspectiveName, registry.GetType().FullName ?? "unknown", registry.GetHashCode());
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      var registryType = TypeNameFormatter.DisplayName(registry.GetType());
+      LogRunnerRegistryResolved(_logger, perspectiveName, registryType, registry.GetHashCode());
+    }
 
     var runner = registry.GetRunner(perspectiveName, scope.ServiceProvider);
     if (runner == null) {
@@ -2889,7 +2892,10 @@ public partial class PerspectiveWorker(
     }
 
     // DIAGNOSTIC: Log runner resolution details
-    LogRunnerInstanceResolved(_logger, perspectiveName, runner.GetType().FullName ?? "unknown", runner.GetHashCode());
+    if (_logger.IsEnabled(LogLevel.Debug)) {
+      var runnerType = TypeNameFormatter.DisplayName(runner.GetType());
+      LogRunnerInstanceResolved(_logger, perspectiveName, runnerType, runner.GetHashCode());
+    }
 
     // Resolve IEventStore from scope (it's registered as scoped, not singleton)
     var eventStore = scope.ServiceProvider.GetService<IEventStore>();

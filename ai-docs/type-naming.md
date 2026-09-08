@@ -19,7 +19,11 @@ This applies to generator code and to regular C# alike.
 | CLR form (no assembly, `+` for nested, arity on generics) | `MyApp.Outer+Model`, `MyApp.Generic`1` | `TypeNameFormatter.FormatClrTypeName(Type)` | `TypeNameUtilities.BuildClrTypeName(ITypeSymbol)` |
 | Wire form (CLR form plus the simple assembly name) | `MyApp.Outer+Model, MyApp` | `TypeNameFormatter.Format(Type)` | `TypeNameUtilities.FormatTypeNameForRuntime(ITypeSymbol)` |
 | Simple name (display only) | `Model` | `TypeNameFormatter.GetSimpleName(string)` | `TypeNameUtilities.GetSimpleName(...)` |
-| Fully qualified for generated source | `global::MyApp.Outer.Model` | n/a | `ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)` (code generation only, never a key) |
+| Display text (logs, traces, exception messages, metric tags; never a key) | `MyApp.Outer+Model` | `TypeNameFormatter.DisplayName(Type)` | `TypeNameUtilities.Display(ISymbol)` (`MyApp.Outer.Model`; `IsNamed(symbol, "...")` to compare against a known display name) |
+| Versioned assembly-qualified form (the envelope-type wire header and a few storage paths still carry it) | `MyApp.Outer+Model, MyApp, Version=1.0.0.0, ...` | `TypeNameFormatter.AssemblyQualifiedName(Type)` / `AssemblyQualifiedNameOrNull` | n/a |
+| Envelope type name | `Whizbang.Core.Observability.MessageEnvelope`1[[<wire or versioned form>]], Whizbang.Core` | `EnvelopeTypeNameHelper.Format(inner)` / `ExtractInnerTypeName(envelopeType)` | n/a |
+| Fully qualified for generated source | `global::MyApp.Outer.Model` | n/a | `TypeNameUtilities.FullyQualified(ISymbol)` (`FullyQualifiedWithNullability`, `MinimallyQualified`; code generation only, never a key) |
+| Namespace for a generated `namespace X;` line | `MyApp.Outer`, empty for the global namespace | n/a | `TypeNameUtilities.NamespaceName(INamespaceSymbol)` |
 
 Which columns hold which form:
 
@@ -68,18 +72,35 @@ today:
 Display-only sites (tracing tags, exception messages, log lines) may use `Type.FullName` or
 `Type.Name`; keep them out of anything persisted or compared.
 
-## Enforcement
+## Enforcement (issue #698)
 
-- `BannedSymbols.txt` (root, wired by `Directory.Build.props` for production projects) is the
-  build-time layer for raw sources that must never appear outside the helper files. Add the
-  banned symbol with a message that names the helper to use; the helper file carries the one
-  `#pragma warning disable RS0030`.
-- The mirror-contract test above fails the build of the generator tests when the two sides
-  drift.
-- Issue #698 tracks the remaining layers: typed keys (`ClrTypeName` and `WireTypeName` value
-  objects constructible only through `TypeNameFormatter`) and a WHIZ naming analyzer for the
-  residue that neither banned APIs nor typed keys catch (string composition, `==` on persisted
-  names, `*TypeName*` members assigned from anything but a helper result).
+- **Banned raw sources, runtime side.** `BannedSymbols.txt` (root, wired by `Directory.Build.props`
+  for production projects) bans `Type.FullName`, `Type.AssemblyQualifiedName` and
+  `Assembly.FullName`. The only files that may read them are `TypeNameFormatter.cs` and
+  `EventTypeMatchingHelper.cs`, each wrapped in one `#pragma warning disable RS0030`. Every other
+  site names the form it wants through the table above. A `typeof(X).FullName` in an attribute
+  argument or a `const` cannot call a helper: wrap that one line in the pragma with a one-line
+  reason so the audit stays visible.
+- **Banned raw sources, generator side.** `BannedSymbols.Generators.txt` (wired for every project
+  whose name contains `Generators`) bans `ISymbol.ToDisplayString`, `ToDisplayParts` and
+  `MetadataName`. The only file that may call them is `TypeNameUtilities.cs`. A local
+  `SymbolDisplayFormat` that the helper does not offer keeps its call sites under the pragma with a
+  reason naming the option that differs.
+- **The naming analyzer.** `TypeNameHandlingAnalyzer` (in `Whizbang.Generators`, so it runs on
+  the framework and on every consumer) reports the residue the bans cannot see, as warnings:
+  WHIZ160 a name composed with `+` or `, ` by hand, WHIZ161 a name dissected by `Split`,
+  `Substring`, `IndexOf('+')` or `Replace("global::", ...)`, WHIZ162 two type-name strings compared
+  with `==` or `string.Equals`, WHIZ163 a member or parameter named `*ClrTypeName*`, `*TypeName*`
+  or `*EventType*` assigned from an interpolated or concatenated string. The helper classes are
+  exempt. The framework's own test projects turn the four rules off in `tests/.editorconfig`:
+  fixtures compose names on purpose, including malformed ones that prove the parsers' tolerance.
+- **The mirror contract.** `tests/Whizbang.Generators.Tests/TypeNameMirrorContractTests.cs`
+  fails the generator tests when the two sides drift on any shape in its corpus.
+- Deferred: typed keys (`ClrTypeName` and `WireTypeName` value objects constructible only through
+  `TypeNameFormatter`). With the bans and the analyzer in place a bypass is already a build
+  error; the typed keys would add compile-time shape to the sinks
+  (`PerspectiveRetentionDeclaration`, `PerspectiveRegistrationInfo`, the coordinator's
+  `clr_type_name` parameters) at the cost of a public API change that reaches generated code.
 
 ## Checklist when you touch a naming site
 

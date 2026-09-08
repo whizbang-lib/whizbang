@@ -68,7 +68,7 @@ public class EFCorePerspectiveAssociationGenerator : IIncrementalGenerator {
     // Look for all perspective interfaces: IPerspectiveBase, IPerspectiveFor, IPerspectiveWithActionsFor
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           return (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<TModel, TEvent", StringComparison.Ordinal) ||
                   originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent", StringComparison.Ordinal) ||
                   originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel, TEvent", StringComparison.Ordinal))

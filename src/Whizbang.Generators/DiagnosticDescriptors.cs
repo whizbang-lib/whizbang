@@ -872,6 +872,80 @@ public static class DiagnosticDescriptors {
   );
 
   // ==========================================================================
+  // WHIZ160-WHIZ163: Type-name handling (issue #698)
+  // Type-name strings are keys all over the framework (clr_type_name, event_type, perspective
+  // names, registry JSON). There is exactly one correct rendering per form, produced by the
+  // shared helpers (TypeNameUtilities in generators, TypeNameFormatter and
+  // EventTypeMatchingHelper at runtime). These rules catch the residue the banned-API layer and
+  // the typed keys cannot: a name composed, dissected, compared or assigned by hand. Heuristic by
+  // nature, so they ship as warnings.
+  // ==========================================================================
+
+  /// <summary>
+  /// WHIZ160: Warning — a type name is composed by string concatenation or interpolation with a
+  /// CLR or wire separator ('+' between nested types, ", " before an assembly name).
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz160</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/TypeNameHandlingAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor TypeNameComposedByHand = new(
+      id: "WHIZ160",
+      title: "Type Name Composed By Hand",
+      messageFormat: "This expression composes a type name with the separator '{0}'. Render the form you need with TypeNameFormatter (runtime) or TypeNameUtilities (generators) instead; a local rendering drifts from the key the other side looks up.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Nested types render with '+' in the CLR form and '.' in display strings; the wire form appends ', AssemblyName'. Composing these by hand has silently broken row retention, routing and registry lookups. Use the shared helpers so both sides agree."
+  );
+
+  /// <summary>
+  /// WHIZ161: Warning — a type name is dissected by hand (Split on ',', IndexOf('+'), Substring,
+  /// Replace("global::", ...)) instead of parsed through the shared helpers.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz161</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/TypeNameHandlingAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor TypeNameDissectedByHand = new(
+      id: "WHIZ161",
+      title: "Type Name Dissected By Hand",
+      messageFormat: "'{0}' is applied to a type name. Parse it with TypeNameFormatter.Parse / GetSimpleName / GetNamespace (runtime) or TypeNameUtilities (generators) instead; hand parsing misses version decoration, nested '+' and generic arity.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A persisted type name may carry version, culture and public-key decoration, nested-type '+' separators and generic arity. Splitting or trimming it locally reproduces one of those cases and misses the rest."
+  );
+
+  /// <summary>
+  /// WHIZ162: Warning — two type-name values are compared with ==, !=, or string.Equals instead of
+  /// EventTypeMatchingHelper, so a version-decorated name never matches its bare form.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz162</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/TypeNameHandlingAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor TypeNamesComparedWithoutTheMatchingHelper = new(
+      id: "WHIZ162",
+      title: "Type Names Compared Without The Matching Helper",
+      messageFormat: "'{0}' and '{1}' are compared as plain strings. A persisted type name may be version-decorated; normalize both sides with EventTypeMatchingHelper.NormalizeTypeName (or resolve through TryResolveType) so the bare and decorated forms agree.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "The wire form of a type name is sometimes carried with assembly version decoration and sometimes bare. Ordinal equality between a persisted name and a registered one therefore fails on a build change; the matching helper normalizes both sides."
+  );
+
+  /// <summary>
+  /// WHIZ163: Warning — a type-name key (a member or parameter named *ClrTypeName*, *TypeName* or
+  /// *EventType*) is assigned from a string built by hand.
+  /// </summary>
+  /// <docs>operations/diagnostics/whiz163</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/Analyzers/TypeNameHandlingAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor TypeNameKeyAssignedFromAHandBuiltString = new(
+      id: "WHIZ163",
+      title: "Type-Name Key Assigned From A Hand-Built String",
+      messageFormat: "'{0}' is a type-name key but is assigned from a string built by hand. Assign a TypeNameFormatter / TypeNameUtilities result (or a typed key) so the key matches what the other side renders.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Members and parameters that carry a type-name key are looked up by the other side of the framework. A value composed locally (an interpolated or concatenated string) is a second rendering that can drift from the helper's."
+  );
+
+  // ==========================================================================
   // WHIZ200: Perspective sync in receptor safety
   // ==========================================================================
 

@@ -55,8 +55,8 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
 
     // Check for [CommandEndpoint<TCommand, TResult>] attribute
     var commandEndpointAttr = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString()
-            .StartsWith(COMMAND_ENDPOINT_ATTRIBUTE_PREFIX, StringComparison.Ordinal) == true);
+        .FirstOrDefault(a => a.AttributeClass is { } attributeClass
+            && TypeNameUtilities.Display(attributeClass).StartsWith(COMMAND_ENDPOINT_ATTRIBUTE_PREFIX, StringComparison.Ordinal));
 
     if (commandEndpointAttr?.AttributeClass is null) {
       return null;
@@ -86,13 +86,13 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
     var mutationClassName = symbol.Name + "Mutation";
 
     return new GraphQLMutationInfo(
-        CommandTypeName: commandType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        CommandTypeName: TypeNameUtilities.FullyQualified(commandType),
         CommandTypeNameShort: commandType.Name,
-        ResultTypeName: resultType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        ResultTypeName: TypeNameUtilities.FullyQualified(resultType),
         ResultTypeNameShort: resultType.Name,
         GraphQLMutationName: graphQLMutationName!,
         RequestTypeName: requestTypeName,
-        Namespace: symbol.ContainingNamespace.ToDisplayString(),
+        Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),
         MutationClassName: mutationClassName
     );
   }
@@ -122,7 +122,7 @@ public sealed class GraphQLMutationTypeGenerator : IIncrementalGenerator {
       return null;
     }
 
-    return typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    return TypeNameUtilities.FullyQualified(typeSymbol);
   }
 
   /// <summary>

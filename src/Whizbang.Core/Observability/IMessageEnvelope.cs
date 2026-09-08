@@ -125,7 +125,7 @@ public interface IMessageEnvelope {
   /// </summary>
   List<ReceptorInvocationRecord> GetOrCreateReceptorInvocations() =>
     throw new System.NotSupportedException(
-      $"Envelope type '{GetType().FullName}' does not support receptor invocation tracking. " +
+      $"Envelope type '{TypeNameFormatter.DisplayName(GetType())}' does not support receptor invocation tracking. " +
       "Use MessageEnvelope<T> or implement IMessageEnvelope.GetOrCreateReceptorInvocations explicitly.");
 
   /// <summary>

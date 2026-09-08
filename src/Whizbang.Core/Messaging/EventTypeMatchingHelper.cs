@@ -9,6 +9,7 @@ namespace Whizbang.Core.Messaging;
 /// Helper for determining if a message type name matches a known event type.
 /// Handles assembly-qualified names with and without version information.
 /// </summary>
+#pragma warning disable RS0030 // the one place the raw type-name sources (Type.FullName, AssemblyQualifiedName, Assembly.FullName) are allowed (issue #698)
 public static class EventTypeMatchingHelper {
   /// <summary>
   /// Returns the INNERMOST payload type name of a wrapped message type, unwrapping
@@ -234,3 +235,4 @@ public static class EventTypeMatchingHelper {
     return lookup.TryGetValue(normalized, out resolved);
   }
 }
+#pragma warning restore RS0030

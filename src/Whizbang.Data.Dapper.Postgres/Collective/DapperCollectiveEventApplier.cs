@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
@@ -75,12 +76,12 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
 
     if (entry.EventType != evt.GetType()) {
       throw new ArgumentException(
-        $"Entry's EventType {entry.EventType.FullName} does not match the supplied event type {evt.GetType().FullName}. Registry lookup or dispatch routing is wrong.",
+        $"Entry's EventType {TypeNameFormatter.DisplayName(entry.EventType)} does not match the supplied event type {TypeNameFormatter.DisplayName(evt.GetType())}. Registry lookup or dispatch routing is wrong.",
         nameof(entry));
     }
     if (entry.ModelType != typeof(TModel)) {
       throw new ArgumentException(
-        $"Entry's ModelType {entry.ModelType.FullName} does not match TModel {typeof(TModel).FullName}. The dispatcher should fan out to DapperCollectiveEventApplier<{entry.ModelType.Name}> instead.",
+        $"Entry's ModelType {TypeNameFormatter.DisplayName(entry.ModelType)} does not match TModel {TypeNameFormatter.DisplayName(typeof(TModel))}. The dispatcher should fan out to DapperCollectiveEventApplier<{entry.ModelType.Name}> instead.",
         nameof(entry));
     }
     if (resolver.ScopeKind != evt.Scope.ScopeKind) {
@@ -96,7 +97,7 @@ public sealed class DapperCollectiveEventApplier<TModel> where TModel : class {
     var query = new DapperCollectiveQuery(siblingTables);
     if (entry.Invoker(handlerInstance, evt, query) is not ICollectiveSpec<TModel> spec) {
       throw new InvalidOperationException(
-        $"Handler {entry.HandlerType.FullName}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance.");
+        $"Handler {TypeNameFormatter.DisplayName(entry.HandlerType)}.{entry.MethodName} returned null or a non-{nameof(ICollectiveSpec<TModel>)}<{typeof(TModel).Name}> instance.");
     }
 
     // Resolve the apply-hook plan (store columns incl. the default updated_at/version stamping, model-field

@@ -281,9 +281,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
       var messageTypeSymbol = found.TypeArguments[0];
       // 2-arg interfaces have a response type; 1-arg are void receptors
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes and EscapeKeywordIdentifiers, which the shared FullyQualifiedWithNullability lacks
       var responseType = argCount == 2
           ? found.TypeArguments[1].ToDisplayString(_fullyQualifiedFormatWithNullability)
           : null;
+#pragma warning restore RS0030
 
       return new ReceptorInfo(
           ClassName: TypeNameHelper.GetFullyQualifiedName(classSymbol),
@@ -393,7 +395,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var stages = new System.Collections.Generic.List<string>();
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() != FIRE_AT_ATTRIBUTE) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, FIRE_AT_ATTRIBUTE)) {
         continue;
       }
 
@@ -435,7 +437,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
+    return $"{TypeNameUtilities.FullyQualified(enumType)}.{enumMember.Name}";
   }
 
   /// <summary>
@@ -449,7 +451,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var syncAttributes = new System.Collections.Generic.List<SyncAttributeInfo>();
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() != AWAIT_SYNC_ATTRIBUTE) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, AWAIT_SYNC_ATTRIBUTE)) {
         continue;
       }
 
@@ -472,7 +474,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var perspectiveType = perspectiveTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var perspectiveType = TypeNameUtilities.FullyQualified(perspectiveTypeSymbol);
 
     // Extract EventTypes from named argument (Type[]?)
     string[]? eventTypes = null;
@@ -481,7 +483,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var eventTypesList = new System.Collections.Generic.List<string>();
       foreach (var typeConstant in eventTypesArg.Value.Values) {
         if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
-          eventTypesList.Add(eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+          eventTypesList.Add(TypeNameUtilities.FullyQualified(eventTypeSymbol));
         }
       }
       if (eventTypesList.Count > 0) {
@@ -640,7 +642,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string DEFAULT_ROUTING_ATTRIBUTE = "Whizbang.Core.Dispatch.DefaultRoutingAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() != DEFAULT_ROUTING_ATTRIBUTE) {
+      if (attribute.AttributeClass is not { } attributeClass || !TypeNameUtilities.IsNamed(attributeClass, DEFAULT_ROUTING_ATTRIBUTE)) {
         continue;
       }
 
@@ -653,7 +655,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      return _resolveEnumValueName(attribute.AttributeClass, modeValue);
+      return _resolveEnumValueName(attributeClass, modeValue);
     }
 
     return null;
@@ -679,7 +681,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    return $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
+    return $"{TypeNameUtilities.FullyQualified(enumType)}.{enumMember.Name}";
   }
 
   /// <summary>
@@ -691,7 +693,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string WHIZBANG_TRACE_ATTRIBUTE = "Whizbang.Core.Tracing.WhizbangTraceAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() == WHIZBANG_TRACE_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, WHIZBANG_TRACE_ATTRIBUTE)) {
         return true;
       }
     }
@@ -761,7 +763,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           or SpecialType.System_Decimal;
 
       if (isDelegate || isBarePrimitive) {
-        return parameter.Name + "|" + type.ToDisplayString();
+        return parameter.Name + "|" + TypeNameUtilities.Display(type);
       }
     }
 
@@ -772,7 +774,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string SUPPRESS_REGISTRATION_ATTRIBUTE = "Whizbang.Core.SuppressReceptorRegistrationAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() == SUPPRESS_REGISTRATION_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, SUPPRESS_REGISTRATION_ATTRIBUTE)) {
         return true;
       }
     }
@@ -785,11 +787,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      var fqName = attribute.AttributeClass?.ToDisplayString();
-      if (fqName == FIRE_DURING_REPLAY_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, FIRE_DURING_REPLAY_ATTRIBUTE)) {
         return true;
       }
-      if (fqName == RECEPTOR_IDEMPOTENT_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, RECEPTOR_IDEMPOTENT_ATTRIBUTE)) {
         // Treat [ReceptorIdempotent] as replay-safe only when AlwaysFire = true.
         foreach (var arg in attribute.NamedArguments) {
           if (arg.Key == "AlwaysFire" && arg.Value.Value is bool b && b) {
@@ -812,8 +813,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     const string RECEPTOR_IDEMPOTENT_ATTRIBUTE = "Whizbang.Core.Messaging.ReceptorIdempotentAttribute";
 
     foreach (var attribute in classSymbol.GetAttributes()) {
-      var fqName = attribute.AttributeClass?.ToDisplayString();
-      if (fqName == RECEPTOR_IDEMPOTENT_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, RECEPTOR_IDEMPOTENT_ATTRIBUTE)) {
         return true;
       }
     }

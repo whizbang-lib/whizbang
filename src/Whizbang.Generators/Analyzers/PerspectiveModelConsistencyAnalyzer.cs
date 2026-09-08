@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -78,11 +79,11 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
     }
 
     // Find all perspective interfaces (IPerspectiveFor and IPerspectiveWithActionsFor)
-    // Use ToDisplayString() (not OriginalDefinition) to get the constructed type name
+    // Use the display form (not OriginalDefinition) to get the constructed type name
     // e.g., "Whizbang.Core.Perspectives.IPerspectiveFor<OrderView, OrderCreated>"
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var name = i.ToDisplayString();
+          var name = TypeNameUtilities.Display(i);
           // Match both IPerspectiveFor<TModel, ...> and IPerspectiveWithActionsFor<TModel, ...>
           return name.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
                  name.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<", StringComparison.Ordinal);
@@ -108,7 +109,7 @@ public class PerspectiveModelConsistencyAnalyzer : DiagnosticAnalyzer {
     // Report error - multiple different model types found
     var modelTypeNames = string.Join(", ", modelTypes
         .Where(t => t is not null)
-        .Select(t => t!.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
+        .Select(t => TypeNameUtilities.MinimallyQualified(t!)));
 
     var diagnostic = Diagnostic.Create(
         InconsistentModelTypes,

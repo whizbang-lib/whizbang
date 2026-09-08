@@ -4,6 +4,7 @@ using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
@@ -495,8 +496,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
       // Use provided envelope type name if available, otherwise get it from runtime type
       // IMPORTANT: The envelope object is already correctly typed (MessageEnvelope<JsonElement>), so we serialize using envelope.GetType()
       //            But for METADATA, we use the provided envelopeType string which preserves the original payload type information
-      var envelopeTypeName = envelopeType ?? envelope.GetType().AssemblyQualifiedName
-        ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+      var envelopeTypeName = envelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
 
       // For serialization, always use the actual runtime type of the envelope object (AOT-safe)
       var envelopeRuntimeType = envelope.GetType();
@@ -774,8 +774,7 @@ public class AzureServiceBusTransport : ITransport, ITransportWithRecovery, IAsy
 
   private ServiceBusMessage _createServiceBusMessage(BulkPublishItem item, TransportDestination destination) {
     var envelope = item.Envelope;
-    var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
-      ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+    var envelopeTypeName = item.EnvelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
 
     var envelopeRuntimeType = envelope.GetType();
 

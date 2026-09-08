@@ -237,7 +237,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var baseType = symbol.BaseType;
     bool inheritsDbContext = false;
     while (baseType != null) {
-      if (baseType.ToDisplayString() == "Microsoft.EntityFrameworkCore.DbContext") {
+      if (TypeNameUtilities.IsNamed(baseType, "Microsoft.EntityFrameworkCore.DbContext")) {
         inheritsDbContext = true;
         break;
       }
@@ -250,7 +250,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Check for [WhizbangDbContext] attribute
     var attribute = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute");
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute"));
 
     if (attribute is null) {
       return null;  // No attribute = not discovered
@@ -267,7 +267,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // No Schema property set, derive from namespace
     // Roslyn renders the global namespace as the literal "<global namespace>", which is never
     // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
-    var namespaceName = symbol.ContainingNamespace.IsGlobalNamespace ? "" : symbol.ContainingNamespace.ToDisplayString();
+    var namespaceName = TypeNameUtilities.NamespaceName(symbol.ContainingNamespace);
     return _deriveSchemaFromNamespace(namespaceName);
   }
 
@@ -332,7 +332,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // - IPerspectiveFor<TModel, TEvent1, TEvent2>
     // ... up to IPerspectiveFor<TModel, TEvent1, ..., TEvent5>
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
-      var originalDef = i.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
       return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
              originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
              originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>" ||
@@ -360,7 +360,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var isSplitMode = _isSplitStorageMode(modelType as INamedTypeSymbol);
 
     return new PerspectiveCandidate(
-        ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
@@ -408,13 +408,13 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       var physicalFieldAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == PHYSICAL_FIELD_ATTRIBUTE);
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, PHYSICAL_FIELD_ATTRIBUTE));
 
       var vectorFieldAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == VECTOR_FIELD_ATTRIBUTE);
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, VECTOR_FIELD_ATTRIBUTE));
 
       var polymorphicDiscriminatorAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE);
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, POLYMORPHIC_DISCRIMINATOR_ATTRIBUTE));
 
       if (physicalFieldAttr is not null) {
         var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
@@ -442,7 +442,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractPhysicalFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract named arguments
     bool isIndexed = false;
@@ -496,7 +496,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractVectorFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract constructor argument (dimensions)
     int? dimensions = null;
@@ -611,7 +611,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     var storageAttr = modelType.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == PERSPECTIVE_STORAGE_ATTRIBUTE);
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, PERSPECTIVE_STORAGE_ATTRIBUTE));
     if (storageAttr is null) {
       return false;
     }
@@ -658,7 +658,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Checks if a type is a System namespace type that is NOT a collections type.
   /// </summary>
   private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace?.ToDisplayString();
+    var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
     return ns?.StartsWith("System", StringComparison.Ordinal) == true &&
            !ns.StartsWith("System.Collections", StringComparison.Ordinal);
   }
@@ -727,7 +727,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Check for [JsonPolymorphic] attribute
     foreach (var attr in type.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() == JSON_POLYMORPHIC_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(attr.AttributeClass, JSON_POLYMORPHIC_ATTRIBUTE)) {
         return true;
       }
     }
@@ -740,10 +740,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// </summary>
   private static bool _isPropertyIgnored(IPropertySymbol property) {
     foreach (var attr in property.GetAttributes()) {
-      var attrName = attr.AttributeClass?.ToDisplayString();
-      if (attrName == "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute" ||
-          attrName == "System.Text.Json.Serialization.JsonIgnoreAttribute" ||
-          attrName == "Newtonsoft.Json.JsonIgnoreAttribute") {
+      if (TypeNameUtilities.IsNamed(attr.AttributeClass, "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute") ||
+          TypeNameUtilities.IsNamed(attr.AttributeClass, "System.Text.Json.Serialization.JsonIgnoreAttribute") ||
+          TypeNameUtilities.IsNamed(attr.AttributeClass, "Newtonsoft.Json.JsonIgnoreAttribute")) {
         return true;
       }
     }
@@ -759,7 +758,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var originalDef = type.ConstructedFrom.ToDisplayString();
+    var originalDef = TypeNameUtilities.Display(type.ConstructedFrom);
 
     // Common collection interfaces and types
     if (originalDef.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
@@ -780,8 +779,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Checks if a type is a system primitive type that won't contain polymorphic properties.
   /// </summary>
   private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace?.ToDisplayString();
-    if (ns == "System") {
+    if (TypeNameUtilities.IsNamed(type.ContainingNamespace, "System")) {
       var name = type.Name;
       return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
              "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";

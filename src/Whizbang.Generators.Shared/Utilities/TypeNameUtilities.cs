@@ -28,6 +28,7 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Utilities for extracting and formatting type names from Roslyn symbols.
 /// Consolidated from multiple generators for consistency and testability.
 /// </summary>
+#pragma warning disable RS0030 // the one place the raw Roslyn display APIs (ToDisplayString, ToDisplayParts, MetadataName) are allowed (issue #698)
 public static class TypeNameUtilities {
   /// <summary>
   /// Gets a simple name for a type, including containing type for nested classes.
@@ -193,6 +194,67 @@ public static class TypeNameUtilities {
     ));
   }
 
+  // ---------------------------------------------------------------------------------------------
+  // The named rendering forms (issue #698). Every type-name string a generator writes is a key on
+  // the other side (clr_type_name, event_type, registry JSON, generated source), and there is
+  // exactly one correct rendering per form. The raw Roslyn display APIs (ToDisplayString,
+  // ToDisplayParts, MetadataName) are banned outside this file so a local rendering cannot drift
+  // from the runtime's TypeNameFormatter again.
+  // ---------------------------------------------------------------------------------------------
+  private static readonly SymbolDisplayFormat _fullyQualifiedWithNullability =
+    SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
+      SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier);
+
+  /// <summary>
+  /// The fully qualified C# form for generated source: <c>global::Ns.Outer.Inner&lt;T&gt;</c>.
+  /// This is code, not a key: nested types use <c>.</c> and generics carry their arguments.
+  /// </summary>
+  public static string FullyQualified(ISymbol symbol) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+  }
+
+  /// <summary>The fully qualified C# form with nullable reference annotations (<c>string?</c>).</summary>
+  public static string FullyQualifiedWithNullability(ITypeSymbol symbol) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.ToDisplayString(_fullyQualifiedWithNullability);
+  }
+
+  /// <summary>The minimally qualified C# form (<c>Inner&lt;T&gt;</c>), for generated source with usings in scope.</summary>
+  public static string MinimallyQualified(ISymbol symbol) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+  }
+
+  /// <summary>
+  /// The display form (<c>Ns.Outer.Inner</c>): diagnostics, messages, and comparisons against a
+  /// known display name (see <see cref="IsNamed"/>). Never a key: nested types render with
+  /// <c>.</c> here and with <c>+</c> in the CLR form (<see cref="BuildClrTypeName"/>).
+  /// </summary>
+  public static string Display(ISymbol symbol) {
+    if (symbol == null) {
+      throw new ArgumentNullException(nameof(symbol));
+    }
+    return symbol.ToDisplayString();
+  }
+
+  /// <summary>Whether the symbol's display form equals a known display name, ordinal.</summary>
+  public static bool IsNamed(ISymbol? symbol, string displayName) =>
+    symbol != null && string.Equals(symbol.ToDisplayString(), displayName, StringComparison.Ordinal);
+
+  /// <summary>
+  /// The namespace as it appears in source, or an empty string for the global namespace (Roslyn
+  /// renders that one as the literal <c>&lt;global namespace&gt;</c>, which is never a namespace).
+  /// </summary>
+  public static string NamespaceName(INamespaceSymbol? ns) =>
+    ns == null || ns.IsGlobalNamespace ? "" : ns.ToDisplayString();
+
   /// <summary>
   /// Splits tuple parts respecting nested tuples and parentheses.
   /// E.g., "A, B, (C, D)" -> ["A", "B", "(C, D)"]
@@ -225,3 +287,4 @@ public static class TypeNameUtilities {
     return [.. parts];
   }
 }
+#pragma warning restore RS0030

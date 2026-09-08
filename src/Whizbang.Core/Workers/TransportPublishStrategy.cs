@@ -659,8 +659,7 @@ public partial class TransportPublishStrategy(
       work.Envelope, typeInfo, Whizbang.Core.Serialization.SerializationOptions.Default);
 
     var envelopeTypeName = work.EnvelopeType
-      ?? runtimeType.AssemblyQualifiedName
-      ?? throw new InvalidOperationException("Envelope type must have an assembly-qualified name.");
+      ?? TypeNameFormatter.AssemblyQualifiedName(runtimeType);
 
     var context = new Whizbang.Core.Offloads.PostSerializeContext(
       Envelope: work.Envelope,

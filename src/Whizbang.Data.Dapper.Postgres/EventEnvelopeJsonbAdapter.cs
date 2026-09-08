@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Dispatch;
 using Whizbang.Core.Lenses;
@@ -117,7 +118,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     _restoreScopeFromJson(jsonb.ScopeJson, hops);
 
     // Deserialize payload (event data) with concrete type - AOT-compatible
-    var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {typeof(TMessage).FullName}. Ensure the type is registered in WhizbangJsonContext.");
+    var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {TypeNameFormatter.DisplayName(typeof(TMessage))}. Ensure the type is registered in WhizbangJsonContext.");
     var payload = JsonSerializer.Deserialize(jsonb.DataJson, payloadTypeInfo)
                   ?? throw new InvalidOperationException("Failed to deserialize event data");
 

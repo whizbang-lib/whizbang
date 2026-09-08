@@ -60,8 +60,8 @@ public static class AutoPopulateRegistry {
   public static IEnumerable<AutoPopulateRegistration> FindRegistrationsByTypeName(string messageTypeName) {
     foreach (var registry in AssemblyRegistry<IAutoPopulateRegistry>.GetOrderedContributions()) {
       foreach (var registration in registry.GetAllRegistrations()) {
-        var fullName = registration.MessageType.FullName;
-        var assemblyQualifiedName = registration.MessageType.AssemblyQualifiedName;
+        var fullName = TypeNameFormatter.TryFormatClrTypeName(registration.MessageType, out var clrTypeName) ? clrTypeName : null;
+        var assemblyQualifiedName = TypeNameFormatter.AssemblyQualifiedNameOrNull(registration.MessageType);
 
         if (fullName == messageTypeName ||
             assemblyQualifiedName == messageTypeName ||

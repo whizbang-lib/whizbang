@@ -56,8 +56,8 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
 
     // Check for [CommandEndpoint<TCommand, TResult>] attribute
     var commandEndpointAttr = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString()
-            .StartsWith(COMMAND_ENDPOINT_ATTRIBUTE_PREFIX, StringComparison.Ordinal) == true);
+        .FirstOrDefault(a => a.AttributeClass is { } attributeClass
+            && TypeNameUtilities.Display(attributeClass).StartsWith(COMMAND_ENDPOINT_ATTRIBUTE_PREFIX, StringComparison.Ordinal));
 
     if (commandEndpointAttr?.AttributeClass is null) {
       return null;
@@ -87,13 +87,13 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
     var endpointClassName = symbol.Name + "Endpoint";
 
     return new RestMutationInfo(
-        CommandTypeName: commandType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        CommandTypeName: TypeNameUtilities.FullyQualified(commandType),
         CommandTypeNameShort: commandType.Name,
-        ResultTypeName: resultType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        ResultTypeName: TypeNameUtilities.FullyQualified(resultType),
         ResultTypeNameShort: resultType.Name,
         RestRoute: restRoute!,
         RequestTypeName: requestTypeName,
-        Namespace: symbol.ContainingNamespace.ToDisplayString(),
+        Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),
         EndpointClassName: endpointClassName
     );
   }
@@ -123,7 +123,7 @@ public sealed class RestMutationEndpointGenerator : IIncrementalGenerator {
       return null;
     }
 
-    return typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    return TypeNameUtilities.FullyQualified(typeSymbol);
   }
 
   /// <summary>

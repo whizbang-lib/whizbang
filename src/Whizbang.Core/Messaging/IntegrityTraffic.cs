@@ -77,5 +77,5 @@ public static class IntegrityTraffic {
     return list;
   }
 
-  private static string _name(Type type) => EventTypeMatchingHelper.NormalizeTypeName(type.AssemblyQualifiedName!);
+  private static string _name(Type type) => EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(type));
 }

@@ -83,7 +83,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
         _reportDiagnostic(context, property, rootType, currentType, parentProperty, "dynamic",
             DiagnosticDescriptors.NonSerializablePropertyDynamic);
       } else if (_isNonSerializableInterface(propType)) {
-        _reportDiagnostic(context, property, rootType, currentType, parentProperty, propType.ToDisplayString(),
+        _reportDiagnostic(context, property, rootType, currentType, parentProperty, TypeNameUtilities.Display(propType),
             DiagnosticDescriptors.NonSerializablePropertyInterface);
       }
 
@@ -150,7 +150,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
   private static bool _isMessageType(INamedTypeSymbol typeSymbol) {
     // Check for ICommand interface
     foreach (var iface in typeSymbol.AllInterfaces) {
-      var interfaceName = iface.ToDisplayString();
+      var interfaceName = TypeNameUtilities.Display(iface);
       if (interfaceName == I_COMMAND || interfaceName == I_EVENT) {
         return true;
       }
@@ -158,7 +158,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
 
     // Check for [WhizbangSerializable] attribute
     foreach (var attr in typeSymbol.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() == WHIZBANG_SERIALIZABLE) {
+      if (TypeNameUtilities.IsNamed(attr.AttributeClass, WHIZBANG_SERIALIZABLE)) {
         return true;
       }
     }
@@ -243,7 +243,7 @@ public class SerializablePropertyAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check if it's a System.* or Microsoft.* type
-    var containingNamespace = typeSymbol.ContainingNamespace?.ToDisplayString() ?? "";
+    var containingNamespace = typeSymbol.ContainingNamespace is null ? "" : TypeNameUtilities.Display(typeSymbol.ContainingNamespace);
     if (containingNamespace.StartsWith("System", StringComparison.Ordinal) ||
         containingNamespace.StartsWith("Microsoft", StringComparison.Ordinal)) {
       return true;

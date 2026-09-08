@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 
@@ -191,7 +192,7 @@ internal sealed class AsbReceiveDecisionMaker {
         Envelope = envelope,
         EnvelopeTypeName = envelopeTypeName,
         Reason = AsbReceiveReason.NO_LOCAL_CONSUMER,
-        Description = $"No local receptor or perspective consumes payload type '{payloadType.FullName}' — broker ack + drop",
+        Description = $"No local receptor or perspective consumes payload type '{TypeNameFormatter.DisplayName(payloadType)}' — broker ack + drop",
       };
     }
 
@@ -261,7 +262,7 @@ internal sealed class AsbReceiveDecisionMaker {
       Action = AsbReceiveAction.InvokeRawReceptor,
       EnvelopeTypeName = envelopeTypeName,
       Reason = AsbReceiveReason.RAW_RECEPTOR_MATCH,
-      Description = $"Inner type '{innerTypeName}' matched IRawReceptor '{receptor.GetType().FullName}'",
+      Description = $"Inner type '{innerTypeName}' matched IRawReceptor '{TypeNameFormatter.DisplayName(receptor.GetType())}'",
       RawReceptor = receptor,
       RawPayload = payload,
     };

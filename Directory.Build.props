@@ -150,6 +150,8 @@
     <!-- Only include BannedSymbols.txt for production code projects -->
     <!-- Exclude: test projects, benchmark projects (need RequiresDynamicCode/RequiresUnreferencedCode for test infrastructure) -->
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests')) and !$(MSBuildProjectName.Contains('Benchmarks'))" />
+    <!-- Generator projects also ban the raw Roslyn display APIs outside TypeNameUtilities (issue #698) -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.Generators.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests')) and $(MSBuildProjectName.Contains('Generators'))" />
   </ItemGroup>
 
   <!-- Roslynator Analyzers - Code quality and style enforcement -->

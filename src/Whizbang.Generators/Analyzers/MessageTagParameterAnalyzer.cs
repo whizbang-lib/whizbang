@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -52,7 +53,7 @@ public class MessageTagParameterAnalyzer : DiagnosticAnalyzer {
     }
 
     // Skip the MessageTagAttribute base class itself
-    if (typeSymbol.ToDisplayString() == MESSAGE_TAG_ATTRIBUTE_NAME) {
+    if (TypeNameUtilities.IsNamed(typeSymbol, MESSAGE_TAG_ATTRIBUTE_NAME)) {
       return;
     }
 
@@ -96,7 +97,7 @@ public class MessageTagParameterAnalyzer : DiagnosticAnalyzer {
     var current = typeSymbol.BaseType;
 
     while (current != null) {
-      if (current.ToDisplayString() == MESSAGE_TAG_ATTRIBUTE_NAME) {
+      if (TypeNameUtilities.IsNamed(current, MESSAGE_TAG_ATTRIBUTE_NAME)) {
         return true;
       }
       current = current.BaseType;

@@ -483,7 +483,7 @@ public sealed partial class MaintenanceWorker(
     var guardsByType = new Dictionary<string, Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard>(StringComparer.Ordinal);
     foreach (var guard in guards) {
       foreach (var model in guard.GuardedModels) {
-        if (model.FullName is { } name) {
+        if (TypeNameFormatter.TryFormatClrTypeName(model, out var name)) {
           guardsByType[name] = guard;
         }
       }
@@ -571,9 +571,9 @@ public sealed partial class MaintenanceWorker(
       }
 
       // clr name ↔ table ↔ model type maps, from the registry + the group declarations.
-      var clrNames = models.Select(m => m.FullName).Where(n => n is not null).Cast<string>().ToList();
+      var clrNames = models.Select(m => TypeNameFormatter.TryFormatClrTypeName(m, out var clr) ? clr : null).Where(n => n is not null).Cast<string>().ToList();
       var tableNames = await coordinator.GetPerspectiveTableNamesAsync(clrNames, ct).ConfigureAwait(false);
-      var typeByClr = models.Where(m => m.FullName is not null).ToDictionary(m => m.FullName!, m => m, StringComparer.Ordinal);
+      var typeByClr = models.Where(m => TypeNameFormatter.TryFormatClrTypeName(m, out _)).ToDictionary(m => TypeNameFormatter.FormatClrTypeName(m), m => m, StringComparer.Ordinal);
       var typeByTable = new Dictionary<string, Type>(StringComparer.Ordinal);
       var tableByType = new Dictionary<Type, string>();
       foreach (var entry in tableNames) {
@@ -614,7 +614,7 @@ public sealed partial class MaintenanceWorker(
         }
         var rowIds = group.Select(g => g.RowId).ToList();
 
-        if (guardByType.TryGetValue(group.Key, out var guard) && group.Key.FullName is { } guardedClr) {
+        if (guardByType.TryGetValue(group.Key, out var guard) && TypeNameFormatter.TryFormatClrTypeName(group.Key, out var guardedClr)) {
           // Cascaded rows of a guarded perspective pass through the same guard as sweep-selected
           // ones — a resource-referencing row cannot slip out through the cascade path.
           var targets = await coordinator.GetPerspectiveRowsByIdsAsync(guardedClr, table, rowIds, ct).ConfigureAwait(false);

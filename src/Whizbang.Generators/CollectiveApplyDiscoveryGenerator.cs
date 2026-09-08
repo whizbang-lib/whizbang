@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -64,7 +65,7 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
 
     // Find [CollectiveApplyFor] by FQN.
     var attr = methodSymbol.GetAttributes()
-      .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == ATTRIBUTE_FQN);
+      .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, ATTRIBUTE_FQN));
     if (attr is null) {
       return null;
     }
@@ -75,7 +76,7 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
     if (methodSymbol.ReturnType is not INamedTypeSymbol returnType ||
         !returnType.IsGenericType ||
         returnType.OriginalDefinition.Name != SPEC_TYPE_NAME ||
-        returnType.OriginalDefinition.ContainingNamespace?.ToDisplayString() != SPEC_NAMESPACE) {
+        !TypeNameUtilities.IsNamed(returnType.OriginalDefinition.ContainingNamespace, SPEC_NAMESPACE)) {
       return null;
     }
 
@@ -83,7 +84,7 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
     var modelType = returnType.TypeArguments[0];
-    var modelFqn = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var modelFqn = TypeNameUtilities.FullyQualified(modelType);
 
     // First parameter implements ICollectiveEvent; an optional second parameter is the
     // ICollectiveQuery context (handlers that scope by a sibling perspective take it; others omit it).
@@ -92,23 +93,23 @@ public class CollectiveApplyDiscoveryGenerator : IIncrementalGenerator {
     }
     var eventType = methodSymbol.Parameters[0].Type;
     var implementsCollectiveEvent = eventType.AllInterfaces
-      .Any(i => i.ToDisplayString() == COLLECTIVE_EVENT_FQN);
+      .Any(i => TypeNameUtilities.IsNamed(i, COLLECTIVE_EVENT_FQN));
     if (!implementsCollectiveEvent) {
       return null;
     }
-    var eventFqn = eventType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var eventFqn = TypeNameUtilities.FullyQualified(eventType);
 
     var takesQuery = methodSymbol.Parameters.Length == 2;
     if (takesQuery) {
       var queryParam = methodSymbol.Parameters[1].Type;
-      var isCollectiveQuery = queryParam.ToDisplayString() == COLLECTIVE_QUERY_FQN
-        || queryParam.AllInterfaces.Any(i => i.ToDisplayString() == COLLECTIVE_QUERY_FQN);
+      var isCollectiveQuery = TypeNameUtilities.IsNamed(queryParam, COLLECTIVE_QUERY_FQN)
+        || queryParam.AllInterfaces.Any(i => TypeNameUtilities.IsNamed(i, COLLECTIVE_QUERY_FQN));
       if (!isCollectiveQuery) {
         return null;
       }
     }
 
-    var handlerFqn = methodSymbol.ContainingType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var handlerFqn = TypeNameUtilities.FullyQualified(methodSymbol.ContainingType);
 
     // Attribute named-argument enums come through as int (the underlying value).
     var scopeHandling = "Framework";

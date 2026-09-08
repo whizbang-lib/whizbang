@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using RabbitMQ.Client.Exceptions;
+using Whizbang.Core;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Transports;
@@ -261,8 +262,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
 
       // Get envelope type name - prefer provided envelopeType to preserve correct generic type
       // (envelope.GetType() may be MessageEnvelope<object> when loaded from outbox)
-      var envelopeTypeName = envelopeType ?? envelope.GetType().AssemblyQualifiedName
-        ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+      var envelopeTypeName = envelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
 
       var envelopeRuntimeType = envelope.GetType();
 
@@ -444,8 +444,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
   ) {
     var routingKey = item.RoutingKey ?? destination.RoutingKey ?? "#";
     var envelope = item.Envelope;
-    var envelopeTypeName = item.EnvelopeType ?? envelope.GetType().AssemblyQualifiedName
-      ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+    var envelopeTypeName = item.EnvelopeType ?? TypeNameFormatter.AssemblyQualifiedName(envelope.GetType());
     var envelopeRuntimeType = envelope.GetType();
 
     // Honor per-item pre-serialized hint when present (avoids double-serialize
@@ -1368,7 +1367,7 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     }
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var typeInfoTypeName = typeInfo.Type.FullName;
+      var typeInfoTypeName = TypeNameFormatter.DisplayName(typeInfo.Type);
       _logger.LogDebug(
         "DIAGNOSTIC [RabbitMQ]: Deserializing envelope. EnvelopeTypeName={EnvelopeTypeName}, TypeInfo={TypeInfoType}",
         envelopeTypeName,
@@ -1383,8 +1382,8 @@ public class RabbitMQTransport : ITransport, ITransportWithRecovery, IAsyncDispo
     }
 
     if (_logger?.IsEnabled(LogLevel.Debug) == true) {
-      var envelopeType = envelope.GetType().FullName;
-      var payloadType = envelope.Payload?.GetType().FullName ?? "null";
+      var envelopeType = TypeNameFormatter.DisplayName(envelope.GetType());
+      var payloadType = envelope.Payload is { } envelopePayload ? TypeNameFormatter.DisplayName(envelopePayload.GetType()) : "null";
       var messageId = envelope.MessageId.Value;
       _logger.LogDebug(
         "DIAGNOSTIC [RabbitMQ]: Deserialized envelope. EnvelopeType={EnvelopeType}, PayloadType={PayloadType}, MessageId={MessageId}",

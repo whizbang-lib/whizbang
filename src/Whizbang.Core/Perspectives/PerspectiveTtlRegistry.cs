@@ -72,7 +72,7 @@ public static class PerspectiveTtlRegistry {
       return -1;
     }
     var overrides = _runtimeOverrides;
-    if (overrides is not null && modelType.FullName is { } fullName
+    if (overrides is not null && TypeNameFormatter.TryFormatClrTypeName(modelType, out var fullName)
         && overrides.TryGetValue(fullName, out var overridden)) {
       return overridden ?? -1;
     }

@@ -28,7 +28,7 @@ public sealed class RawReceptorRegistry : IRawReceptorRegistry {
       if (byName.TryGetValue(normalized, out var existing)) {
         throw new InvalidOperationException(
           $"Multiple IRawReceptor implementations registered for type name '{normalized}': " +
-          $"'{existing.GetType().FullName}' and '{receptor.GetType().FullName}'. At most one raw receptor per type is allowed.");
+          $"'{TypeNameFormatter.DisplayName(existing.GetType())}' and '{TypeNameFormatter.DisplayName(receptor.GetType())}'. At most one raw receptor per type is allowed.");
       }
       byName[normalized] = receptor;
     }

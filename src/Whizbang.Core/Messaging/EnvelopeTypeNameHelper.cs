@@ -8,6 +8,18 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 public static class EnvelopeTypeNameHelper {
   /// <summary>
+  /// The one rendering of an envelope type name (issue #698): the generic
+  /// <c>MessageEnvelope`1</c> closed over the payload's assembly-qualified name, qualified by the
+  /// framework assembly. Every producer of an <c>EnvelopeType</c> key goes through here so the
+  /// receiver's <see cref="ExtractInnerTypeName"/> reads back exactly what was written.
+  /// </summary>
+  /// <param name="innerTypeName">The payload's assembly-qualified type name.</param>
+  public static string Format(string innerTypeName) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(innerTypeName);
+    return "Whizbang.Core.Observability.MessageEnvelope`1[[" + innerTypeName + "]], Whizbang.Core";
+  }
+
+  /// <summary>
   /// Extracts the inner generic type argument from an envelope type name.
   /// </summary>
   /// <example>

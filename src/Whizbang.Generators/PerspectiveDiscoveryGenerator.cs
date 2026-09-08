@@ -80,7 +80,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     // Skip marker base interfaces (have only 1 type argument)
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           return (originalDef.Contains("IPerspectiveFor<") || originalDef.Contains("IPerspectiveWithActionsFor<"))
                  && i.TypeArguments.Length > 1;
         })
@@ -94,7 +94,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     var modelType = perspectiveInterfaces[0].TypeArguments[0];
     var streamKeyPropertyName = _findStreamIdProperty(modelType);
 
-    var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var className = TypeNameUtilities.FullyQualified(classSymbol);
 
     // Compute nested-aware simple name
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
@@ -107,13 +107,13 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
       // Use FullyQualifiedFormat for CODE GENERATION (includes global:: prefix)
       var typeArguments = perspectiveInterface.TypeArguments
-          .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+          .Select(t => TypeNameUtilities.FullyQualified(t))
           .ToArray();
 
       // Extract event types (all except TModel at index 0) for validation and diagnostics
       var eventTypeSymbols = perspectiveInterface.TypeArguments.Skip(1).ToArray();
       var eventTypes = eventTypeSymbols
-          .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+          .Select(t => TypeNameUtilities.FullyQualified(t))
           .ToArray();
 
       // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
@@ -126,7 +126,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       var (validationErrors, eventStreamIds) = _validateAndExtractEventInfo(eventTypeSymbols);
 
       // Detect if this interface is IPerspectiveWithActionsFor (returns ApplyResult<TModel>)
-      var isWithActions = perspectiveInterface.OriginalDefinition.ToDisplayString()
+      var isWithActions = TypeNameUtilities.Display(perspectiveInterface.OriginalDefinition)
           .Contains("IPerspectiveWithActionsFor");
 
       return new PerspectiveInfo(
@@ -179,7 +179,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         var streamKeyProp = _extractStreamIdProperty(eventTypeSymbol);
         if (streamKeyProp != null) {
           eventStreamIds.Add(new EventStreamIdInfo(
-              EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+              EventTypeName: TypeNameUtilities.FullyQualified(eventTypeSymbol),
               StreamIdPropertyName: streamKeyProp
           ));
         }
@@ -203,18 +203,18 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     if (typeToValidate is not INamedTypeSymbol namedType) {
-      var typeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var typeName = TypeNameUtilities.FullyQualified(typeToValidate);
       return new EventValidationError(TypeNameUtilities.GetSimpleName(typeName), StreamIdErrorType.MissingStreamId);
     }
 
     // Get all properties with [StreamId] from the type hierarchy
     var streamKeyProperties = namedType.GetAllProperties()
         .Where(p => p.GetAttributes().Any(a =>
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE))
+            a.AttributeClass is not null && TypeNameUtilities.FullyQualified(a.AttributeClass) == StandardInterfaceNames.STREAM_ID_ATTRIBUTE))
         .Select(p => p.Name)
         .ToList();
 
-    var eventTypeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var eventTypeName = TypeNameUtilities.FullyQualified(typeToValidate);
     var simpleEventName = TypeNameUtilities.GetSimpleName(eventTypeName);
 
     if (streamKeyProperties.Count == 0) {

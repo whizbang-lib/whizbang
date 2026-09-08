@@ -4,6 +4,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -47,7 +48,7 @@ public class GuidUsageAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var containingType = methodSymbol.ContainingType?.ToDisplayString();
+    var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : null;
 
     // Check for Guid.NewGuid()
     if (containingType == "System.Guid" && methodName == "NewGuid") {

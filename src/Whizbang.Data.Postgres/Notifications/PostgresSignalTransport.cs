@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
@@ -91,12 +92,12 @@ public sealed partial class PostgresSignalTransport(
       // Routing maps are built in StartAsync — this publish beat the hosted start (or the bus was
       // never started at all). Say THAT, not "not in the registry": the misleading version of
       // this message hid a fleet-wide dead doorbell route for weeks (issue #505).
-      LogPublishBeforeStart(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name);
+      LogPublishBeforeStart(_logger, TypeNameFormatter.DisplayName(typeof(TSignal)));
       return;
     }
     if (!_typeToWireName.TryGetValue(typeof(TSignal), out var wireName)) {
       // Genuinely not in the registry — cannot route on the wire (the type must be a discoverable ISignal).
-      LogUnregisteredSignal(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name);
+      LogUnregisteredSignal(_logger, TypeNameFormatter.DisplayName(typeof(TSignal)));
       return;
     }
 

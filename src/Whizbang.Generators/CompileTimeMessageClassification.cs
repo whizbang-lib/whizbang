@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -27,10 +28,7 @@ internal static class CompileTimeMessageClassification {
   /// conventions (OwnDomains patterns, broker routing keys). Empty for global-namespace types.
   /// </summary>
   internal static string ContractNamespaceOf(ITypeSymbol messageType) {
-    var ns = messageType.ContainingNamespace;
-    return ns is null || ns.IsGlobalNamespace
-      ? string.Empty
-      : ns.ToDisplayString().ToLowerInvariant();
+    return TypeNameUtilities.NamespaceName(messageType.ContainingNamespace).ToLowerInvariant();
   }
 
   /// <summary>
@@ -41,7 +39,7 @@ internal static class CompileTimeMessageClassification {
   internal static string DetectMessageKind(ITypeSymbol messageType) {
     // Priority 1: [MessageKind] attribute (explicit override)
     foreach (var attr in messageType.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() != MESSAGE_KIND_ATTRIBUTE
+      if (!TypeNameUtilities.IsNamed(attr.AttributeClass, MESSAGE_KIND_ATTRIBUTE)
           || attr.ConstructorArguments.Length == 0) {
         continue;
       }
@@ -57,9 +55,7 @@ internal static class CompileTimeMessageClassification {
 
     // Priority 2: framework system namespace subtree (outranks interfaces — framework
     // system commands implement ICommand yet are broadcast/run-control traffic)
-    var ns = messageType.ContainingNamespace is { IsGlobalNamespace: false } containing
-      ? containing.ToDisplayString()
-      : string.Empty;
+    var ns = TypeNameUtilities.NamespaceName(messageType.ContainingNamespace);
     if (ns == FRAMEWORK_SYSTEM_NAMESPACE
         || ns.StartsWith(FRAMEWORK_SYSTEM_NAMESPACE + ".", System.StringComparison.Ordinal)) {
       return "System";
@@ -67,7 +63,7 @@ internal static class CompileTimeMessageClassification {
 
     // Priority 3: marker interfaces
     foreach (var iface in messageType.AllInterfaces) {
-      var display = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var display = TypeNameUtilities.FullyQualified(iface);
       if (display == ICOMMAND_INTERFACE) {
         return "Command";
       }
@@ -117,7 +113,7 @@ internal static class CompileTimeMessageClassification {
   internal static ImmutableArray<string> FireAtStagesOf(INamedTypeSymbol receptorClass) {
     var stages = ImmutableArray.CreateBuilder<string>();
     foreach (var attr in receptorClass.GetAttributes()) {
-      if (attr.AttributeClass?.ToDisplayString() != FIREAT_ATTRIBUTE) {
+      if (!TypeNameUtilities.IsNamed(attr.AttributeClass, FIREAT_ATTRIBUTE)) {
         continue;
       }
       if (attr.ConstructorArguments.Length == 0) {
