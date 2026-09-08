@@ -17,6 +17,13 @@ namespace Whizbang.Core.Tests.Workers;
 /// Verifies that the worker uses the strategy to report perspective completions and failures.
 /// </summary>
 public class PerspectiveWorkerStrategyTests {
+  /// <summary>Upper bound on how long a cancelled worker body may take to unwind.</summary>
+  /// <remarks>
+  /// Not a pace assertion: a healthy worker's <c>ExecuteTask</c> settles as soon as the token
+  /// trips. The bound only stops a worker that never observes cancellation from hanging the suite.
+  /// </remarks>
+  private static readonly TimeSpan _bodyStopTimeout = TimeSpan.FromSeconds(30);
+
   // DELETED (Category 1): PerspectiveWorker_WithBatchedStrategy_CollectsThenReportsOnNextCycle_Async
   // The legacy assertion (completions reported via the coordinator poll request parameters) doesn't apply
   // post commit C — completions now flow through IPerspectiveCompletionChannel, not the SQL request.
@@ -65,18 +72,20 @@ public class PerspectiveWorkerStrategyTests {
 
     // Act - Run worker and wait for the instant strategy to report completion
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    // Await the worker BODY. StartAsync's task is NOT the body -- .NET 10 hands back
+    // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it settled nothing and
+    // the assertions below read state the worker's finally blocks had not necessarily written.
+    // SuppressThrowing because a body leaving through a cancellation catch settles
+    // RanToCompletion OR Canceled depending on thread-pool timing, and either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Strategy should have reported immediately, nothing pending
     await Assert.That(strategy.GetPendingCompletions()).IsEmpty()
@@ -141,21 +150,19 @@ public class PerspectiveWorkerStrategyTests {
 
       // Act - Run worker and wait for the failure to propagate through the strategy
       using var cts = new CancellationTokenSource();
-      var workerTask = worker.StartAsync(cts.Token);
+      await worker.StartAsync(cts.Token);
       foreach (var __w in coordinator.PerspectiveWorkToReturn) {
         await harness.EnqueueWorkAsync(__w, cts.Token);
       }
       await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(5));
-      cts.Cancel();
+      await cts.CancelAsync();
 
-      try {
-        await workerTask;
-      } catch (OperationCanceledException) {
-        // Expected during shutdown
-      } catch (InvalidOperationException) {
-        // Expected - the test runner throws InvalidOperationException("Test exception")
-        // This is the exception we're testing gets reported via the failure strategy
-      }
+      // Await the worker BODY, not StartAsync's task -- see the first test in this file.
+      // SuppressThrowing also observes the InvalidOperationException("Test exception") the
+      // runner raises on purpose: that fault is the subject of the assertion below, not a
+      // failure of this await, and observing it here is what keeps it off the finalizer.
+      await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
       // Assert - Strategy should have reported failure immediately
       await Assert.That(coordinator.ReportFailureCallCount).IsGreaterThanOrEqualTo(1)
@@ -211,7 +218,7 @@ public class PerspectiveWorkerStrategyTests {
 
     // Act - Run worker and wait for completion to be reported
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
@@ -219,12 +226,10 @@ public class PerspectiveWorkerStrategyTests {
     // Wait for completion to be reported (deterministic, no timers!)
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
 
-    cts.Cancel();
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Registry should have been called with CLR format name and found a runner
     await Assert.That(registry.LastLookedUpName).IsEqualTo("TestNamespace.ActiveAccount+Projection")
@@ -279,7 +284,7 @@ public class PerspectiveWorkerStrategyTests {
 
     // Act - Run worker and wait for registry lookup to occur
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
@@ -287,12 +292,10 @@ public class PerspectiveWorkerStrategyTests {
     // Wait for registry to signal that lookup occurred (deterministic, no timers!)
     await registry.WaitForLookupAsync(timeout: TimeSpan.FromSeconds(5));
 
-    cts.Cancel();
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Registry lookup failed because name doesn't match CLR format
     await Assert.That(registry.LastLookedUpName).IsEqualTo("Projection")
@@ -346,7 +349,7 @@ public class PerspectiveWorkerStrategyTests {
 
     // Act - Run worker and wait for registry lookup to occur
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
@@ -354,12 +357,10 @@ public class PerspectiveWorkerStrategyTests {
     // Wait for registry to signal that lookup occurred (deterministic, no timers!)
     await registry.WaitForLookupAsync(timeout: TimeSpan.FromSeconds(5));
 
-    cts.Cancel();
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await cts.CancelAsync();
+    // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.
+    await worker.ExecuteTask!.WaitAsync(_bodyStopTimeout)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Registry should handle multiple '+' nesting levels correctly
     await Assert.That(registry.LastLookedUpName).IsEqualTo("TestNamespace.Sessions+Active+Projection")

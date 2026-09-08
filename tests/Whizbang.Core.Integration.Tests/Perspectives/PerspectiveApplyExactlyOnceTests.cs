@@ -107,7 +107,8 @@ public class PerspectiveApplyExactlyOnceTests {
     // Act — drive the worker.
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore);
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
 
     // First wait on the DISPATCH itself. Waiting only on a cycle count was racy: the coordinator
@@ -120,8 +121,7 @@ public class PerspectiveApplyExactlyOnceTests {
     // that if the guard is broken and BOTH paths fire, the second invocation is recorded before we
     // assert. Without this the test could pass vacuously by asserting too early.
     await coordinator.WaitForCyclesAsync(minCycles: 2, timeout: TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopWorkerAsync(worker, cts);
 
     // Assert — at most ONE invocation recorded for (streamId, perspectiveName) across all
     // runner paths. If the guard at PerspectiveWorker.cs:566 fails, both RunWithEventsAsync
@@ -208,11 +208,11 @@ public class PerspectiveApplyExactlyOnceTests {
     // not on a claim-cycle count that races the async drain.
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore);
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.TerminalProcessed.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopWorkerAsync(worker, cts);
 
     // Assert — exactly ONE Apply dispatch per (streamId, eventId) despite the upstream duplicate.
     var applyDispatchesForEvent = runner.Invocations
@@ -289,11 +289,11 @@ public class PerspectiveApplyExactlyOnceTests {
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createWorker(coordinator, registry, eventStore);
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.TerminalProcessed.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopWorkerAsync(worker, cts);
 
     foreach (var (eventId, multiplicity) in new[] { (eventIdA, 1), (eventIdB, 2), (eventIdC, 3) }) {
       var count = runner.Invocations.Count(i =>
@@ -368,7 +368,8 @@ public class PerspectiveApplyExactlyOnceTests {
         gateParked.TrySetResult();
       }
     };
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
 
     try {
       // Consumer A picks up the first signal, enters the runner, and BLOCKS before cooldown is marked
@@ -395,8 +396,7 @@ public class PerspectiveApplyExactlyOnceTests {
     // the apply). B then acquires, sees the event cooled, and skips. Waiting for A's apply to return
     // guarantees the cooldown mark (its next, synchronous step) happens before we tear down.
     await runner.FirstReturned.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopWorkerAsync(worker, cts);
 
     await Assert.That(runner.Entries).IsEqualTo(1).Because(
       "with the affinity gate the event is applied exactly once across both drain consumers");
@@ -477,7 +477,8 @@ public class PerspectiveApplyExactlyOnceTests {
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Synchronise on the ASSERTED outcome, not on a claim-cycle proxy. _cycleCount increments at
     // the START of ClaimWorkAsync, while the dispatch happens later on the async drain path — so
@@ -487,8 +488,7 @@ public class PerspectiveApplyExactlyOnceTests {
     // ...then let a FURTHER cycle run, so "exactly once" is proven against a coordinator that has
     // had another opportunity to hand the same work out again, rather than merely not-yet-observed.
     await coordinator.WaitForCyclesAsync(minCycles: 3, timeout: TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopWorkerAsync(worker, cts);
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
       .Because("The collective event must be dispatched through ICollectiveDispatcher exactly once.");
@@ -546,14 +546,14 @@ public class PerspectiveApplyExactlyOnceTests {
 
     using var cts = new CancellationTokenSource();
     var (worker, harness) = _createCollectiveWorker(coordinator, registry, eventStore, dispatcher);
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Deterministic wait on the actual dispatch — the drain channel processes the claimed stream
     // asynchronously, so cycle counting would race the drain. Times out (and fails) if the gap-#6
     // fix doesn't surface the __collective__ sink through the drain expansion.
     await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopWorkerAsync(worker, cts);
 
     await Assert.That(dispatcher.Calls.Count).IsEqualTo(1)
       .Because("A collective event claimed via the drain path (PerspectiveStreamIds) must be dispatched "
@@ -983,5 +983,23 @@ public class PerspectiveApplyExactlyOnceTests {
       recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
     return (worker, harness);
+  }
+
+  /// <summary>
+  /// Cancels <paramref name="cts"/> and then waits for the worker's BODY to finish.
+  /// </summary>
+  /// <remarks>
+  /// What <c>StartAsync</c> returns is NOT the worker body: under .NET 10 a <c>BackgroundService</c>
+  /// hands back <c>Task.CompletedTask</c> as soon as <c>ExecuteAsync</c> is queued to the thread
+  /// pool, so awaiting it is not a "the worker has stopped" barrier — it completes instantly and the
+  /// assertions after it can read state the worker's <c>finally</c> blocks have not settled yet.
+  /// <c>ExecuteTask</c> is the body. SuppressThrowing because a body that exits through a
+  /// cancellation catch settles RanToCompletion or Canceled depending on thread-pool timing, and
+  /// either is a clean stop.
+  /// </remarks>
+  private static async Task _stopWorkerAsync(PerspectiveWorker worker, CancellationTokenSource cts) {
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
   }
 }

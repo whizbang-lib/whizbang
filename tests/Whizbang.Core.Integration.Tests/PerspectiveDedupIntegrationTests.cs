@@ -56,12 +56,12 @@ public class PerspectiveDedupIntegrationTests {
 
     // Act — run for 5+ cycles to give ample opportunity for duplicate processing
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(5, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN ASSERTION: Runner MUST be called exactly once for this WorkId
     await Assert.That(runner.CallCount).IsEqualTo(1)
@@ -99,14 +99,14 @@ public class PerspectiveDedupIntegrationTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Generous deadlines — completes in <1s locally, but CI parallel load can
     // slip the 100-call drain past a tight budget.
     await runner.WaitForCallCountAsync(100, TimeSpan.FromSeconds(30));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(30));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN ASSERTION: Each of the 100 work items processed exactly once
     await Assert.That(runner.CallCount).IsEqualTo(100)
@@ -140,12 +140,12 @@ public class PerspectiveDedupIntegrationTests {
 
     // Act — run 3 cycles (cycle 1 processes, cycles 2-3 should dedup even though DB hasn't acked)
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: InFlight guard must block even before ActivateRetention
     await Assert.That(runner.CallCount).IsEqualTo(1)
@@ -179,7 +179,8 @@ public class PerspectiveDedupIntegrationTests {
 
     // Act — cycle 1 processes, cycle 2 sends completions
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
 
@@ -195,8 +196,7 @@ public class PerspectiveDedupIntegrationTests {
     // advances, so "5 cycles have elapsed" does not imply "the entry was evicted and reapplied". Under
     // full-suite load that gap made this racy — wait on the exact condition we assert.
     await runner.WaitForCallCountAsync(2, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: After retention expiry, the work MUST be reprocessable
     await Assert.That(runner.CallCount).IsGreaterThanOrEqualTo(2)
@@ -225,7 +225,8 @@ public class PerspectiveDedupIntegrationTests {
 
     // Phase 1: Process + InFlight
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
 
@@ -242,8 +243,7 @@ public class PerspectiveDedupIntegrationTests {
     fakeTime.Advance(TimeSpan.FromMinutes(6));
     await observer.WaitForEvictionAsync(TimeSpan.FromSeconds(10));
 
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: Every observer hook must fire at least once during the lifecycle
     await Assert.That(observer.InFlightCount).IsGreaterThanOrEqualTo(1)
@@ -279,11 +279,11 @@ public class PerspectiveDedupIntegrationTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(5, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: All 5 different WorkIds must be processed (no false positives)
     await Assert.That(runner.CallCount).IsEqualTo(5)
@@ -309,12 +309,12 @@ public class PerspectiveDedupIntegrationTests {
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: true);
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     await Assert.That(runner.CallCount).IsEqualTo(1)
       .Because("LOCK-IN: BatchedCompletionStrategy must be protected by dedup cache.");
@@ -337,12 +337,12 @@ public class PerspectiveDedupIntegrationTests {
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), useBatchedStrategy: false);
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     await runner.WaitForAtLeastOneCallAsync(TimeSpan.FromSeconds(5));
     await coordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     await Assert.That(runner.CallCount).IsEqualTo(1)
       .Because("LOCK-IN: InstantCompletionStrategy must be protected by dedup cache.");
@@ -391,14 +391,14 @@ public class PerspectiveDedupIntegrationTests {
       eventTypeProvider: eventTypeProvider);
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(workCoordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(20, TimeSpan.FromSeconds(10));
 
     // Wait for the coordinator WhenAll gate to fire PostLifecycleInline — deterministic signal, no timing bet.
     await postLifecycleSpy.WaitForPostLifecycleInlineCountAsync(1, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: PostLifecycleInline must fire exactly once (not 0, not 20)
     await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(1)
@@ -446,15 +446,15 @@ public class PerspectiveDedupIntegrationTests {
       eventTypeProvider: eventTypeProvider);
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(workCoordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(20, TimeSpan.FromSeconds(10));
     await workCoordinator.WaitForCyclesAsync(4, TimeSpan.FromSeconds(10));
 
     // Deterministic wait for PostLifecycleInline — no Task.Delay timing bet.
     await postLifecycleSpy.WaitForPostLifecycleInlineCountAsync(1, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: PostLifecycleInline fires exactly once on batch 1. Re-delivery batches are deduped.
     await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(1)
@@ -499,14 +499,14 @@ public class PerspectiveDedupIntegrationTests {
       eventTypeProvider: eventTypeProvider);
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(workCoordinator, harness, cts.Token);
     await runner.WaitForCallCountAsync(1, TimeSpan.FromSeconds(5));
 
     // Deterministic wait for PostLifecycleInline — no Task.Delay timing bet.
     await postLifecycleSpy.WaitForPostLifecycleInlineCountAsync(1, TimeSpan.FromSeconds(10));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: PostLifecycleInline fires exactly once with 1 perspective
     await Assert.That(postLifecycleSpy.PostLifecycleInlineCount).IsEqualTo(1)
@@ -532,34 +532,31 @@ public class PerspectiveDedupIntegrationTests {
         PartitionNumber = 1
       });
     }
-    // Offer the SAME batch on several cycles rather than once.
-    //
-    // SequentialWorkCoordinator serves WorkPerCycle[n] to the nth claim and an empty list after
-    // that, so a single queued cycle is consumed by whichever claim happens first. Under parallel
-    // load that claim can land before the worker is ready to process what it returns — the batch is
-    // taken, dropped, and the test then waits the full timeout for ten calls that can no longer
-    // arrive. That is the flake: single-shot work racing worker startup, not a product defect.
-    //
-    // Repeating it does not weaken the assertions. Dedup here is keyed on WorkId and every item has
-    // a distinct one, so re-offering the identical batch must still produce exactly ten calls —
-    // if dedup regressed, CallCount would exceed ten and the test fails, which is precisely what it
-    // exists to catch. The repeat therefore removes the race and exercises dedup harder.
-    for (var cycle = 0; cycle < 3; cycle++) {
-      coordinator.WorkPerCycle.Add(batchWork);
-    }
+    // ONE cycle is sufficient, and a claimed batch cannot be lost by racing worker startup: the pump
+    // is the only caller of ClaimWorkAsync (PerspectiveWorker never calls it), so claims are strictly
+    // sequential, and every claimed item is written to an UNBOUNDED channel that the worker drains at
+    // its own pace. This previously re-offered the same batch on three cycles to dodge a supposed
+    // "the batch is taken and dropped" race; no such drop path exists, and removing the repeat is
+    // 12/12 green under CPU saturation while the repeat itself was not (it added only deduped work).
+    coordinator.WorkPerCycle.Add(batchWork);
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner));
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
-    await runner.WaitForCallCountAsync(10, TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    // Let the assertions report the shortfall rather than surfacing a bare timeout: if this ever
+    // stalls, what matters is how far the pipeline got and whether the work was even offered.
+    try {
+      await runner.WaitForCallCountAsync(10, TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
+    } catch (TimeoutException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: All 10 streams must be processed independently
     await Assert.That(runner.CallCount).IsEqualTo(10)
-      .Because("LOCK-IN: Different streams with different WorkIds must all be processed.");
+      .Because("LOCK-IN: Different streams with different WorkIds must all be processed. Coordinator "
+             + $"offered {coordinator.ItemsServed} item(s) over {coordinator.ClaimCount} claim(s).");
     await Assert.That(runner.UniqueStreamIds.Count).IsEqualTo(10)
       .Because("LOCK-IN: Each stream must be processed independently.");
   }
@@ -593,38 +590,41 @@ public class PerspectiveDedupIntegrationTests {
         PartitionNumber = 1
       });
     }
-    // Offered across several cycles for the same reason as the concurrency test above: the
-    // coordinator serves WorkPerCycle[n] to the nth claim, so a single cycle can be consumed by a
-    // claim that lands before the worker is ready to process it.
-    for (var cycle = 0; cycle < 3; cycle++) {
-      coordinator.WorkPerCycle.Add(batchWork);
-    }
+    // One cycle, for the same reason as the concurrency test above: claims are sequential and the
+    // work channel is unbounded, so a claimed batch is never dropped by racing worker startup.
+    coordinator.WorkPerCycle.Add(batchWork);
 
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), completionMeter: meter);
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Wait for the FIRST apply, not all five. The property under test is that completions are
     // recorded at all — the meter records per batch as the batch scope disposes, so one processed
     // batch is sufficient evidence. Demanding an exact count made this depend on the worker
     // draining a specific amount inside a fixed window, which is a throughput assertion wearing a
     // correctness assertion's clothes: it passed alone and timed out under full-suite load.
-    await runner.WaitForAtLeastOneCallAsync(TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
+    try {
+      await runner.WaitForAtLeastOneCallAsync(TestTimeouts.Scale(TimeSpan.FromSeconds(30)));
+    } catch (TimeoutException) { }
 
     // The apply is not the recording. Completions are recorded when the batch scope DISPOSES, which
     // happens after the apply observed above — so reading the meter straight after that wait races
     // the worker's teardown. StartAsync returns once the service has started, not when its loop has
-    // finished, so awaiting workerTask never closed that gap; StopAsync does, because it waits for
-    // ExecuteAsync to return and therefore for the scope to have disposed.
+    // finished — under .NET 10 it hands back Task.CompletedTask as soon as ExecuteAsync is queued —
+    // so awaiting what it returned never closed that gap; StopAsync does, because it waits for
+    // ExecuteAsync to return and therefore for the scope to have disposed. Cancel afterwards to stop
+    // the pump; there is no second body to wait on once StopAsync has returned.
     await worker.StopAsync(CancellationToken.None);
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
 
     await Assert.That(meter.ReadAndReset()).IsGreaterThan(0)
       .Because("perspective rows count toward outstanding work, so their completions must be "
              + "measured too — counting a work kind without measuring it drives the drain rate down "
-             + "and throttles a service that is keeping up");
+             + "and throttles a service that is keeping up. Coordinator offered "
+             + $"{coordinator.ItemsServed} item(s) over {coordinator.ClaimCount} claim(s); runner saw "
+             + $"{runner.CallCount} call(s).");
   }
 
   private static (PerspectiveWorker Worker, Whizbang.Testing.Workers.PerspectiveWorkerTestHarness Harness) _createWorker(
@@ -891,13 +891,23 @@ public class PerspectiveDedupIntegrationTests {
   /// </summary>
   private sealed class SequentialWorkCoordinator : IWorkCoordinator {
     private int _cycleCount;
+    private int _itemsServed;
 
     public List<List<PerspectiveWork>> WorkPerCycle { get; } = [];
+
+    /// <summary>Claims taken so far. Diagnostic only — lets a wait that times out report whether the
+    /// coordinator had actually handed its queued cycles out, separating "work never offered" from
+    /// "work offered but the worker was too starved to drain it".</summary>
+    public int ClaimCount => Volatile.Read(ref _cycleCount);
+
+    /// <summary>Total PerspectiveWork items handed to the pump. Diagnostic only.</summary>
+    public int ItemsServed => Volatile.Read(ref _itemsServed);
 
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       var current = Interlocked.Increment(ref _cycleCount);
       var idx = current - 1;
       var work = idx < WorkPerCycle.Count ? [.. WorkPerCycle[idx]] : new List<PerspectiveWork>();
+      Interlocked.Add(ref _itemsServed, work.Count);
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -1127,12 +1137,12 @@ public class PerspectiveDedupIntegrationTests {
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Wait for the SECOND call — the retry after the failed first apply.
     await runner.WaitForCallCountAsync(2, TimeSpan.FromSeconds(15));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     await Assert.That(runner.CallCount).IsGreaterThanOrEqualTo(2)
       .Because("a failed apply must leave the work claimable again — if the claim-window "
@@ -1213,7 +1223,8 @@ public class PerspectiveDedupIntegrationTests {
     var (worker, harness) = _createWorker(coordinator, new SingleRunnerRegistry(runner), observer);
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    // Awaited, so ExecuteTask is populated before anything touches the worker.
+    await worker.StartAsync(cts.Token);
     _ = Whizbang.Testing.Workers.WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
     // Let the assertion below report the shortfall rather than surfacing this as a bare timeout:
     // when the sentinel is reserved, four of the five items never arrive and the diagnostic that
@@ -1222,13 +1233,30 @@ public class PerspectiveDedupIntegrationTests {
       await runner.WaitForCallCountAsync(sentinelItemCount, TimeSpan.FromSeconds(30));
     } catch (TimeoutException) { }
     await coordinator.WaitForCyclesAsync(3, TimeSpan.FromSeconds(30));
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _stopWorkerAsync(worker, cts);
 
     // LOCK-IN: every stream must be reached. Reserving the sentinel caps this at ONE — the first
     // item claims Guid.Empty and the other four are silently discarded as "duplicates".
     await Assert.That(runner.UniqueStreamIds).IsEquivalentTo(streamIds)
       .Because("LOCK-IN: Guid.Empty is a sentinel, not an identity. Reserving it would let the "
              + "first empty-id item claim it and silently drop work on every other stream.");
+  }
+
+  /// <summary>
+  /// Cancels <paramref name="cts"/> and then waits for the worker's BODY to finish.
+  /// </summary>
+  /// <remarks>
+  /// What <c>StartAsync</c> returns is NOT the worker body: under .NET 10 a <c>BackgroundService</c>
+  /// hands back <c>Task.CompletedTask</c> as soon as <c>ExecuteAsync</c> is queued to the thread
+  /// pool, so awaiting it is not a "the worker has stopped" barrier — it completes instantly and the
+  /// assertions after it can read state the worker's <c>finally</c> blocks have not settled yet.
+  /// <c>ExecuteTask</c> is the body. SuppressThrowing because a body that exits through a
+  /// cancellation catch settles RanToCompletion or Canceled depending on thread-pool timing, and
+  /// either is a clean stop.
+  /// </remarks>
+  private static async Task _stopWorkerAsync(PerspectiveWorker worker, CancellationTokenSource cts) {
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
   }
 }

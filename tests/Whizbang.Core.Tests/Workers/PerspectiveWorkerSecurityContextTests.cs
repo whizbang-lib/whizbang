@@ -107,19 +107,13 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     await worker.DrainDetachedAsync();
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert
     await Assert.That(securityContextEstablishedBeforeInvoke).IsTrue()
@@ -193,19 +187,13 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     await worker.DrainDetachedAsync();
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert
     await Assert.That(lifecycleInvoked).IsTrue()
@@ -277,18 +265,12 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert
     await Assert.That(accessorWasSet).IsFalse()
@@ -369,7 +351,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
@@ -381,13 +363,7 @@ public class PerspectiveWorkerSecurityContextTests {
       throw new TimeoutException("PostPerspectiveInline was not invoked within timeout");
     }
 
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert
     await Assert.That(capturedUserId).IsEqualTo(expectedUserId)
@@ -473,19 +449,13 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     await worker.DrainDetachedAsync();
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert - should have captured two different user IDs, one per envelope, in order
     await Assert.That(capturedUserIds.Count).IsEqualTo(2)
@@ -563,19 +533,13 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     await worker.DrainDetachedAsync();
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert
     await Assert.That(lifecycleInvoked).IsTrue()
@@ -677,18 +641,12 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert: MessageContext should use extractor result, NOT envelope.GetCurrentScope() (which is null)
     await Assert.That(capturedTenantId).IsEqualTo(expectedTenantId)
@@ -781,18 +739,12 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert: Should fall back to envelope.GetCurrentScope()
     await Assert.That(capturedTenantId).IsEqualTo(expectedTenantId)
@@ -882,19 +834,13 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
     await worker.DrainDetachedAsync();
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert: InitiatingContext should be set with proper TenantId and UserId
     await Assert.That(capturedInitiatingContext).IsNotNull()
@@ -1004,18 +950,12 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert: Callback should have been invoked with envelope's scope
     await Assert.That(callbackInvoked).IsTrue()
@@ -1252,23 +1192,40 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
-
-    try {
-      await workerTask;
-    } catch (OperationCanceledException) {
-      // Expected during shutdown
-    }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert: Callback should only be invoked once (by the security provider)
     // Note: This may be > 1 if multiple events are processed, but should be exactly 1 per event
     await Assert.That(callbackInvocationCount).IsLessThanOrEqualTo(1)
       .Because("Callbacks should not be invoked twice for the same envelope (once by provider, once by worker)");
+  }
+
+  #endregion
+
+  #region Shutdown Helper
+
+  /// <summary>
+  /// Cancels <paramref name="cts"/> and waits for the worker's ExecuteAsync BODY to finish.
+  /// </summary>
+  /// <remarks>
+  /// The task <see cref="Microsoft.Extensions.Hosting.BackgroundService.StartAsync"/> hands back is
+  /// NOT the worker body: .NET returns Task.CompletedTask as soon as ExecuteAsync is queued to the
+  /// thread pool. Awaiting it completed instantly, so every assertion after "shutdown" read state
+  /// the worker's finally blocks had not necessarily settled yet. ExecuteTask IS the body.
+  /// SuppressThrowing because a body leaving through a cancellation catch settles RanToCompletion or
+  /// Canceled depending on thread-pool timing, and either one is a clean stop.
+  /// </remarks>
+  private static async Task _stopAndAwaitWorkerBodyAsync(PerspectiveWorker worker, CancellationTokenSource cts) {
+    await cts.CancelAsync();
+    if (worker.ExecuteTask is { } body) {
+      await body.WaitAsync(TimeSpan.FromSeconds(30))
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    }
   }
 
   #endregion

@@ -146,7 +146,7 @@ public sealed class RecoveryLifecycleHardeningTests {
       provider.GetRequiredService<ILogger<DeadLetterRecoveryWorker>>());
 
     using var cts = new CancellationTokenSource();
-    var run = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     // The warning is emitted on the first pass that discovers the absence — either the
     // generation-replay sweep or the first scan; both happen before the first idle wait.
     var deadline = Task.Delay(TimeSpan.FromSeconds(5), cts.Token);
@@ -155,8 +155,14 @@ public sealed class RecoveryLifecycleHardeningTests {
       if (deadline.IsCompleted) { break; }
       await Task.Yield();
     }
-    cts.Cancel();
-    try { await run; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    // Await the worker BODY, not StartAsync's task: .NET 10 returns Task.CompletedTask from
+    // StartAsync as soon as ExecuteAsync is queued, so awaiting it was no barrier at all and
+    // the warning count below was read while the scan loop was still running. SuppressThrowing
+    // because a cancelled body settles RanToCompletion OR Canceled depending on thread-pool
+    // timing, and either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     var warnings = collector.GetSnapshot()
       .Where(r => r.Level == LogLevel.Warning
