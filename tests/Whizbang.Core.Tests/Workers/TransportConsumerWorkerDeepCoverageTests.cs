@@ -78,8 +78,11 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // Subscribing is what registers the transport's handler, so this signal -- not a fixed delay --
+    // is what lets the simulated delivery below reach the worker at all.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var metadataJson = JsonSerializer.SerializeToElement(
       new Dictionary<string, object> { { "AggregateId", expectedStreamId.ToString() } });
@@ -149,8 +152,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Envelope with empty Hops (no metadata at all)
     var envelope = new MessageEnvelope<JsonElement> {
@@ -207,8 +212,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var metadataJson = JsonSerializer.SerializeToElement(
       new Dictionary<string, object> { { "SomeOtherKey", "value" } });
@@ -274,11 +281,18 @@ public class TransportConsumerWorkerDeepCoverageTests {
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    using var cts = new CancellationTokenSource();
 
     // Act
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+    await worker.StartAsync(cts.Token);
+
+    // The readiness-false branch settles SubscriptionsReady on its way out (so readiness waiters
+    // don't hang) -- the only signal this path emits. Awaiting it is what makes the "never
+    // subscribed" assertion below discriminating: a fixed delay was equally satisfied by a worker
+    // whose ExecuteAsync had not been dequeued yet, and the timed CTS could cancel the token
+    // before the body ever ran.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert - no subscriptions should be created when readiness returns false
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)
@@ -429,8 +443,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
@@ -480,8 +496,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Envelope with traceparent to create activity for error tagging
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
@@ -543,8 +561,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
 
@@ -591,8 +611,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
@@ -643,19 +665,31 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300); // Allow subscription to fail
+    await worker.StartAsync(cts.Token);
+
+    // SubscriptionsReady settles after the initial subscription pass, failures included, so this
+    // is proof the one allowed attempt has already failed -- what the 300 ms sleep only guessed at.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(worker.SubscriptionStates.Values.All(s => s.Subscription is null)).IsTrue()
+      .Because("the failed attempt leaves a null Subscription, which is the state whose disposal " +
+               "during recovery this test is about");
 
     // Now stop failing and simulate recovery
     transport.StopFailing();
-    await transport.SimulateRecoveryAsync();
-    await Task.Delay(200);
 
-    cts.Cancel();
+    // SimulateRecoveryAsync awaits the worker's recovery handler, which awaits the re-subscribe --
+    // recovery is therefore complete when this returns and there is nothing left to sleep for.
+    await transport.SimulateRecoveryAsync();
+
+    await cts.CancelAsync();
 
     // Assert - recovery should succeed without throwing even when subscription was null
     await Assert.That(transport.RecoveryCount).IsEqualTo(1)
       .Because("Recovery handler should have been invoked");
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(2)
+      .Because("one failed initial attempt plus one re-subscribe driven by recovery");
+    await Assert.That(worker.SubscriptionStates.Values.All(s => s.Status == SubscriptionStatus.Healthy)).IsTrue()
+      .Because("recovery re-established the subscription that had failed");
 
     try { await worker.StopAsync(CancellationToken.None); } catch { }
   }
@@ -700,22 +734,19 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
 
-    // Wait for initial subscription attempt to fail (condition-based, not fixed delay)
-    var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-    while (transport.SubscribeCallCount < 1 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(20);
-    }
+    // SubscriptionsReady settles once the initial pass is done, failures included -- proof the one
+    // allowed attempt already failed and left a Failed state for the health monitor to find.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Stop failing so health monitor recovery succeeds
     transport.StopFailing();
 
-    // Wait for health monitor to retry (condition-based, not fixed delay)
-    deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-    while (transport.SubscribeCallCount < 2 && DateTimeOffset.UtcNow < deadline) {
-      await Task.Delay(20);
-    }
+    // Wait on the transport's own "N subscribes reached" signal rather than polling: the recovery
+    // attempt arrives on the health monitor's cadence, and a poll loop that runs out of deadline
+    // falls through to the assertion instead of failing on the wait.
+    await transport.WaitForSubscribeCountAsync(2).WaitAsync(TimeSpan.FromSeconds(30));
 
     // At this point health monitor should have attempted recovery
     await Assert.That(transport.SubscribeCallCount).IsGreaterThanOrEqualTo(2)
@@ -764,8 +795,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -820,8 +853,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Create envelope with valid traceparent to exercise activity creation path
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
@@ -885,8 +920,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     // Type without assembly qualifier (no comma in message type)
@@ -931,11 +968,17 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // Both destinations must actually be subscribed before stopping, or the dispose assertions
+    // below iterate an empty list and pass without proving anything. SubscriptionsReady settles
+    // only after the initial pass over every destination.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert states exist before stop
     await Assert.That(worker.SubscriptionStates.Count).IsEqualTo(2);
+    await Assert.That(transport.SubscriptionCount).IsEqualTo(2)
+      .Because("both destinations should be subscribed before StopAsync disposes them");
 
     // Act
     await worker.StopAsync(CancellationToken.None);
@@ -982,12 +1025,17 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Act - cancel to trigger the OperationCanceledException catch
-    cts.Cancel();
-    await Task.Delay(100);
+    await cts.CancelAsync();
+
+    // ExecuteAsync catches the cancellation, logs it and returns, so the completion of its task is
+    // the signal that the catch actually ran. A 100 ms sleep proved nothing about it.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
+      .Because("cancellation must be caught and logged, not faulted out of ExecuteAsync");
 
     // Assert
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
@@ -1033,8 +1081,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     // Use a command type (not in the event type provider list)
@@ -1085,8 +1135,10 @@ public class TransportConsumerWorkerDeepCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await worker.StartAsync(cts.Token);
+
+    // The delivery below can only reach the worker once subscribing has registered its handler.
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Hop with null metadata (no Metadata property set)
     var envelope = new MessageEnvelope<JsonElement> {
@@ -1191,6 +1243,9 @@ public class TransportConsumerWorkerDeepCoverageTests {
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
     public IReadOnlyList<DeepCoverageSubscription> Subscriptions => _subscriptions;
+
+    /// <summary>How many subscriptions the worker has created against this transport.</summary>
+    public int SubscriptionCount => _subscriptions.Count;
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -1321,10 +1376,50 @@ public class TransportConsumerWorkerDeepCoverageTests {
 
   private sealed class DeepCoverageSelectiveFailTransport(IEnumerable<string> failingTopics) : ITransport {
     private readonly HashSet<string> _failingTopics = [.. failingTopics];
+    private readonly Lock _subscribeLock = new();
+    private readonly List<(int Count, TaskCompletionSource Signal)> _countWaiters = [];
     private int _subscribeCallCount;
     private volatile bool _isFailing = true;
 
-    public int SubscribeCallCount => Volatile.Read(ref _subscribeCallCount);
+    /// <summary>How many subscribe attempts the worker made. Written from the worker's threads.</summary>
+    public int SubscribeCallCount {
+      get { lock (_subscribeLock) { return _subscribeCallCount; } }
+    }
+
+    /// <summary>
+    /// Completes once at least <paramref name="count"/> subscribe attempts have been made.
+    /// </summary>
+    /// <remarks>
+    /// The health monitor's recovery attempt runs on its own cadence, so the subscribe count is the
+    /// only evidence it happened. A body-emitted signal fails loudly if it never does, where the
+    /// poll loop this replaced ran out of deadline and fell through to the assertion instead.
+    /// </remarks>
+    /// <param name="count">The subscribe-attempt count to wait for.</param>
+    /// <returns>A task that completes when the count is reached.</returns>
+    public Task WaitForSubscribeCountAsync(int count) {
+      lock (_subscribeLock) {
+        if (_subscribeCallCount >= count) { return Task.CompletedTask; }
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _countWaiters.Add((count, signal));
+        return signal.Task;
+      }
+    }
+
+    private void _recordSubscribe() {
+      List<TaskCompletionSource> ready = [];
+      lock (_subscribeLock) {
+        _subscribeCallCount++;
+        for (var i = _countWaiters.Count - 1; i >= 0; i--) {
+          if (_subscribeCallCount >= _countWaiters[i].Count) {
+            ready.Add(_countWaiters[i].Signal);
+            _countWaiters.RemoveAt(i);
+          }
+        }
+      }
+      // Completed outside the lock: a continuation must never run while holding it.
+      foreach (var signal in ready) { signal.TrySetResult(); }
+    }
+
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
@@ -1343,7 +1438,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
         Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
         TransportDestination destination,
         CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _subscribeCallCount);
+      _recordSubscribe();
       if (_isFailing && _failingTopics.Contains(destination.Address)) {
         throw new InvalidOperationException($"Subscription to {destination.Address} failed");
       }
@@ -1355,7 +1450,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
         TransportDestination destination,
         TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
-      Interlocked.Increment(ref _subscribeCallCount);
+      _recordSubscribe();
       if (_isFailing && _failingTopics.Contains(destination.Address)) {
         throw new InvalidOperationException($"Subscription to {destination.Address} failed");
       }

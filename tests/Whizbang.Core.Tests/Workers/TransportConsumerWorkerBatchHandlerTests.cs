@@ -81,7 +81,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Await the batch-subscribe signal instead of a fixed delay: the simulated batch cannot be
+    // delivered until the worker has handed its handler to the transport, and StartAsync returning
+    // only proves ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+    await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Act — simulate batch of 2 messages
     var envelope1 = _createJsonEnvelope(messageId1);
@@ -121,7 +124,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Await the batch-subscribe signal instead of a fixed delay: the simulated batch cannot be
+    // delivered until the worker has handed its handler to the transport, and StartAsync returning
+    // only proves ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+    await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -175,7 +181,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Await the batch-subscribe signal instead of a fixed delay: the simulated batch cannot be
+    // delivered until the worker has handed its handler to the transport, and StartAsync returning
+    // only proves ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+    await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Create self-echo envelope (last hop matches this service, owned namespace)
     var selfEchoEnvelope = _createSelfEchoEnvelope(messageId, serviceName);
@@ -215,7 +224,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Await the batch-subscribe signal instead of a fixed delay: the simulated batch cannot be
+    // delivered until the worker has handed its handler to the transport, and StartAsync returning
+    // only proves ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+    await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var goodEnvelope = _createJsonEnvelope(goodMessageId);
     var badEnvelope = _createJsonEnvelope(MessageId.New());
@@ -257,7 +269,10 @@ public class TransportConsumerWorkerBatchHandlerTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Await the batch-subscribe signal instead of a fixed delay: the simulated batch cannot be
+    // delivered until the worker has handed its handler to the transport, and StartAsync returning
+    // only proves ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+    await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -401,9 +416,12 @@ public class TransportConsumerWorkerBatchHandlerTests {
       throw new NotSupportedException();
 
     public async Task SimulateBatchReceivedAsync(IReadOnlyList<TransportMessage> batch) {
-      if (_batchHandler != null) {
-        await _batchHandler(batch, CancellationToken.None);
+      if (_batchHandler is null) {
+        // Previously a silent no-op, which is how a too-short startup delay turned into a
+        // confusing "nothing was stored" assertion failure instead of a clear diagnosis.
+        throw new InvalidOperationException("SubscribeBatchAsync was never called by the worker.");
       }
+      await _batchHandler(batch, CancellationToken.None);
     }
   }
 

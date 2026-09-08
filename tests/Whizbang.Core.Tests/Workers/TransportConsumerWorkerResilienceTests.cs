@@ -202,11 +202,15 @@ public class TransportConsumerWorkerResilienceTests {
     var state = new SubscriptionState(new TransportDestination("test-topic"));
     using var cts = new CancellationTokenSource();
 
-    // Act - Cancel after a short delay
-    _ = Task.Run(async () => {
-      await Task.Delay(100);
-      cts.Cancel();
-    });
+    // Act - cancel from the transport itself, on the second subscribe attempt. That point is
+    // provably inside the retry loop (one failure and one backoff behind it), which is where
+    // "cancel 100 ms from now" was only hoping to land; the cancellation is then observed by the
+    // backoff's Task.Delay, the path this test is about.
+    transport.OnSubscribeAttempt = () => {
+      if (transport.SubscribeCallCount == 2) {
+        cts.Cancel();
+      }
+    };
 
     // Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () => {
@@ -370,8 +374,11 @@ public class TransportConsumerWorkerResilienceTests {
     using var cts = new CancellationTokenSource();
 
     // Act
+    // AllowPartialSubscriptions means SubscriptionsReady resolves only after every destination has
+    // finished attempting (the failing one after it gives up), so the assertion below reads a
+    // settled result rather than whatever had happened 200 ms in.
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200); // Give time for subscriptions
+    await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert - should have at least one successful subscription
     await Assert.That(transport.SuccessfulSubscriptions).Count().IsGreaterThanOrEqualTo(1)

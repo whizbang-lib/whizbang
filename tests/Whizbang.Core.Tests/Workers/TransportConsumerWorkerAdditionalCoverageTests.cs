@@ -75,7 +75,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -128,7 +129,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     // Use a message type matching one in our event type provider
     var envelope = _createJsonEnvelope(messageId);
@@ -182,7 +184,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     // Create envelope WITH a valid traceparent so Activity is created
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
@@ -234,15 +237,17 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     // Capture initial subscriptions
     var initialSubscriptions = transport.Subscriptions.ToList();
     await Assert.That(initialSubscriptions.Count).IsEqualTo(2);
 
-    // Act - simulate recovery
+    // Act - simulate recovery. SimulateRecoveryAsync awaits the worker's recovery handler to
+    // completion, and that handler disposes the old subscriptions and re-subscribes before it
+    // returns — so the awaited call is itself the signal and no delay is needed.
     await transport.SimulateRecoveryAsync();
-    await Task.Delay(200);
 
     // Assert - initial subscriptions should be disposed
     foreach (var sub in initialSubscriptions) {
@@ -294,7 +299,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     // Use a non-MessageEnvelope<JsonElement> envelope
     var envelope = new NonJsonEnvelope(messageId);
@@ -347,7 +353,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -446,20 +453,25 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using var cts = new CancellationTokenSource();
 
-    // Act & Assert - should throw or stop due to AllowPartialSubscriptions=false
+    // Act & Assert - AllowPartialSubscriptions=false must fail startup rather than degrade. The
+    // worker settles SubscriptionsReady with the startup exception, so awaiting that signal is the
+    // deterministic outcome to assert on; the old 500 ms delay merely hoped the failing subscribe,
+    // its one retry and the throw all landed inside the window, and the 5 s token that used to cap
+    // this test could itself cancel the subscribe pass on a loaded machine.
     Exception? caughtException = null;
     try {
       await worker.StartAsync(cts.Token);
-      await Task.Delay(500, cts.Token);
+      await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
     } catch (InvalidOperationException ex) {
       caughtException = ex;
-    } catch (OperationCanceledException) {
-      // Timing issue
     } finally {
       try { await worker.StopAsync(CancellationToken.None); } catch { }
     }
+
+    await Assert.That(caughtException).IsNotNull()
+      .Because("AllowPartialSubscriptions=false should surface a failed destination as a startup failure");
 
     // At least one subscribe attempt should have been made
     await Assert.That(transport.SubscribeCallCount).IsGreaterThanOrEqualTo(1);
@@ -502,7 +514,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     var envelope = _createJsonEnvelope(messageId);
     const string invalidType = "Type]]BadOrder[[";
@@ -546,7 +559,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     var envelope = _createJsonEnvelope(messageId);
     const string emptyTypeEnvelope = "Type[[ ]]";
@@ -613,7 +627,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     // Create envelope with non-Guid AggregateId value
     var metadataJson = JsonSerializer.SerializeToElement(
@@ -685,7 +700,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     // Create envelope with numeric AggregateId (ValueKind != String)
     var metadataJson = JsonSerializer.SerializeToElement(
@@ -763,7 +779,11 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300); // Wait for subscriptions
+    // AllowPartialSubscriptions=true, so the initial pass runs both destinations to completion and
+    // records each status before settling SubscriptionsReady. Awaiting that signal — rather than
+    // 300 ms — is what makes the healthy/failed split observable; the failing destination needs a
+    // subscribe attempt plus a 10 ms retry delay before it is marked Failed.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     // Assert - one should be healthy, one failed
     var states = worker.SubscriptionStates.Values.ToList();
@@ -815,7 +835,8 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    // Wait for the worker's own subscribe-complete signal: StartAsync only queues ExecuteAsync.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30));
 
     var envelope = _createJsonEnvelope(messageId);
     // Use single-segment assembly name to avoid LastIndexOf('.') picking up assembly dot

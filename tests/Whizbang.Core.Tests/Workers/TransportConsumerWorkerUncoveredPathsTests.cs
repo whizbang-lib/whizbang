@@ -838,13 +838,22 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
+    // Awaited so ExecuteTask is published before it is read.
+    await worker.StartAsync(cts.Token);
 
-    // Give time for ExecuteAsync to run
-    await Task.Delay(100);
+    // "Never subscribed" cannot be signaled, but "finished the subscribe phase" can: with zero
+    // destinations ExecuteAsync walks an empty loop and settles SubscriptionsReady, then runs to
+    // completion. Awaiting both makes the counts below final -- a 100 ms window was equally
+    // satisfied by a worker the thread pool had not started yet, which proved nothing.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
+      .Because("\"stops gracefully\" means ExecuteAsync returns once its token is canceled; a " +
+               "worker still parked here after the bounded wait has not stopped at all");
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)
       .Because("No destinations means no subscriptions");
     await Assert.That(worker.SubscriptionStates.Count).IsEqualTo(0);
