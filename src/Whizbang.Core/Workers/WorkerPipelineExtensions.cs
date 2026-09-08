@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -254,6 +255,14 @@ public static class WorkerPipelineExtensions {
     // This avoids a circular DI deadlock: if we resolved the channel via
     // sp.GetServices<IHostedService>() and any other hosted service depended on
     // a channel surface, IHostedService resolution would recurse on itself.
+    // The heartbeat carries this instance's lifecycle phase and library version to the registry.
+    // Run control (registered above) supplies the phase; the version defaults to this assembly's
+    // informational version unless a driver registered the package version first.
+    services.TryAddSingleton<Whizbang.Core.Observability.ILibraryVersionProvider>(static _ =>
+      new Whizbang.Core.Observability.LibraryVersionProvider(
+        typeof(HeartbeatWorker).Assembly.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? typeof(HeartbeatWorker).Assembly.GetName().Version?.ToString()
+        ?? "unknown"));
     services.TryAddSingleton<HeartbeatWorker>();
     // The claim window's churn signal lives here: the claim returns stream ids and never sees a
     // row's attempt count, so the inbox drain reports what it fetched. Idempotent with the

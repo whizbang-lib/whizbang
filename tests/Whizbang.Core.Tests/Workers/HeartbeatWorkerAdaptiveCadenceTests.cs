@@ -130,6 +130,8 @@ public class HeartbeatWorkerAdaptiveCadenceTests {
       schemaReadyGate: new _stubSchemaReadyGate(),
       options: Options.Create(opts),
       logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: HeartbeatTestDependencies.LifecycleState,
+      libraryVersion: HeartbeatTestDependencies.Version,
       pinnedPool: null,
       aliveLockSource: source);
   }

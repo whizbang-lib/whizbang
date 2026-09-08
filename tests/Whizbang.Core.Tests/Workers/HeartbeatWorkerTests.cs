@@ -90,7 +90,9 @@ public class HeartbeatWorkerTests {
       instProvider,
       gate,
       Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
-      NullLogger<HeartbeatWorker>.Instance);
+      NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -126,7 +128,9 @@ public class HeartbeatWorkerTests {
       instProvider,
       gate,
       Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
-      NullLogger<HeartbeatWorker>.Instance);
+      NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -152,7 +156,9 @@ public class HeartbeatWorkerTests {
         new StubInstanceProvider(Guid.NewGuid(), "s", "h", 1),
         new SchemaReadyGate(),
         Options.Create(new HeartbeatWorkerOptions()),
-        NullLogger<HeartbeatWorker>.Instance);
+        NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version);
     } catch (ArgumentNullException) {
       threw = true;
     }
@@ -175,7 +181,9 @@ public class HeartbeatWorkerTests {
       instProvider,
       gate,
       Options.Create(new HeartbeatWorkerOptions { Enabled = false, IntervalSeconds = 1 }),
-      NullLogger<HeartbeatWorker>.Instance);
+      NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -205,7 +213,9 @@ public class HeartbeatWorkerTests {
       instProvider,
       gate,
       Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 1 }),
-      NullLogger<HeartbeatWorker>.Instance);
+      NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

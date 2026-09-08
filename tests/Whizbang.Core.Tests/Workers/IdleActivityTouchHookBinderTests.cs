@@ -86,7 +86,9 @@ public class IdleActivityTouchHookBinderTests {
       instance,
       gate,
       Options.Create(new HeartbeatWorkerOptions()),
-      NullLogger<HeartbeatWorker>.Instance);
+      NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version);
 
     return (new IdleActivityTouchHookBinder(tracker, claimWorker, heartbeatWorker, listener), tracker, listener);
   }

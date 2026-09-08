@@ -83,7 +83,9 @@ public class HeartbeatWorkerCoverageTests {
       new _instanceProvider("origin-svc"),
       gate,
       Options.Create(options),
-      NullLogger<HeartbeatWorker>.Instance);
+      NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version);
   }
 
   // Target: src/Whizbang.Core/Workers/HeartbeatWorker.cs:79 — `return;` in the
