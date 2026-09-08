@@ -208,14 +208,6 @@ public sealed partial class IntegrityCheckpointReceptor(
           pending.FromCommitSequence, pending.ToCommitSequence, pending.ExpectedCount, actual);
       }
 
-      // An operator seeing a confirmed gap with autoRepair=false needs to know WHY: a service
-      // deliberately withholding repair while it drains reads identically to one with repair
-      // disabled, and the two call for opposite responses.
-      if (measurable && !settled && options.RepairMode == IntegrityRepairMode.AutoRepairCapped) {
-        LogRepairWithheldConsumerBehind(logger, pending.OriginServiceName, pending.EventType,
-          backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
-      }
-
       // Opt-in: nothing consumes these and each mints its own stream. See
       // StreamIntegrityOptions.PublishReportEvents.
       if (!options.PublishReportEvents || gapReportsPublished >= gapReportCap) {
@@ -354,18 +346,16 @@ public sealed partial class IntegrityCheckpointReceptor(
             + "that is already queued. Implement the count, or set RepairMode=ReportOnly.")]
   static partial void LogSettlednessUnmeasurable(ILogger logger, string originServiceName);
 
-  [LoggerMessage(EventId = 59, Level = LogLevel.Information,
-    Message = "Auto-repair WITHHELD for '{OriginServiceName}' ({EventType}) — this service has not "
-            + "settled ({UnprocessedRows} unprocessed, {LeasedRows} leased by any instance). The "
-            + "events are queued, not missing; repairing now would re-deliver work already in "
-            + "flight and lengthen the very queue that produced the deficit. A value of -1 means "
-            + "the backend could not report, which is treated as NOT settled.")]
-  static partial void LogRepairWithheldConsumerBehind(ILogger logger, string originServiceName,
-    string eventType, long unprocessedRows, long leasedRows);
+  // EventId 59 (auto-repair withheld while the consumer is behind) is retired: the deferral guard
+  // returns before a confirmation, so that line could never fire (issue #708). Its content, that a
+  // service deliberately withholding repair while it drains is not one with repair disabled, is
+  // carried by the deferral line (62) instead. Do not reuse the id.
 
   [LoggerMessage(EventId = 62, Level = LogLevel.Debug,
     Message = "Integrity deficit for {EventType} (tenant {TenantScope}) from origin '{OriginServiceName}' deferred: "
-            + "consumer visibly behind (unprocessed={UnprocessedRows}, leased={LeasedRows}) — in-flight lag, not loss; re-evaluated when settled")]
+            + "consumer visibly behind (unprocessed={UnprocessedRows}, leased={LeasedRows}) — in-flight lag, not loss; "
+            + "repair is withheld until this service settles (repairing now would re-deliver work already in flight); "
+            + "re-evaluated when settled. A value of -1 means the backend could not report, which is treated as NOT settled")]
   static partial void LogGapDeferredConsumerBehind(ILogger logger, string eventType, string? tenantScope,
     string originServiceName, long unprocessedRows, long leasedRows);
 

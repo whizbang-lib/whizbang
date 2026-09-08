@@ -334,6 +334,34 @@ public class IntegrityCheckpointReceptorTests {
     public Guid OriginId { get; } = TrackedGuid.NewMedo().Value;
   }
 
+  [Test]
+  public async Task DeficitWhileConsumerBehind_DeferralLineSaysRepairIsWithheldAsync() {
+    // Issue #708: the deferral guard returns before the confirmation, so the "auto-repair
+    // WITHHELD" line that explained a confirmed gap with autoRepair=false could never fire. The
+    // distinction it carried (a service deliberately withholding repair while it drains reads the
+    // same as one with repair disabled) now lives on the deferral line itself, so the operator
+    // reading the deferral knows both facts from the one line that does fire.
+    var logger = new _captureLogger();
+    var fx = _fixture(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }, logger: logger);
+    fx.Coordinator.Counts = _ => [];
+    fx.Coordinator.Backlog = new ServiceBacklog {
+      UnprocessedInboxRows = 500,
+      ActiveLeasedRows = 12,
+      OldestUnprocessedAge = TimeSpan.FromSeconds(30),
+    };
+
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));
+    await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));
+
+    var deferrals = logger.Entries.Where(e => e.EventId == 62).ToList();
+    await Assert.That(deferrals).IsNotEmpty().Because("the unsettled service defers the deficit");
+    await Assert.That(deferrals.All(d => d.Message.Contains("repair", StringComparison.OrdinalIgnoreCase)
+                                       && d.Message.Contains("withheld", StringComparison.OrdinalIgnoreCase))).IsTrue()
+      .Because("a deferral while repair is enabled must say repair is withheld until the service settles, or it reads like repair is off");
+    await Assert.That(logger.Entries.Any(e => e.EventId == 59)).IsFalse()
+      .Because("the separate withheld line sat behind the deferral's continue and could never fire; it is folded, not kept");
+  }
+
   private static _fixtureState _fixture(
       StreamIntegrityOptions? options = null,
       Whizbang.Core.Observability.StreamIntegrityMetrics? metrics = null,
