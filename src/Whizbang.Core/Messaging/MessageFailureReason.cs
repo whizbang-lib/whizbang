@@ -174,5 +174,13 @@ public enum MessageFailureReason {
   /// broker counter at all, so nothing else bounds it.
   /// </para>
   /// </summary>
-  PoisonRedeliveryLoop = 18
+  PoisonRedeliveryLoop = 18,
+
+  /// <summary>
+  /// A body claim carries a cipher descriptor whose cipher name the receiver has not registered
+  /// (issue #704). The stored bytes verified against the claim hash but cannot be opened here.
+  /// Fix by registering the matching <c>AddWhizbangMessageBodyCipher</c> /
+  /// <c>AddWhizbangAesGcmBodyCipher</c> on the receiver with the same name and key.
+  /// </summary>
+  BodyClaimCipherUnknown = 19
 }
