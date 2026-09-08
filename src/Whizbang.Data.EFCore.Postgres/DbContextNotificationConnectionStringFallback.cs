@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -42,7 +43,7 @@ public sealed class DbContextNotificationConnectionStringFallback
     ArgumentNullException.ThrowIfNull(dbContextType);
     if (!typeof(DbContext).IsAssignableFrom(dbContextType)) {
       throw new ArgumentException(
-        $"Type '{dbContextType.FullName}' is not a {nameof(DbContext)} subtype.",
+        $"Type '{TypeNameFormatter.DisplayName(dbContextType)}' is not a {nameof(DbContext)} subtype.",
         nameof(dbContextType));
     }
     _serviceProvider = serviceProvider;

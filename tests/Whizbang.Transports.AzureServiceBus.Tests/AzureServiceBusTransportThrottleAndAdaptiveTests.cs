@@ -43,7 +43,7 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
     var options = new AzureServiceBusOptions {
       AutoProvisionInfrastructure = false,
       EnableSessions = true,
-      AcceptorFloor = 4,
+      AcceptorFloor = 16,
       MaxConcurrentSessions = 200,
       AcceptorEvaluationInterval = _window,
     };
@@ -87,9 +87,11 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
     await _subscribeBatchAsync(transport, "inbox-b", "sub-b");
     var healthy = client.LastSessionProcessor!;
 
-    // Stamp 100%-of-floor pressure on both pools at the same moment.
-    await _raiseSessionInitializingAsync(failing, 4);
-    await _raiseSessionInitializingAsync(healthy, 4);
+    // Stamp near-saturation pressure (13 of 16, slots still free) on both pools at the same
+    // moment — a FULL pool would grow at once on the accept itself (#710), and this test is about
+    // the periodic sweep.
+    await _raiseSessionInitializingAsync(failing, 13);
+    await _raiseSessionInitializingAsync(healthy, 13);
 
     // Everything must be armed BEFORE the clock moves. Advancing the fake clock fires the
     // periodic tick synchronously, and it is the only thing that ever evaluates the elapsed
@@ -120,7 +122,7 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
       .Because("the failing registration's resize failure must still be logged, not swallowed silently");
     await Assert.That(logger.Contains(LogLevel.Warning, "inbox-a/sub-a")).IsTrue()
       .Because("a diagnostic that doesn't name the topic/subscription is useless during an incident");
-    await Assert.That(healthy.MaxConcurrentSessions).IsEqualTo(8)
+    await Assert.That(healthy.MaxConcurrentSessions).IsEqualTo(32)
       .Because("registration B's resize must still succeed in the SAME sweep even though registration A's resize call raised — one stale processor must not silently freeze every other governed pool");
   }
 
@@ -152,13 +154,14 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
       }
     };
 
-    // Saturate the SECOND subscription's pool and let only the periodic tick observe the
-    // elapsed window — no further session churn on it at all.
-    await _raiseSessionInitializingAsync(second, 4);
+    // Near-saturate the SECOND subscription's pool (13 of 16, a full pool would grow on the
+    // accept itself) and let only the periodic tick observe the elapsed window — no further
+    // session churn on it at all.
+    await _raiseSessionInitializingAsync(second, 13);
     time.Advance(_window);
 
     await grown.Task;
-    await Assert.That(second.MaxConcurrentSessions).IsEqualTo(8)
+    await Assert.That(second.MaxConcurrentSessions).IsEqualTo(32)
       .Because("the second governed subscription must be swept by the SAME shared loop the first one started — a skipped or duplicated loop would leave it unattended");
   }
 
@@ -202,11 +205,11 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
         grownAfterRecovery.TrySetResult();
       }
     };
-    await _raiseSessionInitializingAsync(processor, 4);
+    await _raiseSessionInitializingAsync(processor, 13);
     time.Advance(_window);
 
     await grownAfterRecovery.Task;
-    await Assert.That(processor.MaxConcurrentSessions).IsEqualTo(8)
+    await Assert.That(processor.MaxConcurrentSessions).IsEqualTo(32)
       .Because("one failed sweep must not kill the loop — every governed pool depends on the SAME loop to ever re-evaluate again");
   }
 

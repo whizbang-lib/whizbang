@@ -81,7 +81,7 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
   /// Skips attributes that are not [AwaitPerspectiveSync] or are malformed.
   /// </summary>
   private static void _extractMappingsFromAttribute(AttributeData attribute, List<SyncTypeMapping> mappings) {
-    if (attribute.AttributeClass?.ToDisplayString() != AWAIT_SYNC_ATTRIBUTE) {
+    if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, AWAIT_SYNC_ATTRIBUTE)) {
       return;
     }
 
@@ -102,7 +102,7 @@ public class SyncEventTypeRegistryGenerator : IIncrementalGenerator {
 
     foreach (var typeConstant in eventTypesArg.Value.Values) {
       if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
-        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var eventType = TypeNameUtilities.FullyQualified(eventTypeSymbol);
         mappings.Add(new SyncTypeMapping(eventType, perspectiveType));
       }
     }

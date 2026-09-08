@@ -8,7 +8,7 @@ namespace Whizbang.Generators;
 /// <remarks>
 /// <para>
 /// This record uses value equality which is critical for incremental generator performance.
-/// String values are interned by Roslyn's ToDisplayString() method.
+/// String values are interned by Roslyn's symbol display rendering (via TypeNameUtilities).
 /// </para>
 /// <para>
 /// Memory footprint is minimal: 2 interned strings + 1 bool.

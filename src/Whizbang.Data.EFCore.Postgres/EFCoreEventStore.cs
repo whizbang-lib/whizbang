@@ -709,18 +709,6 @@ public sealed class EFCoreEventStore<TDbContext>(
     };
   }
 
-  /// <summary>
-  /// Identity stamped on a hop synthesized during replay. The originating instance is not recorded
-  /// on the event row, and inventing one would misattribute the hop; this names the replayer, which
-  /// is what actually produced it.
-  /// </summary>
-  private static ServiceInstanceInfo _localInstance() => new() {
-    InstanceId = Guid.Empty,
-    ServiceName = "replay",
-    HostName = Environment.MachineName,
-    ProcessId = Environment.ProcessId,
-  };
-
   private EnvelopeMetadata? _deserializeMetadataIfPresent(string? raw) {
     if (string.IsNullOrEmpty(raw)) {
       return null;

@@ -684,7 +684,7 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -815,7 +815,7 @@ public abstract partial class Dispatcher(
 
         // Start dispatch activity to serve as parent for handler traces
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -916,7 +916,7 @@ public abstract partial class Dispatcher(
         var parentActivity = Activity.Current;
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
         if (dispatchActivity != null) {
-          dispatchActivity.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+          dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
           dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
           dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
           dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
@@ -1013,7 +1013,7 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -1424,7 +1424,7 @@ public abstract partial class Dispatcher(
   ) {
     // Start dispatch activity to serve as parent for handler traces
     using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-    dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+    dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
 
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
     if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
@@ -1560,7 +1560,7 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -1622,7 +1622,7 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -1801,7 +1801,7 @@ public abstract partial class Dispatcher(
         var parentActivity = Activity.Current;
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}", ActivityKind.Internal);
         if (dispatchActivity != null) {
-          dispatchActivity.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+          dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
           dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
           dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
           dispatchActivity.SetTag(TAG_DEBUG_PARENT_ID, parentActivity?.Id ?? "none");
@@ -1881,7 +1881,7 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -1927,7 +1927,7 @@ public abstract partial class Dispatcher(
     // Start dispatch activity to serve as parent for handler traces
     // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
     using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-    dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+    dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
 
     // Invoke synchronously
     invoker(message);
@@ -1973,7 +1973,7 @@ public abstract partial class Dispatcher(
         // Start dispatch activity to serve as parent for handler traces
         // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
         using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -2168,7 +2168,7 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -2222,7 +2222,7 @@ public abstract partial class Dispatcher(
       // Start dispatch activity to serve as parent for handler traces
       // Handler traces created via ITracer.BeginHandlerTrace will link to this activity
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -2401,7 +2401,7 @@ public abstract partial class Dispatcher(
       }
 
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -2462,7 +2462,7 @@ public abstract partial class Dispatcher(
       }
 
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name}");
-      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+      dispatchActivity?.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
       dispatchActivity?.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
       dispatchActivity?.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
 
@@ -2848,7 +2848,7 @@ public abstract partial class Dispatcher(
       var perspectiveNames = _trackedEventTypeRegistry.GetPerspectiveNames(messageType);
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[SYNC_DEBUG] SINGLETON tracker check: EventType={EventType}, PerspectiveCount={Count}, Perspectives=[{Perspectives}]",
-          messageType.FullName, perspectiveNames.Count, string.Join(", ", perspectiveNames));
+          TypeNameFormatter.DisplayName(messageType), perspectiveNames.Count, string.Join(", ", perspectiveNames));
       }
       foreach (var perspectiveName in perspectiveNames) {
         _syncEventTracker.TrackEvent(messageType, eventId, streamId, perspectiveName);
@@ -3555,7 +3555,7 @@ public abstract partial class Dispatcher(
 #pragma warning disable CA1848
       if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
         CascadeLogger.LogDebug("[SYNC_DEBUG] CascadeMessageAsync SINGLETON tracker check: EventType={EventType}, PerspectiveCount={Count}, Perspectives=[{Perspectives}]",
-          messageType.FullName, perspectiveNames.Count, string.Join(", ", perspectiveNames));
+          TypeNameFormatter.DisplayName(messageType), perspectiveNames.Count, string.Join(", ", perspectiveNames));
       }
 #pragma warning restore CA1848
       foreach (var perspectiveName in perspectiveNames) {
@@ -4045,11 +4045,11 @@ public abstract partial class Dispatcher(
   /// Serializes event data to a JsonElement envelope using the runtime type's JSON type info.
   /// </summary>
   private static MessageEnvelope<JsonElement> _serializeToJsonEnvelope(IMessage eventData, Type eventType, MessageId messageId, MessageDispatchContext dispatchContext, IReadOnlySet<Type>? declaredUnscopedTypes = null) {
-    var typeNameForLookup = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name;
+    var typeNameForLookup = TypeNameFormatter.AssemblyQualifiedNameOrNull(eventType) ?? TypeNameFormatter.DisplayName(eventType);
     var combinedOptions = Serialization.JsonContextRegistry.CreateCombinedOptions();
     var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(typeNameForLookup, combinedOptions)
       ?? throw new InvalidOperationException(
-        $"No JSON type info found for {eventType.FullName}. Ensure the type is registered in a JsonSerializerContext.");
+        $"No JSON type info found for {TypeNameFormatter.DisplayName(eventType)}. Ensure the type is registered in a JsonSerializerContext.");
 
     var payloadJson = JsonSerializer.SerializeToElement(eventData, jsonTypeInfo);
 
@@ -4107,14 +4107,14 @@ public abstract partial class Dispatcher(
         Hops = jsonEnvelope.Hops?.ToList() ?? [],
         EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(eventData, ephemeralModeResolver)
       },
-      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
+      EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
       StreamId = streamId,
       IsEvent = eventData is IEvent,
       Flags = (eventData is Whizbang.Core.Minting.ICompositeEvent ? Whizbang.Core.Messaging.EventFlags.Composite : Whizbang.Core.Messaging.EventFlags.None)
             | (eventData is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
-      MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
+      MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType)
     };
   }
 
@@ -4276,7 +4276,7 @@ public abstract partial class Dispatcher(
       var parentActivity = Activity.Current;
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
       if (dispatchActivity != null) {
-        dispatchActivity.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
         dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
@@ -4361,7 +4361,7 @@ public abstract partial class Dispatcher(
       var parentActivity = Activity.Current;
       using var dispatchActivity = WhizbangActivitySource.Execution.StartActivity($"Dispatch {messageType.Name} (Outbox)", ActivityKind.Internal);
       if (dispatchActivity != null) {
-        dispatchActivity.SetTag(TAG_MESSAGE_TYPE, messageType.FullName);
+        dispatchActivity.SetTag(TAG_MESSAGE_TYPE, TypeNameFormatter.DisplayName(messageType));
         dispatchActivity.SetTag(TAG_MESSAGE_ID, envelope.MessageId.ToString());
         dispatchActivity.SetTag(TAG_CORRELATION_ID, envelope.GetCorrelationId()?.ToString());
         dispatchActivity.SetTag("whizbang.dispatch.destination", destination);
@@ -5191,9 +5191,9 @@ public abstract partial class Dispatcher(
       throw new InvalidOperationException(
         "BUG IN DISPATCHER: _serializeToNewOutboxMessage called with TMessage=JsonElement. " +
         $"MessageId: {envelope.MessageId}. " +
-        $"Envelope type: {envelope.GetType().FullName}. " +
-        $"Payload type: {(payload?.GetType().FullName ?? "null")}. " +
-        $"PayloadType parameter: {payloadType.FullName}. " +
+        $"Envelope type: {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
+        $"Payload type: {(payload is null ? "null" : TypeNameFormatter.DisplayName(payload.GetType()))}. " +
+        $"PayloadType parameter: {TypeNameFormatter.DisplayName(payloadType)}. " +
         "This indicates Dispatcher is being passed a MessageEnvelope<JsonElement> instead of a strongly-typed envelope.");
     }
 
@@ -5202,7 +5202,7 @@ public abstract partial class Dispatcher(
 
     // Guard: fail-fast if StreamId is Guid.Empty (indicates missing [GenerateStreamId] or unpopulated StreamId)
     if (payload is IEvent) {
-      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox", payload.GetType().FullName ?? payload.GetType().Name);
+      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox", TypeNameFormatter.DisplayName(payload.GetType()));
     }
 
     // Use centralized envelope serializer (REQUIRED)
@@ -5219,10 +5219,10 @@ public abstract partial class Dispatcher(
       throw new InvalidOperationException(
         $"CRITICAL BUG: EnvelopeSerializer returned MessageType='{serialized.MessageType}' which contains 'JsonElement'. " +
         $"MessageId: {envelope.MessageId}. " +
-        $"Envelope type: {envelope.GetType().FullName}. " +
-        $"TMessage type parameter: {typeof(TMessage).FullName}. " +
-        $"Payload type: {(payload?.GetType().FullName ?? "null")}. " +
-        $"PayloadType parameter: {payloadType.FullName}. " +
+        $"Envelope type: {TypeNameFormatter.DisplayName(envelope.GetType())}. " +
+        $"TMessage type parameter: {TypeNameFormatter.DisplayName(typeof(TMessage))}. " +
+        $"Payload type: {(payload is null ? "null" : TypeNameFormatter.DisplayName(payload.GetType()))}. " +
+        $"PayloadType parameter: {TypeNameFormatter.DisplayName(payloadType)}. " +
         "The serializer defensive checks should have caught this!");
     }
 
@@ -5254,9 +5254,9 @@ public abstract partial class Dispatcher(
         $"MessageId={outboxMessage.MessageId}, " +
         $"MessageType={outboxMessage.MessageType}, " +
         $"EnvelopeType={outboxMessage.EnvelopeType}, " +
-        $"TMessage={typeof(TMessage).FullName}, " +
-        $"PayloadType={payloadType.FullName}, " +
-        $"Payload runtime type={payload?.GetType().FullName ?? "null"}. " +
+        $"TMessage={TypeNameFormatter.DisplayName(typeof(TMessage))}, " +
+        $"PayloadType={TypeNameFormatter.DisplayName(payloadType)}, " +
+        $"Payload runtime type={(payload is null ? "null" : TypeNameFormatter.DisplayName(payload.GetType()))}. " +
         "This means either: (1) Envelope parameter was MessageEnvelope<JsonElement>, " +
         "(2) Payload was JsonElement, or (3) PayloadType parameter was typeof(JsonElement). " +
         "All these cases should have been caught by earlier checks!");

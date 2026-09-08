@@ -1066,8 +1066,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     Console.WriteLine($"=== TYPE NAME COMPARISON ({schemaName}) ===");
 
     // Query event types from wh_event_store
-    var eventTypesQuery = $"SELECT DISTINCT event_type FROM {schemaName}.wh_event_store ORDER BY event_type";
-    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(eventTypesQuery).ToListAsync(cancellationToken);
+    var sql = $"SELECT DISTINCT event_type FROM {schemaName}.wh_event_store ORDER BY event_type";
+    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(sql).ToListAsync(cancellationToken);
 
     // Query message types from wh_message_associations (perspectives only)
     var associationsQuery = $"SELECT DISTINCT message_type FROM {schemaName}.wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type";

@@ -80,6 +80,22 @@ public class TypeNameMirrorContractTests {
     }
   }
 
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task WireName_JaggedArrayOfACorpusType_AgreesAndUsesTheInnermostElementsAssemblyAsync() {
+    // Issue #706: the generator unwrapped exactly one array level to find the assembly (array
+    // symbols have no ContainingAssembly), so a jagged array's element, itself an array, threw.
+    // The throw escaped the perspective discovery generator and every registration in the
+    // assembly was lost instead of the one event type being reported.
+    var (compilation, assembly) = _compileAndLoad();
+    var element = compilation.GetTypeByMetadataName("Corpus.Deep.TopLevel")!;
+    var jagged = compilation.CreateArrayTypeSymbol(compilation.CreateArrayTypeSymbol(element));
+    var type = assembly.GetType("Corpus.Deep.TopLevel", throwOnError: true)!.MakeArrayType().MakeArrayType();
+
+    await Assert.That(TypeNameUtilities.FormatTypeNameForRuntime(jagged)).IsEqualTo(TypeNameFormatter.Format(type))
+      .Because("every array level unwraps to the innermost element, whose assembly is the array's assembly");
+  }
+
   private static (CSharpCompilation Compilation, System.Reflection.Assembly Assembly) _compileAndLoad() {
     var compilation = GeneratorTestHelper.CreateCompilation(CORPUS, assemblyName: "TypeNameMirrorCorpus");
     using var stream = new MemoryStream();

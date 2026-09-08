@@ -44,8 +44,7 @@ public class NamespacePattern(string pattern) {
   public bool Matches(Type messageType) {
     ArgumentNullException.ThrowIfNull(messageType);
 
-    var fullName = messageType.FullName;
-    if (string.IsNullOrEmpty(fullName)) {
+    if (!TypeNameFormatter.TryFormatClrTypeName(messageType, out var fullName) || string.IsNullOrEmpty(fullName)) {
       return false;
     }
 

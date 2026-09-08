@@ -70,11 +70,11 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return null;
     }
     var hasAttribute = methodSymbol.GetAttributes()
-        .Any(a => a.AttributeClass?.ToDisplayString() == COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN);
+        .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, COLLECTIVE_APPLY_FOR_ATTRIBUTE_FQN));
     if (!hasAttribute || methodSymbol.Parameters.Length < 1) {
       return null;
     }
-    return methodSymbol.Parameters[0].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    return TypeNameUtilities.FullyQualified(methodSymbol.Parameters[0].Type);
   }
 
   /// <summary>
@@ -102,7 +102,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     // IPerspectiveBase is the unified marker extended by both IPerspectiveFor and IPerspectiveWithActionsFor
     var singleStreamInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           // Match IPerspectiveBase<TModel, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(PERSPECTIVE_BASE_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
@@ -112,7 +112,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     // Look for IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1..50> interfaces (multi-stream)
     var globalInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
           return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
@@ -135,7 +135,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var className = TypeNameUtilities.FullyQualified(classSymbol);
     var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
     var clrTypeName = TypeNameUtilities.BuildClrTypeName(classSymbol);
 
@@ -150,7 +150,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         SimpleName: simpleName,
         ClrTypeName: clrTypeName,
         RunnerName: $"{simpleName.Replace(".", "")}Runner",
-        ModelType: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        ModelType: TypeNameUtilities.FullyQualified(modelType),
         EventTypes: [.. eventTypes.Distinct()],
         EventTypesCodeGen: [.. eventTypesCodeGen.Distinct()]
     );
@@ -163,7 +163,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     return modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Any(property => property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamIdAttribute"));
+            .Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.StreamIdAttribute")));
   }
 
   /// <summary>
@@ -182,7 +182,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       foreach (var iface in singleStreamInterfaces) {
         for (var i = 1; i < iface.TypeArguments.Length; i++) {
           eventTypes.Add(TypeNameUtilities.FormatTypeNameForRuntime(iface.TypeArguments[i]));
-          eventTypesCodeGen.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+          eventTypesCodeGen.Add(TypeNameUtilities.FullyQualified(iface.TypeArguments[i]));
         }
       }
 #pragma warning restore S3267
@@ -194,7 +194,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       foreach (var iface in globalInterfaces) {
         for (var i = 2; i < iface.TypeArguments.Length; i++) {
           eventTypes.Add(TypeNameUtilities.FormatTypeNameForRuntime(iface.TypeArguments[i]));
-          eventTypesCodeGen.Add(iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+          eventTypesCodeGen.Add(TypeNameUtilities.FullyQualified(iface.TypeArguments[i]));
         }
       }
 #pragma warning restore S3267

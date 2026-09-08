@@ -95,7 +95,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Check if interface name contains "IPerspectiveFor" (case-sensitive)
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
+          var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
           // Match IPerspectiveBase — unified marker for all perspective types
           return originalDef.Contains("IPerspectiveBase");
         })
@@ -142,7 +142,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     return new PerspectiveCandidate(
         ClassName: className,
-        FullyQualifiedClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        FullyQualifiedClassName: TypeNameUtilities.FullyQualified(classSymbol),
         ModelClassName: modelClassName,
         TableBaseName: tableBaseName,
         PropertyCount: propertyCount,
@@ -181,7 +181,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     const string PERSPECTIVE_STORAGE_ATTRIBUTE = "Whizbang.Core.Perspectives.PerspectiveStorageAttribute";
 
     foreach (var attribute in modelType.GetAttributes()) {
-      var attrClassName = attribute.AttributeClass?.ToDisplayString();
+      var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
       if (attrClassName == PERSPECTIVE_STORAGE_ATTRIBUTE && attribute.ConstructorArguments.Length > 0) {
         var modeArg = attribute.ConstructorArguments[0];
         if (modeArg.Value is int modeValue) {
@@ -204,7 +204,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       foreach (var attribute in property.GetAttributes()) {
-        var attrClassName = attribute.AttributeClass?.ToDisplayString();
+        var attrClassName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
 
         if (attrClassName == PHYSICAL_FIELD_ATTRIBUTE) {
           var fieldInfo = _extractPhysicalFieldInfo(property, attribute);
@@ -228,7 +228,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractPhysicalFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract named arguments
     bool isIndexed = false;
@@ -283,7 +283,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractVectorFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract constructor argument (dimensions)
     int? dimensions = null;

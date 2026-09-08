@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -101,7 +102,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
   /// <summary>True when the constructed type derives from <c>Whizbang.Core.Minting.CompositeEventBase</c>.</summary>
   private static bool _isMintedComposite(INamedTypeSymbol constructedType) {
     for (var baseType = constructedType.BaseType; baseType is not null; baseType = baseType.BaseType) {
-      if (baseType.ToDisplayString() == COMPOSITE_EVENT_BASE) {
+      if (TypeNameUtilities.IsNamed(baseType, COMPOSITE_EVENT_BASE)) {
         return true;
       }
     }
@@ -114,7 +115,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
     if (ns is null) {
       return false;
     }
-    var display = ns.ToDisplayString();
+    var display = TypeNameUtilities.Display(ns);
     return display == MINTING_NAMESPACE_PREFIX
       || display.StartsWith(MINTING_NAMESPACE_PREFIX + ".", System.StringComparison.Ordinal);
   }
@@ -154,7 +155,7 @@ public class MintedCompositeConstructionAnalyzer : DiagnosticAnalyzer {
     if (containingType is null) {
       return false;
     }
-    var containingDisplay = $"{containingType.ContainingNamespace.ToDisplayString()}.{containingType.Name}";
+    var containingDisplay = $"{TypeNameUtilities.Display(containingType.ContainingNamespace)}.{containingType.Name}";
     return (property.Name == MINT_REQUEST_BUILDER && containingDisplay == MINT_REQUEST_TYPE)
         || (property.Name == COALESCE_POLICY_BUILDER && containingDisplay == COALESCE_POLICY_OPTIONS_TYPE);
   }

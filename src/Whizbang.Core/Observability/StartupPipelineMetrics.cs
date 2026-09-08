@@ -31,7 +31,7 @@ public sealed class StartupPipelineMetrics {
   public Histogram<double> StepDuration { get; }
 
   /// <summary>One count per step completion. Tagged by <c>step</c> and <c>outcome</c>.</summary>
-  public Counter<long> StepOutcomes { get; }
+  public PassiveCounter<long> StepOutcomes { get; }
 
   /// <summary>Initializes a new instance of <see cref="StartupPipelineMetrics"/>.</summary>
   public StartupPipelineMetrics(WhizbangMetrics whizbangMetrics) {
@@ -43,9 +43,12 @@ public sealed class StartupPipelineMetrics {
       unit: "ms",
       description: "Wall time of one startup step, tagged by step and outcome.");
 
-    StepOutcomes = meter.CreateCounter<long>(
+    StepOutcomes = meter.CreatePassiveCounter<long>(
       "whizbang.startup.step_outcomes",
       description: "Startup step completions, tagged by step and outcome.");
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    StepOutcomes.Touch("outcome", Enum.GetNames<StartupStepOutcome>());
   }
 
   /// <summary>Records one step's completion.</summary>

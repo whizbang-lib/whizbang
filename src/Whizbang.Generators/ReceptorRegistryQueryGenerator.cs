@@ -3,6 +3,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -134,7 +135,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
 
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i => {
-      var s = i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var s = TypeNameUtilities.FullyQualified(i.OriginalDefinition);
       return s.StartsWith(IRECEPTOR_PREFIX, System.StringComparison.Ordinal)
           || s.StartsWith(ISYNCRECEPTOR_PREFIX, System.StringComparison.Ordinal);
     });
@@ -143,8 +144,7 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     }
 
     var messageTypeSymbol = receptorInterface.TypeArguments[0];
-    var messageType = messageTypeSymbol
-      .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+    var messageType = TypeNameUtilities.FullyQualified(messageTypeSymbol)
       .Replace("global::", "");
     // Classification is shared with the ownership analyzer (WHIZ151) via
     // CompileTimeMessageClassification — one mirror, no drift.
@@ -174,15 +174,14 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
 
     var entries = ImmutableArray.CreateBuilder<PerspectiveRegistryEntry>();
     foreach (var iface in classSymbol.AllInterfaces) {
-      var prefix = iface.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var prefix = TypeNameUtilities.FullyQualified(iface.OriginalDefinition);
       if (!prefix.StartsWith(IPERSPECTIVE_PREFIX, System.StringComparison.Ordinal)
           && !prefix.StartsWith(IPERSPECTIVE_WITH_ACTIONS_PREFIX, System.StringComparison.Ordinal)) {
         continue;
       }
       // IPerspectiveFor<TModel, TEvent1, TEvent2, ...> — first type arg is the model, rest are events
       for (var i = 1; i < iface.TypeArguments.Length; i++) {
-        var eventType = iface.TypeArguments[i]
-          .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+        var eventType = TypeNameUtilities.FullyQualified(iface.TypeArguments[i])
           .Replace("global::", "");
         entries.Add(new PerspectiveRegistryEntry(eventType));
       }
@@ -205,14 +204,13 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
     if (symbol is null || symbol.IsAbstract) {
       return null;
     }
-    var hasTag = symbol.GetAttributes().Any(a => {
-      var name = a.AttributeClass?.ToDisplayString();
-      return name == NOTIFICATION_TAG_ATTRIBUTE || name == NOTIFICATION_ID_TAG_ATTRIBUTE;
-    });
+    var hasTag = symbol.GetAttributes().Any(a =>
+      TypeNameUtilities.IsNamed(a.AttributeClass, NOTIFICATION_TAG_ATTRIBUTE)
+      || TypeNameUtilities.IsNamed(a.AttributeClass, NOTIFICATION_ID_TAG_ATTRIBUTE));
     if (!hasTag) {
       return null;
     }
-    return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
+    return TypeNameUtilities.FullyQualified(symbol).Replace("global::", "");
   }
 
   // ===== Discovery: composite events =====
@@ -232,11 +230,11 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       return null;
     }
     var implementsComposite = symbol.AllInterfaces.Any(i =>
-      i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == ICOMPOSITE_EVENT_INTERFACE);
+      TypeNameUtilities.FullyQualified(i) == ICOMPOSITE_EVENT_INTERFACE);
     if (!implementsComposite) {
       return null;
     }
-    return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
+    return TypeNameUtilities.FullyQualified(symbol).Replace("global::", "");
   }
 
   // ===== Discovery: collective events =====
@@ -257,11 +255,11 @@ public class ReceptorRegistryQueryGenerator : IIncrementalGenerator {
       return null;
     }
     var implementsCollective = symbol.AllInterfaces.Any(i =>
-      i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == ICOLLECTIVE_EVENT_INTERFACE);
+      TypeNameUtilities.FullyQualified(i) == ICOLLECTIVE_EVENT_INTERFACE);
     if (!implementsCollective) {
       return null;
     }
-    return symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
+    return TypeNameUtilities.FullyQualified(symbol).Replace("global::", "");
   }
 
   // ===== Emission =====

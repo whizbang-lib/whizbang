@@ -35,7 +35,8 @@ namespace Whizbang.Core.Tests.Observability;
 /// <list type="bullet">
 /// <item><description>Counter name <c>whizbang.dead_letters.added</c> on meter
 /// <c>Whizbang.DeadLetters</c>.</description></item>
-/// <item><description>Value is +1 per promotion (one row → one metric event).</description></item>
+/// <item><description>Value is +1 per promotion (one row → +1 on the cumulative series the
+/// passive counter reports at collection, #711).</description></item>
 /// <item><description>Tagged <c>source_table=wh_outbox</c> + <c>reason=MaxAttemptsExceeded</c>
 /// so PromQL queries can slice by failure-mode + source.</description></item>
 /// </list>
@@ -124,10 +125,13 @@ public class DeadLetterMetricsEmissionTests {
 
   private sealed record _MetricRecording(string InstrumentName, long Value, IReadOnlyDictionary<string, object?> Tags);
 
-  private static MeterListener _attachListener(ConcurrentBag<_MetricRecording> recordings) {
+  // Filters by meter INSTANCE, not name: every DeadLetterMetrics in the process shares the meter
+  // name, and a passive counter (#711) reports EVERY enabled instance's series at collection —
+  // a name filter would fold parallel tests' promotions into this one's count.
+  private static MeterListener _attachListener(ConcurrentBag<_MetricRecording> recordings, TestMeterFactory factory) {
     var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (instrument.Meter.Name == DeadLetterMetrics.METER_NAME) {
+        if (factory.CreatedMeters.Contains(instrument.Meter)) {
           l.EnableMeasurementEvents(instrument);
         }
       }
@@ -140,6 +144,21 @@ public class DeadLetterMetricsEmissionTests {
     listener.Start();
     return listener;
   }
+
+  /// <summary>
+  /// Collects the passive counters (#711): discards any earlier reading and returns the current
+  /// cumulative value of every series — the untagged one, the constructor's zero seeds per
+  /// source_table/reason, and one per tag set a promotion added.
+  /// </summary>
+  private static List<_MetricRecording> _collect(MeterListener listener, ConcurrentBag<_MetricRecording> recordings) {
+    recordings.Clear();
+    listener.RecordObservableInstruments();
+    return [.. recordings];
+  }
+
+  /// <summary>The <c>whizbang.dead_letters.added</c> series that actually counted something.</summary>
+  private static List<_MetricRecording> _added(IEnumerable<_MetricRecording> readings) =>
+    readings.Where(r => r.InstrumentName == "whizbang.dead_letters.added" && r.Value > 0).ToList();
 
   private static OutboxWork _work(int attempts) {
     var msgId = (Guid)TrackedGuid.NewMedo();
@@ -166,11 +185,11 @@ public class DeadLetterMetricsEmissionTests {
 
   [Test]
   public async Task OutboxPublishWorker_PromotesToDlq_EmitsAddedCounterTaggedSourceTableAndReasonAsync() {
-    var recordings = new ConcurrentBag<_MetricRecording>();
-    using var listener = _attachListener(recordings);
-
-    var whizbangMetrics = new WhizbangMetrics();
+    using var factory = new TestMeterFactory();
+    var whizbangMetrics = new WhizbangMetrics(factory);
     var dlqMetrics = new DeadLetterMetrics(whizbangMetrics);
+    var recordings = new ConcurrentBag<_MetricRecording>();
+    using var listener = _attachListener(recordings, factory);
 
     var channel = new _FakeWorkChannelWriter();
     var completion = new _NoOpCompletionChannel();
@@ -198,17 +217,20 @@ public class DeadLetterMetricsEmissionTests {
     await channel.WriteAsync(_work(attempts: 2), cts.Token);
 
     await dlqStore.FirstMove.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    // The metric increment fires immediately after MoveAsync returns. Yield once to let
-    // the worker finish the rest of _routeResultAsync before sampling.
+    // The metric increment fires immediately after MoveAsync returns, on the worker's own
+    // continuation. A passive counter (#711) shows nothing until collected, so yield and
+    // re-collect until the promotion's series reads non-zero (bounded).
     var sw = System.Diagnostics.Stopwatch.StartNew();
-    while (recordings.IsEmpty && sw.Elapsed < TimeSpan.FromSeconds(2)) {
+    while (_added(_collect(listener, recordings)).Count == 0 && sw.Elapsed < TimeSpan.FromSeconds(2)) {
       await Task.Yield();
     }
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
-    var addedEvents = recordings.Where(r => r.InstrumentName == "whizbang.dead_letters.added").ToList();
+    // Final cumulative reading once the worker is quiescent. The constructor seeds every counter
+    // with zeros (#711); only series that actually counted a promotion are considered here.
+    var addedEvents = _added(_collect(listener, recordings));
     await Assert.That(addedEvents.Count).IsEqualTo(1)
       .Because("OutboxPublishWorker's DLQ promotion path MUST fire whizbang.dead_letters.added exactly once per row promoted — without it, operator dashboards never reflect production-style stuck-row clearance.");
     await Assert.That(addedEvents[0].Value).IsEqualTo(1L)
@@ -225,11 +247,11 @@ public class DeadLetterMetricsEmissionTests {
 
   [Test]
   public async Task OutboxPublishWorker_NoPromotion_NoAddedCounterEmissionAsync() {
-    var recordings = new ConcurrentBag<_MetricRecording>();
-    using var listener = _attachListener(recordings);
-
-    var whizbangMetrics = new WhizbangMetrics();
+    using var factory = new TestMeterFactory();
+    var whizbangMetrics = new WhizbangMetrics(factory);
     var dlqMetrics = new DeadLetterMetrics(whizbangMetrics);
+    var recordings = new ConcurrentBag<_MetricRecording>();
+    using var listener = _attachListener(recordings, factory);
 
     var channel = new _FakeWorkChannelWriter();
     var completion = new _NoOpCompletionChannel();
@@ -264,8 +286,10 @@ public class DeadLetterMetricsEmissionTests {
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
 
-    var addedEvents = recordings.Where(r => r.InstrumentName == "whizbang.dead_letters.added").ToList();
+    // The constructor seeds every counter with zeros (#711); a promotion would show as a
+    // non-zero added series at collection, so the cumulative reading must hold none.
+    var addedEvents = _added(_collect(listener, recordings));
     await Assert.That(addedEvents).IsEmpty()
-      .Because("With MaxOutboxAttempts unset, no DLQ promotion fires, so the Added counter MUST stay silent — emitting a spurious +1 would inflate dashboards for ops who never opted into DLQ.");
+      .Because("With MaxOutboxAttempts unset, no DLQ promotion fires, so the Added counter MUST stay at zero on every series — a spurious +1 would inflate dashboards for ops who never opted into DLQ.");
   }
 }

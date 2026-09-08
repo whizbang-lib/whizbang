@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -85,7 +86,7 @@ public static class PolymorphicQueryExtensions {
       where TModel : class {
     ArgumentNullException.ThrowIfNull(discriminatorSelector);
 
-    var typeName = typeof(TDerived).FullName ?? typeof(TDerived).Name;
+    var typeName = TypeNameFormatter.FormatClrTypeName(typeof(TDerived));
     return query.WhereDiscriminatorValue(discriminatorSelector, typeName);
   }
 

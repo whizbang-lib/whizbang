@@ -82,7 +82,7 @@ public static class TypeSymbolExtensions {
         }
 
         if (member.GetAttributes().Any(a =>
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == attributeFullName)) {
+            a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == attributeFullName)) {
           return member;
         }
       }
@@ -118,7 +118,7 @@ public static class TypeSymbolExtensions {
         var isStaticMatch = includeStatic || !member.IsStatic;
 
         // Use method signature for deduplication (name + parameter types)
-        var signature = $"{member.Name}({string.Join(",", member.Parameters.Select(p => p.Type.ToDisplayString()))})";
+        var signature = $"{member.Name}({string.Join(",", member.Parameters.Select(p => TypeNameUtilities.Display(p.Type)))})";
 
         if (isAccessible && isStaticMatch && seenSignatures.Add(signature)) {
           yield return member;
@@ -153,7 +153,7 @@ public static class TypeSymbolExtensions {
         }
 
         if (member.GetAttributes().Any(a =>
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == attributeFullName)) {
+            a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == attributeFullName)) {
           return member;
         }
       }

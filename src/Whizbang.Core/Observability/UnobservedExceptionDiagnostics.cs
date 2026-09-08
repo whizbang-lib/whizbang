@@ -113,7 +113,7 @@ public sealed class UnobservedExceptionDiagnostics : IDisposable {
     if (ex is OperationCanceledException) {
       return;
     }
-    if (!_options.IncludeExceptionTypeInFirstChanceLog(ex.GetType().FullName ?? string.Empty)) {
+    if (!_options.IncludeExceptionTypeInFirstChanceLog(TypeNameFormatter.DisplayName(ex.GetType()))) {
       return;
     }
     if (!_logger.IsEnabled(LogLevel.Debug)) {
@@ -123,7 +123,7 @@ public sealed class UnobservedExceptionDiagnostics : IDisposable {
     _logger.LogDebug(
       ex,
       "FirstChanceException: {ExceptionType} — {Message}",
-      ex.GetType().FullName, ex.Message);
+      TypeNameFormatter.DisplayName(ex.GetType()), ex.Message);
 #pragma warning restore CA1848
   }
 

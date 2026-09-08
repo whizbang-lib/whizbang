@@ -94,7 +94,7 @@ public sealed class MultiServiceHarness : IAsyncDisposable {
       Target = target
     };
     var envelopeType =
-      $"Whizbang.Core.Messaging.MessageEnvelope`1[[{typeof(TMessage).AssemblyQualifiedName}]], Whizbang.Core";
+      $"Whizbang.Core.Messaging.MessageEnvelope`1[[{TypeNameFormatter.AssemblyQualifiedName(typeof(TMessage))}]], Whizbang.Core";
     await Wire.PublishAsync(envelope, new TransportDestination(topic), envelopeType);
   }
 

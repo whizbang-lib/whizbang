@@ -17,22 +17,30 @@ public class TypeRegistryMetricsTests {
 
   private static TypeRegistryMetrics _newMetrics() => new(new WhizbangMetrics(meterFactory: null));
 
+  // The counters are passive (#711): the meter reports every series it holds at collection, so
+  // the capture collects after the act and keeps the series that counted something. The series
+  // at zero (the untagged one and the entry-assembly service tag declared at construction) are
+  // the "nothing happened" reading, not an emission.
   private static (List<long> values, List<KeyValuePair<string, object?>[]> tags) _capture(
-      TypeRegistryMetrics metrics, Counter<long> instrument, System.Action act) {
+      TypeRegistryMetrics metrics, PassiveCounter<long> instrument, System.Action act) {
     var values = new List<long>();
     var tags = new List<KeyValuePair<string, object?>[]>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (inst, l) => {
-      if (ReferenceEquals(inst, instrument)) {
+      if (ReferenceEquals(inst, instrument.Instrument)) {
         l.EnableMeasurementEvents(inst);
       }
     };
     listener.SetMeasurementEventCallback<long>((_, measurement, t, _) => {
+      if (measurement == 0) {
+        return;
+      }
       values.Add(measurement);
       tags.Add(t.ToArray());
     });
     listener.Start();
     act();
+    listener.RecordObservableInstruments();
     listener.Dispose();
     return (values, tags);
   }

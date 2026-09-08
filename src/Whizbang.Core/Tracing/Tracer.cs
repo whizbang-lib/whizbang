@@ -123,7 +123,7 @@ public sealed partial class Tracer(ILogger<Tracer> logger, IOptionsMonitor<Traci
         activity.SetStatus(ActivityStatusCode.Error, exception.Message);
         // Record exception as an event
         var exceptionTags = new ActivityTagsCollection {
-          { "exception.type", exception.GetType().FullName ?? exception.GetType().Name },
+          { "exception.type", TypeNameFormatter.DisplayName(exception.GetType()) },
           { "exception.message", exception.Message },
           { "exception.stacktrace", exception.StackTrace ?? string.Empty }
         };

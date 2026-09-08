@@ -21,8 +21,8 @@ public static class RepairTraffic {
   /// containment, not equality.
   /// </summary>
   public static IReadOnlyList<string> InboxMessageTypeNames { get; } = [
-    EventTypeMatchingHelper.NormalizeTypeName(typeof(RequestRedeliveryCommand).AssemblyQualifiedName!),
-    EventTypeMatchingHelper.NormalizeTypeName(typeof(RedeliveryComposite).AssemblyQualifiedName!),
+    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(RequestRedeliveryCommand))),
+    EventTypeMatchingHelper.NormalizeTypeName(TypeNameFormatter.AssemblyQualifiedName(typeof(RedeliveryComposite))),
   ];
 
   /// <summary>

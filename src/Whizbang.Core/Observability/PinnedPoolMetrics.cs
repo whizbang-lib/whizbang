@@ -19,10 +19,10 @@ public sealed class PinnedPoolMetrics {
   public Histogram<double> BorrowDuration { get; }
 
   /// <summary>Count of borrow attempts that timed out waiting for an available connection. Tag: <c>worker</c>.</summary>
-  public Counter<long> BorrowTimeouts { get; }
+  public PassiveCounter<long> BorrowTimeouts { get; }
 
   /// <summary>Count of pinned-connection recycles (driven by <c>ConnectionLifetimeSeconds</c>).</summary>
-  public Counter<long> ConnectionRecycles { get; }
+  public PassiveCounter<long> ConnectionRecycles { get; }
 
   /// <summary>Constructs the metrics group via the host's <see cref="WhizbangMetrics"/> meter factory when available (matches DispatcherMetrics pattern); falls back to a freshly-created <see cref="Meter"/> when the host hasn't registered metrics.</summary>
   public PinnedPoolMetrics(WhizbangMetrics? whizbangMetrics = null) {
@@ -31,10 +31,10 @@ public sealed class PinnedPoolMetrics {
       "whizbang.workers.pinned_pool.borrow.duration",
       "ms",
       "Time from borrow request to connection handed back by the pinned pool.");
-    BorrowTimeouts = meter.CreateCounter<long>(
+    BorrowTimeouts = meter.CreatePassiveCounter<long>(
       "whizbang.workers.pinned_pool.borrow.timeouts",
       description: "Count of borrow attempts that timed out waiting for an available connection.");
-    ConnectionRecycles = meter.CreateCounter<long>(
+    ConnectionRecycles = meter.CreatePassiveCounter<long>(
       "whizbang.workers.pinned_pool.connection_recycles",
       description: "Count of pinned-connection recycles (Npgsql ConnectionLifetime).");
   }

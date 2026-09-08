@@ -1,3 +1,6 @@
 T:System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute; Reflection is banned in Whizbang - use source generators instead
 T:System.Diagnostics.CodeAnalysis.RequiresDynamicCodeAttribute; Dynamic code generation is banned in Whizbang - use source generators instead
 T:System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessageAttribute; Do not suppress AOT warnings - fix the underlying code instead
+P:System.Type.FullName; Type names are keys (issue #698): render them with TypeNameFormatter (DisplayName for logs/traces/messages, FormatClrTypeName for a CLR key, Format for the wire form) so both sides agree
+P:System.Type.AssemblyQualifiedName; Type names are keys (issue #698): use TypeNameFormatter.AssemblyQualifiedName / AssemblyQualifiedNameOrNull, and compare through EventTypeMatchingHelper
+P:System.Reflection.Assembly.FullName; Use TypeNameFormatter.AssemblyDisplayName (issue #698)

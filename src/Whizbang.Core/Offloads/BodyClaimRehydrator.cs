@@ -81,6 +81,24 @@ public static class BodyClaimRehydrator {
         $"Body integrity check failed: claim expected {claim.ContentHash}, downloaded body hashes to {actualHash}. Provider '{claim.ProviderName}' storage key '{claim.StorageKey}'.");
     }
 
+    // Sealed body (issue #704): the hash above verified the STORED bytes, so nothing unverified
+    // reaches the cipher; the authenticated cipher now covers the plaintext.
+    if (claim.Cipher is { } descriptor) {
+      var cipher = serviceProvider.GetKeyedService<IMessageBodyCipher>(descriptor.CipherName);
+      if (cipher is null) {
+        return RehydrateResult.DeadLetter(
+          MessageFailureReason.BodyClaimCipherUnknown,
+          $"Receiver does not have an IMessageBodyCipher registered under cipher name '{descriptor.CipherName}' (key '{descriptor.KeyId}'). Register the matching AddWhizbangMessageBodyCipher / AddWhizbangAesGcmBodyCipher on the receiver service.");
+      }
+      try {
+        downloaded = await cipher.OpenAsync(downloaded, descriptor, cancellationToken);
+      } catch (CryptographicException ex) {
+        return RehydrateResult.DeadLetter(
+          MessageFailureReason.BodyClaimIntegrityFailure,
+          $"Body could not be opened with cipher '{descriptor.CipherName}' under key '{descriptor.KeyId}': {ex.Message}. The stored bytes matched the claim hash, so the key or the descriptor is wrong, not the storage. Provider '{claim.ProviderName}' storage key '{claim.StorageKey}'.");
+      }
+    }
+
     var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(claimPayload.OriginalTypeName, jsonOptions);
     if (typeInfo is null) {
       return RehydrateResult.DeadLetter(

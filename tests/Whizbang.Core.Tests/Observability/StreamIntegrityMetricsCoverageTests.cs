@@ -94,6 +94,7 @@ public class StreamIntegrityMetricsCoverageTests {
     metrics.RedeliveryEventsShipped.Add(12);
     metrics.ManifestPagesFollowed.Add(1, new KeyValuePair<string, object?>("origin", "origin-b"));
     metrics.ManifestPagesCapped.Add(2, new KeyValuePair<string, object?>("origin", "origin-b"));
+    listener.RecordObservableInstruments();
 
     await Assert.That(readings.Any(r =>
       r.Name == "whizbang.stream_integrity.compares_declined" && r.Value == 4 && r.Origin == "origin-a"))

@@ -4,6 +4,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
@@ -71,11 +72,11 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
     }
 
     // Report diagnostic - invalid type argument
-    var typeArgName = methodTypeArg.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+    var typeArgName = TypeNameUtilities.MinimallyQualified(methodTypeArg);
     var interfaceTypeParams = string.Join(", ",
-        validTypes.Select(t => t.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
+        validTypes.Select(t => TypeNameUtilities.MinimallyQualified(t)));
     var validTypesList = string.Join(", ",
-        validTypes.Select(t => t.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
+        validTypes.Select(t => TypeNameUtilities.MinimallyQualified(t)));
 
     var diagnostic = Diagnostic.Create(
         DiagnosticDescriptors.InvalidLensQueryTypeArgument,
@@ -133,8 +134,7 @@ public sealed class LensQueryTypeArgumentAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check namespace is Whizbang.Core.Lenses
-    var containingNamespace = type.ContainingNamespace?.ToDisplayString();
-    return containingNamespace == "Whizbang.Core.Lenses";
+    return TypeNameUtilities.IsNamed(type.ContainingNamespace, "Whizbang.Core.Lenses");
   }
 
   private static bool _isValidTypeArgument(

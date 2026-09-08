@@ -473,11 +473,11 @@ public class DapperPostgresEventStore(
   private object _deserializeEventData(JsonbPersistenceModel jsonb, Type concreteType) {
     var typeInfo = JsonOptions.GetTypeInfo(concreteType)
       ?? throw new InvalidOperationException(
-        $"No JsonTypeInfo found for type {concreteType.FullName}. " +
+        $"No JsonTypeInfo found for type {TypeNameFormatter.DisplayName(concreteType)}. " +
         "Ensure the event type is registered in your JsonSerializerContext.");
 
     return JsonSerializer.Deserialize(jsonb.DataJson, typeInfo)
-      ?? throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
+      ?? throw new InvalidOperationException($"Failed to deserialize event of type {TypeNameFormatter.DisplayName(concreteType)}");
   }
 
   /// <summary>
@@ -490,7 +490,7 @@ public class DapperPostgresEventStore(
 
     if (eventData is not IEvent eventPayload) {
       throw new InvalidOperationException(
-        $"Deserialized event of type {eventData.GetType().FullName} does not implement IEvent.");
+        $"Deserialized event of type {TypeNameFormatter.DisplayName(eventData.GetType())} does not implement IEvent.");
     }
 
     return new MessageEnvelope<IEvent> {

@@ -150,7 +150,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
 
   private static bool _implementsInterface(INamedTypeSymbol typeSymbol, string fullyQualifiedInterface)
     => typeSymbol.AllInterfaces.Any(i =>
-      i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == fullyQualifiedInterface);
+      TypeNameUtilities.FullyQualified(i) == fullyQualifiedInterface);
 
   // ── Type-definition fingerprint (F-3) ────────────────────────────────────────────────────────────
   // Deterministic per-type content hashes stamped onto the catalog entry so the startup reconciler can
@@ -175,7 +175,7 @@ public class MessageTypeCatalogGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _computeSchemaHash(INamedTypeSymbol type) {
     var props = _serializableProperties(type)
-      .Select(p => p.Name + ":" + p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+      .Select(p => p.Name + ":" + TypeNameUtilities.FullyQualified(p.Type))
       .OrderBy(s => s, System.StringComparer.Ordinal);
     return _sha256Hex("{" + string.Join(",", props) + "}");
   }

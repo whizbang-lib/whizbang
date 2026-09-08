@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 using CancellationToken = System.Threading.CancellationToken;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
@@ -94,7 +95,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
       return false;
     }
     foreach (var iface in named.AllInterfaces) {
-      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<", StringComparison.Ordinal) ||
           originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveBase<", StringComparison.Ordinal)) {
@@ -119,8 +120,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     var hasWhizbangIdAttribute = structSymbol.GetAttributes().Any(static a =>
         a.AttributeClass?.Name == "WhizbangIdAttribute" ||
         a.AttributeClass?.Name == "WhizbangId" ||
-        a.AttributeClass?.ToDisplayString() == WHIZBANG_ID_ATTRIBUTE ||
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
+        TypeNameUtilities.IsNamed(a.AttributeClass, WHIZBANG_ID_ATTRIBUTE) ||
+        (a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}"));
 
     if (!hasWhizbangIdAttribute) {
       return null;
@@ -133,8 +134,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
     return new WhizbangIdInfo(
         TypeName: structSymbol.Name,
-        Namespace: structSymbol.ContainingNamespace?.ToDisplayString() ?? "Global",
-        FullyQualifiedName: structSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+        Namespace: structSymbol.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : "Global",
+        FullyQualifiedName: TypeNameUtilities.FullyQualified(structSymbol));
   }
 
   /// <summary>

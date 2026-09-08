@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Whizbang.Core;
 using Whizbang.Core.Attributes;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
@@ -80,7 +81,7 @@ public sealed class OpenTelemetrySpanHook : IMessageTagHook<TelemetryTagAttribut
     activity.SetTag("messaging.system", "whizbang");
     activity.SetTag("messaging.operation", "process");
     activity.SetTag("whizbang.tag", attribute.Tag);
-    activity.SetTag("whizbang.message_type", messageType.FullName);
+    activity.SetTag("whizbang.message_type", TypeNameFormatter.DisplayName(messageType));
   }
 
   private static void _setScopeAttributes(Activity activity, IScopeContext? scopeContext) {

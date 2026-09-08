@@ -484,9 +484,12 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     // Arrange - DispatcherMetrics registered + trace store forces the tracing path;
     // a throwing receptor must record an error measurement and rethrow
     var errorCount = 0L;
+    var metrics = new DispatcherMetrics(new WhizbangMetrics());
     using var meterListener = new MeterListener();
+    // Pin to THIS test's error counter: other tests build DispatcherMetrics on the same meter
+    // name, and a passive counter reports every instance's series at collection.
     meterListener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == DispatcherMetrics.METER_NAME && instrument.Name == "whizbang.dispatcher.errors") {
+      if (ReferenceEquals(instrument, metrics.Errors.Instrument)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
@@ -494,7 +497,6 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
       Interlocked.Add(ref errorCount, measurement));
     meterListener.Start();
 
-    var metrics = new DispatcherMetrics(new WhizbangMetrics());
     var dispatcher = new SweepRoutedDispatcher(
       _buildProvider(metrics: metrics),
       traceStore: new SweepTraceStore(),
@@ -504,6 +506,8 @@ public class DispatcherCoverageSweepRoutedCascadeTests {
     await Assert.That(async () =>
         await dispatcher.LocalInvokeAsync((object)new SweepRoutedCommand("metric-error"), MessageContext.New()))
       .ThrowsExactly<InvalidOperationException>();
+    // Passive counter: the error series reports its cumulative count only at collection.
+    meterListener.RecordObservableInstruments();
     await Assert.That(Interlocked.Read(ref errorCount)).IsGreaterThanOrEqualTo(1L);
   }
 

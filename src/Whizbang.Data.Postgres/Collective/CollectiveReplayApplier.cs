@@ -147,7 +147,7 @@ public sealed class CollectiveReplayApplier : ICollectiveReplayApplier {
       }
     }
     throw new InvalidOperationException(
-      $"No ICollectiveInMemoryExecutor registered for ModelType='{modelType.FullName}'. " +
+      $"No ICollectiveInMemoryExecutor registered for ModelType='{TypeNameFormatter.DisplayName(modelType)}'. " +
       $"AddCollectiveExecutorEFCore<{modelType.Name}>()/AddCollectiveExecutorDapper<{modelType.Name}>() registers it " +
       "alongside the SQL executor — required so this model's collective events survive a perspective rebuild.");
   }

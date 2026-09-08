@@ -114,7 +114,7 @@ public sealed class OrphanInboxJanitor : BackgroundService {
     var names = new HashSet<string>(StringComparer.Ordinal);
 
     foreach (var t in _receptorSnapshot.ReceptorMessageTypes) {
-      var qualified = t.AssemblyQualifiedName;
+      var qualified = TypeNameFormatter.AssemblyQualifiedNameOrNull(t);
       if (!string.IsNullOrEmpty(qualified)) {
         names.Add(EventTypeMatchingHelper.NormalizeTypeName(qualified));
       }
@@ -123,7 +123,7 @@ public sealed class OrphanInboxJanitor : BackgroundService {
     var perspectiveRegistry = scopedProvider.GetService<IPerspectiveRunnerRegistry>();
     if (perspectiveRegistry != null) {
       foreach (var t in perspectiveRegistry.GetEventTypes()) {
-        var qualified = t.AssemblyQualifiedName;
+        var qualified = TypeNameFormatter.AssemblyQualifiedNameOrNull(t);
         if (!string.IsNullOrEmpty(qualified)) {
           names.Add(EventTypeMatchingHelper.NormalizeTypeName(qualified));
         }

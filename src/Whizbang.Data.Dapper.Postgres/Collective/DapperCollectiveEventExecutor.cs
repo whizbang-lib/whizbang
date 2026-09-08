@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
@@ -70,7 +71,7 @@ public sealed class DapperCollectiveEventExecutor<TModel> : ICollectiveEventExec
 
     if (dbContextOrSession is not IDbConnectionFactory connectionFactory) {
       throw new ArgumentException(
-        $"DapperCollectiveEventExecutor<{typeof(TModel).Name}> requires an IDbConnectionFactory but received '{dbContextOrSession.GetType().FullName}'. The worker dispatch routed a Dapper executor at a non-Dapper session — driver registration is wrong.",
+        $"DapperCollectiveEventExecutor<{typeof(TModel).Name}> requires an IDbConnectionFactory but received '{TypeNameFormatter.DisplayName(dbContextOrSession.GetType())}'. The worker dispatch routed a Dapper executor at a non-Dapper session — driver registration is wrong.",
         nameof(dbContextOrSession));
     }
 

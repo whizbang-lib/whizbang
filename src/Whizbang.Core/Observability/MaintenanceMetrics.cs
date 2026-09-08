@@ -31,24 +31,42 @@ public sealed class MaintenanceMetrics {
 #pragma warning restore CA1707
 
   /// <summary>Rows affected by a maintenance task in one cycle. Tagged by <c>task</c>.</summary>
-  public Counter<long> RowsAffected { get; }
+  public PassiveCounter<long> RowsAffected { get; }
 
   /// <summary>A maintenance task's per-cycle duration in milliseconds. Tagged by <c>task</c>.</summary>
   public Histogram<double> TaskDuration { get; }
+
+  /// <summary>
+  /// Rows past a declared retention window at the moment the maintenance cycle adopted it (opened
+  /// the adoption gate). Tagged by <c>perspective</c>; the first day of a retroactive window.
+  /// </summary>
+  public PassiveCounter<long> RetentionAdopted { get; }
 
   /// <summary>Initializes a new instance of <see cref="MaintenanceMetrics"/>.</summary>
   public MaintenanceMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    RowsAffected = meter.CreateCounter<long>(
+    RowsAffected = meter.CreatePassiveCounter<long>(
       "whizbang.maintenance.rows_affected",
       description: "Rows affected by a maintenance task in one cycle; tagged by task");
     TaskDuration = meter.CreateHistogram<double>(
       "whizbang.maintenance.task_duration",
       unit: "ms",
       description: "A maintenance task's per-cycle duration in milliseconds; tagged by task");
+    RetentionAdopted = meter.CreatePassiveCounter<long>(
+      "whizbang.maintenance.retention_adopted",
+      description: "Rows past the window when the maintenance cycle adopted a perspective's declared retention; tagged by perspective");
   }
+
+  /// <summary>
+  /// Records one adoption: the backlog the newly opened window will drain, tagged by the
+  /// perspective's CLR type name. A zero backlog still records, so the series marks the adoption.
+  /// </summary>
+  /// <param name="clrTypeName">The perspective model's CLR type name.</param>
+  /// <param name="backlog">Rows past the window at adoption time.</param>
+  public void RecordRetentionAdopted(string clrTypeName, long backlog) =>
+    RetentionAdopted.Add(Math.Max(0, backlog), new KeyValuePair<string, object?>("perspective", clrTypeName));
 
   /// <summary>Records one task's cycle outcome. Duration always records; rows only when &gt; 0.</summary>
   /// <param name="taskName">The maintenance task name (e.g. <c>reap_expired_perspective_rows</c>).</param>

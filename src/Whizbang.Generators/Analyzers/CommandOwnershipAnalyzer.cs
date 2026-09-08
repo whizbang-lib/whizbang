@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
 
@@ -107,7 +108,7 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
     }
 
     foreach (var iface in classSymbol.AllInterfaces) {
-      var display = iface.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var display = TypeNameUtilities.FullyQualified(iface.OriginalDefinition);
       if ((!display.StartsWith(IRECEPTOR_PREFIX, System.StringComparison.Ordinal)
            && !display.StartsWith(ISYNCRECEPTOR_PREFIX, System.StringComparison.Ordinal))
           || iface.TypeArguments.Length == 0) {
@@ -121,11 +122,9 @@ public class CommandOwnershipAnalyzer : DiagnosticAnalyzer {
         continue;
       }
 
-      var commandName = messageType
-        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+      var commandName = TypeNameUtilities.FullyQualified(messageType)
         .Replace("global::", "");
-      var receptorName = classSymbol
-        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+      var receptorName = TypeNameUtilities.FullyQualified(classSymbol)
         .Replace("global::", "");
       var location = classSymbol.Locations.FirstOrDefault() ?? Location.None;
 

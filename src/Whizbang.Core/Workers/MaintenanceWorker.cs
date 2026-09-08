@@ -389,17 +389,43 @@ public sealed partial class MaintenanceWorker(
   }
 
   /// <summary>
+  /// The automatic half of the retention adoption gate (issue #712). The enrolled reap withholds
+  /// every perspective until it is acknowledged, so a deploy cannot silently drain a historical
+  /// backlog; nothing in the framework acknowledged, so a declared window never started reaping.
+  /// Immediately before the reap, adopt every enrolled perspective still gated: the coordinator
+  /// reads the backlog, opens the gate, and reports one row per perspective, which becomes an
+  /// Information line and a meter reading. The surprise the gate exists for is now a signal
+  /// instead of a manual step; the load is already bounded by the reap's batch size. Off when
+  /// <see cref="Whizbang.Core.Configuration.PerspectiveRowRetentionOptions.AutoAcknowledge"/> is
+  /// false, which restores the manual gate exactly.
+  /// </summary>
+  private async Task _adoptDeclaredRetentionAsync(
+      IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
+    var retention = sp.GetService<IOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>>()?.Value;
+    if (retention is { AutoAcknowledge: false }) {
+      return;
+    }
+    var adopted = await coordinator.AdoptEnrolledPerspectiveRetentionAsync(ct).ConfigureAwait(false);
+    foreach (var adoption in adopted) {
+      LogRetentionAdopted(_logger, adoption.ClrTypeName, adoption.Backlog, _options.RowReapBatchSize);
+      metrics?.RecordRetentionAdopted(adoption.ClrTypeName, adoption.Backlog);
+    }
+  }
+
+  /// <summary>
   /// The perspective-row retention step: offers about-to-die rows to registered guards (the
-  /// pre-destruction seam), applies their per-row decisions as durable holds, then invokes the
-  /// two sweeps — the expiry ladder every cycle, the cap eviction behind a fleet watermark.
-  /// Without a registered guard the offering is skipped entirely and the sweeps keep their
-  /// pure-SQL path. Best-effort: any failure is logged and retried next cycle.
+  /// pre-destruction seam), applies their per-row decisions as durable holds, adopts any newly
+  /// declared window, then invokes the two sweeps — the expiry ladder every cycle, the cap
+  /// eviction behind a fleet watermark. Without a registered guard the offering is skipped
+  /// entirely and the sweeps keep their pure-SQL path. Best-effort: any failure is logged and
+  /// retried next cycle.
   /// </summary>
   private async Task _sweepPerspectiveRowsAsync(
       IWorkCoordinator coordinator, IServiceProvider sp, CancellationToken ct) {
     try {
       var releasedByGuard = await _offerRowsToGuardsAsync(coordinator, sp, ct);
 
+      await _adoptDeclaredRetentionAsync(coordinator, sp, ct).ConfigureAwait(false);
       var ttlResult = await coordinator.ReapEnrolledPerspectiveRowsAsync(_options.RowReapBatchSize, ct)
         .ConfigureAwait(false);
       Whizbang.Core.Messaging.PerspectiveRowReapResult? capResult = null;
@@ -457,7 +483,7 @@ public sealed partial class MaintenanceWorker(
     var guardsByType = new Dictionary<string, Whizbang.Core.Lifecycle.IPerspectiveRowDestructionGuard>(StringComparer.Ordinal);
     foreach (var guard in guards) {
       foreach (var model in guard.GuardedModels) {
-        if (model.FullName is { } name) {
+        if (TypeNameFormatter.TryFormatClrTypeName(model, out var name)) {
           guardsByType[name] = guard;
         }
       }
@@ -545,9 +571,9 @@ public sealed partial class MaintenanceWorker(
       }
 
       // clr name ↔ table ↔ model type maps, from the registry + the group declarations.
-      var clrNames = models.Select(m => m.FullName).Where(n => n is not null).Cast<string>().ToList();
+      var clrNames = models.Select(m => TypeNameFormatter.TryFormatClrTypeName(m, out var clr) ? clr : null).Where(n => n is not null).Cast<string>().ToList();
       var tableNames = await coordinator.GetPerspectiveTableNamesAsync(clrNames, ct).ConfigureAwait(false);
-      var typeByClr = models.Where(m => m.FullName is not null).ToDictionary(m => m.FullName!, m => m, StringComparer.Ordinal);
+      var typeByClr = models.Where(m => TypeNameFormatter.TryFormatClrTypeName(m, out _)).ToDictionary(m => TypeNameFormatter.FormatClrTypeName(m), m => m, StringComparer.Ordinal);
       var typeByTable = new Dictionary<string, Type>(StringComparer.Ordinal);
       var tableByType = new Dictionary<Type, string>();
       foreach (var entry in tableNames) {
@@ -588,7 +614,7 @@ public sealed partial class MaintenanceWorker(
         }
         var rowIds = group.Select(g => g.RowId).ToList();
 
-        if (guardByType.TryGetValue(group.Key, out var guard) && group.Key.FullName is { } guardedClr) {
+        if (guardByType.TryGetValue(group.Key, out var guard) && TypeNameFormatter.TryFormatClrTypeName(group.Key, out var guardedClr)) {
           // Cascaded rows of a guarded perspective pass through the same guard as sweep-selected
           // ones — a resource-referencing row cannot slip out through the cascade path.
           var targets = await coordinator.GetPerspectiveRowsByIdsAsync(guardedClr, table, rowIds, ct).ConfigureAwait(false);
@@ -888,6 +914,10 @@ public sealed partial class MaintenanceWorker(
   [LoggerMessage(EventId = 54, Level = LogLevel.Warning,
     Message = "Stream-integrity sweep failed; pending rows of features that are off stay until the next cycle (repair rows are still discarded at dispatch when their schedule arrives)")]
   static partial void LogIntegritySweepFailed(ILogger logger, Exception ex);
+
+  [LoggerMessage(EventId = 55, Level = LogLevel.Information,
+    Message = "Row retention adopted for {ClrTypeName}: {Backlog} rows past the declared window, draining at up to {BatchSize} per maintenance cycle")]
+  static partial void LogRetentionAdopted(ILogger logger, string clrTypeName, long backlog, int batchSize);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Warning,
     Message = "Table {Table} holds {Ratio}x the space its live rows need. Autovacuum cannot reclaim this; a rewrite can. Recorded — the post-ready Rewrite step performs it on the next boot when MaintenanceWorkerOptions.AllowTableRewrite permits (takes an ACCESS EXCLUSIVE lock), or rewrite it manually.")]

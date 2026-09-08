@@ -59,7 +59,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
 
     // Check for [RestLens] attribute
     var restLensAttr = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == REST_LENS_ATTRIBUTE_NAME);
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, REST_LENS_ATTRIBUTE_NAME));
 
     if (restLensAttr is null) {
       return null;
@@ -67,7 +67,7 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
 
     // Find ILensQuery<TModel> interface to get the model type
     var lensQueryInterface = symbol.AllInterfaces
-        .FirstOrDefault(i => i.OriginalDefinition.ToDisplayString().StartsWith(LENS_QUERY_INTERFACE_NAME, StringComparison.Ordinal));
+        .FirstOrDefault(i => TypeNameUtilities.Display(i.OriginalDefinition).StartsWith(LENS_QUERY_INTERFACE_NAME, StringComparison.Ordinal));
 
     if (lensQueryInterface is null || lensQueryInterface.TypeArguments.Length == 0) {
       return null;
@@ -88,15 +88,15 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     var endpointClassName = _getEndpointClassName(symbol.Name);
 
     return new RestLensInfo(
-        InterfaceName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        InterfaceName: TypeNameUtilities.FullyQualified(symbol),
+        ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
         Route: route,
         EnableFiltering: enableFiltering,
         EnableSorting: enableSorting,
         EnablePaging: enablePaging,
         DefaultPageSize: defaultPageSize,
         MaxPageSize: maxPageSize,
-        Namespace: symbol.ContainingNamespace.ToDisplayString(),
+        Namespace: TypeNameUtilities.Display(symbol.ContainingNamespace),
         EndpointClassName: endpointClassName
     );
   }

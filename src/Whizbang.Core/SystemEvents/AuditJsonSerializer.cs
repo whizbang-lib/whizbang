@@ -54,7 +54,7 @@ internal static partial class AuditJsonSerializer {
     // Neither the compile-time nor the runtime type resolved — the audit payload is written as an
     // empty object. That's a silent compliance hole, so ALWAYS surface it (NullLogger no-ops only
     // when a caller genuinely has no logger, e.g. AuditOutboxMessageBuilder).
-    LogEmptyAuditPayload(logger ?? NullLogger.Instance, value.GetType().FullName ?? value.GetType().Name);
+    LogEmptyAuditPayload(logger ?? NullLogger.Instance, TypeNameFormatter.DisplayName(value.GetType()));
     return JsonDocument.Parse("{}").RootElement.Clone();
   }
 

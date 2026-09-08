@@ -138,7 +138,7 @@ public sealed partial class PerspectiveSyncAwaiter(
     using var syncActivity = WhizbangActivitySource.Tracing.StartActivity(
       $"PerspectiveSync {perspectiveType.Name}",
       ActivityKind.Internal);
-    syncActivity?.SetTag("whizbang.sync.perspective", perspectiveType.FullName);
+    syncActivity?.SetTag("whizbang.sync.perspective", TypeNameFormatter.DisplayName(perspectiveType));
     syncActivity?.SetTag("whizbang.sync.timeout_ms", options.Timeout.TotalMilliseconds);
 
     var stopwatch = _clock.StartNew();
@@ -247,7 +247,7 @@ public sealed partial class PerspectiveSyncAwaiter(
 
   private static void _setStreamSyncActivityTags(
       Activity? syncActivity, Type perspectiveType, Guid streamId, TimeSpan timeout, Guid? eventIdToAwait) {
-    syncActivity?.SetTag("whizbang.sync.perspective", perspectiveType.FullName);
+    syncActivity?.SetTag("whizbang.sync.perspective", TypeNameFormatter.DisplayName(perspectiveType));
     syncActivity?.SetTag("whizbang.sync.stream_id", streamId.ToString());
     syncActivity?.SetTag("whizbang.sync.timeout_ms", timeout.TotalMilliseconds);
     if (eventIdToAwait.HasValue) {

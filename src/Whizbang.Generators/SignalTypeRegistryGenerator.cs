@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
@@ -64,8 +65,7 @@ public class SignalTypeRegistryGenerator : IIncrementalGenerator {
 
   private static string? _readWireNameAttribute(INamedTypeSymbol symbol) {
     foreach (var attr in symbol.GetAttributes()) {
-      var name = attr.AttributeClass?.ToDisplayString();
-      if (name != "Whizbang.Core.Signals.WireNameAttribute") {
+      if (!TypeNameUtilities.IsNamed(attr.AttributeClass, "Whizbang.Core.Signals.WireNameAttribute")) {
         continue;
       }
       if (attr.ConstructorArguments.Length > 0 &&

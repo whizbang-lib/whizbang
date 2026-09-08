@@ -122,8 +122,9 @@ public class TransportMetricsTests {
     metrics.InboxMessagesReceived.Add(1, new KeyValuePair<string, object?>("topic", "orders"));
 
     var measurements = helper.GetByName("whizbang.transport.inbox.messages_received");
-    await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Tags["topic"]).IsEqualTo("orders");
+    var orders = measurements.Where(m => m.Tags.GetValueOrDefault("topic") == "orders").ToList();
+    await Assert.That(orders).Count().IsEqualTo(1);
+    await Assert.That(orders[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -162,7 +163,9 @@ public class TransportMetricsTests {
     metrics.InboxMessagesFailed.Add(1, new KeyValuePair<string, object?>("failure_reason", "timeout"));
 
     var measurements = helper.GetByName("whizbang.transport.inbox.messages_failed");
-    await Assert.That(measurements[0].Tags["failure_reason"]).IsEqualTo("timeout");
+    var timeouts = measurements.Where(m => m.Tags.GetValueOrDefault("failure_reason") == "timeout").ToList();
+    await Assert.That(timeouts).Count().IsEqualTo(1);
+    await Assert.That(timeouts[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -227,7 +230,9 @@ public class TransportMetricsTests {
     metrics.OutboxMessagesFailed.Add(1, new KeyValuePair<string, object?>("failure_reason", "TransportNotReady"));
 
     var measurements = helper.GetByName("whizbang.transport.outbox.messages_failed");
-    await Assert.That(measurements[0].Tags["failure_reason"]).IsEqualTo("TransportNotReady");
+    var notReady = measurements.Where(m => m.Tags.GetValueOrDefault("failure_reason") == "TransportNotReady").ToList();
+    await Assert.That(notReady).Count().IsEqualTo(1);
+    await Assert.That(notReady[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -252,11 +257,13 @@ public class TransportMetricsTests {
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     metrics.ActiveSubscriptions.Add(1);
-    metrics.ActiveSubscriptions.Add(-1);
+    var afterSubscribe = helper.GetByName("whizbang.transport.active_subscriptions");
+    await Assert.That(afterSubscribe).Count().IsEqualTo(1);
+    await Assert.That(afterSubscribe[0].Value).IsEqualTo(1);
 
-    var measurements = helper.GetByName("whizbang.transport.active_subscriptions");
-    await Assert.That(measurements).Count().IsEqualTo(2);
-    await Assert.That(measurements[1].Value).IsEqualTo(-1);
+    metrics.ActiveSubscriptions.Add(-1);
+    var afterUnsubscribe = helper.GetByName("whizbang.transport.active_subscriptions");
+    await Assert.That(afterUnsubscribe[^1].Value).IsEqualTo(0);
   }
 
   [Test]

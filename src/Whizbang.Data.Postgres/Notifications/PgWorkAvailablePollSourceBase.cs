@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using Whizbang.Core;
 using Whizbang.Core.Notifications;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Signals;
@@ -104,7 +105,7 @@ public abstract partial class PgWorkAvailablePollSourceBase<TSignal> : BasePollS
   protected override void OnTickError(Exception ex) {
     // Log at Warning — a single failed poll is not fatal (the NOTIFY push path or the next tick
     // will retry), but sustained failures should be visible in observability.
-    LogDetectFailed(_logger, typeof(TSignal).FullName ?? typeof(TSignal).Name, ex);
+    LogDetectFailed(_logger, TypeNameFormatter.DisplayName(typeof(TSignal)), ex);
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,

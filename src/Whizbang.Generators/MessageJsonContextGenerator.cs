@@ -56,7 +56,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// generated JsonTypeInfo to match System.Text.Json's own behavior.</summary>
   private static bool _hasJsonIgnore(IPropertySymbol property) =>
       property.GetAttributes().Any(a =>
-          a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{JSON_IGNORE_ATTRIBUTE}");
+          a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{JSON_IGNORE_ATTRIBUTE}");
   private const string GRAPHQL_NAME_ATTRIBUTE = "HotChocolate.GraphQLNameAttribute";
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
@@ -225,7 +225,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         ? []
         : _extractPropertiesFromType(eventBase);
 
-    var sagaFullyQualifiedName = sagaType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var sagaFullyQualifiedName = TypeNameUtilities.FullyQualified(sagaType);
     var sagaClrTypeName = _getClrTypeName(sagaType);
 
     // Inheritance the event base contributes (its own base chain and interfaces), computed once and
@@ -291,7 +291,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var builder = ImmutableArray.CreateBuilder<InheritanceInfo>();
 
     if (eventBase is not null) {
-      var eventBaseName = eventBase.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var eventBaseName = TypeNameUtilities.FullyQualified(eventBase);
       if (!_isInheritanceChainTerminator(eventBaseName)) {
         builder.Add(new InheritanceInfo(eventFullyQualifiedName, eventBaseName, IsInterface: false));
       }
@@ -305,7 +305,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var marker = compilation.GetTypeByMetadataName(shape.MarkerInterface);
     if (marker is not null) {
       foreach (var iface in new[] { marker }.Concat(marker.AllInterfaces)) {
-        var interfaceName = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var interfaceName = TypeNameUtilities.FullyQualified(iface);
         if (_isPolymorphicBaseInterface(interfaceName)) {
           builder.Add(new InheritanceInfo(eventFullyQualifiedName, interfaceName, IsInterface: true));
         }
@@ -453,25 +453,25 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Check if implements ICommand or IEvent
     bool isCommand = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_COMMAND}");
+        TypeNameUtilities.FullyQualified(i) == $"global::{I_COMMAND}");
 
     bool isEvent = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_EVENT}");
+        TypeNameUtilities.FullyQualified(i) == $"global::{I_EVENT}");
 
     // Check if implements ICompositeEvent — a wire-only event that fans out into inner events at the
     // receiver. Composites implement IMessage (NOT IEvent), so without explicit discovery they are
     // neither serialized nor registered as an IMessage derived type, and MessageEnvelope<ICompositeEvent>
     // fails to round-trip. They must register as IMessage but NOT as IEvent (never persisted).
     bool isComposite = typeSymbol.AllInterfaces.Any(i =>
-        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_COMPOSITE_EVENT}");
+        TypeNameUtilities.FullyQualified(i) == $"global::{I_COMPOSITE_EVENT}");
 
     // Check if marked with [WhizbangSerializable] attribute
     bool isSerializable = typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_SERIALIZABLE}");
+        .Any(a => a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_SERIALIZABLE}");
 
     // Check if marked with [GraphQLName] attribute (implies GraphQL serialization needed)
     bool hasGraphQLName = typeSymbol.GetAttributes()
-        .Any(a => a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{GRAPHQL_NAME_ATTRIBUTE}");
+        .Any(a => a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{GRAPHQL_NAME_ATTRIBUTE}");
 
     // Check if this type is a perspective model (used as TModel in IPerspectiveFor<TModel, ...>)
     // Look for sibling or nested types that implement IPerspectiveFor<ThisType, ...>
@@ -491,7 +491,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var fullyQualifiedName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var fullyQualifiedName = TypeNameUtilities.FullyQualified(typeSymbol);
     var clrTypeName = _getClrTypeName(typeSymbol);
     var simpleName = typeSymbol.Name;
 
@@ -500,7 +500,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var properties = _getAllPropertiesIncludingInherited(typeSymbol)
         .Select(p => new PropertyInfo(
             Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
             IsValueType: _isValueType(p.Type),
             IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
             CanWrite: p.SetMethod != null
@@ -1997,7 +1999,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var derivedTypeNames = new List<string>();
 
     foreach (var derivedType in derivedTypes) {
-      var derivedTypeName = derivedType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var derivedTypeName = TypeNameUtilities.FullyQualified(derivedType);
       derivedTypeNames.Add(derivedTypeName);
 
       if (processedTypes.Contains(derivedTypeName)) {
@@ -2968,7 +2970,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithWhizbangIdProperty_SkipsConverterGenerationAsync</tests>
   private static bool _hasWhizbangIdAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
+        a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) == $"global::{WHIZBANG_ID_ATTRIBUTE}");
   }
 
   /// <summary>
@@ -3011,7 +3013,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       INamedTypeSymbol modelTypeSymbol) {
     foreach (var iface in candidateType.AllInterfaces) {
       // Check if it's a perspective interface -- use default format to match shared helper
-      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (!_isPerspectiveInterfaceDefinition(originalDef)) {
         continue;
       }
@@ -3054,7 +3056,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var results = ImmutableArray.CreateBuilder<JsonMessageTypeInfo>();
 
     foreach (var iface in typeSymbol.AllInterfaces) {
-      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (!_isPerspectiveInterfaceDefinition(originalDef)) {
         continue;
       }
@@ -3069,14 +3071,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           continue;
         }
 
-        var fullyQualifiedName = eventType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var fullyQualifiedName = TypeNameUtilities.FullyQualified(eventType);
         var clrTypeName = _getClrTypeName(eventType);
         var simpleName = eventType.Name;
 
         var properties = _getAllPropertiesIncludingInherited(eventType)
             .Select(p => new PropertyInfo(
                 Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
                 Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
                 IsValueType: _isValueType(p.Type),
                 IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
                 CanWrite: p.SetMethod != null
@@ -3116,7 +3120,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_IPerspectiveWithActionsFor_ModelIncludedInJsonContextAsync</tests>
   private static JsonMessageTypeInfo? _extractPerspectiveModelFromPerspectiveClass(INamedTypeSymbol typeSymbol) {
     foreach (var iface in typeSymbol.AllInterfaces) {
-      var originalDef = iface.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(iface.OriginalDefinition);
       if (!_isPerspectiveInterfaceDefinition(originalDef)) {
         continue;
       }
@@ -3135,14 +3139,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var fullyQualifiedName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var fullyQualifiedName = TypeNameUtilities.FullyQualified(modelType);
       var clrTypeName = _getClrTypeName(modelType);
       var simpleName = modelType.Name;
 
       var properties = _getAllPropertiesIncludingInherited(modelType)
           .Select(p => new PropertyInfo(
               Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
               Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
               IsValueType: _isValueType(p.Type),
               IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
               CanWrite: p.SetMethod != null
@@ -3179,7 +3185,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithJsonPolymorphicAbstractType_DiscoversDerivedTypesAsync</tests>
   private static bool _hasJsonPolymorphicAttribute(INamedTypeSymbol typeSymbol) {
     return typeSymbol.GetAttributes().Any(a =>
-        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ==
+        a.AttributeClass is { } attributeClass && TypeNameUtilities.FullyQualified(attributeClass) ==
         "global::System.Text.Json.Serialization.JsonPolymorphicAttribute");
   }
 
@@ -3196,7 +3202,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var attr in polymorphicBaseType.GetAttributes()) {
       // Check for [JsonDerivedType(typeof(DerivedType), ...)]
-      if (attr.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) !=
+      if (attr.AttributeClass is not { } attributeClass || TypeNameUtilities.FullyQualified(attributeClass) !=
           "global::System.Text.Json.Serialization.JsonDerivedTypeAttribute") {
         continue;
       }
@@ -3277,7 +3283,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return [.. _getAllPropertiesIncludingInherited(typeSymbol)
         .Select(p => new PropertyInfo(
             Name: p.Name,
+#pragma warning disable RS0030 // local format keeps UseSpecialTypes (string?/int keywords), which the shared FullyQualifiedWithNullability lacks
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+#pragma warning restore RS0030
             IsValueType: _isValueType(p.Type),
             IsInitOnly: p.SetMethod?.IsInitOnly ?? false,
             CanWrite: p.SetMethod != null
@@ -3503,12 +3511,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <docs>extending/source-generators/polymorphic-serialization</docs>
   private static InheritanceInfo[] _extractInheritanceInfo(INamedTypeSymbol typeSymbol) {
     var inheritanceList = new List<InheritanceInfo>();
-    var derivedTypeName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var derivedTypeName = TypeNameUtilities.FullyQualified(typeSymbol);
 
     // Walk up base type chain (classes only)
     var currentBase = typeSymbol.BaseType;
     while (currentBase != null) {
-      var baseTypeName = currentBase.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var baseTypeName = TypeNameUtilities.FullyQualified(currentBase);
 
       // Skip System.* types (object, ValueType, etc.)
       // Also skip C# keyword aliases like "object", "string" which FullyQualifiedFormat may return
@@ -3529,7 +3537,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Process interfaces (excluding core Whizbang interfaces and System interfaces)
     foreach (var iface in typeSymbol.AllInterfaces) {
-      var interfaceName = iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var interfaceName = TypeNameUtilities.FullyQualified(iface);
 
       if (!_isPolymorphicBaseInterface(interfaceName)) {
         continue;

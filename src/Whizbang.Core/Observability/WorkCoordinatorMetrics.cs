@@ -51,31 +51,31 @@ public sealed class WorkCoordinatorMetrics {
   // Counters
 
   /// <summary>Total process_work_batch calls.</summary>
-  public Counter<long> ProcessBatchCalls { get; }
+  public PassiveCounter<long> ProcessBatchCalls { get; }
 
   /// <summary>SQL errors.</summary>
-  public Counter<long> ProcessBatchErrors { get; }
+  public PassiveCounter<long> ProcessBatchErrors { get; }
 
   /// <summary>
   /// Handler-commit batches that fell back from the bulk tier to the per-handler savepoint
   /// loop (#573). A fleet quietly living on the slow path is invisible without this —
   /// sustained non-zero is the operator's cue to read the paired warning's SQLSTATE.
   /// </summary>
-  public Counter<long> CommitHandlerFallbacks { get; }
+  public PassiveCounter<long> CommitHandlerFallbacks { get; }
 
   /// <summary>Total FlushAsync calls.</summary>
-  public Counter<long> FlushCalls { get; }
+  public PassiveCounter<long> FlushCalls { get; }
 
   /// <summary>Flushes with no queued work.</summary>
-  public Counter<long> EmptyFlushCalls { get; }
+  public PassiveCounter<long> EmptyFlushCalls { get; }
 
   // Publisher worker
 
   /// <summary>Lease renewals due to transport not ready.</summary>
-  public Counter<long> PublisherLeaseRenewals { get; }
+  public PassiveCounter<long> PublisherLeaseRenewals { get; }
 
   /// <summary>Total messages buffered for publish.</summary>
-  public Counter<long> PublisherBufferedMessages { get; }
+  public PassiveCounter<long> PublisherBufferedMessages { get; }
 
   // Maintenance
 
@@ -114,16 +114,16 @@ public sealed class WorkCoordinatorMetrics {
     ReturnedInboxWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.inbox_work", description: "Inbox work items returned");
     ReturnedPerspectiveWork = meter.CreateHistogram<int>("whizbang.work_coordinator.returned.perspective_work", description: "Perspective work items returned");
 
-    ProcessBatchCalls = meter.CreateCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Total process_work_batch calls");
-    ProcessBatchErrors = meter.CreateCounter<long>("whizbang.work_coordinator.process_batch.errors", description: "SQL errors");
-    CommitHandlerFallbacks = meter.CreateCounter<long>(
+    ProcessBatchCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.calls", description: "Total process_work_batch calls");
+    ProcessBatchErrors = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.process_batch.errors", description: "SQL errors");
+    CommitHandlerFallbacks = meter.CreatePassiveCounter<long>(
       "whizbang.work_coordinator.commit_handler.fallbacks",
       description: "Handler-commit batches that fell back from the bulk tier to the per-handler savepoint loop");
-    FlushCalls = meter.CreateCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
-    EmptyFlushCalls = meter.CreateCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes with no queued work");
+    FlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
+    EmptyFlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes with no queued work");
 
-    PublisherLeaseRenewals = meter.CreateCounter<long>("whizbang.publisher.lease_renewals", description: "Lease renewals due to transport not ready");
-    PublisherBufferedMessages = meter.CreateCounter<long>("whizbang.publisher.buffered_messages", description: "Total messages buffered for publish");
+    PublisherLeaseRenewals = meter.CreatePassiveCounter<long>("whizbang.publisher.lease_renewals", description: "Lease renewals due to transport not ready");
+    PublisherBufferedMessages = meter.CreatePassiveCounter<long>("whizbang.publisher.buffered_messages", description: "Total messages buffered for publish");
 
     MaintenanceTaskDuration = meter.CreateHistogram<double>("whizbang.maintenance.task.duration", "ms", "Duration per maintenance task");
     MaintenanceTaskRowsAffected = meter.CreateHistogram<long>("whizbang.maintenance.task.rows_affected", description: "Rows cleaned per task");

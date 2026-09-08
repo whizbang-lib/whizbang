@@ -81,7 +81,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         .Where(a => _inheritsFromMessageTagAttribute(a.AttributeClass));
 
     // Get type information (shared across all attributes)
-    var typeFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeFullName = TypeNameUtilities.FullyQualified(typeSymbol);
 
     // Get property names from the type for payload extraction (shared across all attributes)
     // Uses shared utility to include inherited properties from base classes
@@ -100,7 +100,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         continue;
       }
 
-      var attributeFullName = tagAttribute.AttributeClass!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      var attributeFullName = TypeNameUtilities.FullyQualified(tagAttribute.AttributeClass!);
 
       // Capture additional named arguments declared on the attribute (e.g., `Scope`) so
       // the emitted AttributeFactory can faithfully reconstruct the attribute instance.
@@ -126,7 +126,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       yield return new MessageTagInfo(
           TypeFullName: typeFullName,
           TypeName: typeSymbol.Name,
-          Namespace: typeSymbol.ContainingNamespace?.ToDisplayString() ?? "",
+          Namespace: typeSymbol.ContainingNamespace is null ? "" : TypeNameUtilities.Display(typeSymbol.ContainingNamespace),
           AttributeFullName: attributeFullName,
           AttributeName: tagAttribute.AttributeClass!.Name,
           Tag: tag,
@@ -178,7 +178,8 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     var current = attributeClass;
     while (current is not null) {
       var conventionAttr = current.GetAttributes().FirstOrDefault(a =>
-          a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+          a.AttributeClass is not null
+          && TypeNameUtilities.FullyQualified(a.AttributeClass)
               == "global::Whizbang.Core.Attributes.AttributeArgNamingAttribute");
       if (conventionAttr is not null && conventionAttr.ConstructorArguments.Length > 0) {
         var rawValue = conventionAttr.ConstructorArguments[0].Value;
@@ -250,13 +251,13 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
         };
       case TypedConstantKind.Enum:
         // Emit as ((EnumType)underlyingValue) — always compiles even for [Flags] combinations.
-        var enumTypeName = value.Type?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? "int";
+        var enumTypeName = value.Type is null ? "int" : TypeNameUtilities.FullyQualified(value.Type);
         return $"({enumTypeName})({value.Value})";
       case TypedConstantKind.Type:
         var t = value.Value as ITypeSymbol;
-        return t is null ? null : $"typeof({t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)})";
+        return t is null ? null : $"typeof({TypeNameUtilities.FullyQualified(t)})";
       case TypedConstantKind.Array:
-        var elementType = (value.Type as IArrayTypeSymbol)?.ElementType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var elementType = value.Type is IArrayTypeSymbol arrayType ? TypeNameUtilities.FullyQualified(arrayType.ElementType) : null;
         if (elementType is null) { return null; }
         var elements = value.Values
             .Select(_typedConstantToCSharpLiteral)
@@ -276,7 +277,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     // Check if the attribute is MessageTagAttribute or inherits from it
     var current = attributeClass;
     while (current is not null) {
-      if (current.ToDisplayString() == MESSAGE_TAG_ATTRIBUTE) {
+      if (TypeNameUtilities.IsNamed(current, MESSAGE_TAG_ATTRIBUTE)) {
         return true;
       }
       current = current.BaseType;

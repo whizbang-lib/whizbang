@@ -39,11 +39,13 @@ public sealed class GovernorMetrics {
 #pragma warning restore CA1707
 
   private readonly ConcurrentDictionary<string, IConcurrencyGovernor> _tracked = new(StringComparer.Ordinal);
-  private readonly Counter<long> _adjustments;
-  private readonly Counter<long> _completed;
+  private readonly PassiveCounter<long> _adjustments;
+  private readonly PassiveCounter<long> _completed;
   private readonly Histogram<double> _throughput;
   private readonly Histogram<long> _queueDepth;
-  private readonly Counter<long> _contended;
+  private readonly PassiveCounter<long> _contended;
+
+  private static readonly string[] _directions = ["grew", "shrank"];
 
   /// <summary>Creates the governor metrics over the supplied meter factory.</summary>
   /// <param name="whizbangMetrics">Meter factory holder.</param>
@@ -51,14 +53,14 @@ public sealed class GovernorMetrics {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    _adjustments = meter.CreateCounter<long>(
+    _adjustments = meter.CreatePassiveCounter<long>(
       name: "whizbang.governor.adjustments",
       description: "Width changes a concurrency governor made, tagged by direction (grew/shrank).");
 
     // The EVIDENCE behind each decision, not just the decision. A width change on its own is not
     // diagnosable: 30 -> 22 could be correct backoff or a controller misreading an idle queue.
     // Exporting the inputs makes the two distinguishable after the fact.
-    _completed = meter.CreateCounter<long>(
+    _completed = meter.CreatePassiveCounter<long>(
       name: "whizbang.governor.completed_items",
       description: "Units of work a governed cycle completed.");
 
@@ -74,7 +76,7 @@ public sealed class GovernorMetrics {
       description: "Work waiting when a governed cycle began. Distinguishes real backoff from a "
                  + "governor reacting to an empty queue.");
 
-    _contended = meter.CreateCounter<long>(
+    _contended = meter.CreatePassiveCounter<long>(
       name: "whizbang.governor.contention_reports",
       description: "Cycles where the caller explicitly reported resource pushback.");
 
@@ -89,6 +91,9 @@ public sealed class GovernorMetrics {
       name: "whizbang.governor.ceiling",
       observeValues: _observeCeilings,
       description: "Upper bound a governor may grow to, derived from the governed resource's budget.");
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    _adjustments.Touch("direction", _directions);
   }
 
   /// <summary>

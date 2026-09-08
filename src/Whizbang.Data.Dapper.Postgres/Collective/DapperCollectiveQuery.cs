@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 
@@ -49,7 +50,7 @@ public sealed class DapperCollectiveQuery : ICollectiveQuery, ICollectiveSibling
     return _tables.TryGetValue(modelType, out var table)
       ? table
       : throw new InvalidOperationException(
-          $"No Dapper collective table registered for sibling model '{modelType.FullName}'. A handler's Where " +
+          $"No Dapper collective table registered for sibling model '{TypeNameFormatter.DisplayName(modelType)}'. A handler's Where " +
           $"called q.Of<{modelType.Name}>(), but its table is unknown. Register it with " +
           $"AddCollectiveTableDapper<{modelType.Name}>(\"wh_per_…\") (or AddCollectiveExecutorDapper).");
   }

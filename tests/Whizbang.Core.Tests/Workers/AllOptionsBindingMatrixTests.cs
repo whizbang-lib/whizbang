@@ -53,6 +53,16 @@ public sealed class AllOptionsBindingMatrixTests {
   }
 
   [Test]
+  public async Task PerspectiveRowRetentionOptions_AutoAcknowledge_BindsTurnkeyAsync() {
+    await using var provider = _hostWith(new Dictionary<string, string?> {
+      ["Whizbang:PerspectiveRowRetention:AutoAcknowledge"] = "false",
+    });
+    var options = provider.GetRequiredService<IOptions<Whizbang.Core.Configuration.PerspectiveRowRetentionOptions>>().Value;
+    await Assert.That(options.AutoAcknowledge).IsFalse()
+      .Because("#712: keeping the manual adoption gate is a configuration decision, so the key must bind");
+  }
+
+  [Test]
   public async Task SchemaInitializationOptions_BindsTurnkeyAsync() {
     await using var provider = _hostWith(new Dictionary<string, string?> {
       ["Whizbang:SchemaInitialization:NonBlockingSchemaInit"] = "false",

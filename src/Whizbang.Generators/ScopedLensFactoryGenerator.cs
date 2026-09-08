@@ -7,6 +7,7 @@ using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -55,7 +56,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
         .FirstOrDefault(i =>
             i.IsGenericType &&
             i.OriginalDefinition.Name == LENS_QUERY_INTERFACE_NAME &&
-            i.OriginalDefinition.ContainingNamespace?.ToDisplayString() == LENS_QUERY_NAMESPACE);
+            TypeNameUtilities.IsNamed(i.OriginalDefinition.ContainingNamespace, LENS_QUERY_NAMESPACE));
 
     if (lensInterface is null) {
       return null;
@@ -73,8 +74,8 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var modelFullName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var lensFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var modelFullName = TypeNameUtilities.FullyQualified(modelType);
+    var lensFullName = TypeNameUtilities.FullyQualified(typeSymbol);
 
     // Detect scope properties on the model
     var scopeProperties = _detectScopeProperties(modelType);

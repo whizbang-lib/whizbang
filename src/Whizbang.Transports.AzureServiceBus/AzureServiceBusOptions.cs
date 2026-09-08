@@ -279,10 +279,11 @@ public class AzureServiceBusOptions {
   /// When true (the default), session acceptors scale with observed active-session demand
   /// instead of standing up <see cref="MaxConcurrentSessions"/> acceptors permanently: the
   /// session processor starts at <see cref="AcceptorFloor"/> concurrent sessions, DOUBLES
-  /// (capped at <see cref="MaxConcurrentSessions"/> — the ceiling) when active sessions hold at
-  /// or above 80% of the current pool for one <see cref="AcceptorEvaluationInterval"/>, and
-  /// HALVES (floored) after a full interval below 25% occupancy. Concurrency changes apply to
-  /// the RUNNING processor (no stop/recreate) via the SDK's dynamic concurrency update.
+  /// (capped at <see cref="MaxConcurrentSessions"/> — the ceiling) at once when active sessions
+  /// fill the current pool, or when they hold at or above 80% of it for one
+  /// <see cref="AcceptorEvaluationInterval"/>, and HALVES (floored) after a full interval below
+  /// 25% occupancy. Concurrency changes apply to the RUNNING processor (no stop/recreate) via
+  /// the SDK's dynamic concurrency update.
   /// <para>
   /// <b>Why:</b> every idle acceptor slot re-issues a broker accept each
   /// <see cref="SessionIdleTimeout"/> — a billable namespace request with zero messages flowing.
@@ -313,10 +314,12 @@ public class AzureServiceBusOptions {
   public int AcceptorFloor { get; set; } = 4;
 
   /// <summary>
-  /// How long a pressure (≥ 80% occupancy) or quiet (&lt; 25% occupancy) condition must hold
-  /// before the adaptive acceptor pool grows or decays, and the cadence of the periodic
-  /// evaluation tick. Shorter reacts faster to fan-out bursts but risks thrashing concurrency on
-  /// noisy occupancy; longer smooths at the cost of up to one extra interval of queued sessions.
+  /// How long a pressure (≥ 80% occupancy, pool not yet full) or quiet (&lt; 25% occupancy)
+  /// condition must hold before the adaptive acceptor pool grows or decays, and the cadence of
+  /// the periodic evaluation tick. A pool that is completely full grows on the accept that fills
+  /// it, without this wait. Shorter reacts faster to near-saturation but risks thrashing
+  /// concurrency on noisy occupancy; longer smooths at the cost of up to one extra interval of
+  /// queued sessions in the near-saturation band.
   /// Default: 30 seconds
   /// </summary>
   /// <docs>messaging/transports/azure-service-bus#adaptive-acceptors</docs>

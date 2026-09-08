@@ -15,6 +15,52 @@ public class PerspectiveDiscoveryGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_JaggedArrayEventType_DoesNotLoseTheAssemblysRegistrationsAsync() {
+    // Issue #706: the runtime-name formatter unwrapped one array level to find the assembly and
+    // threw on a jagged array (its element is itself an array with no ContainingAssembly). The
+    // formatter runs before the event-type validation, so one IPerspectiveFor<TModel, TEvent[][]>
+    // took the whole generator down (CS8785) and every registration in the assembly was lost.
+    const string source = """
+
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = "";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = "";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) => currentData;
+  }
+
+  public record GridModel {
+    public string Id { get; set; } = "";
+  }
+
+  public class JaggedPerspective : IPerspectiveFor<GridModel, OrderCreatedEvent[][]> {
+    public GridModel Apply(GridModel currentData, OrderCreatedEvent[][] @event) => currentData;
+  }
+}
+""";
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    await Assert.That(result.Results.All(r => r.Exception is null)).IsTrue()
+      .Because("one odd event type must be reported, never allowed to crash the generator");
+    await Assert.That(result.Diagnostics.Any(d => d.Id == "CS8785")).IsFalse();
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull()
+      .Because("the other perspective in the assembly keeps its registration");
+    await Assert.That(generatedSource).Contains("OrderPerspective");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
   public async Task PerspectiveDiscoveryGenerator_EmptyCompilation_GeneratesNothingAsync() {
     // Arrange
     const string source = @"

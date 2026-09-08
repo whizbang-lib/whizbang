@@ -118,7 +118,7 @@ public static partial class CompositeInboxFanout {
       return new FanoutResult(FanoutOutcome.NotComposite, Array.Empty<InboxMessage>(), null, null);
     }
 
-    var compositeTypeName = composite.GetType().FullName ?? "unknown-composite";
+    var compositeTypeName = TypeNameFormatter.DisplayName(composite.GetType());
     var serializer = scope.GetService<IEnvelopeSerializer>()
       ?? throw new InvalidOperationException("IEnvelopeSerializer is required for composite fan-out but is not registered.");
     var eventTypeProvider = scope.GetService<IEventTypeProvider>();
@@ -342,7 +342,7 @@ public static partial class CompositeInboxFanout {
         MessageId = childEnvelope.MessageId.Value,
         HandlerName = TypeNameFormatter.GetSimpleName(wireTypeName) + "Handler",
         Envelope = childEnvelope,
-        EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{wireTypeName}]], Whizbang.Core",
+        EnvelopeType = EnvelopeTypeNameHelper.Format(wireTypeName),
         StreamId = childStreamId,
         IsEvent = isEvent,
         // Name-first flag derivation — there is no typed payload to fall back to, which is exactly

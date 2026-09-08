@@ -7,6 +7,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 
 #pragma warning disable CA1707 // test method underscores
@@ -48,15 +49,26 @@ public sealed class RecoveryLifecycleHardeningTests {
     services.AddWhizbangWorkers();
     await using var provider = services.BuildServiceProvider();
 
-    var recorded = new List<(string Instrument, long Value)>();
+    // Pin to the decisions counter of the HousekeepingMetrics THIS provider registered, not the
+    // meter name: parallel tests build HousekeepingMetrics on the same meter name, and a passive
+    // counter reports every instance's series (the declared activity/verdict ones at zero) at
+    // collection. Only a non-zero decision series proves the resolved coordinator counted.
+    var metrics = provider.GetRequiredService<HousekeepingMetrics>();
+    var recorded = new List<(string Instrument, long Value, string? Activity)>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == "Whizbang.Housekeeping") {
+      if (ReferenceEquals(instrument, metrics.Decisions.Instrument)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
-    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) => {
-      lock (recorded) { recorded.Add((instrument.Name, value)); }
+    listener.SetMeasurementEventCallback<long>((instrument, value, tags, _) => {
+      string? activity = null;
+      foreach (var tag in tags) {
+        if (tag.Key == "activity") {
+          activity = tag.Value?.ToString();
+        }
+      }
+      lock (recorded) { recorded.Add((instrument.Name, value, activity)); }
     });
     listener.Start();
 
@@ -67,10 +79,14 @@ public sealed class RecoveryLifecycleHardeningTests {
     if (decision.Granted) {
       coordinator.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);
     }
+    listener.RecordObservableInstruments();
 
-    List<(string, long)> snapshot;
+    List<(string Instrument, long Value, string? Activity)> snapshot;
     lock (recorded) { snapshot = [.. recorded]; }
-    await Assert.That(snapshot.Any(r => r.Item1 == "whizbang.housekeeping.decisions")).IsTrue()
+    await Assert.That(snapshot.Any(r =>
+        r.Instrument == "whizbang.housekeeping.decisions"
+        && r.Activity == nameof(HousekeepingCoordinator.Activity.DeadLetterRecovery)
+        && r.Value > 0)).IsTrue()
       .Because("the coordinator the REAL bootstrap order resolves must be the metrics-attached "
              + "one — a second open registration made every arbitration decision invisible in "
              + "production while the dashboards said the feature did not run");

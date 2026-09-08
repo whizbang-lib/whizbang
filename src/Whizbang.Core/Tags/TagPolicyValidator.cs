@@ -48,7 +48,7 @@ public static class TagPolicyValidator {
       if (registration.Tag.StartsWith(SystemTags.RESERVED_PREFIX, StringComparison.Ordinal)
           && !SystemTags.IsFrameworkTag(registration.Tag)) {
         throw new TagPolicyConfigurationException(
-          $"Message type '{registration.MessageType.FullName}' declares tag '{registration.Tag}', which mints a new "
+          $"Message type '{TypeNameFormatter.DisplayName(registration.MessageType)}' declares tag '{registration.Tag}', which mints a new "
           + $"tag under the reserved '{SystemTags.RESERVED_PREFIX}' prefix. That namespace belongs to framework tags "
           + "(see SystemTags) so framework and application vocabularies can never collide — rename the tag (for "
           + "example, drop the prefix), or use an existing SystemTags value to opt into that framework policy.");
@@ -87,7 +87,7 @@ public static class TagPolicyValidator {
 
       if (boundKeys.Count > 1) {
         throw new TagPolicyConfigurationException(
-          $"Message type '{group.Key.FullName}' carries tags routed to more than one TransportNamespace "
+          $"Message type '{TypeNameFormatter.DisplayName(group.Key)}' carries tags routed to more than one TransportNamespace "
           + $"({string.Join(", ", boundKeys.Select(k => $"'{k}'"))}). A message rides exactly one broker namespace — "
           + "silently picking the first match is how traffic-class drift hides, so this fails instead. Remove one of "
           + "the tags from the type, or rebind (or unbind) one of the RouteNamespace policies.");
@@ -122,7 +122,7 @@ public static class TagPolicyValidator {
 
       if (boundTags.Count > 1) {
         throw new TagPolicyConfigurationException(
-          $"Message type '{group.Key.FullName}' carries tags bound to more than one coalesce policy "
+          $"Message type '{TypeNameFormatter.DisplayName(group.Key)}' carries tags bound to more than one coalesce policy "
           + $"({string.Join(", ", boundTags.Select(t => $"'{t}'"))}). A message belongs to at most one coalesce "
           + "group — silently picking the first match is how policy drift hides, so this fails instead. Remove "
           + "one of the tags from the type, or unbind (or disable via SlideSeconds = 0) one of the policies.");

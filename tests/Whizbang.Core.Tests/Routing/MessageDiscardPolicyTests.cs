@@ -173,7 +173,7 @@ public class MessageDiscardPolicyTests {
   public async Task RecordDiscard_IncrementsCounter_WithExpectedTagsAsync() {
     var (policy, _, _, meter) = _newPolicy();
     long total = 0;
-    var tagSnapshots = new List<IReadOnlyDictionary<string, object?>>();
+    var countedSnapshots = new List<IReadOnlyDictionary<string, object?>>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
         if (instrument.Meter == meter && instrument.Name == "whizbang.message.skipped") {
@@ -183,23 +183,27 @@ public class MessageDiscardPolicyTests {
     };
     listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
       total += value;
+      // Passive counter: every series reports at collection — the untagged one and the declared
+      // per-gate series at zero — so only a series that counted something carries this discard's tags.
+      if (value == 0) { return; }
       var snapshot = new Dictionary<string, object?>(tags.Length);
       foreach (var t in tags) { snapshot[t.Key] = t.Value; }
-      tagSnapshots.Add(snapshot);
+      countedSnapshots.Add(snapshot);
     });
     listener.Start();
 
     var decision = new MessageDiscardDecision(ShouldDiscard: true, Reason: MessageDiscardReason.NoLocalConsumer, Detail: null);
     policy.RecordDiscard(MessageDiscardGate.Receive, decision, UNCONSUMED_TYPE,
       additionalTags: new Dictionary<string, object?> { ["topic"] = "topic.a", ["subscription"] = "sub-1" });
+    listener.RecordObservableInstruments();
 
     await Assert.That(total).IsEqualTo(1L);
-    await Assert.That(tagSnapshots.Count).IsEqualTo(1);
-    await Assert.That(tagSnapshots[0]["gate"]).IsEqualTo("receive");
-    await Assert.That(tagSnapshots[0]["reason"]).IsEqualTo("NoLocalConsumer");
-    await Assert.That(tagSnapshots[0]["payload_type"]).IsEqualTo(UNCONSUMED_TYPE);
-    await Assert.That(tagSnapshots[0]["topic"]).IsEqualTo("topic.a");
-    await Assert.That(tagSnapshots[0]["subscription"]).IsEqualTo("sub-1");
+    await Assert.That(countedSnapshots.Count).IsEqualTo(1);
+    await Assert.That(countedSnapshots[0]["gate"]).IsEqualTo("receive");
+    await Assert.That(countedSnapshots[0]["reason"]).IsEqualTo("NoLocalConsumer");
+    await Assert.That(countedSnapshots[0]["payload_type"]).IsEqualTo(UNCONSUMED_TYPE);
+    await Assert.That(countedSnapshots[0]["topic"]).IsEqualTo("topic.a");
+    await Assert.That(countedSnapshots[0]["subscription"]).IsEqualTo("sub-1");
   }
 
   // ============================================================
@@ -323,7 +327,7 @@ public class MessageDiscardPolicyTests {
     var measured = 0L;
     using var listener = new MeterListener {
       InstrumentPublished = (inst, l) => {
-        if (inst.Meter.Name == "Whizbang.Tests.DiscardFloodCounter") { l.EnableMeasurementEvents(inst); }
+        if (inst.Meter == meter) { l.EnableMeasurementEvents(inst); }
       },
     };
     listener.SetMeasurementEventCallback<long>((_, v, _, _) => Interlocked.Add(ref measured, v));
@@ -337,6 +341,8 @@ public class MessageDiscardPolicyTests {
     for (var i = 0; i < 250; i++) {
       policy.RecordDiscard(MessageDiscardGate.Inbox, decision, UNCONSUMED_TYPE);
     }
+    // Passive counter: one collection reports the cumulative count of every series.
+    listener.RecordObservableInstruments();
 
     await Assert.That(measured).IsEqualTo(250)
       .Because("the log is throttled, the MEASUREMENT never is — otherwise quieting the flood "
