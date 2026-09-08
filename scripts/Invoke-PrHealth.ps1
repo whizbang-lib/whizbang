@@ -72,13 +72,19 @@ $sonarExit = 0
 $sonarExit = $LASTEXITCODE
 $sonar = Get-Content "$prefix-sonar.json" -Raw | ConvertFrom-Json
 
-# 3. Coverage of new lines, from the CI run for the head commit
+# 3. Coverage of new lines, from the CI run for the head commit. No artifacts (the build failed, or the
+#    run is still going) is "unknown", never zero: absence of coverage must not read as full coverage.
 $run = gh run list @repoArgs --commit $pr.headRefOid --workflow ci.yml --limit 1 --json databaseId --jq '.[0].databaseId'
 $uncoveredCount = $null
+$coverageNote = 'no CI run found for the head commit yet'
 if ($run) {
   $covDir = Join-Path $ReportDir "coverage-$run"
-  & pwsh (Join-Path $scripts 'Find-UncoveredNewLines.ps1') -CoverageRoot $covDir -BaseRef $BaseRef -DownloadFromRun $run -OutFile "$prefix-uncovered.txt" | Out-Host
-  $uncoveredCount = @(Get-Content "$prefix-uncovered.txt" -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
+  & pwsh (Join-Path $scripts 'Find-UncoveredNewLines.ps1') -CoverageRoot $covDir -BaseRef $BaseRef -DownloadFromRun $run -OutFile "$prefix-uncovered.txt" 2>&1 | Out-Host
+  if (Test-Path "$prefix-uncovered.txt") {
+    $uncoveredCount = @(Get-Content "$prefix-uncovered.txt" | Where-Object { $_ }).Count
+  } else {
+    $coverageNote = "unknown: CI run $run produced no coverage artifacts (build or tests failed?)"
+  }
 }
 
 # 4. The report
@@ -92,12 +98,12 @@ $lines.Add("")
 $lines.Add("## Checks: pass=$($checks.pass) fail=$($checks.fail) skipping=$($checks.skipping) pending=$($checks.pending)")
 foreach ($f in $checks.failed) { $lines.Add("- FAILED $($f.name)  $($f.link)") }
 $lines.Add("")
-$lines.Add("## SonarCloud gate: $($sonar.gate); open findings on new code: $($sonar.findings.Count)")
+$lines.Add("## SonarCloud gate: $($sonar.gate); open findings on new code: $(if ($sonar.gate -eq 'NOT_ANALYZED') { 'unknown, no analysis for this head commit yet' } else { $sonar.findings.Count })")
 foreach ($c in $sonar.failing) { $lines.Add("- FAIL $($c.metric): actual $($c.actual), threshold $($c.comparator) $($c.threshold)") }
 foreach ($f in $sonar.findings) { $lines.Add("- $($f.type) $($f.severity) $($f.rule) ``$($f.file):$($f.line)`` $($f.message)") }
 $lines.Add("")
 if ($null -eq $uncoveredCount) {
-  $lines.Add("## Uncovered new lines: no CI run found for the head commit yet")
+  $lines.Add("## Uncovered new lines: $coverageNote")
 } else {
   $lines.Add("## Uncovered new lines: $uncoveredCount")
   foreach ($u in (Get-Content "$prefix-uncovered.txt" | Where-Object { $_ })) { $lines.Add("- ``$u``") }

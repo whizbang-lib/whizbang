@@ -84,7 +84,24 @@ if ($WaitForAnalysis) {
   if ($status -ne 'SUCCESS') { Write-Error "Sonar analysis $task ended with status $status." }
 }
 
-$gate = Invoke-Sonar "qualitygates/project_status?projectKey=$ProjectKey&pullRequest=$PullRequest"
+# A PR nobody has analyzed yet (or whose Quality job died before the scanner finished) has no component
+# on SonarCloud. That is a state to report, never a crash and never "no findings".
+try {
+  $gate = Invoke-Sonar "qualitygates/project_status?projectKey=$ProjectKey&pullRequest=$PullRequest"
+} catch {
+  if ("$_" -match 'not found') { $gate = $null } else { throw }
+}
+if (-not $gate) {
+  $note = "NOT ANALYZED: SonarCloud has no analysis for PR #$PullRequest (the Quality job has not completed a scan for its head commit)."
+  if ($OutFile) { [System.IO.File]::WriteAllLines($OutFile, [string[]]@($note)) }
+  if ($Json) {
+    [pscustomobject]@{ pullRequest = $PullRequest; gate = 'NOT_ANALYZED'; failing = @(); findings = @() } | ConvertTo-Json -Depth 5
+  } else {
+    Write-Host $note
+  }
+  if ($FailOnAny) { exit 1 }
+  exit 0
+}
 $issues = @()
 $page = 1
 do {
