@@ -29,6 +29,20 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
   /// <summary>Captures the batch handler so the test can deliver simulated batches.</summary>
   private sealed class CapturingBatchTransport : ITransport {
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
+    private readonly TaskCompletionSource _firstBatchSubscribe =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes the moment the worker issues its first batch subscribe against this transport.
+    /// </summary>
+    /// <remarks>
+    /// Tests await this instead of sleeping. <c>StartAsync</c> returning only proves
+    /// <c>ExecuteAsync</c> was queued -- .NET 10 dispatches it via <c>Task.Run</c> -- so a fixed
+    /// delay bets the thread pool's progress against a stopwatch rather than proving the batch
+    /// handler has been captured.
+    /// </remarks>
+    public Task FirstBatchSubscribe => _firstBatchSubscribe.Task;
+
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -43,6 +57,7 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
         TransportDestination destination, TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       _batchHandler = batchHandler;
+      _firstBatchSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(new _NopSubscription());
     }
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
@@ -160,7 +175,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       var batch = new TransportMessage[100];
       for (var i = 0; i < 100; i++) {
@@ -189,7 +207,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       // 7 consumed + 3 dropped, interleaved
       await transport.SimulateBatchReceivedAsync([
@@ -224,7 +245,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       await transport.SimulateBatchReceivedAsync([
         new TransportMessage(_makeEnvelope(), DROPPED_ENVELOPE_TYPE),
@@ -276,7 +300,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(150);
+    // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+    // throws until the worker has handed its handler over, and StartAsync returning only proves
+    // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+    await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
     // StartAsync spins one scope for transport-readiness + infrastructure provisioning.
     // That scope is one-shot (not per-batch), so capture the count after startup settles
@@ -307,7 +334,10 @@ public class TransportConsumerWorkerBulkInsertInvariantTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       var batch1 = new TransportMessage[5];
       for (var i = 0; i < 5; i++) {

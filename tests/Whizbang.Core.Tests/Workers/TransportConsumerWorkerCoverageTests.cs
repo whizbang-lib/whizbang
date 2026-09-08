@@ -295,25 +295,26 @@ public class TransportConsumerWorkerCoverageTests {
 
     var worker = _createWorkerWithResilience(transport, options, resilienceOptions);
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using var cts = new CancellationTokenSource();
 
-    // Act & Assert - should throw InvalidOperationException because AllowPartialSubscriptions=false
-    Exception? caughtException = null;
-    try {
-      await worker.StartAsync(cts.Token);
-      await Task.Delay(500, cts.Token);
-    } catch (InvalidOperationException ex) {
-      caughtException = ex;
-    } catch (OperationCanceledException) {
-      // If canceled before the exception was thrown, that's a timing issue
-    } finally {
-      try { await worker.StopAsync(CancellationToken.None); } catch { }
-    }
+    // Act - StartAsync only queues ExecuteAsync (.NET 10 dispatches it with
+    // Task.Run(_, stoppingToken)), so the subscription failure never surfaces out of
+    // StartAsync itself. ExecuteAsync hands it to readiness waiters via SubscriptionsReady
+    // before rethrowing, which makes that signal the deterministic "the failure really did
+    // propagate" point. The old 500 ms delay could return before the single retry had even
+    // been attempted, and the OperationCanceledException arm below it quietly excused that.
+    await worker.StartAsync(cts.Token);
 
-    // The subscription failure should propagate when AllowPartialSubscriptions=false
-    // The worker StartAsync may complete, but the underlying ExecuteAsync should throw
+    // Assert - the failure propagates instead of being absorbed as a partial subscription
+    await Assert.That(async () => await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30)))
+      .Throws<InvalidOperationException>()
+      .Because("AllowPartialSubscriptions=false must surface the subscription failure to " +
+               "readiness waiters rather than reporting ready with a dead destination");
     await Assert.That(transport.SubscribeCallCount).IsGreaterThanOrEqualTo(1)
       .Because("At least one subscribe attempt should have been made");
+
+    // ExecuteAsync faulted; StopAsync observes that same fault on its way out.
+    try { await worker.StopAsync(CancellationToken.None); } catch { }
   }
 
   // ========================================
@@ -353,8 +354,7 @@ public class TransportConsumerWorkerCoverageTests {
 
     // Start worker and wait for subscription
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     // Build a proper envelope with the envelope type format expected
     var envelope = _createJsonEnvelope(messageId);
@@ -411,8 +411,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -463,8 +462,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var envelope = _createJsonEnvelope(messageId);
 
@@ -506,8 +504,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var envelope = _createJsonEnvelope(messageId);
 
@@ -553,8 +550,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var envelope = _createJsonEnvelope(messageId);
     // Invalid format - no [[ ]] delimiters
@@ -602,8 +598,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     // Create envelope WITH a valid traceparent
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
@@ -657,8 +652,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     // Create envelope with AggregateId in metadata
     var envelope = _createJsonEnvelopeWithAggregateId(messageId, streamId);
@@ -711,8 +705,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
@@ -767,8 +760,7 @@ public class TransportConsumerWorkerCoverageTests {
     var worker = _createWorker(transport, options);
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     // Verify subscriptions exist before stop
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(2);
@@ -844,8 +836,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -893,8 +884,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
@@ -975,14 +965,14 @@ public class TransportConsumerWorkerCoverageTests {
     var worker = _createWorkerWithResilience(transport, options, resilienceOptions);
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);
 
-    // Act - simulate recovery
+    // Act - simulate recovery. The recovery handler awaits _subscribeToAllDestinationsAsync,
+    // so this await IS the completion signal: by the time it returns, the re-subscribe has
+    // already happened. The 200 ms sleep that used to follow could only fail to prove that.
     await transport.SimulateRecoveryAsync();
-    await Task.Delay(200);
 
     // Assert - should have resubscribed
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(2)
@@ -1027,8 +1017,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     // Use a concrete MessageEnvelope<JsonElement> so _populateDeliveredAtTimestamp is exercised
     var envelope = new MessageEnvelope<JsonElement> {
@@ -1089,15 +1078,20 @@ public class TransportConsumerWorkerCoverageTests {
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-    try {
-      _ = worker.StartAsync(cts.Token);
-      await Task.Delay(300, cts.Token);
-    } catch (OperationCanceledException) { }
+    using var cts = new CancellationTokenSource();
+
+    // Provisioning runs inside ExecuteAsync strictly before any subscription is created, so
+    // the subscriptions-live signal proves BOTH assertions below are reading finished work.
+    // The old fixed delay could return with the worker still queued, and then "provisioned"
+    // and "subscribed once" would have been decided by the thread pool, not by the code.
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     // Assert
     await Assert.That(provisioner.ProvisionCalled).IsTrue();
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(1);
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 
   // ========================================
@@ -1111,7 +1105,7 @@ public class TransportConsumerWorkerCoverageTests {
   // stopped, which during a canceled startup means the host never reports ready and the readiness
   // waiter never exits either.
   [Test]
-  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_ReturnsWithoutSettlingSubscriptionsReadyAsync() {
+  public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_SettlesSubscriptionsReadyAsCanceledAsync() {
     var neverReady = new EnteredSignalingSchemaGate();
     var worker = _createWorkerWithSchemaGate(new CoverageTransport(), neverReady);
 
@@ -1136,9 +1130,16 @@ public class TransportConsumerWorkerCoverageTests {
     await Assert.That(worker.ExecuteTask.IsCompletedSuccessfully).IsTrue()
       .Because("a host shutting down mid-migration must return cleanly from the gate wait, not " +
                "fault, and not leave this worker parked on the gate");
-    await Assert.That(worker.SubscriptionsReady.IsCompleted).IsFalse()
-      .Because("today, returning here leaves SubscriptionsReady unsettled — pinning this so a fix " +
-               "that adds the missing TrySetCanceled/TrySetResult call must consciously update this test");
+    // The point of the fix (#716). Awaiting readiness must produce an outcome rather than park:
+    // a bounded wait that throws is the caller's-eye view, and a wait that hung would fail here
+    // instead of hanging the suite.
+    await Assert.That(async () => await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5)))
+      .Throws<OperationCanceledException>()
+      .Because("a readiness waiter must observe shutdown; leaving the signal unsettled parked it "
+             + "forever, including any waiter that itself gates shutdown");
+    await Assert.That(worker.SubscriptionsReady.IsCanceled).IsTrue()
+      .Because("nothing subscribed, so readiness reports cancellation — TrySetResult here would "
+             + "tell a readiness probe the consumer is receiving when it never subscribed at all");
 
     await worker.StopAsync(CancellationToken.None);
   }
@@ -1245,8 +1246,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var firstEnvelope = _createJsonEnvelope(MessageId.New());
     var secondEnvelope = _createJsonEnvelope(MessageId.New());
@@ -1309,8 +1309,7 @@ public class TransportConsumerWorkerCoverageTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+    await _startAndWaitForSubscriptionsAsync(worker, cts.Token);
 
     var envelope = _createJsonEnvelope(MessageId.New());
     var envelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core";
@@ -1374,6 +1373,29 @@ public class TransportConsumerWorkerCoverageTests {
       logger: NullLogger<TransportConsumerWorker>.Instance,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: schemaReadyGate);
+  }
+
+  /// <summary>
+  /// Starts <paramref name="worker"/> and returns only once its subscriptions are live.
+  /// </summary>
+  /// <remarks>
+  /// <c>StartAsync</c> returning proves only that <c>ExecuteAsync</c> was queued — .NET 10
+  /// dispatches it with <c>Task.Run(_, stoppingToken)</c>. The transport handler these tests
+  /// deliver into is registered inside <c>ExecuteAsync</c>, and <c>SubscriptionsReady</c> is
+  /// settled immediately after <c>_subscribeToAllDestinationsAsync</c> returns, so it is the
+  /// one signal that says the handler is actually live. A fixed delay bet the worker's
+  /// progress against the scheduler; when it lost,
+  /// <c>CoverageTransport.SimulateMessageReceivedAsync</c> found no handler and silently did
+  /// nothing, so the assertions after it read zero for a reason the test never reported. The
+  /// bounded wait keeps a real regression a loud failure instead of a hung suite.
+  /// </remarks>
+  private static async Task _startAndWaitForSubscriptionsAsync(
+      TransportConsumerWorker worker, CancellationToken cancellationToken) {
+    await worker.StartAsync(cancellationToken);
+    // CancellationToken.None deliberately: the caller's token is the worker's own stopping token,
+    // and cancelling it is exactly what these tests do AFTER this wait. Forwarding it would turn
+    // a genuine stall into an OperationCanceledException instead of the timeout that names it.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(30), CancellationToken.None);
   }
 
   private static IServiceScopeFactory _buildScopeFactory() {

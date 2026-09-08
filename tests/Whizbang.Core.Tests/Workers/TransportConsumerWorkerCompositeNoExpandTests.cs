@@ -28,6 +28,20 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
 
   private sealed class CapturingBatchTransport : ITransport {
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
+    private readonly TaskCompletionSource _firstBatchSubscribe =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes the moment the worker issues its first batch subscribe against this transport.
+    /// </summary>
+    /// <remarks>
+    /// Tests await this instead of sleeping. <c>StartAsync</c> returning only proves
+    /// <c>ExecuteAsync</c> was queued -- .NET 10 dispatches it via <c>Task.Run</c> -- so a fixed
+    /// delay bets the thread pool's progress against a stopwatch rather than proving the batch
+    /// handler has been captured.
+    /// </remarks>
+    public Task FirstBatchSubscribe => _firstBatchSubscribe.Task;
+
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable;
     public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -42,6 +56,7 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
         TransportDestination destination, TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
       _batchHandler = batchHandler;
+      _firstBatchSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(new _NopSubscription());
     }
     public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(IMessageEnvelope envelope,
@@ -131,7 +146,10 @@ public class TransportConsumerWorkerCompositeNoExpandTests {
     await using (sp) {
       using var cts = new CancellationTokenSource();
       _ = worker.StartAsync(cts.Token);
-      await Task.Delay(150);
+      // Await the batch-subscribe signal instead of a fixed delay: SimulateBatchReceivedAsync
+      // throws until the worker has handed its handler over, and StartAsync returning only proves
+      // ExecuteAsync was queued (.NET 10 dispatches it via Task.Run).
+      await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
 
       var compositeEnvelope = new MessageEnvelope<_composite> {
         MessageId = MessageId.New(),

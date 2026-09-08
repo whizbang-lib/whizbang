@@ -150,7 +150,6 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
     public PerspectiveWorker Worker { get; private set; } = null!;
     public Guid StreamId { get; } = (Guid)TrackedGuid.NewMedo();
     private readonly CancellationTokenSource _cts = new();
-    private Task _workerTask = Task.CompletedTask;
     private bool _stopped;
 
     public static async Task<_Fixture> StartAsync(TimeSpan longHoldWarning, int gateMaxConcurrent = 0, TimeProvider? timeProvider = null) {
@@ -211,7 +210,10 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
         schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null,
         timeProvider: timeProvider);
-      f._workerTask = f.Worker.StartAsync(f._cts.Token);
+      // Await StartAsync so ExecuteTask is populated before any test touches the worker. Its own
+      // returned task is NOT the worker body -- .NET 10 hands back Task.CompletedTask as soon as
+      // ExecuteAsync is queued to the thread pool.
+      await f.Worker.StartAsync(f._cts.Token);
       return f;
     }
 
@@ -222,10 +224,15 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       _stopped = true;
       Registry.Release.TrySetResult();
       await _cts.CancelAsync();
-      try {
-        await _workerTask.WaitAsync(TimeSpan.FromSeconds(10));
-      } catch (OperationCanceledException) {
-        // expected on shutdown
+      // Await the worker BODY, not StartAsync's task. This used to await what StartAsync returned,
+      // which under .NET 10 is Task.CompletedTask -- so this method returned immediately and the
+      // drain consumer's finally, the thing that clears the affinity hold, had not necessarily run.
+      // A test asserting "a released gate is not a hold" straight after then read a stale hold,
+      // which passed on an idle machine and failed on a loaded CI runner.
+      var body = Worker.ExecuteTask;
+      if (body is not null) {
+        await body.WaitAsync(TimeSpan.FromSeconds(30))
+          .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
       }
     }
 

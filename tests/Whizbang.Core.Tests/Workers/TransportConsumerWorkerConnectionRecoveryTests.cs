@@ -95,17 +95,19 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Start worker so initial subscriptions are created
+    // Start worker so initial subscriptions are created. SubscriptionsReady is the worker's own
+    // "every destination has been subscribed" signal, so the count below is settled rather than
+    // whatever the thread pool managed inside a 300 ms window.
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+    await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
     var initialSubscribeCount = transport.SubscribeCallCount;
     await Assert.That(initialSubscribeCount).IsEqualTo(2)
       .Because("Initial startup should create 2 subscriptions");
 
-    // Act - simulate connection recovery
+    // Act - simulate connection recovery. SimulateRecoveryAsync awaits the worker's recovery
+    // handler, which re-subscribes every destination inline before returning -- no wait needed.
     await transport.SimulateRecoveryAsync(CancellationToken.None);
-    await Task.Delay(300);
 
     // Assert - subscriptions should be re-established
     await Assert.That(transport.SubscribeCallCount).IsGreaterThan(initialSubscribeCount)
@@ -177,7 +179,12 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
 
     using var cts = new CancellationTokenSource();
     _ = worker.StartAsync(cts.Token);
-    await Task.Delay(300);
+    // The subscribe must have really happened before StopAsync, or this test would be asserting
+    // that StopAsync clears states a worker never populated. SubscriptionsReady says so; a 300 ms
+    // sleep only guessed.
+    await worker.WaitForSubscriptionsReadyAsync().WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
+      .Because("The worker must have subscribed before StopAsync is exercised");
 
     // Verify subscriptions exist
     await Assert.That(worker.SubscriptionStates.Count).IsEqualTo(1);
@@ -262,9 +269,15 @@ public class TransportConsumerWorkerConnectionRecoveryTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(500);
+    // Act — awaited so ExecuteTask is published before it is read.
+    await worker.StartAsync(cts.Token);
+
+    // "Did not subscribe" cannot be signaled, but "already finished deciding" can: the
+    // readiness-false path releases readiness waiters and returns straight out of ExecuteAsync.
+    // Awaiting both signals makes the count below final -- a 500 ms window was equally satisfied
+    // by a worker the thread pool had not started yet, which is what made it prove nothing.
+    await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
 
     // Assert - should NOT have subscribed
     await Assert.That(transport.SubscribeCallCount).IsEqualTo(0)

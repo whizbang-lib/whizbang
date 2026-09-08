@@ -596,15 +596,6 @@ internal class FakeMessageEnvelope : IMessageEnvelope {
   public ScopeContext? GetCurrentScope() => null;
 }
 
-internal class DelayedReadinessCheck(int millisecondsDelay) : ITransportReadinessCheck {
-  private readonly int _millisecondsDelay = millisecondsDelay;
-
-  public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-    await Task.Delay(_millisecondsDelay, cancellationToken);
-    return true;
-  }
-}
-
 /// <summary>
 /// Gate-controlled readiness check that blocks until explicitly released.
 /// Deterministic alternative to delay-based readiness simulation.
