@@ -62,8 +62,13 @@ public class PerspectiveWorkerDeepPathChannelTests {
   public async Task Worker_BatchSpansWithListener_SetsBatchTagsAndExtractsTraceContextAsync() {
     // Arrange — a real ActivityListener so StartActivity returns non-null and tag lines execute
     var started = new ConcurrentBag<Activity>();
+    // Resolve the source name BEFORE registering the listener. ActivitySource's constructor asks every
+    // registered listener ShouldListenTo, and when this class runs first that happens while
+    // WhizbangActivitySource's static initializer is still building its sources: a delegate that
+    // reads Tracing.Name then dereferences a field not yet assigned and the initializer faults.
+    var tracingSourceName = WhizbangActivitySource.Tracing.Name;
     using var listener = new ActivityListener {
-      ShouldListenTo = source => source.Name == WhizbangActivitySource.Tracing.Name,
+      ShouldListenTo = source => source.Name == tracingSourceName,
       Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
       ActivityStarted = started.Add,
     };
@@ -627,6 +632,146 @@ public class PerspectiveWorkerDeepPathChannelTests {
     await Assert.That(coordinator.Completions.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(listener.SubscriberCount).IsEqualTo(0)
       .Because("StopAsync must unsubscribe the NOTIFY handler");
+  }
+
+  /// <summary>
+  /// #728: every consumer-loop iteration that ended on the WORK channel used to leave its wake
+  /// wait queued on a <c>SemaphoreSlim</c>. <c>Release()</c> then completed the oldest of those
+  /// stale waiters, which nothing awaited, and the live iteration slept on. Two iterations ended
+  /// by work, then ONE signal: the loop must wake and take an idle tick.
+  /// </summary>
+  [Test]
+  public async Task Worker_SignalAfterWorkDrivenIterations_WakesOnTheFirstSignalAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.WakeAfterWorkPerspective";
+
+    var coordinator = new RecordingWorkCoordinator();
+    var instanceProvider = new FakeInstanceProvider();
+    var runner = new RecordingRunner();
+    var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
+    var listener = new FakeWorkNotificationListener();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
+        // The idle timeout must never win the race here: only work or the signal may end an iteration.
+        PollingIntervalMilliseconds = 1_000_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+        // One empty poll after work is enough to flip active -> idle, which is the observable wake.
+        IdleThresholdPolls = 1,
+      }),
+      tracingOptions: null,
+      completionStrategy: new InstantCompletionStrategy(),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel,
+      perspectiveNotificationListener: listener,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+    var idleTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnWorkProcessingIdle += () => idleTick.TrySetResult();
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await listener.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Two iterations ended by WORK. Each leaves the wake wait parked and unawaited.
+    for (var completed = 1; completed <= 2; completed++) {
+      await harness.EnqueueWorkAsync(new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }, cts.Token);
+      await coordinator.WaitForCompletionsAsync(completed, TimeSpan.FromSeconds(10));
+    }
+    await Assert.That(worker.PendingWakeWaiters).IsLessThanOrEqualTo(1)
+      .Because("iterations ended by work must not stack wake waiters; one parked waiter is the ceiling");
+
+    // Act: exactly one signal.
+    listener.Raise(WorkSignalCategory.Perspective);
+
+    // Assert: the live iteration wakes, finds no work, and flips active -> idle. With the
+    // semaphore idiom the release landed on a stale waiter and this never completed.
+    await idleTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(worker.IsIdle).IsTrue()
+      .Because("the one signal must reach the iteration the loop is actually awaiting");
+
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+  }
+
+  /// <summary>
+  /// #728: the number of parked wake waiters is bounded by one regardless of how many iterations
+  /// the loop has run. A heap dump of a long-running instance held 108,992 of them.
+  /// </summary>
+  [Test]
+  public async Task Worker_ManyWorkDrivenIterations_HoldsAtMostOneWakeWaiterAsync() {
+    var streamId = Guid.CreateVersion7();
+    const string perspectiveName = "Deep.OneWaiterPerspective";
+
+    var coordinator = new RecordingWorkCoordinator();
+    var instanceProvider = new FakeInstanceProvider();
+    var runner = new RecordingRunner();
+    var registry = new SingleRunnerRegistry(perspectiveName, runner, [typeof(DeepChannelEvent)]);
+    var listener = new FakeWorkNotificationListener();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coordinator);
+    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
+    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
+    services.AddLogging();
+    var serviceProvider = services.BuildServiceProvider();
+
+    var harness = new PerspectiveWorkerTestHarness();
+    var worker = new PerspectiveWorker(
+      instanceProvider: instanceProvider,
+      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+      options: Options.Create(new PerspectiveWorkerOptions {
+        PollingIntervalMilliseconds = 1_000_000,
+        NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
+      }),
+      tracingOptions: null,
+      completionStrategy: new InstantCompletionStrategy(),
+      perspectiveChannelWriter: harness.ChannelWriter,
+      perspectiveCompletionChannel: harness.CompletionCapture,
+      failureChannel: harness.FailureCapture,
+      perspectiveDrainChannel: harness.DrainChannel,
+      perspectiveNotificationListener: listener,
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await listener.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    for (var completed = 1; completed <= 6; completed++) {
+      await harness.EnqueueWorkAsync(new PerspectiveWork {
+        WorkId = Guid.CreateVersion7(),
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastProcessedEventId = null,
+        PartitionNumber = 1
+      }, cts.Token);
+      await coordinator.WaitForCompletionsAsync(completed, TimeSpan.FromSeconds(10));
+    }
+
+    await Assert.That(worker.PendingWakeWaiters).IsEqualTo(1)
+      .Because("six iterations must leave exactly the one live waiter, never six");
+
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    await Assert.That(worker.PendingWakeWaiters).IsEqualTo(0)
+      .Because("cancellation must clear the parked waiter");
   }
 
   [Test]
