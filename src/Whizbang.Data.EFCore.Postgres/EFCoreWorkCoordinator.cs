@@ -2373,9 +2373,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_inbox", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = inboxArray });
     cmd.Parameters.Add(new NpgsqlParameter("p_persp", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = perspectiveArray });
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    if (!await reader.ReadAsync(cancellationToken)) {
-      return new UnstartedLeaseRelease(0, 0);
-    }
+    // release_unstarted_leases RETURNS TABLE and always emits exactly one row (RETURN QUERY SELECT of
+    // two locals), so the read cannot come back empty; a missing row would be a broken function and
+    // surfaces as the read's own exception rather than as a silent zero.
+    _ = await reader.ReadAsync(cancellationToken);
     return new UnstartedLeaseRelease(reader.GetInt32(0), reader.GetInt32(1));
   }
 

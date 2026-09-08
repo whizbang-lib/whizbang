@@ -2,6 +2,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -247,9 +248,68 @@ public class ClaimWorkerAcquisitionBoundsTests {
       .Because("a store that cannot release must not stop the claim loop; the leases lapse on their own as before");
   }
 
+  // ---- #714: a slow claim narrows the window; a canceled release ends the loop cleanly ------------
+
+  [Test]
+  public async Task Claim_ThatTakesFarLongerThanTheLearnedNorm_NarrowsTheWindowAsync() {
+    // Clean batches grow the window; the clock advances 50 ms per claim so a norm is learned, then one
+    // claim takes 5 s. The window must come back narrower even though that batch was clean.
+    var clock = new FakeTimeProvider();
+    var coord = new ScriptedCoordinator(_ => _batchOfInboxRows(100)) {
+      OnClaim = call => clock.Advance(call == 7 ? TimeSpan.FromSeconds(5) : TimeSpan.FromMilliseconds(50)),
+    };
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+      MaxStreamsPerBatch = 1000,
+      MinStreamsPerBatch = 25,
+      ClaimWindowGrowthStep = 25,
+      AdaptiveOutstandingBudget = false,
+    }, timeProvider: clock);
+
+    await coord.WaitForCallsAsync(9, TimeSpan.FromSeconds(10));
+
+    var before = coord.Requests[6].MaxStreams;
+    var after = coord.Requests[7].MaxStreams;
+    await Assert.That(before).IsGreaterThan(25).Because("precondition: clean claims grew the window off its floor");
+    await Assert.That(after).IsLessThan(before)
+      .Because("the claim itself took a hundred times the norm; acquisition is paying for the backlog, so the loop asks for less next time (#714)");
+  }
+
+  [Test]
+  public async Task ReleaseCanceledByShutdown_EndsTheLoopWithoutTreatingItAsAFailureAsync() {
+    var batch = _batchOfInboxStreams(2);
+    var coord = new ScriptedCoordinator(_ => batch);
+    WorkerHarness? harness = null;
+    coord.OnRelease = () => {
+      harness!.Cts.Cancel();
+      throw new OperationCanceledException(harness.Cts.Token);
+    };
+    harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 20,
+      PollingMaxIntervalMilliseconds = 60,
+    });
+    using var _ = harness;
+
+    await coord.WaitForReleaseAsync(TimeSpan.FromSeconds(10));
+    await harness.Worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(coord.ReleaseCalls).IsEqualTo(1);
+    await Assert.That(harness.Worker.ExecuteTask!.IsCompletedSuccessfully).IsTrue()
+      .Because("a release cut short by shutdown propagates the cancellation to the loop, which exits; it is not a release failure to log and swallow");
+  }
+
   // ---- harness -------------------------------------------------------------------------------------
 
   private static WorkBatch _emptyBatch() => new() { OutboxWork = [], InboxWork = [], PerspectiveWork = [] };
+
+  private static WorkBatch _batchOfInboxRows(int rows) {
+    var inbox = new List<InboxWork>(rows);
+    for (var i = 0; i < rows; i++) {
+      inbox.Add(new InboxWork { MessageId = TrackedGuid.NewMedo().Value, MessageType = "TestEvent", Envelope = null!, Attempts = 1 });
+    }
+    return new WorkBatch { OutboxWork = [], InboxWork = inbox, PerspectiveWork = [] };
+  }
 
   private static WorkBatch _batchOfInboxStreams(int streams) {
     var ids = new List<Guid>(streams);
@@ -264,7 +324,8 @@ public class ClaimWorkerAcquisitionBoundsTests {
       ClaimWorkerOptions options,
       WorkCompletionMeter? completionMeter = null,
       IPerspectiveDrainChannel? perspectiveDrainChannel = null,
-      IInboxDrainChannel? inboxDrainChannel = null) {
+      IInboxDrainChannel? inboxDrainChannel = null,
+      TimeProvider? timeProvider = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
@@ -279,13 +340,16 @@ public class ClaimWorkerAcquisitionBoundsTests {
       NullLogger<ClaimWorker>.Instance,
       perspectiveDrainChannel: perspectiveDrainChannel,
       inboxDrainChannel: inboxDrainChannel,
-      completionMeter: completionMeter);
+      completionMeter: completionMeter,
+      timeProvider: timeProvider);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);
   }
 
   private sealed class WorkerHarness(ClaimWorker worker, CancellationTokenSource cts) : IDisposable {
+    public ClaimWorker Worker => worker;
+    public CancellationTokenSource Cts => cts;
     public void Dispose() {
       cts.Cancel();
       try { worker.StopAsync(CancellationToken.None).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
@@ -329,6 +393,10 @@ public class ClaimWorkerAcquisitionBoundsTests {
 
     public Guid InstanceId { get; } = TrackedGuid.NewMedo().Value;
     public List<ClaimWorkRequest> Requests { get; } = [];
+    /// <summary>Runs inside each claim with the 1-based call number; a test advances a fake clock here.</summary>
+    public Action<int>? OnClaim { get; set; }
+    /// <summary>Runs inside each release before it is recorded; a test cancels or throws here.</summary>
+    public Action? OnRelease { get; set; }
     public OutstandingWork? OutstandingToReport { get; set; }
     public bool ReleaseThrowsNotImplemented { get; set; }
     public int ReleaseCalls { get; private set; }
@@ -341,6 +409,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
       lock (_lock) {
         Requests.Add(req);
         var call = Requests.Count;
+        OnClaim?.Invoke(call);
         batch = script(call);
         if (req.IncludeOutstanding && OutstandingToReport is not null) {
           batch = batch with { Outstanding = OutstandingToReport };
@@ -358,6 +427,8 @@ public class ClaimWorkerAcquisitionBoundsTests {
         CancellationToken cancellationToken = default) {
       lock (_lock) {
         ReleaseCalls++;
+        _released.TrySetResult();
+        OnRelease?.Invoke();
         if (ReleaseThrowsNotImplemented) {
           _released.TrySetResult();
           throw new NotImplementedException("this store does not implement ReleaseUnstartedLeasesAsync.");

@@ -703,8 +703,11 @@ public class PerspectiveWorkerDeepPathChannelTests {
 
     // Assert: the live iteration wakes, finds no work, and flips active -> idle. With the
     // semaphore idiom the release landed on a stale waiter and this never completed.
+    // The idle event is the proof: the worker raises it only after the flag flipped, so awaiting it IS
+    // the assertion. Reading IsIdle afterwards races the next iteration, which may already have
+    // flipped active on re-emitted work, and reads false without anything being wrong.
     await idleTick.Task.WaitAsync(TimeSpan.FromSeconds(10));
-    await Assert.That(worker.IsIdle).IsTrue()
+    await Assert.That(idleTick.Task.IsCompletedSuccessfully).IsTrue()
       .Because("the one signal must reach the iteration the loop is actually awaiting");
 
     cts.Cancel();

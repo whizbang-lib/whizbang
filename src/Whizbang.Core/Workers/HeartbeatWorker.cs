@@ -196,31 +196,11 @@ public partial class HeartbeatWorker(
         continue;
       }
 
-      var accepted = true;
-      _lastAttemptAt = _time.GetUtcNow();
-      _lastAttemptFailed = false;
-      var started = _time.GetTimestamp();
+      bool accepted;
       try {
-        accepted = await _heartbeatOnceAsync(stoppingToken);
-        LastBeatDuration = _time.GetElapsedTime(started);
-        if (accepted) {
-          _lastAcceptedAt = _time.GetUtcNow();
-          if (plan.Reason == HeartbeatBeatReason.Watchdog) {
-            _metrics?.WatchdogBeats.Add(1);
-            LogWatchdogBeat(_logger, _instanceProvider.InstanceId, (int)HeartbeatLivenessThreshold.StaleThreshold(_options).TotalSeconds);
-          }
-          if (LastBeatDuration >= lead) {
-            _metrics?.SlowBeats.Add(1);
-            LogSlowBeat(_logger, (long)LastBeatDuration.TotalMilliseconds, (int)lead.TotalSeconds);
-          }
-        }
+        accepted = await _beatAsync(plan, lead, stoppingToken);
       } catch (OperationCanceledException) {
         break;
-      } catch (Exception ex) {
-        // Heartbeat failures are non-fatal: peers may flag this instance stale,
-        // which is the correct behavior. Log and retry on the plan's spacing.
-        _lastAttemptFailed = true;
-        LogError(_logger, ex);
       }
 
       if (!accepted) {
@@ -233,6 +213,56 @@ public partial class HeartbeatWorker(
     }
 
     LogStopped(_logger);
+  }
+
+  /// <summary>
+  /// One beat under a plan: records the attempt, beats, and on acceptance records the beat's
+  /// duration and reason (watchdog beats and slow beats are counted and logged). A failed beat is
+  /// logged and reported as accepted so the loop keeps trying on the retry spacing; cancellation
+  /// propagates. Returns false only when the registry evicted this instance.
+  /// </summary>
+  private async Task<bool> _beatAsync(HeartbeatTickPlan plan, TimeSpan lead, CancellationToken ct) {
+    _lastAttemptAt = _time.GetUtcNow();
+    _lastAttemptFailed = false;
+    var started = _time.GetTimestamp();
+    try {
+      var accepted = await _heartbeatOnceAsync(ct);
+      LastBeatDuration = _time.GetElapsedTime(started);
+      if (accepted) {
+        _lastAcceptedAt = _time.GetUtcNow();
+        if (plan.Reason == HeartbeatBeatReason.Watchdog) {
+          _metrics?.WatchdogBeats.Add(1);
+          LogWatchdogBeat(_logger, _instanceProvider.InstanceId, (int)HeartbeatLivenessThreshold.StaleThreshold(_options).TotalSeconds);
+        }
+        if (LastBeatDuration >= lead) {
+          _metrics?.SlowBeats.Add(1);
+          LogSlowBeat(_logger, (long)LastBeatDuration.TotalMilliseconds, (int)lead.TotalSeconds);
+        }
+      }
+      return accepted;
+    } catch (OperationCanceledException) {
+      throw;
+    } catch (Exception ex) {
+      // Heartbeat failures are non-fatal: peers may flag this instance stale,
+      // which is the correct behavior. Log and retry on the plan's spacing.
+      _lastAttemptFailed = true;
+      LogError(_logger, ex);
+      return true;
+    }
+  }
+
+  /// <summary>
+  /// One tick without the wait: plans against the injected clock and beats when the plan says so.
+  /// Lets a test drive the watchdog and slow-beat paths with a fake clock instead of real time.
+  /// </summary>
+  /// <returns>The plan that was applied.</returns>
+  internal async Task<HeartbeatTickPlan> TickForTestsAsync(CancellationToken cancellationToken) {
+    var lead = HeartbeatLivenessThreshold.WatchdogLead(_options);
+    var plan = PlanNextTick(_time.GetUtcNow());
+    if (plan.BeatNow) {
+      _ = await _beatAsync(plan, lead, cancellationToken);
+    }
+    return plan;
   }
 
   /// <summary>One heartbeat tick. Returns whether it was accepted; <see langword="false"/> means

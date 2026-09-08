@@ -37,6 +37,8 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly AdaptiveClaimWindow _claimWindow;
   private readonly ClaimCycleReport _cycleReport = new(repeatStreakThreshold: 8);
   private readonly ClaimChurnFeedback? _churnFeedback;
+  /// <summary>Clock for the claim's own duration (#714); injectable so the latency feedback is testable without waiting.</summary>
+  private readonly TimeProvider _time;
   private readonly AdaptiveOutstandingBudget _outstandingBudget;
 
   /// <summary>Observed inbox rows per claimed stream, smoothed. Converts a row budget into streams.</summary>
@@ -117,7 +119,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     ISignalBus? signalBus = null,
     SignalBusLivenessState? busLiveness = null,
     WorkCompletionMeter? completionMeter = null,
-    ClaimChurnFeedback? churnFeedback = null) {
+    ClaimChurnFeedback? churnFeedback = null,
+    TimeProvider? timeProvider = null) {
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -146,6 +149,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     _busLiveness = busLiveness;
     _completionMeter = completionMeter;
     _churnFeedback = churnFeedback;
+    _time = timeProvider ?? TimeProvider.System;
 
     // F1 unify-now: bus signals for outbox/inbox/perspective work-available replace the raw
     // WorkSignalCategory subscription for those categories. Push transport (NOTIFY) and pull
@@ -806,7 +810,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     // of held work continues so the drain keeps moving; only NEW perspective leases wait.
     var maxPerspectiveStreams = _perspectiveDrainBacklogAboveCap() ? 0 : (int?)null;
 
-    var claimStarted = Stopwatch.GetTimestamp();
+    var claimStarted = _time.GetTimestamp();
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
@@ -823,7 +827,7 @@ public sealed partial class ClaimWorker : BackgroundService {
       MaxAcquireRows: maxAcquireRows,
       AllowSteal: allowSteal,
       MaxPerspectiveStreams: maxPerspectiveStreams), ct);
-    var claimElapsed = Stopwatch.GetElapsedTime(claimStarted);
+    var claimElapsed = _time.GetElapsedTime(claimStarted);
 
     if (batch.InboxWork.Count == 0 && batch.InboxStreamIds.Count == 0) {
       Interlocked.Increment(ref _consecutiveInboxEmptyClaims);

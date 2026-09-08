@@ -46,6 +46,27 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
   }
 
+  /// <summary>
+  /// Announces deaths normally and fails the FIRST retraction (InstanceJoinedSignal) with the given
+  /// exception, then succeeds: the retract path's failure and shutdown arms.
+  /// </summary>
+  private sealed class RetractFailingOnceBus(Exception toThrow) : ISignalBus {
+    private bool _failed;
+    public List<Type> Published { get; } = [];
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
+      where TSignal : ISignal {
+      if (typeof(TSignal) == typeof(InstanceJoinedSignal) && !_failed) {
+        _failed = true;
+        return ValueTask.FromException(toThrow);
+      }
+      Published.Add(typeof(TSignal));
+      return ValueTask.CompletedTask;
+    }
+    public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal
+      => new NoopSub();
+    private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
+  }
+
   private async Task _insertHeartbeatAsync(Guid instanceId, DateTimeOffset lastHeartbeatAt) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -269,6 +290,46 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
       .Because("the retraction is the same signal a fresh instance raises, so subscribers need no new handler");
     await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsFalse()
       .Because("once retracted, the same instance dying for real later must be announced again");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_RetractionPublishFails_ReArmsTheRetractionForTheNextTickAsync(CancellationToken cancellationToken) {
+    // A retraction that cannot be published must not be forgotten: the death stays announced so the
+    // next tick tries again, otherwise a subscriber that reassigned the instance's work never lets it back in.
+    var id = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    var bus = new RetractFailingOnceBus(new InvalidOperationException("signal transport down"));
+    var monitor = _createMonitor(bus);
+    await monitor.TickForTestsAsync(cancellationToken);
+    await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsTrue().Because("precondition: the stale row was announced");
+
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+    await monitor.TickForTestsAsync(cancellationToken);
+    await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsTrue()
+      .Because("the failed retraction re-arms the announcement so the next tick retries it");
+    await Assert.That(bus.Published.Contains(typeof(InstanceJoinedSignal))).IsFalse();
+
+    await monitor.TickForTestsAsync(cancellationToken);
+
+    await Assert.That(bus.Published).Contains(typeof(InstanceJoinedSignal))
+      .Because("the retry on the next tick publishes the retraction");
+    await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_RetractionCanceledByShutdown_SurfacesRatherThanRetryingAsync(CancellationToken cancellationToken) {
+    var id = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    var bus = new RetractFailingOnceBus(new OperationCanceledException("shutting down"));
+    var monitor = _createMonitor(bus);
+    await monitor.TickForTestsAsync(cancellationToken);
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+
+    await Assert.That(async () => await monitor.TickForTestsAsync(cancellationToken))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown is not a transport failure to retry; it ends the tick loop");
   }
 
   [Test]

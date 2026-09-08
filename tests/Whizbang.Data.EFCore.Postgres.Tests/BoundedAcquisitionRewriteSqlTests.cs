@@ -3,6 +3,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -405,6 +406,33 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
     owner.CommandText = "SELECT count(DISTINCT stream_id) FROM wh_inbox WHERE instance_id = @sib";
     owner.Parameters.AddWithValue("sib", sibling);
     await Assert.That(Convert.ToInt32(await owner.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task Coordinator_ReleaseUnstartedLeases_WithNothingToRelease_ReturnsZerosWithoutARoundTripAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var released = await coordinator.ReleaseUnstartedLeasesAsync(Guid.CreateVersion7(), [], []);
+
+    await Assert.That(released).IsEqualTo(new UnstartedLeaseRelease(0, 0))
+      .Because("two empty lists have nothing to release; the coordinator answers without opening a connection");
+  }
+
+  [Test]
+  public async Task Coordinator_ReleaseUnstartedLeases_ReturnsWhatTheFunctionReleasedAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    var stuck = Guid.CreateVersion7();
+    await _registerInstanceAsync(conn, stuck);
+    var streams = await _seedStreamsAsync(conn, streams: 2, rowsPerStream: 3, isEvent: true, partition: 0, ageSeconds: 600);
+    _ = await _acquireAsync(conn, stuck, rank: 0, count: 1, limit: 100, allowSteal: false);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var released = await coordinator.ReleaseUnstartedLeasesAsync(stuck, [streams[0]], []);
+
+    await Assert.That(released).IsEqualTo(new UnstartedLeaseRelease(3, 0))
+      .Because("the real call path reads the function's one result row: three inbox rows of the named stream, no perspective rows");
   }
 
   [Test]

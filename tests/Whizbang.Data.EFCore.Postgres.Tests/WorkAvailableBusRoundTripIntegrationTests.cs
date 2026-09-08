@@ -235,6 +235,10 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
     services.AddSingleton<IServiceInstanceProvider>(instance);
     services.AddSingleton<ISharedNotifyConnection>(shared);
     services.AddWhizbangSignalBus();
+    // The first liveness probe is a real round trip through the database's LISTEN path; its
+    // production window is 5 s, which a loaded test machine can miss while the signal itself still
+    // arrives. The test asserts the probe's verdict, not its speed, so give it a wide window.
+    services.Configure<Whizbang.Core.Signals.SignalBusOptions>(o => o.ProbeTimeoutMilliseconds = 30_000);
     services.AddSingleton<ISignalTransport, PostgresSignalTransport>();
     await using var provider = services.BuildServiceProvider();
 

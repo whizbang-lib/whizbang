@@ -34,7 +34,12 @@ public static partial class DoorbellRinger {
     ArgumentNullException.ThrowIfNull(qualifiedFunctionName);
     try {
       await using var cmd = connection.CreateCommand();
+      // The function name is the schema-qualified constant the caller built from its validated schema
+      // (or the bare framework name on the Dapper side); it is never user input, and a function name
+      // cannot be a bind parameter. Same pattern as the coordinators' schema-qualified calls.
+#pragma warning disable S2077
       cmd.CommandText = $"SELECT {qualifiedFunctionName}()";
+#pragma warning restore S2077
       cmd.CommandTimeout = RING_TIMEOUT_SECONDS;
       var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
       return result is null or DBNull ? 0 : Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);

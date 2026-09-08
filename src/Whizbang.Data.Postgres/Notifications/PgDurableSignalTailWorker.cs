@@ -71,8 +71,6 @@ public sealed partial class PgDurableSignalTailWorker(
     return new Whizbang.Core.Workers.AdaptiveIdleBackoff(TickFloor, ceiling);
   }
 
-  /// <summary>The delay before the next tail scan, as adapted by the last scan's outcome.</summary>
-  public TimeSpan CurrentInterval => _cadence.Current;
 
   private Dictionary<string, SignalTypeEntry>? _wireNameToEntry;
 
