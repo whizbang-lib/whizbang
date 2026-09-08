@@ -125,4 +125,57 @@ public sealed class AdaptiveClaimWindow {
       _current = Math.Min(_ceiling, _current + _additiveStep);
     }
   }
+
+  // ---- claim latency (#714) -------------------------------------------------------------------
+  //
+  // Churn tells the window whether the batch was too big to DRAIN. It says nothing about whether the
+  // batch was too big to ACQUIRE. Acquisition cost grows with the pending backlog, and a loop that
+  // kept asking for the same width while each claim took seconds spent its time in the claim rather
+  // than in the drain. The claim's own duration is the signal, judged against a norm learned from the
+  // claims themselves: no operator knob, because the right number depends on the database, the batch
+  // and the backlog, none of which the operator can see from a configuration file.
+
+  /// <summary>Samples before the learned norm is trusted; a cold first claim is not a signal.</summary>
+  private const int LATENCY_WARMUP_SAMPLES = 3;
+
+  /// <summary>Weight of the newest sample in the exponential moving average of claim latency.</summary>
+  private const double LATENCY_EMA_ALPHA = 0.2;
+
+  /// <summary>A claim must take at least this many times the norm to count as slow.</summary>
+  private const double LATENCY_SLOW_RATIO = 4.0;
+
+  /// <summary>A claim must also be slow in absolute terms; ratios of tiny numbers are noise.</summary>
+  private static readonly TimeSpan _latencySlowFloor = TimeSpan.FromMilliseconds(250);
+
+  private int _latencySamples;
+  private double _latencyNormMs;
+
+  /// <summary>
+  /// Feeds how long the last claim took. A claim far slower than the learned norm halves the window
+  /// (never below the floor); anything else only refines the norm. Deliberately never grows the
+  /// window: fast claims are the normal case and growth stays with the churn signal, which knows
+  /// whether the batch drained.
+  /// </summary>
+  /// <remarks>
+  /// A slow sample is clamped before it enters the norm, so one outlier does not double the norm and
+  /// hide the next slow claim. Normal samples enter at full weight so the norm tracks the workload as
+  /// it drifts.
+  /// </remarks>
+  public void ObserveLatency(TimeSpan elapsed) {
+    var ms = Math.Max(0.0, elapsed.TotalMilliseconds);
+
+    if (_latencySamples < LATENCY_WARMUP_SAMPLES) {
+      _latencyNormMs = _latencySamples == 0 ? ms : _latencyNormMs + (LATENCY_EMA_ALPHA * (ms - _latencyNormMs));
+      _latencySamples++;
+      return;
+    }
+
+    var slow = ms >= _latencySlowFloor.TotalMilliseconds && ms > LATENCY_SLOW_RATIO * Math.Max(_latencyNormMs, 1.0);
+    if (slow) {
+      _current = Math.Max(_floor, _current / 2);
+      // Let the norm learn only that claims got a little slower, not that this outlier is normal.
+      ms = Math.Min(ms, LATENCY_SLOW_RATIO * Math.Max(_latencyNormMs, 1.0));
+    }
+    _latencyNormMs += LATENCY_EMA_ALPHA * (ms - _latencyNormMs);
+  }
 }

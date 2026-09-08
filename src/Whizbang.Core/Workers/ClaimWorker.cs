@@ -449,8 +449,14 @@ public sealed partial class ClaimWorker : BackgroundService {
         if (hadWork) {
           if (_lastClaimWasRepeat) {
             Interlocked.Increment(ref _consecutiveEmptyPolls);
+            // A sustained re-offer with idle consumers is the #724 livelock: the rows are leased to
+            // this instance, nothing is draining them, and nobody else may touch them while this
+            // instance heartbeats. Give back what has not been started. Emission below is untouched,
+            // so anything a consumer IS working on keeps flowing.
+            await _releaseUnstartedIfStuckAsync(batch, stoppingToken);
           } else {
             _consecutiveEmptyPolls = 0;
+            _releasedThisStreak = false;
             Volatile.Write(ref _lastFreshWorkTicks, Environment.TickCount64);
           }
           await _distributeAsync(batch, stoppingToken);
@@ -639,6 +645,92 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// comes out low. That understates capacity and therefore sizes the budget smaller — the safe
   /// direction to be wrong in, since the failure being prevented is holding too much.
   /// </remarks>
+  /// <summary>Own-residue claims that must come back without inbox work before stealing is allowed (#725).</summary>
+  internal const int STEAL_AFTER_EMPTY_CLAIMS = 2;
+
+  /// <summary>Consecutive re-offers of the same work set before leased-but-unstarted rows are released (#724).</summary>
+  internal const int RELEASE_UNSTARTED_AFTER_REPEATS = 8;
+
+  private int _consecutiveInboxEmptyClaims;
+
+  /// <summary>True once the #724 release has fired for the current repeat streak; a productive claim clears it.</summary>
+  private bool _releasedThisStreak;
+
+  /// <summary>
+  /// The row bound for inbox acquisition this cycle (#714). Headroom when the budget governs, else
+  /// the stream window scaled by the running rows-per-stream estimate, never past the outstanding
+  /// ceiling, never below one.
+  /// </summary>
+  private int _acquireRowBound(int maxStreams) {
+    double rows = _budgetEngaged
+      ? _outstandingBudget.Headroom(_lastOutstanding)
+      : maxStreams * Math.Max(1.0, _rowsPerStream);
+    var bounded = Math.Min(rows, _options.MaxOutstandingInboxRows);
+    return (int)Math.Max(1, Math.Min(int.MaxValue, Math.Ceiling(bounded)));
+  }
+
+  /// <summary>
+  /// True while the perspective drain channel holds more stream ids than the configured cap (#719).
+  /// A channel that cannot count reports false, so a store without the cap behaves as before.
+  /// </summary>
+  private bool _perspectiveDrainBacklogAboveCap() {
+    if (_perspectiveDrainChannel is null || _options.MaxPerspectiveDrainBacklog <= 0) {
+      return false;
+    }
+    var reader = _perspectiveDrainChannel.Reader;
+    return reader.CanCount && reader.Count > _options.MaxPerspectiveDrainBacklog;
+  }
+
+  /// <summary>
+  /// The #724 release: when this loop has re-offered the same work set for a sustained streak, the
+  /// rows it leased but never started are given back so a sibling can take them. Streams whose drain
+  /// has begun are never released. The store does the row selection; this only names the streams.
+  /// </summary>
+  /// <remarks>
+  /// A stuck instance looks idle from outside, and today nothing else can act: siblings cannot take
+  /// work from a heartbeating instance (by design, #722), so the instance itself has to let go of
+  /// what it is not working on. The release is scoped to this instance's own leases, refunds the
+  /// attempt the claim charged, and ends its ownership of the released streams. One release per
+  /// streak; the streak resets on any productive claim.
+  /// </remarks>
+  private async Task _releaseUnstartedIfStuckAsync(WorkBatch batch, CancellationToken ct) {
+    var streak = _cycleReport.CurrentRepeatStreak;
+    if (streak < RELEASE_UNSTARTED_AFTER_REPEATS || _releasedThisStreak) {
+      return;
+    }
+    _releasedThisStreak = true;
+
+    var inboxStreams = _notInFlight(batch.InboxStreamIds, _inboxDrainChannel is null ? null : _inboxDrainChannel.IsInFlight);
+    var perspectiveStreams = _notInFlight(batch.PerspectiveStreamIds, _perspectiveDrainChannel is null ? null : _perspectiveDrainChannel.IsInFlight);
+    if (inboxStreams.Count == 0 && perspectiveStreams.Count == 0) {
+      return;
+    }
+
+    try {
+      using var scope = _scopeFactory.CreateScope();
+      var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var released = await coordinator.ReleaseUnstartedLeasesAsync(
+        _instanceProvider.InstanceId, inboxStreams, perspectiveStreams, ct);
+      LogReleasedUnstarted(_logger, streak, released.InboxReleased, inboxStreams.Count, released.PerspectiveReleased, perspectiveStreams.Count);
+    } catch (OperationCanceledException) when (ct.IsCancellationRequested) {
+      throw;
+    } catch (Exception ex) {
+      // Not implemented by this store, or a transient failure: the rows stay leased and lapse on
+      // their own, which is today's behavior. Logged so the gap is visible, never fatal.
+      LogReleaseUnstartedFailed(_logger, ex, inboxStreams.Count + perspectiveStreams.Count);
+    }
+  }
+
+  private static List<Guid> _notInFlight(List<Guid> streamIds, Func<Guid, bool>? isInFlight) {
+    var result = new List<Guid>(streamIds.Count);
+    foreach (var id in streamIds) {
+      if (isInFlight is null || !isInFlight(id)) {
+        result.Add(id);
+      }
+    }
+    return result;
+  }
+
   private void _observeDrain(int outstanding) {
     var now = Stopwatch.GetTimestamp();
 
@@ -697,6 +789,24 @@ public sealed partial class ClaimWorker : BackgroundService {
       maxStreams = Math.Max(1, Math.Min(maxStreams, streamsAffordable));
     }
 
+    // Acquisition is bounded in ROWS, not streams (#714). The stream count doubled as the row cap in
+    // the store, which made a fat stream one row per cycle and a backlog of singleton streams a full
+    // batch of them. The row bound is the budget's headroom when the budget governs, else the stream
+    // window scaled by the running rows-per-stream estimate; either way never past the configured
+    // outstanding ceiling, so a wide window cannot lease more than the drain can hold.
+    var maxAcquireRows = _acquireRowBound(maxStreams);
+
+    // Stealing (#725) is a last resort, never a first move. Only after this instance's own residue
+    // has come back empty twice running does it reach for unowned rows assigned to other residues;
+    // a live sibling's owned streams are never touched (the store enforces that). Under normal load
+    // the residues stay disjoint and ownership stays stable.
+    var allowSteal = Volatile.Read(ref _consecutiveInboxEmptyClaims) >= STEAL_AFTER_EMPTY_CLAIMS;
+
+    // Perspective acquisition pauses while the drain channel is above its cap (#719). Re-emission
+    // of held work continues so the drain keeps moving; only NEW perspective leases wait.
+    var maxPerspectiveStreams = _perspectiveDrainBacklogAboveCap() ? 0 : (int?)null;
+
+    var claimStarted = Stopwatch.GetTimestamp();
     var batch = await coordinator.ClaimWorkAsync(new ClaimWorkRequest(
       InstanceId: _instanceProvider.InstanceId,
       ServiceName: _instanceProvider.ServiceName,
@@ -709,7 +819,20 @@ public sealed partial class ClaimWorker : BackgroundService {
       // trip removes a per-cycle call. Stores that ignore the flag leave batch.Outstanding null
       // and the fallback probe below still runs.
       IncludeOutstanding: _budgetEngaged,
-      FreshWorkShare: _options.FreshWorkShare), ct);
+      FreshWorkShare: _options.FreshWorkShare,
+      MaxAcquireRows: maxAcquireRows,
+      AllowSteal: allowSteal,
+      MaxPerspectiveStreams: maxPerspectiveStreams), ct);
+    var claimElapsed = Stopwatch.GetElapsedTime(claimStarted);
+
+    if (batch.InboxWork.Count == 0 && batch.InboxStreamIds.Count == 0) {
+      Interlocked.Increment(ref _consecutiveInboxEmptyClaims);
+    } else {
+      Volatile.Write(ref _consecutiveInboxEmptyClaims, 0);
+    }
+    if (allowSteal && (batch.InboxWork.Count > 0 || batch.InboxStreamIds.Count > 0)) {
+      LogStoleWork(_logger, batch.InboxWork.Count, batch.InboxStreamIds.Count);
+    }
 
     // Feed the claim back into the window. A row arriving with attempts > 1 is work already claimed
     // and not finished, so a high share means the batch outruns what this instance can dispatch
@@ -747,7 +870,23 @@ public sealed partial class ClaimWorker : BackgroundService {
         _outstandingUnmeasurable = true;
         LogOutstandingUnmeasurable(_logger);
       } else {
-        _observeDrain((int)Math.Min(int.MaxValue, outstanding.Total));
+        // INBOX rows only (#719). The budget bounds inbox acquisition and is sized in inbox rows,
+        // so its headroom must be read against inbox rows. Folding outbox and perspective rows into
+        // the same figure let a perspective backlog close the inbox headroom (the inbox then starved
+        // behind work it could not affect) and, in the other direction, let a large inbox holding
+        // hide behind a drained perspective set. Perspective has its own cap above.
+        _observeDrain((int)Math.Min(int.MaxValue, outstanding.InboxRows));
+      }
+    }
+
+    if (_options.AdaptiveClaimWindow) {
+      // The claim's own duration is the acquisition-cost signal (#714). Churn below says whether the
+      // batch drained; this says whether it was affordable to ACQUIRE, and a slow claim halves the
+      // window regardless of how clean the batch was.
+      var beforeLatency = _claimWindow.Current;
+      _claimWindow.ObserveLatency(claimElapsed);
+      if (_claimWindow.Current != beforeLatency) {
+        LogClaimWindowNarrowedOnLatency(_logger, beforeLatency, _claimWindow.Current, claimElapsed.TotalMilliseconds);
       }
     }
 
@@ -909,6 +1048,28 @@ public sealed partial class ClaimWorker : BackgroundService {
     Message = "ClaimWorker could not hand back {Attempted} undispatched inbox rows; "
             + "they keep the attempt their claim charged and will be re-claimed")]
   static partial void LogReleaseUndispatchedFailed(ILogger logger, Exception ex, int attempted);
+
+  [LoggerMessage(EventId = 15, Level = LogLevel.Information,
+    Message = "ClaimWorker took unowned work from other residues after its own came back empty: "
+            + "{Rows} inbox rows across {Streams} streams (#725)")]
+  static partial void LogStoleWork(ILogger logger, int rows, int streams);
+
+  [LoggerMessage(EventId = 16, Level = LogLevel.Information,
+    Message = "ClaimWorker narrowed the claim window from {Previous} to {Current} streams: the claim itself "
+            + "took {ElapsedMs:F0} ms, far above the learned norm, so acquisition is paying for the backlog (#714)")]
+  static partial void LogClaimWindowNarrowedOnLatency(ILogger logger, int previous, int current, double elapsedMs);
+
+  [LoggerMessage(EventId = 17, Level = LogLevel.Warning,
+    Message = "ClaimWorker re-offered the same work set {Streak} times with no drain progress and released its "
+            + "unstarted leases: {InboxReleased} inbox rows in {InboxStreams} streams, {PerspectiveReleased} "
+            + "perspective rows in {PerspectiveStreams} streams, so a sibling may take them (#724)")]
+  static partial void LogReleasedUnstarted(
+    ILogger logger, int streak, int inboxReleased, int inboxStreams, int perspectiveReleased, int perspectiveStreams);
+
+  [LoggerMessage(EventId = 18, Level = LogLevel.Warning,
+    Message = "ClaimWorker could not release its unstarted leases in {Streams} streams; they stay leased "
+            + "to this instance until they lapse (#724)")]
+  static partial void LogReleaseUnstartedFailed(ILogger logger, Exception ex, int streams);
 
   [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "ClaimWorker disabled via options — claim loop skipped")]
   static partial void LogDisabled(ILogger logger);
@@ -1075,17 +1236,32 @@ public sealed class ClaimWorkerOptions {
   /// bound alone changes only how long that takes, never whether it happens.
   /// </para>
   /// <para>
-  /// Off by default: the current budget samples inbox completions only and counts leased work of every
-  /// category as outstanding, so a perspective backlog reads as a zero drain rate, headroom collapses,
-  /// and inbox acquisition starves while the database sits idle; converting row headroom to a stream
-  /// count also turns any collapse into one row per cycle. The churn-based claim window remains the
-  /// bound. Set true to engage it where throughput is known to exceed arrival rate; the failure mode it
-  /// prevents is silent (rows dead-letter as
-  /// <see cref="Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded"/> having never reached
-  /// a receptor), so a per-category, row-bound version is the intended default.
+  /// On by default. The budget is per category and row-bound: it samples inbox completions and reads
+  /// its headroom against the inbox rows this instance holds, never against outbox or perspective
+  /// rows, so a perspective backlog cannot collapse inbox acquisition; and the headroom is passed to
+  /// the store as a row bound on acquisition (<see cref="ClaimWorkRequest.MaxAcquireRows"/>), so a
+  /// collapse can no longer turn into one row per cycle. Perspective acquisition has its own cap,
+  /// <see cref="MaxPerspectiveDrainBacklog"/>. The failure mode the budget prevents is silent (rows
+  /// dead-letter as <see cref="Whizbang.Core.Messaging.MessageFailureReason.MaxAttemptsExceeded"/>
+  /// having never reached a receptor, and consumers are OOM-killed holding work they cannot drain),
+  /// which is why it is no longer opt-in. Set false to fall back to the churn-based claim window alone.
   /// </para>
   /// </remarks>
-  public bool AdaptiveOutstandingBudget { get; set; }
+  public bool AdaptiveOutstandingBudget { get; set; } = true;
+
+  /// <summary>
+  /// Cap on the perspective drain channel's backlog (stream ids queued and not yet drained) above
+  /// which the claim loop stops leasing NEW perspective work. Re-emission of work already held is
+  /// unaffected, so the drain keeps moving while acquisition waits. Zero disables the cap.
+  /// </summary>
+  /// <remarks>
+  /// The perspective drain channel is unbounded by design (a bounded channel deadlocked the drain in
+  /// an earlier design), so without this a bulk ingest queues every perspective stream it touches in
+  /// process memory ahead of a fixed-parallelism drain. Default 2,000 stream ids: far more than any
+  /// drain parallelism consumes between two claims, small enough that the queue never becomes the
+  /// process's largest allocation.
+  /// </remarks>
+  public int MaxPerspectiveDrainBacklog { get; set; } = 2_000;
 
   /// <summary>
   /// Minimum outstanding inbox rows, retained even when stalled. Default 100.

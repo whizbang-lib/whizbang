@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
@@ -307,13 +308,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var conn = scope.Connection;
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
 #pragma warning disable S2077
-    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb)";
+    cmd.CommandText = $"SELECT {functionName}(@instanceId, @serviceName, @hostName, @processId, @metadata::jsonb, @phase, @version, @staleSeconds)";
 #pragma warning restore S2077
     cmd.Parameters.AddWithValue("instanceId", request.InstanceId);
     cmd.Parameters.AddWithValue("serviceName", request.ServiceName);
     cmd.Parameters.AddWithValue("hostName", request.HostName);
     cmd.Parameters.AddWithValue("processId", request.ProcessId);
     cmd.Parameters.AddWithValue("metadata", metadataJson);
+    // Migration 147: the beat carries the current phase and version so a registry row created
+    // before the first phase transition landed is backfilled, and the stale threshold the writer's
+    // cadence implies for the opportunistic peer reap. Nulls keep the SQL defaults.
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("phase", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)request.LifecyclePhase ?? DBNull.Value });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("version", NpgsqlTypes.NpgsqlDbType.Text) { Value = (object?)request.LibraryVersion ?? DBNull.Value });
+    cmd.Parameters.Add(new Npgsql.NpgsqlParameter("staleSeconds", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.StaleThresholdSeconds ?? DBNull.Value });
 
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
     return result is bool accepted && accepted;
@@ -339,7 +346,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
     cmd.CommandText = sql;
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return result is int n ? n : 0;
+    var due = result is int n ? n : 0;
+    if (due > 0) {
+      // #720: the probe queued a doorbell per due stream; ring them after its commit.
+      await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+    }
+    return due;
   }
 
   /// <inheritdoc />
@@ -1878,6 +1890,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
     cmd.Parameters.Add(new NpgsqlParameter("p_debug_mode", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = debugMode });
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    // #720: the hot call queued its doorbells instead of notifying inside its transaction; ring them now,
+    // after the commit, on their own autocommit so no notifying commit waits on another.
+    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -1915,6 +1930,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_persp", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = perspIds });
     cmd.Parameters.Add(new NpgsqlParameter("p_fail", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = failuresJson });
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    // #720: ring the doorbells the flush queued, after its commit.
+    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
   }
 
   private string _buildFailuresByCategoryJson(IReadOnlyList<CategoryFailures>? failures) {
@@ -2029,7 +2046,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       $"SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       $"envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh)";
+      $"perspective_name FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2044,6 +2061,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_part", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.PartitionCount });
     cmd.Parameters.Add(new NpgsqlParameter("p_lease", NpgsqlTypes.NpgsqlDbType.Integer) { Value = request.LeaseSeconds });
     cmd.Parameters.Add(new NpgsqlParameter("p_fresh", NpgsqlTypes.NpgsqlDbType.Double) { Value = request.FreshWorkShare });
+    // 145: acquisition has its own ROW bound and a steal flag; null rows means "bounded by the stream count".
+    cmd.Parameters.Add(new NpgsqlParameter("p_rows", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.MaxAcquireRows ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter("p_steal", NpgsqlTypes.NpgsqlDbType.Boolean) { Value = request.AllowSteal });
+    cmd.Parameters.Add(new NpgsqlParameter("p_persp", NpgsqlTypes.NpgsqlDbType.Integer) { Value = (object?)request.MaxPerspectiveStreams ?? DBNull.Value });
 
     var rows = new List<WorkBatchRow>();
     OutstandingWork? outstanding = null;
@@ -2074,6 +2095,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
           PerspectiveRows = reader.GetInt64(2),
         };
       }
+    }
+    if (rows.Count > 0) {
+      // #720: a claim that leased or re-emitted work may have queued ownership doorbells; ring them
+      // after its commit. An empty claim queued nothing and skips the round trip.
+      await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
     }
 
     // Phase H step 5d: claim_work no longer projects outbox or inbox bodies — only
@@ -2121,6 +2147,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText = $"SELECT {functionName}(@p_request::jsonb)";
     cmd.Parameters.Add(new NpgsqlParameter("p_request", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = payload });
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
+    // #720: ring the doorbells the commit queued, after the commit.
+    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -2159,17 +2187,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var results = new List<HandlerBatchResult>(requests.Count);
     var fellBack = false;
     string? bulkError = null;
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
-    while (await reader.ReadAsync(cancellationToken)) {
-      results.Add(new HandlerBatchResult(
-        HandlerId: reader.GetGuid(0),
-        Success: reader.GetBoolean(1),
-        ErrorMessage: reader.IsDBNull(2) ? null : reader.GetString(2)));
-      if (!fellBack && reader.GetInt32(3) == 2) {
-        fellBack = true;
-        bulkError = reader.IsDBNull(4) ? null : reader.GetString(4);
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken)) {
+      while (await reader.ReadAsync(cancellationToken)) {
+        results.Add(new HandlerBatchResult(
+          HandlerId: reader.GetGuid(0),
+          Success: reader.GetBoolean(1),
+          ErrorMessage: reader.IsDBNull(2) ? null : reader.GetString(2)));
+        if (!fellBack && reader.GetInt32(3) == 2) {
+          fellBack = true;
+          bulkError = reader.IsDBNull(4) ? null : reader.GetString(4);
+        }
       }
     }
+    // #720: ring the doorbells the commits queued, after the commits and with the reader closed.
+    await DoorbellRinger.RingAsync(conn, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
     if (fellBack) {
       // #573: the fallback is legitimate; the silence was not. One warning per batch with
       // the Tier-1 SQLSTATE (the diagnosis), and a counter the operator can alert on when
@@ -2304,6 +2335,48 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.Parameters.Add(new NpgsqlParameter("p_ids", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = idArray });
     var result = await cmd.ExecuteScalarAsync(cancellationToken);
     return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// Calls <c>release_unstarted_leases</c> (migration 145). Two empty lists cost no round trip.
+  /// </remarks>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BoundedAcquisitionRewriteSqlTests.cs</tests>
+  public async Task<UnstartedLeaseRelease> ReleaseUnstartedLeasesAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> inboxStreamIds,
+    IReadOnlyList<Guid> perspectiveStreamIds,
+    CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(inboxStreamIds);
+    ArgumentNullException.ThrowIfNull(perspectiveStreamIds);
+    if (inboxStreamIds.Count == 0 && perspectiveStreamIds.Count == 0) {
+      return new UnstartedLeaseRelease(0, 0);
+    }
+    using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
+
+    var schema = GetSchemaWithFallback(
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
+      DEFAULT_SCHEMA,
+      _logger);
+    var functionName = BuildSchemaQualifiedName(schema, "release_unstarted_leases");
+
+    Guid[] inboxArray = inboxStreamIds is Guid[] ia ? ia : [.. inboxStreamIds];
+    Guid[] perspectiveArray = perspectiveStreamIds is Guid[] pa ? pa : [.. perspectiveStreamIds];
+
+    await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+        (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+    var conn = __scope.Connection;
+    await using var cmd = conn.CreateCommand().WithCoordinatorTimeout();
+    cmd.CommandText = $"SELECT inbox_released, perspective_released FROM {functionName}(@p_instance, @p_inbox, @p_persp)";
+    cmd.Parameters.Add(new NpgsqlParameter("p_instance", NpgsqlTypes.NpgsqlDbType.Uuid) { Value = instanceId });
+    cmd.Parameters.Add(new NpgsqlParameter("p_inbox", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = inboxArray });
+    cmd.Parameters.Add(new NpgsqlParameter("p_persp", NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = perspectiveArray });
+    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+    if (!await reader.ReadAsync(cancellationToken)) {
+      return new UnstartedLeaseRelease(0, 0);
+    }
+    return new UnstartedLeaseRelease(reader.GetInt32(0), reader.GetInt32(1));
   }
 
   /// <summary>
@@ -3553,6 +3626,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
         sql,
         [json, now, partitionCount],
         cancellationToken);
+      // #720: ring the doorbells the store queued, after its commit. Under an ambient transaction the
+      // rows are not visible yet and the next hot call rings them.
+      if (_dbContext.Database.CurrentTransaction is null) {
+        await using var ringScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+            (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+        await DoorbellRinger.RingAsync(ringScope.Connection, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+      }
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
@@ -3602,13 +3682,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
       cmd.Parameters.AddWithValue("now", DateTime.UtcNow);
       cmd.Parameters.AddWithValue("partitionCount", partitionCount);
       cmd.Parameters.AddWithValue("observedIds", observedIds);
-      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-      // Skip the store's own rowset, then read the observation projection.
-      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) { /* discard */ }
-      if (await reader.NextResultAsync(cancellationToken).ConfigureAwait(false)
-          && await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
-        projection = reader.IsDBNull(0) ? null : reader.GetString(0);
+      await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+        // Skip the store's own rowset, then read the observation projection.
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) { /* discard */ }
+        if (await reader.NextResultAsync(cancellationToken).ConfigureAwait(false)
+            && await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+          projection = reader.IsDBNull(0) ? null : reader.GetString(0);
+        }
       }
+      // #720: ring the doorbells the store queued, after its commit.
+      await DoorbellRinger.RingAsync(scope.Connection, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
 
     return Whizbang.Core.Messaging.InboxRedeliveryObservation.ParseProjection(projection);
@@ -3637,16 +3720,58 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var functionName = BuildSchemaQualifiedName(schema, "store_outbox_messages");
 
 #pragma warning disable S2077 // Schema-qualified function name built from validated schema constant
-    var sql = $"SELECT * FROM {functionName}({{0}}::jsonb, NULL::uuid, NULL::timestamptz, {{1}}, {{2}})";
+    var sql = $"SELECT message_id, was_newly_created FROM {functionName}(@p_messages::jsonb, NULL::uuid, NULL::timestamptz, @p_now, @p_partition_count)";
 #pragma warning restore S2077
 
     await PostgresDeadlockRetry.ExecuteAsync(async () => {
       var now = DateTime.UtcNow;
-      await _dbContext.Database.ExecuteSqlRawAsync(
-        sql,
-        [json, now, partitionCount],
-        cancellationToken);
+      // The store reports which rows it skipped because the same message id already existed. With
+      // deterministic emission identity (EmissionIdentity) a skipped row is the republish a retry would
+      // have produced, so it is counted rather than silently discarded. Same connection as the
+      // DbContext, enlisted in its transaction when one is open, so the semantics of the former
+      // ExecuteSqlRawAsync call are unchanged.
+      var connection = (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection();
+      await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(connection, cancellationToken);
+      await using var cmd = connectionScope.Connection.CreateCommand().WithCoordinatorTimeout();
+      cmd.Transaction = _dbContext.Database.CurrentTransaction?.GetDbTransaction() as Npgsql.NpgsqlTransaction;
+      cmd.CommandText = sql;
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_messages", NpgsqlTypes.NpgsqlDbType.Jsonb) { Value = json });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_now", NpgsqlTypes.NpgsqlDbType.TimestampTz) { Value = now });
+      cmd.Parameters.Add(new Npgsql.NpgsqlParameter("p_partition_count", NpgsqlTypes.NpgsqlDbType.Integer) { Value = partitionCount });
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        if (reader.GetBoolean(1)) {
+          continue;
+        }
+        var skippedId = reader.GetGuid(0);
+        // The store echoes exactly the ids it was given; an unknown id here is a schema bug worth a loud failure.
+        var messageType = messages.First(m => m.MessageId == skippedId).MessageType;
+        _metrics?.OutboxEmissionDeduplicated.Add(1, new KeyValuePair<string, object?>("message_type", messageType));
+        _logOutboxEmissionDeduplicated(_logger, skippedId, messageType);
+      }
+      await reader.DisposeAsync();
+      // #720: ring after the store. Inside an ambient transaction the queued rows commit with it and
+      // the ring below finds nothing yet; the next hot call on this connection rings them.
+      if (cmd.Transaction is null) {
+        await DoorbellRinger.RingAsync(connectionScope.Connection, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
+      }
     }, logger: _logger, cancellationToken: cancellationToken);
+  }
+
+  /// <summary>
+  /// An outbox row was skipped because its message id already existed: a retry re-emitted a message whose
+  /// first emission had already committed. Debug because the metric is the operator's signal; the log
+  /// names the row for forensics.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreOutboxEmissionDedupTests.cs</tests>
+  private static void _logOutboxEmissionDeduplicated(ILogger? logger, Guid messageId, string messageType) {
+    if (logger is null || !logger.IsEnabled(LogLevel.Debug)) {
+      return;
+    }
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    logger.LogDebug("store_outbox_messages skipped {MessageId} ({MessageType}): already stored, so this emission was a retry's republish and is counted, not duplicated",
+      messageId, messageType);
+#pragma warning restore CA1848
   }
 
   /// <inheritdoc />
@@ -3797,6 +3922,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         [new NpgsqlParameter { Value = foldedIdArray, NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid }],
         cancellationToken);
       await transaction.CommitAsync(cancellationToken);
+      // #720: ring the doorbells the fold queued, after the commit.
+      await using var ringScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
+          (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
+      await DoorbellRinger.RingAsync(ringScope.Connection, BuildSchemaQualifiedName(schema, "ring_doorbells"), _logger, cancellationToken);
     });
   }
 

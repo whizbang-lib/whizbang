@@ -360,13 +360,12 @@ public class ClaimWorkerAttemptAccountingTests {
   }
 
   [Test]
-  public async Task OutstandingBudget_CountsAllThreeWorkKindsNotJustInboxAsync() {
+  public async Task OutstandingBudget_ReadsInboxRowsOnly_SoOutboxAndPerspectiveHoldingsDoNotCloseInboxHeadroomAsync() {
     // The meter MUST be fed here. With no completions the drain rate is zero, the stall rule zeroes
-    // headroom, and the claim clamps to 1 no matter how outstanding is counted — so the test would
-    // pass for the wrong reason and could not tell the two readings apart. (Verified: an earlier
-    // version of this test failed to detect inbox-only counting for exactly that reason.)
+    // headroom, and the claim clamps to 1 no matter how outstanding is counted, so the test would
+    // pass for the wrong reason and could not tell the two readings apart.
     var meter = new WorkCompletionMeter();
-    // 200 inbox + 400 outbox + 400 perspective = 1000 outstanding. Inbox alone reads 200.
+    // 200 inbox + 400 outbox + 400 perspective = 1000 held. Inbox alone reads 200.
     var coord = new RecordingCoordinator { BatchToReturn = _mixedBatch(200, 400, 400) };
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
       AdaptiveOutstandingBudget = true,
@@ -376,23 +375,22 @@ public class ClaimWorkerAttemptAccountingTests {
       MinStreamsPerBatch = 25,
       MinOutstandingInboxRows = 100,
       // The budget ceiling sits BETWEEN the two readings on purpose: 1000 counted across all three
-      // exhausts it, 200 counted from inbox alone leaves 300 rows of headroom. Without this the
-      // claim window is the binding constraint and the test passes either way — which is exactly
-      // how two earlier versions of this test managed to be vacuous.
+      // exhausts it and clamps every claim to one stream; 200 counted from inbox alone leaves 300
+      // rows of headroom once the drain has been measured.
       MaxOutstandingInboxRows = 500,
     }, completionMeter: meter);
 
-    // Feed the meter so a drain rate exists. With none, the stall rule zeroes headroom regardless of
-    // how outstanding is counted, and the readings again become indistinguishable.
+    // Feed the meter so a drain rate exists and the budget can grow past its floor.
     for (var i = 0; i < 8; i++) {
       meter.Record(400);
       await coord.WaitForCallsAsync(i + 2, TimeSpan.FromSeconds(5));
     }
 
-    await Assert.That(coord.LastMaxStreams).IsLessThanOrEqualTo(1)
-      .Because("outbox and perspective rows hold leases and charge attempts exactly as inbox rows "
-             + "do — at 1000 held against a 500 budget there is no headroom at all, whereas counting "
-             + "inbox alone would see 200, find 300 rows spare, and keep claiming");
+    await Assert.That(coord.LastMaxStreams).IsGreaterThan(1)
+      .Because("the budget is sized in inbox rows and bounds inbox acquisition, so its headroom is read against "
+             + "inbox rows only (#719). Outbox rows drain through their own worker and perspective acquisition has "
+             + "its own cap (MaxPerspectiveDrainBacklog); folding their 800 rows into this reading closed the inbox "
+             + "headroom and starved the inbox behind work it could not affect");
   }
 
   [Test]
