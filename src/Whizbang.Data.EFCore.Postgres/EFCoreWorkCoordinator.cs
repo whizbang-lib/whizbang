@@ -2655,6 +2655,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }, cancellationToken);
 
   /// <inheritdoc />
+  public Task<IReadOnlyList<PerspectiveRetentionAdoption>> AdoptEnrolledPerspectiveRetentionAsync(
+      CancellationToken cancellationToken = default) =>
+    _withCoordinatorCommandAsync(async (cmd, schema) => {
+      var fn = BuildSchemaQualifiedName(schema, "adopt_enrolled_perspective_retention");
+#pragma warning disable S2077
+      cmd.CommandText = $"SELECT perspective, backlog FROM {fn}()";
+#pragma warning restore S2077
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+      var adopted = new List<PerspectiveRetentionAdoption>();
+      while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) {
+        adopted.Add(new PerspectiveRetentionAdoption(reader.GetString(0), reader.GetInt64(1)));
+      }
+      return (IReadOnlyList<PerspectiveRetentionAdoption>)adopted;
+    }, cancellationToken);
+
+  /// <inheritdoc />
   public Task<long> CountPerspectiveRetentionBacklogAsync(
       string clrTypeName, CancellationToken cancellationToken = default) =>
     _withCoordinatorCommandAsync(async (cmd, schema) => {

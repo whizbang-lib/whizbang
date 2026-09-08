@@ -20,6 +20,18 @@ public sealed class PerspectiveRowRetentionOptions {
   public bool Enabled { get; set; } = true;
 
   /// <summary>
+  /// Adopt a declared retention window automatically (default <c>true</c>). The enrolled reap is
+  /// gated behind a per-perspective acknowledgment so a deploy cannot silently drain a historical
+  /// backlog; with this on, the maintenance cycle acknowledges every newly enrolled perspective
+  /// itself, logs the backlog it found, records it on the maintenance meter, and starts draining at
+  /// <c>MaintenanceWorkerOptions.RowReapBatchSize</c> rows per cycle, so a <c>[RowTtl]</c> or
+  /// <c>[RowCap]</c> declaration is in force within one maintenance interval of the deploy. Set
+  /// <c>false</c> to keep the gate: the backlog is reported and nothing is removed until
+  /// <c>IWorkCoordinator.AcknowledgeRetentionEnforcementAsync</c> is called for the perspective.
+  /// </summary>
+  public bool AutoAcknowledge { get; set; } = true;
+
+  /// <summary>
   /// Per-model TTL overrides keyed by the read model's full CLR name (e.g.
   /// <c>"MyApp.Chat.ConversationModel"</c>). A value replaces the declared TTL (seconds);
   /// <c>null</c> disables retention for that model only. Overrides outrank both the

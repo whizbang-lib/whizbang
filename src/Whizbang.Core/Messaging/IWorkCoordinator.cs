@@ -1182,6 +1182,23 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default) => Task.FromResult(0L);
 
   /// <summary>
+  /// Adopts retention for every enrolled perspective that has not been acknowledged yet: reads the
+  /// backlog its window would remove, opens the adoption gate (the acknowledgment
+  /// <see cref="AcknowledgeRetentionEnforcementAsync"/> sets by hand), and reports one row per
+  /// perspective so the adoption is visible. The maintenance worker calls this immediately before
+  /// the enrolled reap when
+  /// <see cref="Whizbang.Core.Configuration.PerspectiveRowRetentionOptions.AutoAcknowledge"/> is on,
+  /// so a declared window is draining within one maintenance interval of the deploy. Idempotent: an
+  /// acknowledged perspective produces no row. Default: nothing adopted.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <docs>fundamentals/perspectives/row-retention</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/RetentionAutoAdoptionTests.cs</tests>
+  Task<IReadOnlyList<PerspectiveRetentionAdoption>> AdoptEnrolledPerspectiveRetentionAsync(
+    CancellationToken cancellationToken = default) =>
+    Task.FromResult<IReadOnlyList<PerspectiveRetentionAdoption>>([]);
+
+  /// <summary>
   /// Atomically claims a batch of journaled origin evictions (what the row sweeps destroyed) for
   /// group-cascade processing — DELETE ... RETURNING, so N replicas never double-cascade.
   /// Default: empty.
@@ -2354,6 +2371,16 @@ public sealed record OffloadClaimRecord(string StorageKey, string ProviderName);
 /// <docs>proposals/pre-destruction-seam</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PerspectiveRowDestructionSeamSqlTests.cs</tests>
 public sealed record PerspectiveRowReapResult(int RowsAffected, string Status);
+
+/// <summary>
+/// One perspective whose declared retention window the maintenance cycle adopted: the registry key
+/// and the rows past the window at the moment the gate opened (see
+/// <see cref="IWorkCoordinator.AdoptEnrolledPerspectiveRetentionAsync"/>).
+/// </summary>
+/// <param name="ClrTypeName">The perspective model's CLR type name, the registry key.</param>
+/// <param name="Backlog">Rows past the declared window when adoption happened.</param>
+/// <docs>fundamentals/perspectives/row-retention</docs>
+public sealed record PerspectiveRetentionAdoption(string ClrTypeName, long Backlog);
 
 /// <summary>A perspective model's registry identity: its CLR type name and physical table.</summary>
 /// <param name="ClrTypeName">The model's CLR type name (the registry key).</param>
