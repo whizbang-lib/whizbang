@@ -53,6 +53,8 @@ public static class WhizbangMeters {
     StartupPipelineMetrics.METER_NAME,
     StreamIntegrityMetrics.METER_NAME,
     BacklogAgeMetrics.METER_NAME,
+    InstanceLivenessMetrics.METER_NAME,
+    ProbeCadenceMetrics.METER_NAME,
     TableStatisticsMetrics.METER_NAME,
     NotifyDebounceMetrics.METER_NAME,
     TransportDeadLetterDrainWorker.METER_NAME,

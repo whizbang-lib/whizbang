@@ -55,12 +55,18 @@ public sealed class BacklogAgeOptions {
 /// <docs>operations/observability/managed-resource-health#backlog-age</docs>
 /// <tests>tests/Whizbang.Core.Tests/Observability/BacklogAgeDutyTests.cs</tests>
 public sealed partial class BacklogAgeWorker : BackgroundService {
+  /// <summary>How far the idle cadence may stretch past the configured interval.</summary>
+  internal const int IDLE_CEILING_MULTIPLIER = 4;
+
   private readonly IReadOnlyList<IBacklogPeek> _peeks;
   private readonly IReadOnlyList<ITrafficClassOpsRateSource> _opsRateSources;
   private readonly BacklogAgeOptions _options;
   private readonly BacklogAgeState _state;
   private readonly BacklogAgeMetrics _metrics;
   private readonly ILogger<BacklogAgeWorker> _logger;
+  private readonly Workers.AdaptiveIdleBackoff _cadence;
+  private readonly ProbeCadenceMetrics? _probeMetrics;
+  private readonly TimeProvider _time;
 
   /// <summary>Creates the duty.</summary>
   /// <param name="peeks">Every transport's admin-plane peek; empty ⇒ the duty is inert.</param>
@@ -69,6 +75,8 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
   /// <param name="state">Shared state the health source projects.</param>
   /// <param name="metrics">The traffic-class gauge caches.</param>
   /// <param name="logger">Logger.</param>
+  /// <param name="probeMetrics">Optional probe cadence meters.</param>
+  /// <param name="timeProvider">Optional clock; the system clock when null.</param>
   /// <exception cref="ArgumentNullException">Thrown when a required dependency is null.</exception>
   public BacklogAgeWorker(
       IEnumerable<IBacklogPeek> peeks,
@@ -76,7 +84,9 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
       IOptions<BacklogAgeOptions> options,
       BacklogAgeState state,
       BacklogAgeMetrics metrics,
-      ILogger<BacklogAgeWorker> logger) {
+      ILogger<BacklogAgeWorker> logger,
+      ProbeCadenceMetrics? probeMetrics = null,
+      TimeProvider? timeProvider = null) {
     ArgumentNullException.ThrowIfNull(peeks);
     ArgumentNullException.ThrowIfNull(options);
     ArgumentNullException.ThrowIfNull(opsRateSources);
@@ -86,7 +96,19 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
     _state = state ?? throw new ArgumentNullException(nameof(state));
     _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    _probeMetrics = probeMetrics;
+    _time = timeProvider ?? TimeProvider.System;
+    var floor = _options.Interval > TimeSpan.Zero ? _options.Interval : TimeSpan.FromMinutes(1);
+    _cadence = new Workers.AdaptiveIdleBackoff(floor, floor * IDLE_CEILING_MULTIPLIER);
   }
+
+  /// <summary>
+  /// The delay before the next peek, decided by the last one: the configured interval while any
+  /// entity showed depth, stretching up to <see cref="IDLE_CEILING_MULTIPLIER"/> times the interval
+  /// while every entity is empty. A management-plane observer of idle churn must not itself be
+  /// idle churn.
+  /// </summary>
+  public TimeSpan NextInterval { get; private set; }
 
   /// <inheritdoc />
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -96,12 +118,10 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
 
     LogStarted(_logger, _peeks.Count, _options.Interval.TotalSeconds, _options.AgeThreshold.TotalMinutes);
 
-    using var timer = new PeriodicTimer(_options.Interval);
+    NextInterval = _cadence.Floor;
     while (!stoppingToken.IsCancellationRequested) {
       try {
-        if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false)) {
-          return;
-        }
+        await Task.Delay(NextInterval, _time, stoppingToken).ConfigureAwait(false);
         await PeekOnceAsync(stoppingToken).ConfigureAwait(false);
       } catch (OperationCanceledException) {
         return;  // graceful shutdown
@@ -114,10 +134,11 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
   /// Public so tests drive a deterministic single pass instead of racing the timer.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token.</param>
-  /// <returns>A task that completes when the pass finishes.</returns>
-  public async Task PeekOnceAsync(CancellationToken cancellationToken) {
+  /// <returns>True when any entity reported waiting messages; the cadence stays at the floor while it does.</returns>
+  public async Task<bool> PeekOnceAsync(CancellationToken cancellationToken) {
     var findings = new List<BacklogAgeFinding>();
     var gauges = new Dictionary<string, BacklogAgeMetrics.BacklogGaugeSample>(StringComparer.Ordinal);
+    var anyDepth = false;
 
     foreach (var peek in _peeks) {
       IReadOnlyList<BacklogSample> samples;
@@ -133,6 +154,7 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
         gauges[sample.Entity] = new BacklogAgeMetrics.BacklogGaugeSample(
           sample.Transport, sample.TransportNamespace, sample.TrafficClass,
           sample.Depth, sample.OldestAge?.TotalSeconds);
+        anyDepth |= sample.Depth > 0;
 
         if (sample.OldestAge is not { } age) {
           // Capability honesty: no broker-supplied timestamp on this surface. Report it rather
@@ -157,6 +179,10 @@ public sealed partial class BacklogAgeWorker : BackgroundService {
     if (findings.Count > 0) {
       LogAgedBacklog(_logger, findings.Count, findings[0].Entity, findings[0].OldestAge.TotalMinutes);
     }
+
+    _probeMetrics?.RecordTick(ProbeCadenceMetrics.PROBE_BACKLOG_AGE, anyDepth);
+    NextInterval = _cadence.Next(anyDepth);
+    return anyDepth;
   }
 
   /// <summary>
