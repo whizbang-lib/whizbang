@@ -171,6 +171,12 @@ public class NotifyKindAndPayloadSqlTests : EFCoreTestBase {
       }
 
       await emit();
+      // 146 (#720): the functions under test queue their doorbells instead of notifying inside the
+      // transaction; the caller rings after the commit. This models the driver's DoorbellRinger.
+      await using (var ring = conn.CreateCommand()) {
+        ring.CommandText = "SELECT ring_doorbells()";
+        _ = await ring.ExecuteScalarAsync();
+      }
 
       // Force a roundtrip: NOTIFY messages buffered after the function's COMMIT are dispatched
       // to the Notification event on the next request/response cycle.

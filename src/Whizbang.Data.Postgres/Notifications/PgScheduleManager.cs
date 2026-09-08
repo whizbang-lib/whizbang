@@ -112,11 +112,17 @@ public sealed class PgScheduleManager : IScheduleManager {
       Value = (object?)definition.AuthorityClaimsJson ?? DBNull.Value
     });
 
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
-    var scheduleId = reader.GetGuid(0);
-    var nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
-    var wasCreated = reader.GetBoolean(2);
+    Guid scheduleId;
+    DateTimeOffset nextFire;
+    bool wasCreated;
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+      _ = await reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+      scheduleId = reader.GetGuid(0);
+      nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
+      wasCreated = reader.GetBoolean(2);
+    }
+    // #720: the arm-on-mutation doorbell was queued inside the call's transaction; ring it after the commit.
+    await DoorbellRinger.RingAsync(conn, "ring_doorbells", _logger, cancellationToken).ConfigureAwait(false);
     return new ScheduleHandle(scheduleId, nextFire, wasCreated);
   }
 
@@ -147,11 +153,16 @@ public sealed class PgScheduleManager : IScheduleManager {
     });
     cmd.Parameters.Add(new NpgsqlParameter("pc", NpgsqlDbType.Integer) { Value = _partitionCount });
 
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
-      return null;   // missing or terminal
+    Guid occurrenceId;
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+      if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
+        return null;   // missing or terminal
+      }
+      occurrenceId = reader.GetGuid(1);
     }
-    return reader.GetGuid(1);
+    // #720: the spawned occurrence queued its doorbell inside the call's transaction; ring it after the commit.
+    await DoorbellRinger.RingAsync(conn, "ring_doorbells", _logger, cancellationToken).ConfigureAwait(false);
+    return occurrenceId;
   }
 
   /// <inheritdoc />
@@ -193,12 +204,18 @@ public sealed class PgScheduleManager : IScheduleManager {
       Value = update.CatchUpLookback is { } lb ? (long)lb.TotalMilliseconds : (object)DBNull.Value
     });
 
-    await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-    if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
-      return null;   // missing / terminal / version mismatch
+    DateTimeOffset nextFire;
+    long version;
+    await using (var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false)) {
+      if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false) || !reader.GetBoolean(0)) {
+        return null;   // missing / terminal / version mismatch
+      }
+      nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
+      version = reader.GetInt64(2);
     }
-    var nextFire = new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(1), DateTimeKind.Utc), TimeSpan.Zero);
-    return new ScheduleUpdateResult(nextFire, reader.GetInt64(2));
+    // #720: the arm-on-mutation doorbell was queued inside the call's transaction; ring it after the commit.
+    await DoorbellRinger.RingAsync(conn, "ring_doorbells", _logger, cancellationToken).ConfigureAwait(false);
+    return new ScheduleUpdateResult(nextFire, version);
   }
 
   private async Task<bool> _transitionAsync(Guid scheduleId, short targetStatus, long? expectedVersion, CancellationToken cancellationToken) {
@@ -212,7 +229,12 @@ public sealed class PgScheduleManager : IScheduleManager {
     cmd.Parameters.Add(new NpgsqlParameter("target", NpgsqlDbType.Smallint) { Value = targetStatus });
     cmd.Parameters.Add(new NpgsqlParameter("ver", NpgsqlDbType.Bigint) { Value = (object?)expectedVersion ?? DBNull.Value });
     var result = await cmd.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
-    return result is bool b && b;
+    var updated = result is bool b && b;
+    if (updated) {
+      // #720: the arm-on-mutation doorbell was queued inside the call's transaction; ring it after the commit.
+      await DoorbellRinger.RingAsync(conn, "ring_doorbells", _logger, cancellationToken).ConfigureAwait(false);
+    }
+    return updated;
   }
 
   private async Task<NpgsqlConnection?> _openAsync(CancellationToken cancellationToken) {

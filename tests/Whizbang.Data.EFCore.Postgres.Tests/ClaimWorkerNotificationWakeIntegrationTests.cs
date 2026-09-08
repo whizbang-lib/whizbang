@@ -310,5 +310,10 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     });
     cmd.Parameters.AddWithValue("p_inst", instanceId);
     _ = await cmd.ExecuteScalarAsync();
+    // 146 (#720): the store queues its doorbell instead of notifying inside its transaction; the
+    // driver rings after the commit, and this raw call models that ring.
+    await using var ring = conn.CreateCommand();
+    ring.CommandText = "SELECT ring_doorbells()";
+    _ = await ring.ExecuteScalarAsync();
   }
 }

@@ -49,6 +49,9 @@ public class WorkAvailableBusRoundTripIntegrationTests : EFCoreTestBase {
       Value = new[] { streamId },
     });
     await cmd.ExecuteNonQueryAsync();
+    // 146 (#720): the doorbell was queued, not notified; the driver rings after the commit, modeled here.
+    await using var ring = new NpgsqlCommand("SELECT ring_doorbells()", conn);
+    _ = await ring.ExecuteScalarAsync();
   }
 
   [Test]
