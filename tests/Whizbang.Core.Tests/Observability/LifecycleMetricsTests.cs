@@ -97,8 +97,9 @@ public class LifecycleMetricsTests {
     metrics.StageInvocations.Add(1, new KeyValuePair<string, object?>("stage", "PostDistributeInline"));
 
     var measurements = helper.GetByName("whizbang.lifecycle.stage.invocations");
-    await Assert.That(measurements).Count().IsEqualTo(1);
-    await Assert.That(measurements[0].Tags["stage"]).IsEqualTo("PostDistributeInline");
+    var stage = measurements.Where(m => m.Tags.GetValueOrDefault("stage") == "PostDistributeInline").ToList();
+    await Assert.That(stage).Count().IsEqualTo(1);
+    await Assert.That(stage[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -111,7 +112,9 @@ public class LifecycleMetricsTests {
     metrics.ReceptorInvocations.Add(1);
 
     var measurements = helper.GetByName("whizbang.lifecycle.receptor.invocations");
-    await Assert.That(measurements).Count().IsEqualTo(1);
+    var untagged = measurements.Where(m => m.Tags.Count == 0).ToList();
+    await Assert.That(untagged).Count().IsEqualTo(1);
+    await Assert.That(untagged[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -124,7 +127,9 @@ public class LifecycleMetricsTests {
     metrics.ReceptorErrors.Add(1, new KeyValuePair<string, object?>("error_type", "NullReferenceException"));
 
     var measurements = helper.GetByName("whizbang.lifecycle.receptor.errors");
-    await Assert.That(measurements[0].Tags["error_type"]).IsEqualTo("NullReferenceException");
+    var errors = measurements.Where(m => m.Tags.GetValueOrDefault("error_type") == "NullReferenceException").ToList();
+    await Assert.That(errors).Count().IsEqualTo(1);
+    await Assert.That(errors[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -192,7 +197,9 @@ public class LifecycleMetricsTests {
     metrics.TagHookErrors.Add(1, new KeyValuePair<string, object?>("error_type", "TimeoutException"));
 
     var measurements = helper.GetByName("whizbang.lifecycle.tag_hook.errors");
-    await Assert.That(measurements[0].Tags["error_type"]).IsEqualTo("TimeoutException");
+    var errors = measurements.Where(m => m.Tags.GetValueOrDefault("error_type") == "TimeoutException").ToList();
+    await Assert.That(errors).Count().IsEqualTo(1);
+    await Assert.That(errors[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -222,7 +229,14 @@ public class LifecycleMetricsTests {
     }
 
     var measurements = helper.GetByName("whizbang.lifecycle.stage.invocations");
-    await Assert.That(measurements).Count().IsEqualTo(20)
+    var recordedStages = measurements
+      .Where(m => m.Value == 1 && m.Tags.ContainsKey("stage"))
+      .Select(m => m.Tags["stage"])
+      .ToList();
+    await Assert.That(recordedStages).Count().IsEqualTo(20)
       .Because("all 20 lifecycle stages should be recordable");
+    foreach (var stage in stages) {
+      await Assert.That(recordedStages).Contains(stage);
+    }
   }
 }

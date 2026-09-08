@@ -516,7 +516,7 @@ public class InboxDispatchWorkerGapTests {
     var added = new List<(long Value, string? SourceTable, string? Reason)>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (ReferenceEquals(instrument, metrics.Added)) {
+        if (ReferenceEquals(instrument, metrics.Added.Instrument)) {
           l.EnableMeasurementEvents(instrument);
         }
       }
@@ -548,13 +548,17 @@ public class InboxDispatchWorkerGapTests {
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+    // Passive counter: the listener sees every series (the declared-at-zero ones included) only
+    // at collection, so collect once and read the cumulative value of the series this promotion wrote.
+    listener.RecordObservableInstruments();
 
     await Assert.That(store.Moves).Count().IsEqualTo(1);
-    await Assert.That(added).Count().IsEqualTo(1)
-      .Because("each successful DLQ promotion must increment the Added counter exactly once");
-    await Assert.That(added[0].Value).IsEqualTo(1L);
-    await Assert.That(added[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
-    await Assert.That(added[0].Reason).IsEqualTo("MaxAttemptsExceeded");
+    var counted = added.Where(a => a.Value != 0).ToList();
+    await Assert.That(counted).Count().IsEqualTo(1)
+      .Because("each successful DLQ promotion must increment the Added counter exactly once — one series carries the count and every other series still reads zero");
+    await Assert.That(counted[0].Value).IsEqualTo(1L);
+    await Assert.That(counted[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(counted[0].Reason).IsEqualTo("MaxAttemptsExceeded");
     await Assert.That(handlerCommit.All).IsEmpty()
       .Because("the SQL move deletes the wh_inbox row in the same transaction — the legacy commit path must be bypassed");
   }
@@ -663,7 +667,7 @@ public class InboxDispatchWorkerGapTests {
     var added = new List<(long Value, string? SourceTable, string? Reason)>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (ReferenceEquals(instrument, metrics.Added)) {
+        if (ReferenceEquals(instrument, metrics.Added.Instrument)) {
           l.EnableMeasurementEvents(instrument);
         }
       }
@@ -693,9 +697,13 @@ public class InboxDispatchWorkerGapTests {
 
     await Assert.That(store.Moves).Count().IsEqualTo(1);
     await Assert.That(store.Moves.Single().Reason).IsEqualTo(MessageFailureReason.CompositeInnerEventLimitExceeded);
-    await Assert.That(added).Count().IsEqualTo(1);
-    await Assert.That(added[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
-    await Assert.That(added[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
+    // Passive counter: series report only at collection, the declared ones at zero.
+    listener.RecordObservableInstruments();
+    var counted = added.Where(a => a.Value != 0).ToList();
+    await Assert.That(counted).Count().IsEqualTo(1);
+    await Assert.That(counted[0].Value).IsEqualTo(1L);
+    await Assert.That(counted[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(counted[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
     await Assert.That(handlerCommit.All).IsEmpty()
       .Because("a successful composite dead-letter deletes the row atomically — no handler commit may follow");
   }
@@ -988,9 +996,10 @@ public class InboxDispatchWorkerGapTests {
     var added = new List<(long Value, string? SourceTable, string? Reason)>();
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        // Exactly the Added counter: the meter also carries arrivals_by_stack (same
-        // emission, richer tags), and this lock is about Added's arithmetic alone.
-        if (instrument.Name == "whizbang.dead_letters.added") {
+        // Exactly THIS test's Added counter: the meter also carries arrivals_by_stack (same
+        // emission, richer tags), parallel tests build DeadLetterMetrics on the same meter
+        // name, and this lock is about Added's arithmetic alone.
+        if (ReferenceEquals(instrument, metrics.Added.Instrument)) {
           l.EnableMeasurementEvents(instrument);
         }
       },
@@ -1017,12 +1026,15 @@ public class InboxDispatchWorkerGapTests {
       });
 
     await worker.ProcessOneInnerAsync(_makeWork(), CancellationToken.None);
+    // Passive counter: series report only at collection, the declared ones at zero.
+    listener.RecordObservableInstruments();
     listener.Dispose();
 
-    await Assert.That(added).Count().IsEqualTo(1);
-    await Assert.That(added[0].Value).IsEqualTo(1L);
-    await Assert.That(added[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
-    await Assert.That(added[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
+    var counted = added.Where(a => a.Value != 0).ToList();
+    await Assert.That(counted).Count().IsEqualTo(1);
+    await Assert.That(counted[0].Value).IsEqualTo(1L);
+    await Assert.That(counted[0].SourceTable).IsEqualTo(DeadLetterSourceTable.INBOX);
+    await Assert.That(counted[0].Reason).IsEqualTo("CompositeInnerEventLimitExceeded");
   }
 
   /// <summary>
@@ -1224,7 +1236,7 @@ public class InboxDispatchWorkerGapTests {
     long added = 0;
     using var listener = new MeterListener {
       InstrumentPublished = (instrument, l) => {
-        if (ReferenceEquals(instrument, metrics.Added)) { l.EnableMeasurementEvents(instrument); }
+        if (ReferenceEquals(instrument, metrics.Added.Instrument)) { l.EnableMeasurementEvents(instrument); }
       }
     };
     listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref added, value));
@@ -1243,6 +1255,8 @@ public class InboxDispatchWorkerGapTests {
 
     var work = _makeWork(attempts: 4);
     await worker.ProcessOneInnerAsync(work, CancellationToken.None);
+    // Passive counter: collect so the assertion reads the real (zero) count of every series.
+    listener.RecordObservableInstruments();
 
     await Assert.That(Interlocked.Read(ref added)).IsEqualTo(0L)
       .Because("no dead letter was created — counting the no-op overstated every storm's "

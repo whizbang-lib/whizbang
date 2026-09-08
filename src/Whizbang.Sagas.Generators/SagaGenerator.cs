@@ -5,6 +5,7 @@ using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Sagas.Generators;
 
@@ -93,11 +94,11 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
     string eventBaseFullName = "global::Whizbang.Sagas.SagaEventBase";
     if (hasTypeArg && attrData.AttributeClass is { TypeArguments: { Length: 1 } typeArgs } && typeArgs[0] is INamedTypeSymbol baseSymbol) {
-      eventBaseFullName = "global::" + baseSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "");
+      eventBaseFullName = TypeNameUtilities.FullyQualified(baseSymbol);
     }
 
     return new SagaInfo(
-      @namespace: typeSymbol.ContainingNamespace.IsGlobalNamespace ? null : typeSymbol.ContainingNamespace.ToDisplayString(),
+      @namespace: typeSymbol.ContainingNamespace.IsGlobalNamespace ? null : TypeNameUtilities.Display(typeSymbol.ContainingNamespace),
       className: typeSymbol.Name,
       sagaName: sagaName!,
       eventBaseFullName: eventBaseFullName,

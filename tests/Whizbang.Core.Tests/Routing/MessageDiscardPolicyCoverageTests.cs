@@ -138,7 +138,10 @@ public class MessageDiscardPolicyCoverageTests {
         if (instrument.Meter == meter && instrument.Name == "whizbang.message.skipped") { l.EnableMeasurementEvents(instrument); }
       },
     };
-    listener.SetMeasurementEventCallback<long>((_, _, tags, _) => {
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      // Passive counter: every series reports at collection, the declared gate series at zero —
+      // only the series that counted this discard carries its tags.
+      if (value == 0) { return; }
       var snapshot = new Dictionary<string, object?>(tags.Length);
       foreach (var t in tags) { snapshot[t.Key] = t.Value; }
       tagSnapshots.Add(snapshot);
@@ -147,6 +150,7 @@ public class MessageDiscardPolicyCoverageTests {
     var decision = new MessageDiscardDecision(ShouldDiscard: true, MessageDiscardReason.NoLocalConsumer, Detail: null);
 
     policy.RecordDiscard(MessageDiscardGate.Outbox, decision, "Test.Contracts.SomeOutboxType");
+    listener.RecordObservableInstruments();
 
     await Assert.That(tagSnapshots.Count).IsEqualTo(1);
     await Assert.That(tagSnapshots[0]["gate"]).IsEqualTo("outbox")
@@ -168,7 +172,10 @@ public class MessageDiscardPolicyCoverageTests {
         if (instrument.Meter == meter && instrument.Name == "whizbang.message.skipped") { l.EnableMeasurementEvents(instrument); }
       },
     };
-    listener.SetMeasurementEventCallback<long>((_, _, tags, _) => {
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      // Passive counter: every series reports at collection, the declared gate series at zero —
+      // only the series that counted this discard carries its tags.
+      if (value == 0) { return; }
       var snapshot = new Dictionary<string, object?>(tags.Length);
       foreach (var t in tags) { snapshot[t.Key] = t.Value; }
       tagSnapshots.Add(snapshot);
@@ -177,6 +184,7 @@ public class MessageDiscardPolicyCoverageTests {
     var decision = new MessageDiscardDecision(ShouldDiscard: true, MessageDiscardReason.NoLocalConsumer, Detail: null);
 
     policy.RecordDiscard((MessageDiscardGate)999, decision, "Test.Contracts.SomeType");
+    listener.RecordObservableInstruments();
 
     await Assert.That(tagSnapshots.Count).IsEqualTo(1);
     await Assert.That(tagSnapshots[0]["gate"]).IsEqualTo("999")

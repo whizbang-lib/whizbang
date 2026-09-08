@@ -68,7 +68,7 @@ public sealed partial class DispatcherEventCascader : IEventCascader {
 
   private void _onNonMessageValue(Type type) {
     if (_logger is not null) {
-      LogNonMessageReturnType(_logger, type.FullName);
+      LogNonMessageReturnType(_logger, TypeNameFormatter.DisplayName(type));
     }
   }
 

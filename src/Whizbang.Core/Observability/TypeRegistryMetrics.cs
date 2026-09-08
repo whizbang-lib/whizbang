@@ -29,22 +29,29 @@ public sealed class TypeRegistryMetrics {
 #pragma warning restore CA1707
 
   /// <summary>Registry rows reconciled old → new for an acknowledged rename. Tagged by <c>service</c>.</summary>
-  public Counter<long> Renamed { get; }
+  public PassiveCounter<long> Renamed { get; }
 
   /// <summary>Un-acknowledged drift left untouched (stored name is not a recorded former name). Tagged by <c>service</c>.</summary>
-  public Counter<long> DriftDetected { get; }
+  public PassiveCounter<long> DriftDetected { get; }
 
   /// <summary>Initializes a new instance of <see cref="TypeRegistryMetrics"/>.</summary>
   public TypeRegistryMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    Renamed = meter.CreateCounter<long>(
+    Renamed = meter.CreatePassiveCounter<long>(
       "whizbang.type_registry.renamed",
       description: "Registry rows reconciled old->new for an acknowledged rename; tagged by service");
-    DriftDetected = meter.CreateCounter<long>(
+    DriftDetected = meter.CreatePassiveCounter<long>(
       "whizbang.type_registry.drift_detected",
       description: "Un-acknowledged registry drift left untouched; tagged by service");
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    // The service tag is this process's entry assembly, the same value Record stamps, so the seed is
+    // the exact series the process will write.
+    var serviceTag = _serviceTag(null);
+    Renamed.Touch(serviceTag);
+    DriftDetected.Touch(serviceTag);
   }
 
   /// <summary>
@@ -55,13 +62,18 @@ public sealed class TypeRegistryMetrics {
   /// <param name="driftDetected">Number of un-acknowledged drift rows detected.</param>
   /// <param name="service">The consumer assembly / service name (drift attribution tag). Defaults to the entry assembly.</param>
   public void Record(long renamed, long driftDetected, string? service = null) {
-    service ??= System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
-    var tag = new KeyValuePair<string, object?>("service", string.IsNullOrEmpty(service) ? "<unknown>" : service);
+    var tag = _serviceTag(service);
     if (renamed > 0) {
       Renamed.Add(renamed, tag);
     }
     if (driftDetected > 0) {
       DriftDetected.Add(driftDetected, tag);
     }
+  }
+
+  /// <summary>The drift-attribution tag: the given service, else the entry assembly, else a sentinel.</summary>
+  private static KeyValuePair<string, object?> _serviceTag(string? service) {
+    service ??= System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name;
+    return new KeyValuePair<string, object?>("service", string.IsNullOrEmpty(service) ? "<unknown>" : service);
   }
 }

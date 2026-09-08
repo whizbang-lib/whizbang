@@ -87,7 +87,7 @@ PR #513 before this decision; it stays (no revert).
   component (closing the Phase-1 delta). ASB receive loop + RabbitMQ consumer-concurrency
   analogue.
   **STATUS: implemented on this branch (uncommitted).** `AsbAcceptorGovernor` (floor 4 default,
-  double-on-pressure ≥80%/window, halve-on-quiet <25%/window, ceiling = MaxConcurrentSessions)
+  double-at-once when full, double-on-pressure ≥80%/window, halve-on-quiet <25%/window, ceiling = MaxConcurrentSessions)
   applied to RUNNING processors via SDK `UpdateConcurrency` (available in Azure.Messaging.ServiceBus
   7.20.1 — no stop/recreate needed); options `EnableAdaptiveAcceptors`(true)/`AcceptorFloor`(4)/
   `AcceptorEvaluationInterval`(30s) bound in the AOT post-configure; ops-rate projection now

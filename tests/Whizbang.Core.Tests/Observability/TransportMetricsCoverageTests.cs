@@ -42,12 +42,13 @@ public class TransportMetricsCoverageTests {
     using var helper = new MetricAssertionHelper(factory.CreatedMeters[0]);
 
     metrics.InboxConcurrentMessages.Add(1);
-    metrics.InboxConcurrentMessages.Add(-1);
+    var whileInFlight = helper.GetByName("whizbang.transport.inbox.concurrent_messages");
+    await Assert.That(whileInFlight).Count().IsEqualTo(1);
+    await Assert.That(whileInFlight[0].Value).IsEqualTo(1);
 
-    var measurements = helper.GetByName("whizbang.transport.inbox.concurrent_messages");
-    await Assert.That(measurements).Count().IsEqualTo(2);
-    await Assert.That(measurements[0].Value).IsEqualTo(1);
-    await Assert.That(measurements[1].Value).IsEqualTo(-1);
+    metrics.InboxConcurrentMessages.Add(-1);
+    var afterRelease = helper.GetByName("whizbang.transport.inbox.concurrent_messages");
+    await Assert.That(afterRelease[^1].Value).IsEqualTo(0);
   }
 
   // Losing this histogram hides whether inbox batches are flushing near their configured cap or

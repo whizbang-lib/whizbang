@@ -52,6 +52,67 @@ public static class OffloadServiceCollectionExtensions {
   }
 
   /// <summary>
+  /// Registers a body cipher under <paramref name="cipherName"/> (issue #704). Name it in
+  /// <see cref="MessageBodyOffloadOptions.CipherName"/> on the sender; register the same name on
+  /// every receiver that rehydrates its claims.
+  /// </summary>
+  /// <typeparam name="TCipher">The cipher implementation; constructed by the container.</typeparam>
+  /// <param name="services">The service collection.</param>
+  /// <param name="cipherName">The name sender and receiver agree on.</param>
+  /// <docs>fundamentals/offloads/message-body-store</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyOffloadCipherTests.cs</tests>
+  public static IServiceCollection AddWhizbangMessageBodyCipher<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TCipher>(
+      this IServiceCollection services,
+      string cipherName) where TCipher : class, IMessageBodyCipher {
+    ArgumentNullException.ThrowIfNull(services);
+    ArgumentException.ThrowIfNullOrWhiteSpace(cipherName);
+
+    services.AddKeyedSingleton<IMessageBodyCipher, TCipher>(cipherName);
+    return services;
+  }
+
+  /// <summary>
+  /// Registers the built-in AES-256-GCM envelope cipher under <paramref name="cipherName"/> with a
+  /// key wrapper resolved from the container (a vault-backed wrapper keeps the key encryption key
+  /// out of the process; <see cref="LocalAesKeyWrapper"/> holds one the host supplies).
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="cipherName">The name sender and receiver agree on.</param>
+  /// <param name="keyWrapper">Builds the key wrapper from the container.</param>
+  /// <docs>fundamentals/offloads/message-body-store</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyOffloadCipherTests.cs</tests>
+  public static IServiceCollection AddWhizbangAesGcmBodyCipher(
+      this IServiceCollection services,
+      string cipherName,
+      Func<IServiceProvider, IMessageBodyKeyWrapper> keyWrapper) {
+    ArgumentNullException.ThrowIfNull(services);
+    ArgumentException.ThrowIfNullOrWhiteSpace(cipherName);
+    ArgumentNullException.ThrowIfNull(keyWrapper);
+
+    services.AddKeyedSingleton<IMessageBodyCipher>(cipherName, (sp, key) => new AesGcmEnvelopeCipher((string)key!, keyWrapper(sp)));
+    return services;
+  }
+
+  /// <summary>
+  /// Registers the built-in AES-256-GCM envelope cipher over a key encryption key the host
+  /// supplies (32 bytes, from its secret store). Data keys are minted per body and travel wrapped.
+  /// </summary>
+  /// <param name="services">The service collection.</param>
+  /// <param name="cipherName">The name sender and receiver agree on.</param>
+  /// <param name="keyId">The identifier recorded on claims for this key encryption key.</param>
+  /// <param name="keyEncryptionKey">The 32-byte key encryption key.</param>
+  /// <docs>fundamentals/offloads/message-body-store</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Offloads/BodyOffloadCipherTests.cs</tests>
+  public static IServiceCollection AddWhizbangAesGcmBodyCipher(
+      this IServiceCollection services,
+      string cipherName,
+      string keyId,
+      ReadOnlyMemory<byte> keyEncryptionKey) {
+    var wrapper = new LocalAesKeyWrapper(keyId, keyEncryptionKey);
+    return services.AddWhizbangAesGcmBodyCipher(cipherName, _ => wrapper);
+  }
+
+  /// <summary>
   /// Registers a post-serialize hook in the publish pipeline. The chain
   /// is built at <see cref="PostSerializeHookChain"/> construction from
   /// all registered <see cref="IPostSerializeHook"/> instances ordered by

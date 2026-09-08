@@ -943,17 +943,18 @@ public class TransportConsumerWorkerCoverageTests {
     var worker = _createWorkerWithResilience(transport, options, resilienceOptions);
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
 
-    // Wait long enough for initial failure + health check to trigger
-    await Task.Delay(500);
+    // Wait for the recovery attempt itself rather than for a fixed 500 ms to elapse: the initial
+    // failure, its retry and the health check all run on the worker's own threads, and on a loaded
+    // machine they had not finished inside that window -- the assertion then read 1.
+    await transport.WaitForSubscribeCountAsync(2).WaitAsync(TimeSpan.FromSeconds(30));
 
-    // Assert - should have attempted subscribe multiple times
-    // (initial attempt + health monitor recovery attempts)
     await Assert.That(transport.SubscribeCallCount).IsGreaterThan(1)
       .Because("Health monitor should attempt to recover failed subscriptions");
 
-    cts.Cancel();
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 
   // ========================================
@@ -1608,8 +1609,46 @@ public class TransportConsumerWorkerCoverageTests {
 
   private sealed class CoverageSelectiveFailTransport(IEnumerable<string> failingTopics) : ITransport {
     private readonly HashSet<string> _failingTopics = [.. failingTopics];
+    private readonly Lock _subscribeLock = new();
+    private readonly List<(int Count, TaskCompletionSource Signal)> _countWaiters = [];
+    private int _subscribeCallCount;
 
-    public int SubscribeCallCount { get; private set; }
+    /// <summary>How many subscribe attempts the worker made. Written from the worker's thread.</summary>
+    public int SubscribeCallCount {
+      get { lock (_subscribeLock) { return _subscribeCallCount; } }
+    }
+
+    /// <summary>
+    /// Completes once at least <paramref name="count"/> subscribe attempts have been made.
+    /// </summary>
+    /// <remarks>
+    /// The health monitor's recovery attempt is what the count is evidence of, and it arrives on
+    /// the monitor's own cadence. Waiting a fixed delay instead bet that cadence against a loaded
+    /// machine and lost -- the assertion read 1 where it wanted more than 1.
+    /// </remarks>
+    public Task WaitForSubscribeCountAsync(int count) {
+      lock (_subscribeLock) {
+        if (_subscribeCallCount >= count) { return Task.CompletedTask; }
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _countWaiters.Add((count, signal));
+        return signal.Task;
+      }
+    }
+
+    private void _recordSubscribe() {
+      List<TaskCompletionSource> ready = [];
+      lock (_subscribeLock) {
+        _subscribeCallCount++;
+        for (var i = _countWaiters.Count - 1; i >= 0; i--) {
+          if (_subscribeCallCount >= _countWaiters[i].Count) {
+            ready.Add(_countWaiters[i].Signal);
+            _countWaiters.RemoveAt(i);
+          }
+        }
+      }
+      // Completed outside the lock: a continuation must never run while holding it.
+      foreach (var signal in ready) { signal.TrySetResult(); }
+    }
     public bool IsInitialized => true;
     public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
@@ -1626,7 +1665,7 @@ public class TransportConsumerWorkerCoverageTests {
         Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
         TransportDestination destination,
         CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
+      _recordSubscribe();
       if (_failingTopics.Contains(destination.Address)) {
         throw new InvalidOperationException($"Subscription to {destination.Address} failed");
       }
@@ -1638,7 +1677,7 @@ public class TransportConsumerWorkerCoverageTests {
         TransportDestination destination,
         TransportBatchOptions batchOptions,
         CancellationToken cancellationToken = default) {
-      SubscribeCallCount++;
+      _recordSubscribe();
       if (_failingTopics.Contains(destination.Address)) {
         throw new InvalidOperationException($"Subscription to {destination.Address} failed");
       }

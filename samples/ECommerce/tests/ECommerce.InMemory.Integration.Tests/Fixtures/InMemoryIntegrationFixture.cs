@@ -724,8 +724,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     Console.WriteLine($"=== TYPE NAME COMPARISON ({schemaName}) ===");
 
     // Query event types from wh_event_store
-    var eventTypesQuery = $"SELECT DISTINCT event_type FROM {schemaName}.wh_event_store ORDER BY event_type";
-    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(eventTypesQuery).ToListAsync(cancellationToken);
+    var sql = $"SELECT DISTINCT event_type FROM {schemaName}.wh_event_store ORDER BY event_type";
+    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(sql).ToListAsync(cancellationToken);
 
     // Query message types from wh_message_associations (perspectives only)
     var associationsQuery = $"SELECT DISTINCT message_type FROM {schemaName}.wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type";
@@ -1115,16 +1115,11 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// Returns: "MyApp.ProductCreatedEvent, MyApp"
   /// </summary>
   private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
-    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
-    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
-
-    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-      throw new InvalidOperationException(
+    // The framework's one envelope-name parser (depth-aware for nested generics).
+    var messageTypeName = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeTypeName)
+      ?? throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
         $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
-    }
-
-    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
 
     if (string.IsNullOrWhiteSpace(messageTypeName)) {
       throw new InvalidOperationException(
@@ -1146,15 +1141,15 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Determine if message is an event by checking the type string suffix
     // CRITICAL: Cannot use (payload is IEvent) because payload is JsonElement from InProcessTransport
     // Must check if the type name ends with "Event" (convention-based)
-    var typeNameWithoutAssembly = messageTypeName.Split(',')[0].Trim();  // "ECommerce.Contracts.ProductCreatedEvent"
+    var typeNameWithoutAssembly = TypeNameFormatter.GetFullName(messageTypeName);  // "ECommerce.Contracts.ProductCreatedEvent"
     var lastSegment = typeNameWithoutAssembly.Split('.').Last();  // "ProductCreatedEvent"
     var isEvent = lastSegment.EndsWith("Event", StringComparison.Ordinal);
 
     // Extract simple type name for handler name (last part after last '.')
     var lastDotIndex = messageTypeName.LastIndexOf('.');
     var simpleTypeName = lastDotIndex >= 0
-      ? messageTypeName[(lastDotIndex + 1)..].Split(',')[0].Trim()
-      : messageTypeName.Split(',')[0].Trim();
+      ? TypeNameFormatter.GetFullName(messageTypeName[(lastDotIndex + 1)..])
+      : typeNameWithoutAssembly;
     var handlerName = simpleTypeName + "Handler";
 
     var streamId = _extractStreamId(envelope);

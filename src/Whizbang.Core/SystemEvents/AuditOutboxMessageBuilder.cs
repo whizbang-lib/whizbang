@@ -127,11 +127,11 @@ public static partial class AuditOutboxMessageBuilder {
         MessageId = auditEnvelope.MessageId,
         Hops = auditEnvelope.Hops?.ToList() ?? []
       },
-      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{auditEventType.AssemblyQualifiedName}]], Whizbang.Core",
+      EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(auditEventType)),
       StreamId = auditEvent.Id,
       IsEvent = false, // Audit events are NOT stored in event store — only published to transport
       Scope = eventMessage.Scope,
-      MessageType = auditEventType.AssemblyQualifiedName ?? auditEventType.FullName ?? auditEventType.Name
+      MessageType = TypeNameFormatter.AssemblyQualifiedName(auditEventType)
     };
   }
 

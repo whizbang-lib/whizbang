@@ -31,10 +31,10 @@ public sealed class HousekeepingMetrics {
 #pragma warning restore CA1707
 
   /// <summary>Every arbitration verdict, tagged by activity and verdict.</summary>
-  public Counter<long> Decisions { get; }
+  public PassiveCounter<long> Decisions { get; }
 
   /// <summary>Activities currently holding the slot, tagged by activity. 0 or 1 per activity.</summary>
-  public UpDownCounter<long> Running { get; }
+  public PassiveCounter<long> Running { get; }
 
   /// <summary>
   /// Items each activity processed while holding the slot, tagged by activity — the volume rollup.
@@ -44,7 +44,7 @@ public sealed class HousekeepingMetrics {
   /// rows swept. Integrity keeps its dedicated meter (<c>Whizbang.StreamIntegrity</c>) for the
   /// per-reason detail; this counter is the cross-activity overview.
   /// </remarks>
-  public Counter<long> Items { get; }
+  public PassiveCounter<long> Items { get; }
 
   /// <summary>Initializes the meter, optionally exposing the idle tracker as a gauge.</summary>
   /// <param name="whizbangMetrics">The shared meter factory holder.</param>
@@ -56,15 +56,15 @@ public sealed class HousekeepingMetrics {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    Decisions = meter.CreateCounter<long>(
+    Decisions = meter.CreatePassiveCounter<long>(
       "whizbang.housekeeping.decisions",
       description: "Arbitration verdicts, tagged by activity and verdict.");
 
-    Running = meter.CreateUpDownCounter<long>(
+    Running = meter.CreatePassiveUpDownCounter<long>(
       "whizbang.housekeeping.running",
       description: "Activities currently holding the housekeeping slot, tagged by activity.");
 
-    Items = meter.CreateCounter<long>(
+    Items = meter.CreatePassiveCounter<long>(
       "whizbang.housekeeping.items",
       description: "Items processed per housekeeping activity — the volume rollup.");
 
@@ -77,6 +77,16 @@ public sealed class HousekeepingMetrics {
         unit: "s",
         description: "How long this pod has been idle, tagged with the last activity's source.");
     }
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    var activities = Enum.GetNames<HousekeepingCoordinator.Activity>();
+    foreach (var activity in activities) {
+      foreach (var verdict in Enum.GetNames<HousekeepingCoordinator.Verdict>()) {
+        Decisions.Touch(new System.Diagnostics.TagList { { "activity", activity }, { "verdict", verdict } });
+      }
+    }
+    Running.Touch("activity", activities);
+    Items.Touch("activity", activities);
   }
 
   /// <summary>Records one arbitration decision, and slot occupancy when granted.</summary>

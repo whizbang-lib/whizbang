@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -194,12 +195,12 @@ public class StreamGroupAnalyzer : DiagnosticAnalyzer {
       if (!iface.IsGenericType) {
         continue;
       }
-      var definition = iface.ConstructedFrom.ToDisplayString();
+      var definition = TypeNameUtilities.Display(iface.ConstructedFrom);
       if (!definition.StartsWith(PERSPECTIVE_BASE, System.StringComparison.Ordinal)) {
         continue;
       }
       for (var i = 1; i < iface.TypeArguments.Length; i++) {
-        events.Add(iface.TypeArguments[i].ToDisplayString());
+        events.Add(TypeNameUtilities.Display(iface.TypeArguments[i]));
       }
     }
     return events.ToImmutable();

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Routing;
 
@@ -163,7 +164,7 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
   private readonly PoisonMessageOptions _options;
   private readonly TimeSpan _ageThreshold;
   private readonly ILogger<PoisonMessageDetector> _logger;
-  private readonly Counter<long> _quarantinedCounter;
+  private readonly PassiveCounter<long> _quarantinedCounter;
   private readonly PoisonDetectionCapabilityState? _capabilityState;
 
 #pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
@@ -194,10 +195,14 @@ public sealed class PoisonMessageDetector : IPoisonMessageDetector {
     _ageThreshold = _options.EffectiveAgeThreshold;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _capabilityState = capabilityState;
-    _quarantinedCounter = meter.CreateCounter<long>(
+    _quarantinedCounter = meter.CreatePassiveCounter<long>(
       COUNTER_NAME,
       unit: "{message}",
       description: "Count of messages quarantined by the poison detector (age | durable observations).");
+    // Issue #711: one series per gate exists at zero from construction (see PassiveCounter).
+    foreach (var gate in Enum.GetValues<PoisonQuarantineGate>()) {
+      _quarantinedCounter.Touch(new KeyValuePair<string, object?>("gate", _gateTag(gate)));
+    }
   }
 
   /// <inheritdoc />

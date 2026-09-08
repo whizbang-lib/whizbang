@@ -64,6 +64,7 @@ public class RabbitMQReceiveSkipTelemetryTests {
     await Assert.That(shouldSkip).IsTrue();
     await Assert.That(policyLogger.Entries.Count).IsEqualTo(1);
     await Assert.That(policyLogger.Entries[0].Level).IsEqualTo(LogLevel.Debug);
+    listener.RecordObservableInstruments();   // passive counter (#711): the series report their cumulative values at collection
     await Assert.That(skippedCount).IsEqualTo(1L);
   }
 
@@ -89,6 +90,7 @@ public class RabbitMQReceiveSkipTelemetryTests {
 
     await Assert.That(shouldSkip).IsFalse();
     await Assert.That(policyLogger.Entries.Count).IsEqualTo(0);
+    listener.RecordObservableInstruments();   // passive counter (#711): the series report their cumulative values at collection
     await Assert.That(skippedCount).IsEqualTo(0L);
   }
 

@@ -199,6 +199,7 @@ public class EFCoreCommitHandlerTests : EFCoreTestBase {
         e.Level == Microsoft.Extensions.Logging.LogLevel.Warning && e.Message.Contains("P0001"))).IsTrue()
       .Because("the Tier-1 SQLSTATE is the diagnosis — discarding it left the slow path "
              + "undiagnosable for the life of a deployment");
+    listener.RecordObservableInstruments();   // passive counters (#711) report at collection
     await Assert.That(Interlocked.Read(ref fallbacks)).IsEqualTo(1L)
       .Because("one batch fell back once — the counter is what an operator alerts on when "
              + "a fleet quietly lives on the slow path");

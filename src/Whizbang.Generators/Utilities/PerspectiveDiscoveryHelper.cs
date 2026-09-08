@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.CodeAnalysis;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Utilities;
 
@@ -26,7 +27,7 @@ internal static class PerspectiveDiscoveryHelper {
   public static List<INamedTypeSymbol> FindSingleStreamInterfaces(INamedTypeSymbol classSymbol) {
     return [.. classSymbol.AllInterfaces
       .Where(i => {
-        var originalDef = i.OriginalDefinition.ToDisplayString();
+        var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
         // Match with "<TModel, TEvent" prefix to skip marker-only bases like IPerspectiveBase<TModel>
         return (originalDef.StartsWith(PERSPECTIVE_BASE + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
                 originalDef.StartsWith(PERSPECTIVE_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
@@ -41,7 +42,7 @@ internal static class PerspectiveDiscoveryHelper {
   public static List<INamedTypeSymbol> FindGlobalInterfaces(INamedTypeSymbol classSymbol) {
     return [.. classSymbol.AllInterfaces
       .Where(i => {
-        var originalDef = i.OriginalDefinition.ToDisplayString();
+        var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
         return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR + "<", StringComparison.Ordinal)
                && i.TypeArguments.Length >= 3;
       })];
@@ -53,7 +54,7 @@ internal static class PerspectiveDiscoveryHelper {
   /// </summary>
   public static bool IsPerspectiveClass(INamedTypeSymbol classSymbol) {
     return classSymbol.AllInterfaces.Any(i => {
-      var originalDef = i.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
       return (originalDef.StartsWith(PERSPECTIVE_BASE + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
               originalDef.StartsWith(PERSPECTIVE_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
               originalDef.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR + GENERIC_MODEL_EVENT_PREFIX, StringComparison.Ordinal) ||
@@ -77,7 +78,7 @@ internal static class PerspectiveDiscoveryHelper {
     foreach (var iface in FindSingleStreamInterfaces(classSymbol)) {
       for (var i = 1; i < iface.TypeArguments.Length; i++) {
         var eventType = iface.TypeArguments[i];
-        var key = eventType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var key = TypeNameUtilities.FullyQualified(eventType);
         if (seen.Add(key)) {
           eventTypes.Add(eventType);
         }
@@ -88,7 +89,7 @@ internal static class PerspectiveDiscoveryHelper {
       // Global: TypeArguments[0] = TModel, [1] = TPartitionKey, [2..N] = events
       for (var i = 2; i < iface.TypeArguments.Length; i++) {
         var eventType = iface.TypeArguments[i];
-        var key = eventType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var key = TypeNameUtilities.FullyQualified(eventType);
         if (seen.Add(key)) {
           eventTypes.Add(eventType);
         }

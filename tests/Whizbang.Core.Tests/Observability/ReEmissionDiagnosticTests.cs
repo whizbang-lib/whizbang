@@ -42,18 +42,27 @@ public sealed class ReEmissionDiagnosticTests {
     }
   }
 
+  // Filters on the INSTRUMENT of this test's DispatcherMetrics: the meter name is process-wide,
+  // and a passive counter (#711) reports every enabled instance's series at collection. Count()
+  // collects and returns the cumulative total across the counter's series (the untagged one
+  // plus one per re-emitted type), resetting first so repeated calls do not compound.
   private static (ReEmissionDiagnostic Diag, CaptureLogger Log, Func<long> Count) _arm() {
     var metrics = new DispatcherMetrics(new WhizbangMetrics());
     long count = 0;
     var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (ReferenceEquals(instrument, metrics.ReEmissions)) { l.EnableMeasurementEvents(instrument); }
+      if (ReferenceEquals(instrument, metrics.ReEmissions.Instrument)) { l.EnableMeasurementEvents(instrument); }
     };
     listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref count, value));
     listener.Start();
     var log = new CaptureLogger();
     var diag = new ReEmissionDiagnostic(new StubRegistryQuery(), log, metrics);
-    return (diag, log, () => { listener.RecordObservableInstruments(); return Interlocked.Read(ref count); });
+    return (diag, log, () => {
+      Interlocked.Exchange(ref count, 0);
+      listener.RecordObservableInstruments();
+      return Interlocked.Read(ref count);
+    }
+    );
   }
 
   [Test]
@@ -118,7 +127,7 @@ public sealed class ReEmissionDiagnosticTests {
     long count = 0;
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (ReferenceEquals(instrument, metrics.ReEmissions)) { l.EnableMeasurementEvents(instrument); }
+      if (ReferenceEquals(instrument, metrics.ReEmissions.Instrument)) { l.EnableMeasurementEvents(instrument); }
     };
     listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref count, value));
     listener.Start();
@@ -132,6 +141,8 @@ public sealed class ReEmissionDiagnosticTests {
 
     await dispatcher.PublishAsync(new ProbeEvent(Guid.NewGuid()));
 
+    // Passive counter (#711): the re-emission series is reported only when the listener collects.
+    listener.RecordObservableInstruments();
     await Assert.That(Interlocked.Read(ref count)).IsEqualTo(1L)
       .Because("PublishAsync is the emission seam — the diagnostic fires there or it is scenery");
   }

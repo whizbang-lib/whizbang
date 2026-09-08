@@ -140,7 +140,9 @@ public class BodyOffloadPostSerializeHookTests {
     var result = await hook.RunAsync(ctx, CancellationToken.None);
     await Assert.That(result.NewSerializedBytes).IsNotNull(); // confirms offload path ran
 
-    var counts = helper.GetByName("whizbang.transport.body_offload.count");
+    // Passive counter: the untagged series always reports (at zero); the type-tagged series is
+    // the one this offload counted.
+    var counts = helper.GetByName("whizbang.transport.body_offload.count").Where(m => m.Value > 0).ToList();
     await Assert.That(counts.Count).IsEqualTo(1);
     await Assert.That(counts[0].Value).IsEqualTo(1d);
 

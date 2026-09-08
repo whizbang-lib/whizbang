@@ -87,7 +87,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Skip Whizbang.Core internal classes - this generator is for user types only
-    var className = classSymbol.ToDisplayString();
+    var className = TypeNameUtilities.Display(classSymbol);
     if (className.StartsWith("Whizbang.Core", StringComparison.Ordinal)) {
       return null;
     }
@@ -102,9 +102,9 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
       // User-defined interface pattern - register against user interface
       var category = _getServiceCategory(userInterface);
       return new ServiceRegistrationInfo(
-          ConcreteTypeName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ConcreteTypeName: TypeNameUtilities.FullyQualified(classSymbol),
           SimpleTypeName: TypeNameUtilities.GetSimpleName(classSymbol),
-          UserInterfaceName: userInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          UserInterfaceName: TypeNameUtilities.FullyQualified(userInterface),
           Category: category,
           IsAbstract: isAbstract
       );
@@ -117,9 +117,9 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
       // Direct implementation pattern - register against the Whizbang interface
       var category = _getServiceCategoryFromWhizbangInterface(directWhizbangInterface);
       return new ServiceRegistrationInfo(
-          ConcreteTypeName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ConcreteTypeName: TypeNameUtilities.FullyQualified(classSymbol),
           SimpleTypeName: TypeNameUtilities.GetSimpleName(classSymbol),
-          UserInterfaceName: directWhizbangInterface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          UserInterfaceName: TypeNameUtilities.FullyQualified(directWhizbangInterface),
           Category: category,
           IsAbstract: isAbstract
       );
@@ -133,7 +133,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   /// Only matches closed generic types (e.g., ILensQuery&lt;Order&gt;), not open generics (e.g., ILensQuery&lt;TModel&gt;).
   /// </summary>
   private static bool _isDirectWhizbangInterface(INamedTypeSymbol interfaceSymbol) {
-    var name = interfaceSymbol.OriginalDefinition.ToDisplayString();
+    var name = TypeNameUtilities.Display(interfaceSymbol.OriginalDefinition);
     var isWhizbangInterface = name.StartsWith(LENS_QUERY_INTERFACE, StringComparison.Ordinal) ||
                               name.StartsWith(PERSPECTIVE_FOR_INTERFACE, StringComparison.Ordinal) ||
                               name.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE, StringComparison.Ordinal);
@@ -159,7 +159,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   /// Gets the service category from a direct Whizbang interface.
   /// </summary>
   private static ServiceCategory _getServiceCategoryFromWhizbangInterface(INamedTypeSymbol whizbangInterface) {
-    var name = whizbangInterface.OriginalDefinition.ToDisplayString();
+    var name = TypeNameUtilities.Display(whizbangInterface.OriginalDefinition);
     if (name.StartsWith(PERSPECTIVE_FOR_INTERFACE, StringComparison.Ordinal) ||
         name.StartsWith(PERSPECTIVE_WITH_ACTIONS_FOR_INTERFACE, StringComparison.Ordinal)) {
       return ServiceCategory.Perspective;
@@ -175,14 +175,14 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static bool _isUserInterfaceExtendingWhizbang(INamedTypeSymbol interfaceSymbol) {
     // Check if interface is from user code (not Whizbang.Core)
-    var interfaceName = interfaceSymbol.ToDisplayString();
+    var interfaceName = TypeNameUtilities.Display(interfaceSymbol);
     if (interfaceName.StartsWith("Whizbang.Core", StringComparison.Ordinal)) {
       return false;
     }
 
     // Check if it extends ILensQuery or IPerspectiveFor
     return interfaceSymbol.AllInterfaces.Any(i => {
-      var name = i.OriginalDefinition.ToDisplayString();
+      var name = TypeNameUtilities.Display(i.OriginalDefinition);
       return name.StartsWith(LENS_QUERY_INTERFACE, StringComparison.Ordinal) ||
              name.StartsWith(PERSPECTIVE_BASE_INTERFACE, StringComparison.Ordinal);
     });
@@ -193,7 +193,7 @@ public class ServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static ServiceCategory _getServiceCategory(INamedTypeSymbol userInterface) {
     foreach (var baseInterface in userInterface.AllInterfaces) {
-      var name = baseInterface.OriginalDefinition.ToDisplayString();
+      var name = TypeNameUtilities.Display(baseInterface.OriginalDefinition);
       if (name.StartsWith(PERSPECTIVE_BASE_INTERFACE, StringComparison.Ordinal)) {
         return ServiceCategory.Perspective;
       }

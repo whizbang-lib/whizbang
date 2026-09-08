@@ -75,9 +75,14 @@ public class TransportConsumerWorkerBodyOffloadTests {
     await Assert.That(stored.EnvelopeType).IsEqualTo(originalTypeName)
       .Because("After rehydrate the inbox row must use the ORIGINAL envelope type, not the claim sentinel type.");
 
-    var rehydrated = metricHelper.GetByName("whizbang.transport.body_claim.rehydrated.count");
+    // Passive counter: the untagged series always reports (at zero); the type-tagged series is
+    // the one the rehydration counted.
+    var rehydrated = metricHelper.GetByName("whizbang.transport.body_claim.rehydrated.count")
+      .Where(m => m.Value > 0)
+      .ToList();
     await Assert.That(rehydrated).Count().IsEqualTo(1)
       .Because("The rehydrator must observe the rehydration through the worker's DI scope.");
+    await Assert.That(rehydrated[0].Value).IsEqualTo(1d);
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -156,7 +161,11 @@ public class TransportConsumerWorkerBodyOffloadTests {
 
     await Assert.That(coordinator.StoredInboxCount).IsEqualTo(0)
       .Because("A claim whose provider is unknown MUST be dropped (dead-letter path) — storing it without its body would poison downstream processing.");
-    var failed = metricHelper.GetByName("whizbang.transport.inbox.messages_failed");
+    // Passive counter: the untagged series always reports (at zero); the series that counted the
+    // drop is the one that proves the path ran.
+    var failed = metricHelper.GetByName("whizbang.transport.inbox.messages_failed")
+      .Where(m => m.Value > 0)
+      .ToList();
     await Assert.That(failed).Count().IsEqualTo(1)
       .Because("The rehydrate dead-letter path must record the drop in the failed-messages counter.");
     await Assert.That(failed[0].Value).IsEqualTo(1d);

@@ -61,7 +61,7 @@ public sealed class SignalBus : ISignalBus, ISignalSink {
     };
     if (mismatched) {
       throw new ArgumentException(
-        $"Signal type '{typeof(TSignal).FullName}' declares Targeting={targeting} but the publish call used SignalTarget.Kind={kind}. " +
+        $"Signal type '{TypeNameFormatter.DisplayName(typeof(TSignal))}' declares Targeting={targeting} but the publish call used SignalTarget.Kind={kind}. " +
         "Broadcast signals require SignalTarget.Broadcast (default); Targeted signals require SignalTarget.Streams(...) or SignalTarget.Instance(...).",
         nameof(target));
     }

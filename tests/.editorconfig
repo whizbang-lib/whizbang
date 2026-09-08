@@ -4,3 +4,11 @@ root = false
 
 [*.cs]
 # Test-specific editorconfig settings
+
+# Type-name handling rules (WHIZ160-WHIZ163, issue #698) target production code. Test fixtures
+# compose envelope and event type names by hand on purpose, including malformed ones that prove
+# the parsers' tolerance, so the rules are off for the framework's own test projects.
+dotnet_diagnostic.WHIZ160.severity = none
+dotnet_diagnostic.WHIZ161.severity = none
+dotnet_diagnostic.WHIZ162.severity = none
+dotnet_diagnostic.WHIZ163.severity = none

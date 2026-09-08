@@ -38,30 +38,37 @@ public sealed class NotifyMetrics {
 #pragma warning restore CA1707
 
   /// <summary>NOTIFY signals delivered to subscribers, tagged by <c>category</c>.</summary>
-  public Counter<long> SignalsReceived { get; }
+  public PassiveCounter<long> SignalsReceived { get; }
 
   /// <summary>+1 when LISTEN/NOTIFY connection becomes healthy, -1 on disconnect.</summary>
-  public UpDownCounter<int> ConnectionState { get; }
+  public PassiveCounter<int> ConnectionState { get; }
 
   /// <summary>Mode-decision counter (startup and runtime transitions), tagged by <c>mode</c>
   /// and <c>reason</c>.</summary>
-  public Counter<long> SignalingMode { get; }
+  public PassiveCounter<long> SignalingMode { get; }
+
+  private static readonly string[] _categories = ["outbox", "inbox", "perspective", "unknown"];
+  private static readonly string[] _modes = [PgSharedNotifyConnection.SignalingModeName.LISTEN_NOTIFY, PgSharedNotifyConnection.SignalingModeName.POLLING_ONLY];
 
   /// <summary>Initializes a new instance of the <see cref="NotifyMetrics"/> class.</summary>
   public NotifyMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    SignalsReceived = meter.CreateCounter<long>(
+    SignalsReceived = meter.CreatePassiveCounter<long>(
       "whizbang.postgres.notifications.signals_received",
       description: "NOTIFY signals delivered to subscribers, tagged by category (outbox/inbox/perspective/unknown)");
 
-    ConnectionState = meter.CreateUpDownCounter<int>(
+    ConnectionState = meter.CreatePassiveUpDownCounter<int>(
       "whizbang.postgres.notifications.connection_state",
       description: "+1 when LISTEN/NOTIFY is healthy, -1 on disconnect; sum=number of connected pods");
 
-    SignalingMode = meter.CreateCounter<long>(
+    SignalingMode = meter.CreatePassiveCounter<long>(
       "whizbang.postgres.notifications.signaling_mode",
       description: "Mode-decision events (startup + runtime transitions), tagged by mode and reason");
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    SignalsReceived.Touch("category", _categories);
+    SignalingMode.Touch("mode", _modes);
   }
 }

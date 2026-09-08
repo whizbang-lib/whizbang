@@ -44,8 +44,7 @@ public static class EventFlagsDeriver {
         wireTypeName.Contains("[[", StringComparison.Ordinal)) {
       return null;
     }
-    var comma = wireTypeName.IndexOf(',');
-    var name = (comma < 0 ? wireTypeName : wireTypeName[..comma]).Trim();
+    var name = TypeNameFormatter.GetFullName(wireTypeName);
     return name.Length == 0 ? null : name;
   }
 }

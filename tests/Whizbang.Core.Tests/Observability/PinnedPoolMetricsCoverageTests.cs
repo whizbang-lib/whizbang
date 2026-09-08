@@ -41,9 +41,10 @@ public class PinnedPoolMetricsCoverageTests {
     metrics.BorrowTimeouts.Add(1, new KeyValuePair<string, object?>("worker", "claim"));
 
     var readings = helper.GetByName("whizbang.workers.pinned_pool.borrow.timeouts");
-    await Assert.That(readings.Count).IsEqualTo(1)
+    var claim = readings.Where(r => r.Tags.GetValueOrDefault("worker") == "claim").ToList();
+    await Assert.That(claim.Count).IsEqualTo(1)
       .Because("a borrow timeout that never increments this counter would leave operators unable to see workers starving on the pinned pool");
-    await Assert.That(readings[0].Value).IsEqualTo(1d);
+    await Assert.That(claim[0].Value).IsEqualTo(1d);
   }
 
   [Test]

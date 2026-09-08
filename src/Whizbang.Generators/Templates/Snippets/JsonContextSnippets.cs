@@ -399,7 +399,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
   // Throw a clear error - use TryGetOrCreateTypeInfo for graceful handling.
   if (TypesBeingCreated.Contains(type)) {
     throw new InvalidOperationException(
-        $"Circular type reference detected while creating JsonTypeInfo for {type.FullName}. " +
+        $"Circular type reference detected while creating JsonTypeInfo for {(global::Whizbang.Core.TypeNameFormatter.DisplayName(type))}. " +
         "Your type graph has a cycle (e.g., type A references type B, and type B references type A). " +
         "To resolve this, use [JsonIgnore] on one of the properties to break the cycle, " +
         "or use a custom JsonConverter for one of the types.");
@@ -608,7 +608,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
     }
 
     // If still null, type is not registered anywhere - throw helpful error
-    throw new InvalidOperationException($"No JsonTypeInfo found for type {type.FullName}. " +
+    throw new InvalidOperationException($"No JsonTypeInfo found for type {(global::Whizbang.Core.TypeNameFormatter.DisplayName(type))}. " +
       "Ensure you pass a resolver for this type to CreateOptions(), or add [JsonSerializable] to a JsonSerializable attribute.");
   } finally {
     // Always clean up the tracking set, even if an exception was thrown

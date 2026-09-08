@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using Microsoft.CodeAnalysis;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Utilities;
 
@@ -14,19 +15,13 @@ namespace Whizbang.Generators.Utilities;
 /// </remarks>
 internal static class TypeNameHelper {
   /// <summary>
-  /// Standard format for all type names - always fully qualified with global::.
-  /// </summary>
-  private static readonly SymbolDisplayFormat _fullyQualifiedFormat =
-    SymbolDisplayFormat.FullyQualifiedFormat;
-
-  /// <summary>
   /// Gets a fully qualified type name for routing and comparison.
   /// Always returns "global::Namespace.TypeName" format.
   /// </summary>
   /// <param name="symbol">The type symbol to format.</param>
   /// <returns>Fully qualified type name with global:: prefix.</returns>
   public static string GetFullyQualifiedName(ITypeSymbol symbol) {
-    return symbol.ToDisplayString(_fullyQualifiedFormat);
+    return TypeNameUtilities.FullyQualified(symbol);
   }
 
   /// <summary>
@@ -36,7 +31,7 @@ internal static class TypeNameHelper {
   /// <param name="symbol">The named type symbol to format.</param>
   /// <returns>Fully qualified original definition name with global:: prefix.</returns>
   public static string GetOriginalDefinitionName(INamedTypeSymbol symbol) {
-    return symbol.OriginalDefinition.ToDisplayString(_fullyQualifiedFormat);
+    return TypeNameUtilities.FullyQualified(symbol.OriginalDefinition);
   }
 
   /// <summary>

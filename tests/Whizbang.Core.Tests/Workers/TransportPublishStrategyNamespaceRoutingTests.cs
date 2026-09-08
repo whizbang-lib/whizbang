@@ -161,11 +161,13 @@ public class TransportPublishStrategyNamespaceRoutingTests {
 
     await strategy.PublishAsync(_eventWork(typeof(BulkClassEvent), "myapp.records"), CancellationToken.None);
 
+    // Passive counter: every series reports at collection, the untagged one at zero — only the
+    // series that actually counted a throttle says which namespace it was.
     var throttles = recorder.Measurements
-      .Where(m => m.InstrumentName == "whizbang.transport.outbox.publish_throttled")
+      .Where(m => m.InstrumentName == "whizbang.transport.outbox.publish_throttled" && m.Value > 0)
       .ToList();
     await Assert.That(throttles).IsNotEmpty();
-    await Assert.That(throttles.All(m => m.Tags.Any(t => t.Key == "transport_namespace" && (string?)t.Value == "bulk")))
+    await Assert.That(throttles.All(m => m.Tags.TryGetValue("transport_namespace", out var ns) && ns == "bulk"))
       .IsTrue()
       .Because("the counter must attribute the throttle to the namespace whose credits ran out");
   }
@@ -179,12 +181,13 @@ public class TransportPublishStrategyNamespaceRoutingTests {
 
     await strategy.PublishAsync(_eventWork(typeof(PlainEvent), "myapp.records"), CancellationToken.None);
 
+    // Passive counter: only the series that counted a throttle carries the namespace attribution.
     var throttles = recorder.Measurements
-      .Where(m => m.InstrumentName == "whizbang.transport.outbox.publish_throttled")
+      .Where(m => m.InstrumentName == "whizbang.transport.outbox.publish_throttled" && m.Value > 0)
       .ToList();
     await Assert.That(throttles).IsNotEmpty();
-    await Assert.That(throttles.All(m => m.Tags.Any(t =>
-      t.Key == "transport_namespace" && (string?)t.Value == TransportNamespaces.DefaultKey))).IsTrue();
+    await Assert.That(throttles.All(m =>
+      m.Tags.TryGetValue("transport_namespace", out var ns) && ns == TransportNamespaces.DefaultKey)).IsTrue();
   }
 
   /// <summary>Transport whose every publish is refused as broker throttling.</summary>

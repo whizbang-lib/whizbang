@@ -549,7 +549,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       ActivityKind.Internal,
       parentContext: ctx.ParentContext);
     receptorActivity?.SetTag("whizbang.receptor.id", receptor.ReceptorId);
-    receptorActivity?.SetTag("whizbang.receptor.message_type", ctx.MessageType.FullName);
+    receptorActivity?.SetTag("whizbang.receptor.message_type", TypeNameFormatter.DisplayName(ctx.MessageType));
     receptorActivity?.SetTag("whizbang.lifecycle.stage", ctx.Stage.ToString());
 
     // Pre-resolve log fields once per receptor invocation so both the "firing" and "fired" lines
@@ -557,7 +557,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
     // do not change between the two log calls.
     var messageId = ctx.Envelope.MessageId.Value;
     var streamId = ctx.ExtractedStreamId ?? Guid.Empty;
-    var messageTypeName = ctx.MessageType.FullName ?? ctx.MessageType.Name;
+    var messageTypeName = TypeNameFormatter.DisplayName(ctx.MessageType);
     Guid correlationId = Guid.Empty;
     string sourceService = string.Empty;
     if (ctx.Envelope.Hops is { Count: > 0 } hops) {
@@ -586,7 +586,7 @@ public sealed partial class ReceptorInvoker : IReceptorInvoker {
       await _invokeReceptorBodyAsync(receptor, ctx, receptorActivity, stopwatch, cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) {
       isError = true;
-      exceptionTypeName = ex.GetType().FullName;
+      exceptionTypeName = TypeNameFormatter.DisplayName(ex.GetType());
       capturedException = ex;
       receptorActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       receptorActivity?.SetTag("exception.type", exceptionTypeName);

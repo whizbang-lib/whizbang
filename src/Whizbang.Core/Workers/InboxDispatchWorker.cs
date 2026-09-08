@@ -560,7 +560,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     //   ReplaceWith(children)     → fan out the receptor-supplied set instead of InnerEvents.
     //   Proceed / none + Auto     → fan out InnerEvents (default).
     //   Proceed / none + Manual   → nothing auto-fans-out (the receptor chose not to drive it).
-    var compositeTypeName = composite.GetType().FullName;
+    var compositeTypeName = TypeNameFormatter.DisplayName(composite.GetType());
     var result = (pre.Directive?.Kind, composite.FanoutMode) switch {
       (FanoutDirectiveKind.Skip, _) =>
         new CompositeInboxFanout.FanoutResult(

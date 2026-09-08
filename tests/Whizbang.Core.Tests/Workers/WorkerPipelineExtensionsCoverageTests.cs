@@ -129,15 +129,19 @@ public class WorkerPipelineExtensionsCoverageTests {
     // Filtered by level and message only, deliberately not by exception type: the two failures this
     // test is about carry whatever the deserializer threw, and pinning that would couple the test to
     // an unrelated implementation detail while silently dropping the very entries it looks for.
-    // Wait for the post-store entry before reading the log. It is emitted from a stage the
-    // callback does not await, so reading immediately on return was a race: the assertion below
-    // failed whenever that stage had not yet logged.
-    await loggerProvider
-      .WaitForAsync(e => e.Level == LogLevel.Error
-                      && e.Message.Contains("after store", StringComparison.Ordinal))
+    // Wait for BOTH entries this test asserts on before reading the log. The snapshot below is
+    // thread-safe, but that only stops entries being lost -- it does not make them present. Both
+    // are emitted from stages the callback does not await (the pre-distribute stage is detached
+    // and reports its own failure), so either can still be missing when the callback returns.
+    // Waiting on only one of them left the other decided by scheduling luck.
+    await Task.WhenAll(
+      loggerProvider.WaitForAsync(e => e.Level == LogLevel.Error
+                                    && e.Message.Contains("lifecycle receptors", StringComparison.Ordinal)),
+      loggerProvider.WaitForAsync(e => e.Level == LogLevel.Error
+                                    && e.Message.Contains("after store", StringComparison.Ordinal)))
       .WaitAsync(TimeSpan.FromSeconds(10));
 
-    var errors = loggerProvider.Entries
+    var errors = loggerProvider.Snapshot()
       .Where(e => e.Level == LogLevel.Error)
       .Select(e => e.Message)
       .ToList();
@@ -244,23 +248,32 @@ public class WorkerPipelineExtensionsCoverageTests {
   /// passed or failed on whether the detached stage had gotten there yet.
   /// </remarks>
   private sealed class RecordingLoggerProvider : ILoggerProvider {
-    internal readonly record struct Entry(string Category, LogLevel Level, Exception? Exception, string Message);
+    // The fire-and-forget detached lifecycle stages log from background threads while the inline
+    // stages log on the test's thread. An unsynchronized List<T>.Add racing across threads can
+    // drop an entry, which read here as "the post-store failure was never logged".
+    private readonly Lock _sync = new();
+    private readonly List<(string Category, LogLevel Level, Exception? Exception, string Message)> _entries = [];
+    private readonly List<(Func<(string Category, LogLevel Level, Exception? Exception, string Message), bool> Match,
+                           TaskCompletionSource Signal)> _waiters = [];
 
-    private readonly Lock _lock = new();
-    private readonly List<Entry> _entries = [];
-    private readonly List<(Func<Entry, bool> Match, TaskCompletionSource Signal)> _waiters = [];
-
-    /// <summary>A snapshot of what has been recorded so far.</summary>
-    public IReadOnlyList<Entry> Entries {
-      get { lock (_lock) { return [.. _entries]; } }
+    public List<(string Category, LogLevel Level, Exception? Exception, string Message)> Snapshot() {
+      lock (_sync) {
+        return [.. _entries];
+      }
     }
 
     /// <summary>
     /// Completes once an entry matching <paramref name="predicate"/> has been recorded — including
     /// one recorded before this call.
     /// </summary>
-    public Task WaitForAsync(Func<Entry, bool> predicate) {
-      lock (_lock) {
+    /// <remarks>
+    /// The lock above keeps entries from being lost; this keeps a test from reading before the
+    /// entry it asserts on exists. Stages the caller does not await log after it returns, so
+    /// snapshotting on return decides the assertion on scheduling luck.
+    /// </remarks>
+    public Task WaitForAsync(
+        Func<(string Category, LogLevel Level, Exception? Exception, string Message), bool> predicate) {
+      lock (_sync) {
         foreach (var existing in _entries) {
           if (predicate(existing)) { return Task.CompletedTask; }
         }
@@ -270,13 +283,14 @@ public class WorkerPipelineExtensionsCoverageTests {
       }
     }
 
-    public ILogger CreateLogger(string categoryName) => new _RecordingLogger(categoryName, _record);
+    public ILogger CreateLogger(string categoryName) => new _RecordingLogger(categoryName, this);
 
     public void Dispose() { }
 
-    private void _record(Entry entry) {
+    private void _record(string category, LogLevel level, Exception? exception, string message) {
+      var entry = (Category: category, Level: level, Exception: exception, Message: message);
       List<TaskCompletionSource> ready = [];
-      lock (_lock) {
+      lock (_sync) {
         _entries.Add(entry);
         for (var i = _waiters.Count - 1; i >= 0; i--) {
           if (_waiters[i].Match(entry)) {
@@ -289,7 +303,7 @@ public class WorkerPipelineExtensionsCoverageTests {
       foreach (var signal in ready) { signal.TrySetResult(); }
     }
 
-    private sealed class _RecordingLogger(string category, Action<Entry> record) : ILogger {
+    private sealed class _RecordingLogger(string category, RecordingLoggerProvider provider) : ILogger {
       public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
       public bool IsEnabled(LogLevel logLevel) => true;
@@ -300,7 +314,7 @@ public class WorkerPipelineExtensionsCoverageTests {
         TState state,
         Exception? exception,
         Func<TState, Exception?, string> formatter) {
-        record(new Entry(category, logLevel, exception, formatter(state, exception)));
+        provider._record(category, logLevel, exception, formatter(state, exception));
       }
     }
   }

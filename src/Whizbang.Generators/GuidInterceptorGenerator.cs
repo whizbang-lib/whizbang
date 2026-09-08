@@ -100,7 +100,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     }
 
     // Check if it's a GUID creation method we want to intercept
-    var containingType = methodSymbol.ContainingType?.ToDisplayString();
+    var containingType = methodSymbol.ContainingType is { } containingTypeSymbol ? TypeNameUtilities.Display(containingTypeSymbol) : null;
     if (containingType is null) {
       return (null, null);
     }
@@ -108,7 +108,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     // Skip internal Whizbang library code - we control that and don't need interception
     var callingTypeSymbol = _getContainingTypeSymbol(context, invocation, ct);
     if (callingTypeSymbol is not null) {
-      var callingNamespace = callingTypeSymbol.ContainingNamespace?.ToDisplayString() ?? "";
+      var callingNamespace = callingTypeSymbol.ContainingNamespace is { } callingNamespaceSymbol ? TypeNameUtilities.Display(callingNamespaceSymbol) : "";
       if (callingNamespace.StartsWith("Whizbang", StringComparison.Ordinal)) {
         return (null, null);
       }
@@ -208,7 +208,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
     // Check assembly-level attributes
     var compilation = context.SemanticModel.Compilation;
     return compilation.Assembly.GetAttributes().Any(attr =>
-        attr.AttributeClass?.ToDisplayString() == SUPPRESS_ATTRIBUTE ||
+        TypeNameUtilities.IsNamed(attr.AttributeClass, SUPPRESS_ATTRIBUTE) ||
         attr.AttributeClass?.Name == SUPPRESS_ATTRIBUTE_NAME ||
         attr.AttributeClass?.Name == SUPPRESS_SHORT_NAME)
       ? "SuppressGuidInterceptionAttribute on assembly"
@@ -224,7 +224,7 @@ public class GuidInterceptorGenerator : IIncrementalGenerator {
       foreach (var attr in attrList.Attributes) {
         var attrSymbol = context.SemanticModel.GetSymbolInfo(attr, ct).Symbol?.ContainingType;
         if (attrSymbol is not null) {
-          var attrName = attrSymbol.ToDisplayString();
+          var attrName = TypeNameUtilities.Display(attrSymbol);
           if (attrName == SUPPRESS_ATTRIBUTE ||
               attrSymbol.Name == SUPPRESS_ATTRIBUTE_NAME ||
               attrSymbol.Name == SUPPRESS_SHORT_NAME) {

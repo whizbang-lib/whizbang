@@ -26,13 +26,13 @@ public sealed class LifecycleMetrics {
   // Stage counters
 
   /// <summary>Total invocations per lifecycle stage.</summary>
-  public Counter<long> StageInvocations { get; }
+  public PassiveCounter<long> StageInvocations { get; }
 
   /// <summary>Individual receptor invocations.</summary>
-  public Counter<long> ReceptorInvocations { get; }
+  public PassiveCounter<long> ReceptorInvocations { get; }
 
   /// <summary>Receptor failures per stage.</summary>
-  public Counter<long> ReceptorErrors { get; }
+  public PassiveCounter<long> ReceptorErrors { get; }
 
   // Tag hook timing
 
@@ -45,10 +45,10 @@ public sealed class LifecycleMetrics {
   // Tag hook counters
 
   /// <summary>Hook invocations.</summary>
-  public Counter<long> TagHookInvocations { get; }
+  public PassiveCounter<long> TagHookInvocations { get; }
 
   /// <summary>Hook failures.</summary>
-  public Counter<long> TagHookErrors { get; }
+  public PassiveCounter<long> TagHookErrors { get; }
 
   /// <summary>Initializes a new instance of the <see cref="LifecycleMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
@@ -58,14 +58,20 @@ public sealed class LifecycleMetrics {
     StageDuration = meter.CreateHistogram<double>("whizbang.lifecycle.stage.duration", "ms", "Time executing all receptors for a stage");
     ReceptorDuration = meter.CreateHistogram<double>("whizbang.lifecycle.receptor.duration", "ms", "Individual receptor invocation time");
 
-    StageInvocations = meter.CreateCounter<long>("whizbang.lifecycle.stage.invocations", description: "Total invocations per lifecycle stage");
-    ReceptorInvocations = meter.CreateCounter<long>("whizbang.lifecycle.receptor.invocations", description: "Individual receptor invocations");
-    ReceptorErrors = meter.CreateCounter<long>("whizbang.lifecycle.receptor.errors", description: "Receptor failures per stage");
+    StageInvocations = meter.CreatePassiveCounter<long>("whizbang.lifecycle.stage.invocations", description: "Total invocations per lifecycle stage");
+    ReceptorInvocations = meter.CreatePassiveCounter<long>("whizbang.lifecycle.receptor.invocations", description: "Individual receptor invocations");
+    ReceptorErrors = meter.CreatePassiveCounter<long>("whizbang.lifecycle.receptor.errors", description: "Receptor failures per stage");
 
     TagHookDuration = meter.CreateHistogram<double>("whizbang.lifecycle.tag_hook.duration", "ms", "Per-hook execution time");
     TagProcessingDuration = meter.CreateHistogram<double>("whizbang.lifecycle.tag_processing.duration", "ms", "Total tag processing time (all hooks)");
 
-    TagHookInvocations = meter.CreateCounter<long>("whizbang.lifecycle.tag_hook.invocations", description: "Hook invocations");
-    TagHookErrors = meter.CreateCounter<long>("whizbang.lifecycle.tag_hook.errors", description: "Hook failures");
+    TagHookInvocations = meter.CreatePassiveCounter<long>("whizbang.lifecycle.tag_hook.invocations", description: "Hook invocations");
+    TagHookErrors = meter.CreatePassiveCounter<long>("whizbang.lifecycle.tag_hook.errors", description: "Hook failures");
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    var stages = Enum.GetNames<Whizbang.Core.Messaging.LifecycleStage>();
+    StageInvocations.Touch("stage", stages);
+    ReceptorInvocations.Touch("stage", stages);
+    ReceptorErrors.Touch("stage", stages);
   }
 }

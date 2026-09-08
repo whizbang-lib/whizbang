@@ -12,9 +12,13 @@ namespace Whizbang.Core.Tests.Execution;
 /// decisions and the evidence behind them into OpenTelemetry.
 /// </summary>
 /// <remarks>
-/// Every test tags its governor with a unique series name and filters measurements on that tag.
-/// The meter name is process-global, so a listener filtering only by meter would also capture
-/// governors created by tests running in parallel and turn these assertions into a race.
+/// <para>Every test tags its governor with a unique series name and filters measurements on that
+/// tag. The meter name is process-global, so a listener filtering only by meter would also capture
+/// governors created by tests running in parallel and turn these assertions into a race.</para>
+/// <para>The counters (adjustments, completed_items, contention_reports) are passive (#711): they
+/// report one cumulative reading per series only when the listener collects, so each test calls
+/// <see cref="MeterListener.RecordObservableInstruments"/> after the act. The histograms
+/// (queued_items, throughput) still push at record time.</para>
 /// </remarks>
 [Category("Core")]
 [Category("Execution")]
@@ -141,9 +145,11 @@ public class ObservedConcurrencyGovernorTests {
 
     governor.Observe(new GovernorSignal(QueuedItems: 50, Contended: false, Elapsed: TimeSpan.FromSeconds(1)));
 
+    listener.RecordObservableInstruments();
     var adjustments = seen.Where(m => m.Instrument == "whizbang.governor.adjustments").ToList();
     await Assert.That(adjustments.Count).IsEqualTo(1);
     await Assert.That(adjustments[0].Direction).IsEqualTo("grew");
+    await Assert.That(adjustments[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -156,9 +162,11 @@ public class ObservedConcurrencyGovernorTests {
 
     governor.Observe(new GovernorSignal(QueuedItems: 0, Contended: true, Elapsed: TimeSpan.FromSeconds(1)));
 
+    listener.RecordObservableInstruments();
     var adjustments = seen.Where(m => m.Instrument == "whizbang.governor.adjustments").ToList();
     await Assert.That(adjustments.Count).IsEqualTo(1);
     await Assert.That(adjustments[0].Direction).IsEqualTo("shrank");
+    await Assert.That(adjustments[0].Value).IsEqualTo(1);
   }
 
   [Test]
@@ -173,6 +181,9 @@ public class ObservedConcurrencyGovernorTests {
 
     governor.Observe(new GovernorSignal(QueuedItems: 4, Contended: false, Elapsed: TimeSpan.FromSeconds(1)));
 
+    // Collect so the assertion is against the reported series, not against a listener that was
+    // never asked: the constructor's grew/shrank seeds carry no governor tag and are filtered out.
+    listener.RecordObservableInstruments();
     await Assert.That(seen.Any(m => m.Instrument == "whizbang.governor.adjustments")).IsFalse()
       .Because("an adjustment that moved nothing is not an adjustment");
   }
@@ -189,12 +200,15 @@ public class ObservedConcurrencyGovernorTests {
 
     governor.Observe(new GovernorSignal(QueuedItems: 37, Contended: true, Elapsed: TimeSpan.FromSeconds(2), CompletedItems: 8));
 
+    listener.RecordObservableInstruments();
     var queued = seen.SingleOrDefault(m => m.Instrument == "whizbang.governor.queued_items");
     await Assert.That(queued).IsNotNull();
     await Assert.That(queued!.Value).IsEqualTo(37);
-    await Assert.That(seen.Any(m => m.Instrument == "whizbang.governor.contention_reports")).IsTrue()
+    var contention = seen.SingleOrDefault(m => m.Instrument == "whizbang.governor.contention_reports");
+    await Assert.That(contention is { Value: 1 }).IsTrue()
       .Because("contention is the input that explains a narrowing");
-    await Assert.That(seen.Any(m => m.Instrument == "whizbang.governor.completed_items")).IsTrue();
+    var completed = seen.SingleOrDefault(m => m.Instrument == "whizbang.governor.completed_items");
+    await Assert.That(completed is { Value: 8 }).IsTrue();
   }
 
   [Test]
@@ -209,7 +223,10 @@ public class ObservedConcurrencyGovernorTests {
 
     governor.Observe(new GovernorSignal(QueuedItems: 5, Contended: false, Elapsed: TimeSpan.FromSeconds(3)));
 
+    listener.RecordObservableInstruments();
     await Assert.That(seen.Any(m => m.Instrument == "whizbang.governor.throughput")).IsFalse()
       .Because("a cycle that reported no completions has no throughput to report");
+    await Assert.That(seen.Any(m => m.Instrument == "whizbang.governor.completed_items")).IsFalse()
+      .Because("with nothing completed there is no completed_items series for this governor either");
   }
 }

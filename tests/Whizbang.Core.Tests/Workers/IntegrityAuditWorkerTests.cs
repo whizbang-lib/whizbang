@@ -363,6 +363,9 @@ public class IntegrityAuditWorkerTests {
       new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, FullSweepEveryNthAudit = 1 }, tracker, metrics);
 
     await worker.RunAuditOnceAsync(CancellationToken.None);
+    // Passive counters: one collection reports every series' cumulative value (the declared ones
+    // at zero), summed per instrument above.
+    listener.RecordObservableInstruments();
 
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.coverage_gaps_detected")).IsEqualTo(1L)
       .Because("self-healing by default only works when operators can SEE what the healer detects.");

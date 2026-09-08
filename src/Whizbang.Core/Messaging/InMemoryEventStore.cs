@@ -161,8 +161,8 @@ public class InMemoryEventStore : IEventStore {
         var payloadType = eventPayload.GetType();
         if (!typeSet.Contains(payloadType)) {
           throw new InvalidOperationException(
-            $"Event type '{payloadType.FullName}' in stream {streamId} is not in the provided event types list. " +
-            $"Available types: {string.Join(", ", eventTypes.Select(t => t.FullName))}"
+            $"Event type '{TypeNameFormatter.DisplayName(payloadType)}' in stream {streamId} is not in the provided event types list. " +
+            $"Available types: {string.Join(", ", eventTypes.Select(t => TypeNameFormatter.DisplayName(t)))}"
           );
         }
 

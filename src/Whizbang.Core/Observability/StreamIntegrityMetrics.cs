@@ -28,46 +28,46 @@ public sealed class StreamIntegrityMetrics {
 #pragma warning restore CA1707
 
   /// <summary>Phase B checkpoints this origin published (empty windows included — the liveness beat).</summary>
-  public Counter<long> CheckpointsPublished { get; }
+  public PassiveCounter<long> CheckpointsPublished { get; }
 
   /// <summary>Phase B checkpoints received from other origins. Tagged by origin.</summary>
-  public Counter<long> CheckpointsReceived { get; }
+  public PassiveCounter<long> CheckpointsReceived { get; }
 
   /// <summary>CONFIRMED continuity gaps (deficit persisted past the next checkpoint). Tagged by origin + event_type.</summary>
-  public Counter<long> GapsDetected { get; }
+  public PassiveCounter<long> GapsDetected { get; }
 
   /// <summary>CONFIRMED audit divergences (bucket digest disagreed with the origin's manifest). Tagged by origin + event_type.</summary>
-  public Counter<long> DivergencesDetected { get; }
+  public PassiveCounter<long> DivergencesDetected { get; }
 
   /// <summary>LOCAL coverage gaps (settled history a registered perspective never folded). Tagged by perspective.</summary>
-  public Counter<long> CoverageGapsDetected { get; }
+  public PassiveCounter<long> CoverageGapsDetected { get; }
 
   /// <summary>Scoped re-delivery repair requests sent. Tagged by source (checkpoint | audit) + origin.</summary>
-  public Counter<long> RepairsRequested { get; }
+  public PassiveCounter<long> RepairsRequested { get; }
 
   /// <summary>LOCAL rebuilds dispatched for coverage gaps. Tagged by perspective.</summary>
-  public Counter<long> RebuildsRequested { get; }
+  public PassiveCounter<long> RebuildsRequested { get; }
 
   /// <summary>Manifest requests sent to origins by the audit worker. Tagged by origin + sweep.</summary>
-  public Counter<long> ManifestsRequested { get; }
+  public PassiveCounter<long> ManifestsRequested { get; }
 
   /// <summary>Manifest chunks answered as an origin. Tagged by level.</summary>
-  public Counter<long> ManifestChunksSent { get; }
+  public PassiveCounter<long> ManifestChunksSent { get; }
 
   /// <summary>Type-level mismatches escalated to stream-level manifest requests. Tagged by origin.</summary>
-  public Counter<long> DrillDownsRequested { get; }
+  public PassiveCounter<long> DrillDownsRequested { get; }
 
   /// <summary>Phase S state-only backfill requests broadcast for consumed-set growth (value = new type count).</summary>
-  public Counter<long> BackfillsRequested { get; }
+  public PassiveCounter<long> BackfillsRequested { get; }
 
   /// <summary>Settled digest buckets checked by the trust-but-verify sweep.</summary>
-  public Counter<long> DigestBucketsVerified { get; }
+  public PassiveCounter<long> DigestBucketsVerified { get; }
 
   /// <summary>Digest buckets the sweep HEALED (drift — an unaccounted write path). Tagged by kind (updated | removed | added).</summary>
-  public Counter<long> DigestDriftHealed { get; }
+  public PassiveCounter<long> DigestDriftHealed { get; }
 
   /// <summary>Re-delivery requests served as an origin (repair + backfill flows).</summary>
-  public Counter<long> RedeliveryRequestsReceived { get; }
+  public PassiveCounter<long> RedeliveryRequestsReceived { get; }
 
   /// <summary>Origin side: seconds from receiving a manifest request to publishing its last chunk.
   /// Tagged level / windowed / recompute. Epoch-served answers should be milliseconds — a slow
@@ -90,68 +90,72 @@ public sealed class StreamIntegrityMetrics {
 
   /// <summary>Manifest chunks declined at the non-queueing compare gate. Sustained growth means
   /// comparisons cannot keep up with arrivals — the pressure reading behind the gate.</summary>
-  public Counter<long> ComparesDeclined { get; }
+  public PassiveCounter<long> ComparesDeclined { get; }
 
   /// <summary>Events selected and shipped in redelivery bundles as an origin.</summary>
-  public Counter<long> RedeliveryEventsShipped { get; }
+  public PassiveCounter<long> RedeliveryEventsShipped { get; }
 
   /// <summary>Repair traffic discarded because RepairMode is ReportOnly: re-delivery requests declined as an
   /// origin, bundles completed without fan-out as a consumer, and parked rows swept by maintenance (tag
   /// <c>role</c>: origin_request, consumer_bundle, maintenance_sweep).</summary>
-  public Counter<long> RepairTrafficDiscarded { get; }
+  public PassiveCounter<long> RepairTrafficDiscarded { get; }
 
   /// <summary>Windowed stream pages followed via the resume cursor (per follow).</summary>
-  public Counter<long> ManifestPagesFollowed { get; }
+  public PassiveCounter<long> ManifestPagesFollowed { get; }
 
   /// <summary>Cursor-follow chains stopped at MaxManifestPagesPerAudit. Persistent growth means
   /// lanes are wider than the page budget covers per audit — raise the cap or accept the pace.</summary>
-  public Counter<long> ManifestPagesCapped { get; }
+  public PassiveCounter<long> ManifestPagesCapped { get; }
+
+  private static readonly string[] _repairSources = ["checkpoint", "audit", "bulk", "drain"];
+  private static readonly string[] _driftKinds = ["updated", "removed", "added", "epoch-refolded"];
+  private static readonly string[] _discardRoles = ["origin_request", "consumer_bundle", "maintenance_sweep"];
 
   /// <summary>Initializes a new instance of <see cref="StreamIntegrityMetrics"/>.</summary>
   public StreamIntegrityMetrics(WhizbangMetrics whizbangMetrics) {
     ArgumentNullException.ThrowIfNull(whizbangMetrics);
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
 
-    CheckpointsPublished = meter.CreateCounter<long>(
+    CheckpointsPublished = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.checkpoints_published",
       description: "Continuity checkpoints published (empty windows included — the liveness beat)");
-    CheckpointsReceived = meter.CreateCounter<long>(
+    CheckpointsReceived = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.checkpoints_received",
       description: "Continuity checkpoints received; tagged by origin");
-    GapsDetected = meter.CreateCounter<long>(
+    GapsDetected = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.gaps_detected",
       description: "CONFIRMED continuity gaps; tagged by origin + event_type — sustained non-zero means deliveries are being lost");
-    DivergencesDetected = meter.CreateCounter<long>(
+    DivergencesDetected = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.divergences_detected",
       description: "CONFIRMED audit divergences; tagged by origin + event_type");
-    CoverageGapsDetected = meter.CreateCounter<long>(
+    CoverageGapsDetected = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.coverage_gaps_detected",
       description: "LOCAL perspective coverage gaps; tagged by perspective");
-    RepairsRequested = meter.CreateCounter<long>(
+    RepairsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repairs_requested",
       description: "Scoped re-delivery repair requests sent; tagged by source (checkpoint | audit) + origin");
-    RebuildsRequested = meter.CreateCounter<long>(
+    RebuildsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.rebuilds_requested",
       description: "LOCAL rebuilds dispatched for coverage gaps; tagged by perspective");
-    ManifestsRequested = meter.CreateCounter<long>(
+    ManifestsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.manifests_requested",
       description: "Manifest requests sent to origins; tagged by origin + sweep");
-    ManifestChunksSent = meter.CreateCounter<long>(
+    ManifestChunksSent = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.manifest_chunks_sent",
       description: "Manifest chunks answered as an origin; tagged by level");
-    DrillDownsRequested = meter.CreateCounter<long>(
+    DrillDownsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.drill_downs_requested",
       description: "Type-level mismatches escalated to stream-level requests; tagged by origin");
-    BackfillsRequested = meter.CreateCounter<long>(
+    BackfillsRequested = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.backfills_requested",
       description: "State-only backfill requests broadcast for consumed-set growth (value = new type count)");
-    DigestBucketsVerified = meter.CreateCounter<long>(
+    DigestBucketsVerified = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.digest_buckets_verified",
       description: "Settled digest buckets checked by the trust-but-verify sweep");
-    DigestDriftHealed = meter.CreateCounter<long>(
+    DigestDriftHealed = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.digest_drift_healed",
       description: "Digest buckets the sweep healed; tagged by kind (updated | removed | added) — non-zero means an unaccounted write path");
-    RedeliveryRequestsReceived = meter.CreateCounter<long>(
+    RedeliveryRequestsReceived = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.redelivery_requests_received",
       description: "Re-delivery requests served as an origin (repair + backfill flows)");
 
@@ -167,19 +171,19 @@ public sealed class StreamIntegrityMetrics {
     BucketHealSeconds = meter.CreateHistogram<double>(
       "whizbang.stream_integrity.bucket_heal_seconds", unit: "s",
       description: "First sighting of a divergent bucket to its proven heal — per-stream time-to-reconcile");
-    ComparesDeclined = meter.CreateCounter<long>(
+    ComparesDeclined = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.compares_declined",
       description: "Manifest chunks declined at the busy compare gate; sustained growth = comparisons losing to arrivals");
-    RedeliveryEventsShipped = meter.CreateCounter<long>(
+    RedeliveryEventsShipped = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.redelivery_events_shipped",
       description: "Events selected and shipped in redelivery bundles as an origin");
-    ManifestPagesFollowed = meter.CreateCounter<long>(
+    ManifestPagesFollowed = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.manifest_pages_followed",
       description: "Windowed stream pages followed via the resume cursor");
-    ManifestPagesCapped = meter.CreateCounter<long>(
+    ManifestPagesCapped = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.manifest_pages_capped",
       description: "Cursor-follow chains stopped at the per-window page budget");
-    RepairTrafficDiscarded = meter.CreateCounter<long>(
+    RepairTrafficDiscarded = meter.CreatePassiveCounter<long>(
       "whizbang.stream_integrity.repair_traffic_discarded",
       description: "Repair requests, bundles and parked repair rows discarded because RepairMode is ReportOnly (tag role)");
 
@@ -208,6 +212,12 @@ public sealed class StreamIntegrityMetrics {
       "whizbang.stream_integrity.oldest_unhealed_age_seconds",
       () => _ledger.OldestUnhealedAgeSeconds,
       description: "Age of the longest-standing unhealed divergence; distinguishes a transient blip from a stuck one");
+
+    // Issue #711: closed tag domains exist at zero from construction (see PassiveCounter).
+    RepairsRequested.Touch("source", _repairSources);
+    ManifestChunksSent.Touch("level", Enum.GetNames<Whizbang.Core.Messaging.ManifestLevel>());
+    DigestDriftHealed.Touch("kind", _driftKinds);
+    RepairTrafficDiscarded.Touch("role", _discardRoles);
   }
 
   private volatile LedgerGaugeSnapshot _ledger = LedgerGaugeSnapshot.Empty;

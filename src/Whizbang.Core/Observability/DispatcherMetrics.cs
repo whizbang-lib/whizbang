@@ -57,32 +57,32 @@ public sealed class DispatcherMetrics {
   // Throughput counters
 
   /// <summary>Re-emission cascade signature (#587): events published that this service also consumes, tagged by type.</summary>
-  public Counter<long> ReEmissions { get; }
+  public PassiveCounter<long> ReEmissions { get; }
 
   /// <summary>Total messages dispatched.</summary>
-  public Counter<long> MessagesDispatched { get; }
+  public PassiveCounter<long> MessagesDispatched { get; }
 
   /// <summary>Events cascaded from receptor results.</summary>
-  public Counter<long> EventsCascaded { get; }
+  public PassiveCounter<long> EventsCascaded { get; }
 
   /// <summary>Messages serialized for outbox.</summary>
-  public Counter<long> MessagesSerialized { get; }
+  public PassiveCounter<long> MessagesSerialized { get; }
 
   /// <summary>Inbox dedup rejections.</summary>
-  public Counter<long> DuplicatesDetected { get; }
+  public PassiveCounter<long> DuplicatesDetected { get; }
 
   /// <summary>Perspective sync wait timeouts.</summary>
-  public Counter<long> PerspectiveSyncTimeouts { get; }
+  public PassiveCounter<long> PerspectiveSyncTimeouts { get; }
 
   /// <summary>Dispatch-level errors.</summary>
-  public Counter<long> Errors { get; }
+  public PassiveCounter<long> Errors { get; }
 
   /// <summary>
   /// PublishOnceAsync calls that won the claim and proceeded to PublishAsync.
   /// Pairs with <see cref="PublishOnceClaimsLost"/>; <c>lost / (won + lost)</c>
   /// is the observed race rate for the gated emission.
   /// </summary>
-  public Counter<long> PublishOnceClaimsWon { get; }
+  public PassiveCounter<long> PublishOnceClaimsWon { get; }
 
   /// <summary>
   /// PublishOnceAsync calls that lost the claim and intentionally no-opped.
@@ -90,7 +90,7 @@ public sealed class DispatcherMetrics {
   /// the same claim key — expected for saga completion under N concurrent
   /// terminal handlers; investigate if the rate suddenly spikes.
   /// </summary>
-  public Counter<long> PublishOnceClaimsLost { get; }
+  public PassiveCounter<long> PublishOnceClaimsLost { get; }
 
   // Batch metrics
 
@@ -119,15 +119,15 @@ public sealed class DispatcherMetrics {
     SerializationDuration = meter.CreateHistogram<double>("whizbang.dispatcher.serialization.duration", "ms", "_serializeToNewOutboxMessage JSON serialization");
     TagProcessingDuration = meter.CreateHistogram<double>("whizbang.dispatcher.tag_processing.duration", "ms", "_processTagsIfEnabledAsync execution");
 
-    MessagesDispatched = meter.CreateCounter<long>("whizbang.dispatcher.messages_dispatched", description: "Total messages dispatched");
-    EventsCascaded = meter.CreateCounter<long>("whizbang.dispatcher.events_cascaded", description: "Events cascaded from receptor results");
-    MessagesSerialized = meter.CreateCounter<long>("whizbang.dispatcher.messages_serialized", description: "Messages serialized for outbox");
-    DuplicatesDetected = meter.CreateCounter<long>("whizbang.dispatcher.duplicates_detected", description: "Inbox dedup rejections");
-    PerspectiveSyncTimeouts = meter.CreateCounter<long>("whizbang.dispatcher.perspective_sync_timeouts", description: "Perspective sync wait timeouts");
-    Errors = meter.CreateCounter<long>("whizbang.dispatcher.errors", description: "Dispatch-level errors");
-    PublishOnceClaimsWon = meter.CreateCounter<long>("whizbang.dispatcher.publish_once.claims_won", description: "PublishOnceAsync calls that won the claim and emitted the event");
-    PublishOnceClaimsLost = meter.CreateCounter<long>("whizbang.dispatcher.publish_once.claims_lost", description: "PublishOnceAsync calls that lost the claim and intentionally no-opped");
-    ReEmissions = meter.CreateCounter<long>(
+    MessagesDispatched = meter.CreatePassiveCounter<long>("whizbang.dispatcher.messages_dispatched", description: "Total messages dispatched");
+    EventsCascaded = meter.CreatePassiveCounter<long>("whizbang.dispatcher.events_cascaded", description: "Events cascaded from receptor results");
+    MessagesSerialized = meter.CreatePassiveCounter<long>("whizbang.dispatcher.messages_serialized", description: "Messages serialized for outbox");
+    DuplicatesDetected = meter.CreatePassiveCounter<long>("whizbang.dispatcher.duplicates_detected", description: "Inbox dedup rejections");
+    PerspectiveSyncTimeouts = meter.CreatePassiveCounter<long>("whizbang.dispatcher.perspective_sync_timeouts", description: "Perspective sync wait timeouts");
+    Errors = meter.CreatePassiveCounter<long>("whizbang.dispatcher.errors", description: "Dispatch-level errors");
+    PublishOnceClaimsWon = meter.CreatePassiveCounter<long>("whizbang.dispatcher.publish_once.claims_won", description: "PublishOnceAsync calls that won the claim and emitted the event");
+    PublishOnceClaimsLost = meter.CreatePassiveCounter<long>("whizbang.dispatcher.publish_once.claims_lost", description: "PublishOnceAsync calls that lost the claim and intentionally no-opped");
+    ReEmissions = meter.CreatePassiveCounter<long>(
       "whizbang.dispatcher.re_emissions",
       description: "Events published that this service also consumes — the re-emission cascade signature (#587)");
 

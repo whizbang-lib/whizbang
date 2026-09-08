@@ -6,6 +6,7 @@ using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -163,7 +164,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
       if (p.Type is not INamedTypeSymbol dependency || !_isReferenceable(dependency)) {
         continue;
       }
-      dependencies.Add(p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+      dependencies.Add(TypeNameUtilities.FullyQualified(p.Type));
     }
 
     if (dependencies.Count == 0) {
@@ -171,7 +172,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
     }
 
     return new RequirementInfo(
-      implementation.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+      TypeNameUtilities.FullyQualified(implementation),
       dependencies);
   }
 
@@ -223,7 +224,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
           is not INamedTypeSymbol serviceType || !_isReferenceable(serviceType)) {
         return null;
       }
-      owner = serviceType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      owner = TypeNameUtilities.FullyQualified(serviceType);
     } else {
       return null;
     }
@@ -246,7 +247,7 @@ public class ServiceRequirementsGenerator : IIncrementalGenerator {
           is not INamedTypeSymbol dep || dep.TypeKind != TypeKind.Interface || !_isReferenceable(dep)) {
         continue;
       }
-      dependencies.Add(dep.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+      dependencies.Add(TypeNameUtilities.FullyQualified(dep));
     }
 
     if (dependencies.Count == 0) {

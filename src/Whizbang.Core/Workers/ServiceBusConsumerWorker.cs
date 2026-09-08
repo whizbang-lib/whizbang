@@ -292,7 +292,7 @@ public partial class ServiceBusConsumerWorker(
       inboxActivity?.SetStatus(ActivityStatusCode.Ok);
     } catch (Exception ex) {
       inboxActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-      inboxActivity?.SetTag("exception.type", ex.GetType().FullName);
+      inboxActivity?.SetTag("exception.type", TypeNameFormatter.DisplayName(ex.GetType()));
       inboxActivity?.SetTag("exception.message", ex.Message);
       LogErrorProcessingMessage(_logger, envelope.MessageId, ex);
       throw;
@@ -705,16 +705,11 @@ public partial class ServiceBusConsumerWorker(
   /// and returns "MyApp.CreateProductCommand, MyApp".
   /// </summary>
   private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
-    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
-    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
-
-    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
-      throw new InvalidOperationException(
+    // The one parser of envelope type names (issue #698).
+    var messageTypeName = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.ExtractInnerTypeName(envelopeTypeName)
+      ?? throw new InvalidOperationException(
         $"Invalid envelope type name format: '{envelopeTypeName}'. " +
         "Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
-    }
-
-    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
 
     if (string.IsNullOrWhiteSpace(messageTypeName)) {
       throw new InvalidOperationException(

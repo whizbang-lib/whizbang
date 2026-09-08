@@ -303,6 +303,16 @@ public class WorkCoordinatorDefaultsTests {
   }
 
   [Test]
+  public async Task AdoptEnrolledPerspectiveRetentionAsync_WithoutProviderSupport_AdoptsNothingAsync() {
+    IWorkCoordinator coordinator = new MinimalWorkCoordinator();
+
+    var adopted = await coordinator.AdoptEnrolledPerspectiveRetentionAsync();
+
+    await Assert.That(adopted).IsEmpty()
+      .Because("a provider without the adoption gate has nothing to adopt; the worker's loop stays silent");
+  }
+
+  [Test]
   public async Task RequeueRowEvictionsAsync_WithoutProviderSupport_UsesInheritedDefaultAsync() {
     IWorkCoordinator coordinator = new MinimalWorkCoordinator();
 

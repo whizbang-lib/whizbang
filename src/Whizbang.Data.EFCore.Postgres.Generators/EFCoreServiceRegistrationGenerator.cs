@@ -260,7 +260,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var baseType = symbol.BaseType;
     bool inheritsDbContext = false;
     while (baseType != null) {
-      if (baseType.ToDisplayString() == "Microsoft.EntityFrameworkCore.DbContext") {
+      if (TypeNameUtilities.IsNamed(baseType, "Microsoft.EntityFrameworkCore.DbContext")) {
         inheritsDbContext = true;
         break;
       }
@@ -273,7 +273,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Check for [WhizbangDbContext] attribute (explicit opt-in required)
     var attribute = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute");
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute"));
 
     if (attribute is null) {
       return null;  // No attribute = not discovered (opt-in required)
@@ -288,7 +288,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Extract schema from attribute's Schema property, or derive from namespace if not specified
     var schema = _extractSchemaFromAttribute(attribute);
     if (string.IsNullOrEmpty(schema)) {
-      schema = _deriveSchemaFromNamespace(symbol.ContainingNamespace.ToDisplayString());
+      // Roslyn renders the global namespace as the literal "<global namespace>", which is never
+      // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
+      schema = _deriveSchemaFromNamespace(
+        TypeNameUtilities.NamespaceName(symbol.ContainingNamespace));
     }
 
     // Extract connection string name from attribute, or derive from class name
@@ -297,8 +300,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     return new DbContextInfo(
         ClassName: symbol.Name,
-        FullyQualifiedName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        Namespace: symbol.ContainingNamespace.ToDisplayString(),
+        FullyQualifiedName: TypeNameUtilities.FullyQualified(symbol),
+        // Empty for the global namespace (issue #707): Roslyn's display string for it is the
+        // literal "<global namespace>", which is neither a schema name nor a namespace declaration.
+        Namespace: TypeNameUtilities.NamespaceName(symbol.ContainingNamespace),
         Schema: schema ?? "public", // Should never be null, but satisfy compiler
         Keys: keys,
         ConnectionStringName: connectionStringName
@@ -423,6 +428,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Always quotes to ensure safety regardless of the identifier value.
   /// Example: "user" → "\"user\"", "bff" → "\"bff\""
   /// </summary>
+  /// <summary>
+  /// The namespace the generated helpers live in: the consumer's namespace plus <c>.Generated</c>,
+  /// or just <c>Generated</c> when the consumer's type sits in the global namespace (issue #707).
+  /// </summary>
+  private static string _generatedNamespace(string consumerNamespace) =>
+    string.IsNullOrEmpty(consumerNamespace) ? "Generated" : $"{consumerNamespace}.Generated";
+
   private static string _quotePostgresIdentifier(string identifier) {
     // Double quotes are the PostgreSQL standard for quoting identifiers
     // This handles reserved keywords like "user", "table", "select", etc.
@@ -448,7 +460,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Check if class implements IPerspectiveFor<TModel> base interface
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
-      var originalDef = i.OriginalDefinition.ToDisplayString();
+      var originalDef = TypeNameUtilities.Display(i.OriginalDefinition);
       return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
              originalDef == "Whizbang.Core.Perspectives.IPerspectiveWithActionsFor<TModel>" ||
              originalDef == "Whizbang.Core.Perspectives.IPerspectiveBase<TModel>";
@@ -468,7 +480,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Check for [WhizbangPerspective] attribute (optional)
     var perspectiveAttribute = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.WhizbangPerspectiveAttribute");
+        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.WhizbangPerspectiveAttribute"));
 
     string[] keys;
     if (perspectiveAttribute is not null) {
@@ -480,12 +492,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     return new PerspectiveModelCandidate(
-        PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        PerspectiveClassName: TypeNameUtilities.FullyQualified(symbol),
+        ModelTypeName: TypeNameUtilities.FullyQualified(modelType),
         ModelClrTypeName: TypeNameUtilities.BuildClrTypeName(modelType),
         DbSetPropertyName: dbSetPropertyName,
         TableBaseName: tableBaseName,
-        NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
+        NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
         CoalesceBody: _buildDataCoalesceStatements(modelType)
@@ -561,9 +573,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       var physicalFieldAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.PhysicalFieldAttribute");
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PhysicalFieldAttribute"));
       var vectorFieldAttr = property.GetAttributes()
-          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.VectorFieldAttribute");
+          .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.VectorFieldAttribute"));
 
       if (physicalFieldAttr is not null) {
         var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
@@ -620,7 +632,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return;
     }
 
-    var typeName = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(type);
     if (!typesOnPath.Add(typeName)) {
       return; // cycle guard — self/mutually-recursive model types
     }
@@ -693,7 +705,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return true;
     }
     if (type is INamedTypeSymbol { IsGenericType: true } named
-        && named.OriginalDefinition.ToDisplayString() == "System.Collections.Generic.List<T>") {
+        && TypeNameUtilities.IsNamed(named.OriginalDefinition, "System.Collections.Generic.List<T>")) {
       elementType = named.TypeArguments[0];
       return true;
     }
@@ -705,11 +717,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static bool _isComplexModelClass(ITypeSymbol type) =>
     type.TypeKind == TypeKind.Class
     && type.SpecialType == SpecialType.None
-    && !type.ToDisplayString().StartsWith("System.", StringComparison.Ordinal);
+    && !TypeNameUtilities.Display(type).StartsWith("System.", StringComparison.Ordinal);
 
   /// <summary>Empty-collection expression matching the property's shape (List&lt;T&gt; vs array).</summary>
   private static string _emptyCollectionExpression(ITypeSymbol collectionType, ITypeSymbol elementType) {
-    var element = elementType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var element = TypeNameUtilities.FullyQualified(elementType);
     return collectionType is IArrayTypeSymbol
         ? $"global::System.Array.Empty<{element}>()"
         : $"new global::System.Collections.Generic.List<{element}>()";
@@ -720,7 +732,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractPhysicalFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract named arguments
     bool isIndexed = false;
@@ -764,7 +776,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   private static PhysicalFieldInfo? _extractVectorFieldInfo(IPropertySymbol property, AttributeData attribute) {
     var propertyName = property.Name;
-    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract constructor argument (dimensions)
     int? dimensions = null;
@@ -856,13 +868,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    if (type.ContainingNamespace?.ToDisplayString() != "Whizbang.Core.Lenses") {
+    if (!TypeNameUtilities.IsNamed(type.ContainingNamespace, "Whizbang.Core.Lenses")) {
       return null;
     }
 
     // Extract model type names (fully qualified with global:: prefix)
     var modelTypeNames = type.TypeArguments
-        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .Select(t => TypeNameUtilities.FullyQualified(t))
         .ToImmutableArray();
 
     // Get consumer class name from containing type declaration
@@ -871,7 +883,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     if (containingClass != null) {
       var classSymbol = context.SemanticModel.GetDeclaredSymbol(containingClass, ct);
       if (classSymbol != null) {
-        consumerClassName = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        consumerClassName = TypeNameUtilities.FullyQualified(classSymbol);
       }
     }
 
@@ -1179,8 +1191,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres.Configuration;");
       sb.AppendLine();
 
-      sb.AppendLine($"namespace {dbContext.Namespace};");
-      sb.AppendLine();
+      if (!string.IsNullOrEmpty(dbContext.Namespace)) {
+        sb.AppendLine($"namespace {dbContext.Namespace};");
+        sb.AppendLine();
+      }
 
       sb.AppendLine(XML_DOC_SUMMARY_OPEN);
       sb.AppendLine($"/// Auto-generated partial class with DbSet properties for {uniqueModels.Count} perspective model(s).");
@@ -1406,7 +1420,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
     sb.AppendLine();
 
-    sb.AppendLine($"namespace {consumerNamespace}.Generated;");
+    sb.AppendLine($"namespace {_generatedNamespace(consumerNamespace)};");
     sb.AppendLine();
 
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);
@@ -1551,7 +1565,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using Pgvector.EntityFrameworkCore;");
     }
     sb.AppendLine();
-    sb.AppendLine($"namespace {consumerNamespace}.Generated;");
+    sb.AppendLine($"namespace {_generatedNamespace(consumerNamespace)};");
     sb.AppendLine();
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-generated registry for pgvector configuration.");
@@ -1680,8 +1694,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
       sb.AppendLine();
 
-      sb.AppendLine($"namespace {dbContext.Namespace};");
-      sb.AppendLine();
+      if (!string.IsNullOrEmpty(dbContext.Namespace)) {
+        sb.AppendLine($"namespace {dbContext.Namespace};");
+        sb.AppendLine();
+      }
 
       sb.AppendLine(XML_DOC_SUMMARY_OPEN);
       sb.AppendLine($"/// Turnkey extension methods for registering {dbContext.ClassName} with dependency injection.");
@@ -2094,6 +2110,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string perspectiveRegistryJson = _generatePerspectiveRegistryJson(matchingPerspectives, assemblyName);
 
       // Replace placeholders
+      template = template.Replace("__DBCONTEXT_NAMESPACE__.Generated", _generatedNamespace(dbContext.Namespace));
       template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContext.Namespace);
       template = template.Replace("__DBCONTEXT_CLASS__", dbContext.ClassName);
       template = template.Replace("__DBCONTEXT_FQN__", dbContext.FullyQualifiedName);

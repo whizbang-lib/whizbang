@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 using Whizbang.Generators.Utilities;
 
 namespace Whizbang.Generators;
@@ -90,12 +91,12 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
 
       // Verify it's an IEvent implementation
       // Use FullyQualifiedFormat to include global:: prefix which matches our constant
-      if (!eventType.AllInterfaces.Any(iface => iface.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == IEVENT_INTERFACE)) {
+      if (!eventType.AllInterfaces.Any(iface => TypeNameUtilities.FullyQualified(iface) == IEVENT_INTERFACE)) {
         continue;
       }
 
       // Get the namespace
-      var ns = eventType.ContainingNamespace?.ToDisplayString();
+      var ns = eventType.ContainingNamespace is null ? null : TypeNameUtilities.Display(eventType.ContainingNamespace);
       if (!string.IsNullOrEmpty(ns)) {
         eventNamespaces.Add(ns!.ToLowerInvariant());
       }
@@ -130,7 +131,7 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
     // Look for IReceptor<TMessage> or IReceptor<TMessage, TResponse> interface
     // Use FullyQualifiedFormat to include global:: prefix which matches our constant
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).StartsWith(IRECEPTOR_INTERFACE_NAME + "<", StringComparison.Ordinal));
+        TypeNameUtilities.FullyQualified(i.OriginalDefinition).StartsWith(IRECEPTOR_INTERFACE_NAME + "<", StringComparison.Ordinal));
 
     if (receptorInterface is null) {
       return null;
@@ -152,7 +153,7 @@ public class EventNamespaceRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    var ns = containingNamespace.ToDisplayString();
+    var ns = TypeNameUtilities.Display(containingNamespace);
     return ns.ToLowerInvariant();
   }
 

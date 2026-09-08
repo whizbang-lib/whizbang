@@ -201,7 +201,7 @@ public class MaintenanceWorkerIntegritySweepTests {
     var counts = new System.Collections.Concurrent.ConcurrentDictionary<string, long>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (ReferenceEquals(instrument, metrics.RepairTrafficDiscarded)) {
+      if (ReferenceEquals(instrument, metrics.RepairTrafficDiscarded.Instrument)) {
         l.EnableMeasurementEvents(instrument);
       }
     };
@@ -221,6 +221,9 @@ public class MaintenanceWorkerIntegritySweepTests {
     var (worker, _) = _build(coord, options, metrics);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+    // Passive counter: one collection reports every series' cumulative value (the declared ones
+    // at zero), summed per table above.
+    listener.RecordObservableInstruments();
 
     await Assert.That(counts.GetValueOrDefault("inbox")).IsEqualTo(3L)
       .Because("the metric is what a dashboard sees; it counts rows per table");

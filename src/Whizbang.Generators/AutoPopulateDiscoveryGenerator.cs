@@ -78,7 +78,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     }
 
     foreach (var attribute in property.GetAttributes()) {
-      if (attribute.AttributeClass?.ToDisplayString() == "System.Text.Json.Serialization.JsonPropertyNameAttribute"
+      if (TypeNameUtilities.IsNamed(attribute.AttributeClass, "System.Text.Json.Serialization.JsonPropertyNameAttribute")
           && attribute.ConstructorArguments.FirstOrDefault().Value is string alias
           && !string.IsNullOrEmpty(alias)) {
         return alias;
@@ -115,7 +115,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
       yield break;
     }
 
-    var typeFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var typeFullName = TypeNameUtilities.FullyQualified(typeSymbol);
     var isRecord = typeSymbol.IsRecord;
     var inheritanceDepth = _computeInheritanceDepth(typeSymbol);
 
@@ -124,7 +124,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
 
     foreach (var property in properties) {
       foreach (var attribute in property.GetAttributes()) {
-        var attributeName = attribute.AttributeClass?.ToDisplayString();
+        var attributeName = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
         if (attributeName is null) {
           continue;
         }
@@ -171,7 +171,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     return new AutoPopulateInfo(
         TypeFullName: typeFullName,
         PropertyName: property.Name,
-        PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        PropertyTypeFullName: TypeNameUtilities.FullyQualified(property.Type),
         PopulateKind: POPULATE_KIND_TIMESTAMP,
         SpecificKind: $"TimestampKind.{kindName}",
         IsRecord: isRecord,
@@ -200,7 +200,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     return new AutoPopulateInfo(
         TypeFullName: typeFullName,
         PropertyName: property.Name,
-        PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        PropertyTypeFullName: TypeNameUtilities.FullyQualified(property.Type),
         PopulateKind: POPULATE_KIND_CONTEXT,
         SpecificKind: $"ContextKind.{kindName}",
         IsRecord: isRecord,
@@ -231,7 +231,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     return new AutoPopulateInfo(
         TypeFullName: typeFullName,
         PropertyName: property.Name,
-        PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        PropertyTypeFullName: TypeNameUtilities.FullyQualified(property.Type),
         PopulateKind: POPULATE_KIND_SERVICE,
         SpecificKind: $"ServiceKind.{kindName}",
         IsRecord: isRecord,
@@ -262,7 +262,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     return new AutoPopulateInfo(
         TypeFullName: typeFullName,
         PropertyName: property.Name,
-        PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        PropertyTypeFullName: TypeNameUtilities.FullyQualified(property.Type),
         PopulateKind: POPULATE_KIND_IDENTIFIER,
         SpecificKind: $"IdentifierKind.{kindName}",
         IsRecord: isRecord,
@@ -286,7 +286,7 @@ public class AutoPopulateDiscoveryGenerator : IIncrementalGenerator {
     return new AutoPopulateInfo(
         TypeFullName: typeFullName,
         PropertyName: property.Name,
-        PropertyTypeFullName: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        PropertyTypeFullName: TypeNameUtilities.FullyQualified(property.Type),
         PopulateKind: POPULATE_KIND_HEADER,
         SpecificKind: headerName,
         IsRecord: isRecord,

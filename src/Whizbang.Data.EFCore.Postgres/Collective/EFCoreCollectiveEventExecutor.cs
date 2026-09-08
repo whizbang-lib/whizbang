@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Perspectives.Hooks;
@@ -52,7 +53,7 @@ public sealed class EFCoreCollectiveEventExecutor<TModel> : ICollectiveEventExec
 
     if (dbContextOrSession is not DbContext dbContext) {
       throw new ArgumentException(
-        $"EFCoreCollectiveEventExecutor<{typeof(TModel).Name}> requires a DbContext but received '{dbContextOrSession.GetType().FullName}'. The worker dispatch routed an EF executor at a non-EF session — driver registration is wrong.",
+        $"EFCoreCollectiveEventExecutor<{typeof(TModel).Name}> requires a DbContext but received '{TypeNameFormatter.DisplayName(dbContextOrSession.GetType())}'. The worker dispatch routed an EF executor at a non-EF session — driver registration is wrong.",
         nameof(dbContextOrSession));
     }
 

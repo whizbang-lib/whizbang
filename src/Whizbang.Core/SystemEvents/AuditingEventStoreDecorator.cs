@@ -226,10 +226,10 @@ public sealed class AuditingEventStoreDecorator(
         MessageId = envelope.MessageId,
         Hops = envelope.Hops?.ToList() ?? []
       },
-      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType.AssemblyQualifiedName}]], Whizbang.Core",
+      EnvelopeType = Whizbang.Core.Messaging.EnvelopeTypeNameHelper.Format(TypeNameFormatter.AssemblyQualifiedName(eventType)),
       StreamId = auditEvent.Id,
       IsEvent = true,
-      MessageType = eventType.AssemblyQualifiedName ?? eventType.FullName ?? eventType.Name
+      MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType)
     };
   }
 
