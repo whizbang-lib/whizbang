@@ -72,14 +72,49 @@ public class HeartbeatWorkerLifecycleSignalsTests {
   /// <summary>A bus whose publishes fail, to exercise the non-fatal announce paths.</summary>
   private sealed class FailingBus(Exception failure) : ISignalBus {
     public int Attempts;
+    private int _leavingAttempts;
+
+    /// <summary>Completes on the first publish attempt — a deterministic "the heartbeat loop
+    /// reached the announce" signal to wait on instead of a fixed delay.</summary>
+    public TaskCompletionSource FirstAttempt { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>How many <see cref="InstanceLeavingSignal"/> publishes were attempted — the
+    /// goodbye is best-effort, so its only observable trace is the attempt itself.</summary>
+    public int LeavingAttempts => Volatile.Read(ref _leavingAttempts);
+
     public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
       where TSignal : ISignal {
       Interlocked.Increment(ref Attempts);
+      if (typeof(TSignal) == typeof(InstanceLeavingSignal)) {
+        Interlocked.Increment(ref _leavingAttempts);
+      }
+      FirstAttempt.TrySetResult();
       return ValueTask.FromException(failure);
     }
     public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal
       => new NoopSub();
     private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
+  }
+
+  /// <summary>
+  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
+  /// deterministic "the worker is parked at the barrier" signal. Since .NET 10
+  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
+  /// <c>Task.Run(action, stoppingToken)</c>, so StartAsync returning proves only that the body was
+  /// scheduled; a token canceled before the work item is dequeued settles the task Canceled and
+  /// the delegate never runs at all.
+  /// </summary>
+  private sealed class BlockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
   }
 
   private static HeartbeatWorker _createWith(ISignalBus bus, ISchemaReadyGate? gate = null) {
@@ -109,10 +144,7 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     await worker.StartAsync(cts.Token);
     // Wait on the attempt itself rather than on a duration — a fixed delay either flakes under
     // load or slows every run to cover the worst case.
-    var deadline = DateTime.UtcNow.AddSeconds(10);
-    while (Volatile.Read(ref bus.Attempts) == 0 && DateTime.UtcNow < deadline) {
-      await Task.Yield();
-    }
+    await bus.FirstAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(bus.Attempts).IsGreaterThan(0)
@@ -128,7 +160,19 @@ public class HeartbeatWorkerLifecycleSignalsTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Stop a worker that is actually heartbeating, not one the thread pool may never have
+    // started: since .NET 10 StartAsync only queues ExecuteAsync, so without this wait the test
+    // exercises shutdown of a worker that did nothing — and the leaving announce would then be
+    // the only thing this test ever touched.
+    await bus.FirstAttempt.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
     await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(bus.LeavingAttempts).IsGreaterThanOrEqualTo(1)
+      .Because("the goodbye is best-effort and swallowed, so the attempt is its only trace — a "
+             + "shutdown that skipped it would look identical to one whose publish merely failed");
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a failed goodbye must not turn an ordinary stop into a faulted hosted service");
   }
 
   [Test]
@@ -136,12 +180,28 @@ public class HeartbeatWorkerLifecycleSignalsTests {
     // The worker parks on the schema gate at startup. A pod stopped while still waiting has
     // nothing to report and no schema to write to, so the exit must be silent rather than an error
     // on every fast restart.
-    var gate = new SchemaReadyGate();   // never marked ready
-    var worker = _createWith(new CapturingBus(), gate);
+    var gate = new BlockingGate();   // never opens, and says when the worker arrives
+    var bus = new CapturingBus();
+    var worker = _createWith(bus, gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+
     await worker.StopAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    int joinCount;
+    lock (bus.Published) { joinCount = bus.Published.Count(t => t == typeof(InstanceJoinedSignal)); }
+    await Assert.That(joinCount).IsEqualTo(0)
+      .Because("a pod that never recorded a heartbeat has no row in wh_service_instances to "
+             + "announce — announcing a join here tells peers to route work at an instance that "
+             + "cannot write to the schema it is still waiting for");
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
+      .Because("the parked worker must unpark on stop rather than hanging shutdown");
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("stopping mid-migration is an ordinary fast restart, not a crash to report");
   }
 
   private static (HeartbeatWorker Worker, HeartbeatCoordinator Coord, CapturingBus Bus) _create() {

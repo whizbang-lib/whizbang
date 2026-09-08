@@ -44,6 +44,25 @@ public class CoalesceShipWorkerCoverageTests {
     }
   }
 
+  /// <summary>
+  /// Counts every coordinator call the shipper can make once it is past the barrier, so a
+  /// gate-cancel test can assert that none of them happened.
+  /// </summary>
+  private sealed class _countingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    private int _calls;
+    public int Calls => Volatile.Read(ref _calls);
+
+    public Task<IReadOnlyList<CoalesceGroupStats>> GetPendingCoalesceGroupStatsAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _calls);
+      return Task.FromResult<IReadOnlyList<CoalesceGroupStats>>([]);
+    }
+
+    public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _calls);
+      return Task.FromResult(0);
+    }
+  }
+
   /// <summary>A coordinator whose release always reports rows released — for the LogReleasedMatured branch.</summary>
   private sealed class _releasingCoordinator(int releasedCount) : NoOpWorkCoordinator, IWorkCoordinator {
     public IReadOnlyList<CoalesceGroupStats> Stats { get; init; } = [];
@@ -53,6 +72,23 @@ public class CoalesceShipWorkerCoverageTests {
 
     public Task<int> ReleaseMaturedCoalesceAsync(string group, CancellationToken cancellationToken = default) =>
       Task.FromResult(releasedCount);
+  }
+
+  /// <summary>
+  /// A gate that never opens and announces the arrival of a waiter, so a test can wait on the
+  /// worker actually being parked at the barrier instead of assuming StartAsync left it there.
+  /// </summary>
+  private sealed class _blockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
   }
 
   /// <summary>A coordinator whose fetch (the first call inside a fold) always cancels.</summary>
@@ -83,20 +119,29 @@ public class CoalesceShipWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_StoppedWhileWaitingOnTheSchemaGate_ReturnsWithoutFaultingAsync(CancellationToken testToken) {
     var time = new FakeTimeProvider(_testNow);
-    var coordinator = new NoOpWorkCoordinator();
+    var coordinator = new _countingCoordinator();
     // Gate never marked ready — a host stopped mid-migration.
-    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time, gate: new SchemaReadyGate());
+    var gate = new _blockingGate();
+    var worker = _buildWorker(coordinator, _oneGroupResolver(time), time, gate: gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // The gate reports when the body reaches it. On .NET 10 the base class dispatches ExecuteAsync
+    // through Task.Run, so StartAsync returning proves only that the body was scheduled — and a
+    // work item dequeued after the stopping token is canceled never invokes the delegate at all,
+    // settling Canceled, which satisfies both assertions below without the worker ever running.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     var executeTask = worker.ExecuteTask;
-    await worker.StopAsync(CancellationToken.None);
+    await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10), testToken);
 
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(5), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     await Assert.That(executeTask.IsCompleted).IsTrue()
       .Because("stopping while still waiting on the schema gate must let ExecuteAsync return promptly");
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("a host stopped before the schema exists must shut down cleanly, not report a crash");
+    await Assert.That(coordinator.Calls).IsEqualTo(0)
+      .Because("startup recovery and the first tick both sit behind the barrier — either one "
+             + "reached here would query coalesce tables the migration may not have created");
   }
 
   /// <summary>

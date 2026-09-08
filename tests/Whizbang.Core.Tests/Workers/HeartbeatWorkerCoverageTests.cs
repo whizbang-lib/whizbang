@@ -51,6 +51,28 @@ public class HeartbeatWorkerCoverageTests {
     }
   }
 
+  /// <summary>
+  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
+  /// deterministic "the worker is parked at the barrier" signal. It is needed because since .NET 10
+  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
+  /// <c>Task.Run(action, stoppingToken)</c>: StartAsync returning proves only that the body was
+  /// scheduled, and a token canceled before the work item is dequeued settles the task Canceled
+  /// without ever invoking the delegate — which satisfies both <c>IsCompleted</c> and
+  /// <c>!IsFaulted</c>, and trivially satisfies "the coordinator was never called" as well.
+  /// </summary>
+  private sealed class _blockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
   private static HeartbeatWorker _buildWorker(
       IWorkCoordinator coordinator, ISchemaReadyGate gate, HeartbeatWorkerOptions options) {
     var services = new ServiceCollection();
@@ -73,15 +95,20 @@ public class HeartbeatWorkerCoverageTests {
   public async Task ExecuteAsync_CanceledWhileWaitingForSchemaReady_ReturnsQuietlyAsync(
       CancellationToken testToken) {
     var coordinator = new _throwingCoordinator();
-    var worker = _buildWorker(coordinator, new SchemaReadyGate(), new HeartbeatWorkerOptions { IntervalSeconds = 1 });
-    // gate is never marked ready.
+    var gate = new _blockingGate();  // never opens
+    var worker = _buildWorker(coordinator, gate, new HeartbeatWorkerOptions { IntervalSeconds = 1 });
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     var executeTask = worker.ExecuteTask;
+    // Wait until the body is actually parked on the gate. Without this the whole test is
+    // satisfied by a worker whose ExecuteAsync the thread pool never invoked.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     await worker.StopAsync(CancellationToken.None);
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsCompleted).IsTrue();
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("waiting for the schema is not an error condition, so stopping mid-wait must read "
              + "as a clean exit rather than a crashed worker");

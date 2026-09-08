@@ -36,7 +36,7 @@ public class TableStatisticsCollectorCoverageTests {
     services.AddSingleton<ITableStatisticsProvider>(provider);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate(); // deliberately never marked ready
+    var gate = new _SignallingSchemaGate(); // deliberately never marked ready
     var worker = new TableStatisticsCollector(
       scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
       metrics: new TableStatisticsMetrics(new WhizbangMetrics()),
@@ -44,6 +44,14 @@ public class TableStatisticsCollectorCoverageTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+
+    // Wait until the collector is provably parked on the gate before canceling. StartAsync only
+    // queues ExecuteAsync via Task.Run(_, stoppingToken); Task.Run never invokes the delegate when
+    // the token is already canceled at dequeue time, and the task then settles Canceled — which
+    // satisfies IsCompleted, and leaves CallCount at zero, exactly as a correct early return does.
+    // Both assertions below were therefore true of a collector that never ran at all.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+
     await cts.CancelAsync();
     // See ReadModelsReadyDriverCoverageTests: a cancellation-catch exit settles as RanToCompletion
     // or Canceled by thread-pool timing, so suppress and assert completion rather than success.
@@ -56,6 +64,30 @@ public class TableStatisticsCollectorCoverageTests {
     await Assert.That(provider.CallCount).IsEqualTo(0)
       .Because("the collector must return before ever entering the collection loop — reaching "
              + "the provider at all would mean the gate cancellation was ignored");
+  }
+
+  /// <summary>
+  /// A never-ready schema gate that publishes when a waiter arrives.
+  /// </summary>
+  /// <remarks>
+  /// Lets the test tell "the collector is parked on the closed gate" apart from "the thread pool
+  /// has not dequeued ExecuteAsync yet". Only the first makes "the provider was never touched"
+  /// evidence that the gate was honored rather than evidence that nothing happened.
+  /// </remarks>
+  private sealed class _SignallingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes the moment the collector begins waiting on this gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _ready.Task.IsCompleted;
+    public void MarkReady() => _ready.TrySetResult();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
+    }
   }
 
   private sealed class _RecordingProvider : ITableStatisticsProvider {

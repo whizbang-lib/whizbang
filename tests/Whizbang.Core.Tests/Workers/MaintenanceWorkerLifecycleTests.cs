@@ -91,9 +91,31 @@ public class MaintenanceWorkerLifecycleTests {
         => Task.CompletedTask;
   }
 
+  /// <summary>
+  /// A gate that never opens and announces the arrival of a waiter. <see cref="Entered"/> is the
+  /// deterministic "ExecuteAsync is parked at the barrier" signal: on .NET 10 the base class
+  /// dispatches ExecuteAsync with <c>Task.Run</c>, so <c>StartAsync</c> returning proves only
+  /// that the body was scheduled. The infinite delay then observes the stopping token exactly as
+  /// the real gate's wait does.
+  /// </summary>
+  private sealed class BlockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
+  private static readonly TimeSpan _wait = TimeSpan.FromSeconds(10);
+
   private static (MaintenanceWorker Worker, CapturingLogger Logger) _build(
       FakeCoordinator coord,
-      SchemaReadyGate gate,
+      ISchemaReadyGate gate,
       HousekeepingCoordinator? housekeeping = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
@@ -113,17 +135,40 @@ public class MaintenanceWorkerLifecycleTests {
   public async Task ExecuteAsync_CanceledWhileWaitingOnTheSchemaGate_StopsWithoutSweepingAsync() {
     // Shutdown during startup must not be treated as an error, and must not run a sweep
     // against a schema that was never confirmed ready.
+    //
+    // The gate reports when the body actually parks on it, and the test cancels only after that.
+    // Canceling straight after StartAsync would race the thread pool: a work item dequeued after
+    // the token is already canceled never invokes ExecuteAsync at all, and every assertion below
+    // would then be satisfied by a worker that simply never ran.
     var coord = new FakeCoordinator();
-    var gate = new SchemaReadyGate();  // deliberately never marked ready
+    var gate = new BlockingGate();  // deliberately never marked ready
     var (worker, logger) = _build(coord, gate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await cts.CancelAsync();
-    await worker.StopAsync(CancellationToken.None);
+    await gate.Entered.WaitAsync(_wait);
 
-    await Assert.That(coord.MaintenanceCalls).IsEqualTo(0);
-    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Error)).IsFalse();
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None).WaitAsync(_wait);
+    await worker.ExecuteTask!.WaitAsync(_wait).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    List<LogEntry> entries;
+    lock (logger.Entries) {
+      entries = [.. logger.Entries];
+    }
+
+    await Assert.That(coord.MaintenanceCalls).IsEqualTo(0)
+      .Because("a sweep issued before the gate opened runs DDL-dependent work against a schema "
+             + "nobody confirmed exists");
+    await Assert.That(entries.Any(e => e.Level == LogLevel.Error)).IsFalse()
+      .Because("stopping during migrations is an ordinary deploy, not a crash to report");
+    await Assert.That(entries.Any(e => e.Message.Contains("stopped", StringComparison.Ordinal))).IsFalse()
+      .Because("the canceled wait must take the early return; reaching the loop's exit log means "
+             + "the catch fell through into the maintenance loop instead of ending the run");
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue()
+      .Because("a canceled gate wait must settle the hosted service rather than hang shutdown");
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("the cancellation belongs to shutdown, not to a fault");
   }
 
   [Test]

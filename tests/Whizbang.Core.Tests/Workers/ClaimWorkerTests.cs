@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -198,6 +199,7 @@ public class ClaimWorkerTests {
 
     var gate = new SchemaReadyGate();
     gate.MarkReady();  // gate ready but Enabled=false should still suppress the claim loop
+    var disabledLogged = new EventIdSignalLogger(CLAIM_WORKER_DISABLED_EVENT_ID);
     var worker = new ClaimWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new StubInstanceProvider(),
@@ -208,13 +210,21 @@ public class ClaimWorkerTests {
         PollingIntervalMilliseconds = 50,
         PollingMaxIntervalMilliseconds = 200
       }),
-      NullLogger<ClaimWorker>.Instance);
+      disabledLogged);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    var raced = await Task.WhenAny(coord.FirstCallSignal.Task, Task.Delay(500, CancellationToken.None));
-    await Assert.That(coord.CallCount).IsEqualTo(0);
+    // Wait for the killswitch log, not for a delay to elapse. StartAsync only queues ExecuteAsync
+    // to the thread pool, so "no claim happened after 500 ms" was equally true of a worker that
+    // correctly skipped the loop and one whose body never ran at all. LogDisabled is emitted from
+    // inside the branch under test, so observing it is what makes CallCount == 0 mean something.
+    await disabledLogged.Seen.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(coord.CallCount).IsEqualTo(0)
+      .Because("the killswitch must suppress the claim loop, not merely delay it");
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("a disabled worker parks until shutdown rather than exiting — an exit would free "
+             + "the host to treat the service as finished");
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
@@ -227,7 +237,7 @@ public class ClaimWorkerTests {
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
 
-    var gate = new SchemaReadyGate();  // not marked ready
+    var gate = new SignallingSchemaGate();  // not marked ready
     var worker = new ClaimWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new StubInstanceProvider(),
@@ -239,9 +249,13 @@ public class ClaimWorkerTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // No claim while gate is closed.
-    var racedBefore = await Task.WhenAny(coord.FirstCallSignal.Task, Task.Delay(300, CancellationToken.None));
-    await Assert.That(coord.CallCount).IsEqualTo(0);
+    // Wait until the worker is provably parked ON the gate before judging it. A bare 300 ms
+    // delay could not tell "held by the closed gate" from "not dequeued by the thread pool yet",
+    // so the assertion below was equally true of a worker whose body had never run.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(coord.CallCount).IsEqualTo(0)
+      .Because("a closed schema gate must hold the claim loop, and the worker is now provably "
+             + "parked on that gate rather than merely slow to start");
 
     // Open gate — claim fires.
     gate.MarkReady();
@@ -522,4 +536,50 @@ public class ClaimWorkerTests {
     await Assert.That(drain.Written).Contains(streamB);
   }
 
+  /// <summary>EventId of <c>LogDisabled</c> on <see cref="ClaimWorker"/> — the killswitch trace.</summary>
+  private const int CLAIM_WORKER_DISABLED_EVENT_ID = 4;
+
+  /// <summary>
+  /// A schema gate that publishes when a waiter arrives.
+  /// </summary>
+  /// <remarks>
+  /// Lets a test distinguish "the worker is parked on the closed gate" from "the worker has not
+  /// been dequeued yet" — the two are indistinguishable from a timed delay, and only the first
+  /// makes a "nothing was claimed" assertion mean anything.
+  /// </remarks>
+  private sealed class SignallingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _ready.Task.IsCompleted;
+    public void MarkReady() => _ready.TrySetResult();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
+    }
+  }
+
+  /// <summary>
+  /// Completes when a chosen <c>EventId</c> is logged.
+  /// </summary>
+  /// <remarks>
+  /// A deterministic "ExecuteAsync reached this branch" signal for a branch whose only observable
+  /// effect is a log line. Mirrors <c>EventIdSignalLogger</c> in DeadLetterRecoveryWorkerTests.
+  /// </remarks>
+  private sealed class EventIdSignalLogger(int eventId) : ILogger<ClaimWorker> {
+    private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Seen => _seen.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (id.Id == eventId) { _seen.TrySetResult(); }
+    }
+  }
 }

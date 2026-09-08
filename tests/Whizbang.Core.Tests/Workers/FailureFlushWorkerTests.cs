@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -66,7 +67,29 @@ public class FailureFlushWorkerTests {
     Error = error,
   };
 
-  private static (FailureFlushWorker Worker, RecordingCoordinator Coordinator) _build(bool enabled = true) {
+  /// <summary>
+  /// Completes when a chosen <c>EventId</c> is logged. Since .NET 10,
+  /// <see cref="Microsoft.Extensions.Hosting.BackgroundService.StartAsync"/> dispatches
+  /// <c>ExecuteAsync</c> with <c>Task.Run(action, stoppingToken)</c>, so <c>StartAsync</c>
+  /// returning proves only that the body was scheduled — and every assertion in this file is
+  /// "nothing was reported", which a body that never ran satisfies just as well. Waiting on a log
+  /// line the body itself emits is what makes those assertions discriminating.
+  /// </summary>
+  private sealed class EventIdWaiter(int eventId) : ILogger<FailureFlushWorker> {
+    public TaskCompletionSource Seen { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (id.Id == eventId) {
+        Seen.TrySetResult();
+      }
+    }
+  }
+
+  private static (FailureFlushWorker Worker, RecordingCoordinator Coordinator) _build(
+      bool enabled = true, ILogger<FailureFlushWorker>? logger = null) {
     var coordinator = new RecordingCoordinator();
     var services = new ServiceCollection();
     services.AddLogging();
@@ -77,7 +100,7 @@ public class FailureFlushWorkerTests {
       provider.GetRequiredService<IServiceScopeFactory>(),
       SchemaReadyGate.AlreadyReady(),
       Options.Create(new FailureFlushWorkerOptions { Enabled = enabled }),
-      NullLogger<FailureFlushWorker>.Instance);
+      logger ?? NullLogger<FailureFlushWorker>.Instance);
 
     return (worker, coordinator);
   }
@@ -146,13 +169,22 @@ public class FailureFlushWorkerTests {
   public async Task WhenDisabled_NothingIsReportedAsync() {
     // The killswitch has to stop the write, not merely stop the loop. A disabled worker whose
     // flush callback still fired would keep writing while an operator believed it was halted.
-    var (worker, coordinator) = _build(enabled: false);
+    var logger = new EventIdWaiter(3);   // LogDisabled — the killswitch branch's first act
+    var (worker, coordinator) = _build(enabled: false, logger: logger);
     await worker.StartAsync(CancellationToken.None);
+    await logger.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(worker.ExecuteTask!.IsCompleted).IsFalse()
+      .Because("the disabled worker parks rather than returning — a completed ExecuteAsync tells "
+             + "the host this service finished while its channel is still accepting failures");
 
     await worker.EnqueueAsync(WorkCategory.Outbox, _failure());
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.Reported).IsEmpty();
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("the killswitch must park quietly; a faulted hosted service reads as a crash on "
+             + "every shutdown of a deliberately-disabled flusher");
   }
 
   [Test]
@@ -174,12 +206,16 @@ public class FailureFlushWorkerTests {
   public async Task StopAsync_WithNothingBuffered_ReportsNothingAsync() {
     // An idle service still shuts down. Flushing an empty batch would cost a round trip for no
     // reason on every deployment.
-    var (worker, coordinator) = _build();
+    var logger = new EventIdWaiter(1);   // LogStarted — proof the body reached the enabled path
+    var (worker, coordinator) = _build(logger: logger);
     await worker.StartAsync(CancellationToken.None);
+    await logger.Seen.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
     await worker.StopAsync(CancellationToken.None);
 
     await Assert.That(coordinator.Reported).IsEmpty();
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("stopping a running-but-idle flusher must be a clean exit");
   }
 
   [Test]

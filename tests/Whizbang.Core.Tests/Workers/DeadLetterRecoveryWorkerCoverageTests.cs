@@ -44,6 +44,28 @@ public class DeadLetterRecoveryWorkerCoverageTests {
     public string GetGeneration() => value;
   }
 
+  /// <summary>
+  /// A gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is the
+  /// deterministic "the worker is parked at the barrier" signal. Since .NET 10,
+  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
+  /// <c>Task.Run(action, stoppingToken)</c>: StartAsync returning proves only that the body was
+  /// scheduled, and stopping before the thread pool dequeues the work item settles the task
+  /// Canceled with the delegate never invoked — which satisfies <c>IsCompleted</c>,
+  /// <c>!IsFaulted</c> and "zero scans" all at once.
+  /// </summary>
+  private sealed class _blockingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
+
   // Target: src/Whizbang.Core/Workers/DeadLetterRecoveryWorker.cs:154 — `return;` in the
   // `catch (OperationCanceledException)` around `_schemaReadyGate.WaitForReadyAsync`. Without
   // this, a pod stopped while still waiting for the schema (before the DLQ tables exist) would
@@ -55,9 +77,10 @@ public class DeadLetterRecoveryWorkerCoverageTests {
       CancellationToken testToken) {
     var services = new ServiceCollection();
     var sp = services.BuildServiceProvider();
+    var gate = new _blockingGate();  // never opens
     var worker = new DeadLetterRecoveryWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new SchemaReadyGate(),  // never marked ready
+      gate,
       Options.Create(new DeadLetterRecoveryOptions { Enabled = true, ScanIntervalMinutes = 1 }),
       Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new _fixedGenerationProvider("test/0.0.1"),
@@ -66,9 +89,13 @@ public class DeadLetterRecoveryWorkerCoverageTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     var executeTask = worker.ExecuteTask;
+    // Wait until the body is genuinely parked on the gate before stopping it.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     await worker.StopAsync(CancellationToken.None);
+    await executeTask!.WaitAsync(TimeSpan.FromSeconds(10), testToken)
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
-    await Assert.That(executeTask!.IsCompleted).IsTrue();
+    await Assert.That(executeTask.IsCompleted).IsTrue();
     await Assert.That(executeTask.IsFaulted).IsFalse()
       .Because("stopping while still waiting for the schema is routine, not exceptional -- there "
              + "are no DLQ tables to scan yet, so this must read as a clean exit");

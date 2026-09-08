@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -359,9 +360,10 @@ public class DeadLetterRecoveryWorkerTests {
     services.AddSingleton<IDeadLetterRecoveryPolicy>(
       new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
     var sp = services.BuildServiceProvider();
+    var gate = new NeverReadySchemaGate();
     var worker = new DeadLetterRecoveryWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      new NeverReadySchemaGate(),
+      gate,
       Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
       Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGenerationProvider("test/0.0.1"),
@@ -371,19 +373,40 @@ public class DeadLetterRecoveryWorkerTests {
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Wait until the body is actually parked at the barrier. Since .NET 10,
+    // BackgroundService.StartAsync dispatches ExecuteAsync via Task.Run(action, stoppingToken):
+    // StartAsync returning proves only that the body was scheduled, and stopping before the
+    // thread pool dequeues it settles the task Canceled with the delegate never invoked. The
+    // "zero scans" assertion is satisfied by that too, so without this wait the test passes on a
+    // worker that never ran.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+
     await worker.StopAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     await Assert.That(worker.TotalScans).IsEqualTo(0L)
       .Because("nothing may be scanned before the schema exists — a sweep against a missing table "
              + "is what the gate is there to prevent");
+    await Assert.That(worker.ExecuteTask.IsCompleted).IsTrue()
+      .Because("the parked worker must unpark on stop rather than hanging shutdown");
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("a fast restart during migrations is routine, not a crash to report");
   }
 
-  /// <summary>A schema gate that never opens, for the shutdown-while-waiting path.</summary>
+  /// <summary>A schema gate that never opens, for the shutdown-while-waiting path. It announces
+  /// arrival so a test can wait for the worker to be parked instead of assuming StartAsync left
+  /// it there.</summary>
   private sealed class NeverReadySchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
     public bool IsReady => false;
     public void MarkReady() { }
-    public Task WaitForReadyAsync(CancellationToken cancellationToken)
-      => Task.Delay(Timeout.Infinite, cancellationToken);
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
   }
 
   private static (DeadLetterRecoveryWorker Worker, FakeRecoveryService Svc) _newWorker(
@@ -423,25 +446,53 @@ public class DeadLetterRecoveryWorkerTests {
     services.AddSingleton<IDeadLetterRecoveryPolicy>(
       new DefaultDeadLetterRecoveryPolicy(Options.Create(new DeadLetterRecoveryOptions())));
     var sp = services.BuildServiceProvider();
+    var logger = new EventIdSignalLogger(16);  // LogNoRecoveryService
     var worker = new DeadLetterRecoveryWorker(
       sp.GetRequiredService<IServiceScopeFactory>(),
       new ImmediateSchemaGate(),
       Options.Create(new DeadLetterRecoveryOptions { ScanIntervalMinutes = 1, ScanBatchSize = 50 }),
       Options.Create(new Whizbang.Core.Messaging.StreamIntegrityOptions()),
       new FixedGenerationProvider("test/0.0.1"),
-      NullLogger<DeadLetterRecoveryWorker>.Instance);
+      logger);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token); // must NOT throw
-    await Task.Yield();
-    cts.Cancel();
+    // The warning is emitted by the body itself, so waiting on it is the only way to know the
+    // body ran at all: StartAsync since .NET 10 only queues ExecuteAsync onto the thread pool,
+    // and cancelling before it is dequeued settles the task Canceled with the delegate never
+    // invoked. Both "zero replays" assertions below are satisfied by that, so without this wait
+    // the regression lock would hold on a worker that never resolved anything from DI — the
+    // exact thing it exists to prove is survivable.
+    await logger.Seen.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Worker degrades to a LOUD no-op: the scan loop stays alive (a silent early return
     // here once made a mis-wired production host indistinguishable from a healthy quiet one
     // for a day), but nothing is replayed and nothing is recovered.
+    await Assert.That(worker.ExecuteTask.IsFaulted).IsFalse()
+      .Because("a missing persistence driver must degrade the sweep, not fault the hosted service "
+             + "— an unresolved IDeadLetterRecoveryService used to take the whole host down");
     await Assert.That(worker.TotalGenerationReplays).IsEqualTo(0);
     await Assert.That(worker.TotalRecovered).IsEqualTo(0);
+  }
+
+  /// <summary>Completes when a chosen <c>EventId</c> is logged — a deterministic "ExecuteAsync
+  /// reached this branch" signal for a branch whose only effect is a log line.</summary>
+  private sealed class EventIdSignalLogger(int eventId) : ILogger<DeadLetterRecoveryWorker> {
+    private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Seen => _seen.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId id, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (id.Id == eventId) { _seen.TrySetResult(); }
+    }
   }
 
   [Test]

@@ -59,6 +59,20 @@ public class ClaimWorkerDoorbellLivenessTests {
     public TaskCompletionSource SecondCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ThirdCallSignal { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>
+    /// Invoked from inside the FIRST claim, before it returns.
+    /// </summary>
+    /// <remarks>
+    /// Ringing the doorbell here rather than from the test thread is what makes the
+    /// doorbell-preceded test deterministic. The claim loop reads its doorbell flag before
+    /// claiming and, after claiming, skips its spacing nap only if the flag is set by the time it
+    /// checks. A ring that lands after that check is lost — <c>SignalNewWork</c>'s cancel reaches
+    /// only a nap that has already registered its token — so the worker sleeps the full polling
+    /// floor. With polling parked at 60s to force doorbell-driven claims, that lost wake-up is
+    /// longer than the test's own timeout.
+    /// </remarks>
+    public Action? DuringFirstClaim { get; set; }
+
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) {
       int call;
       lock (_lock) {
@@ -70,6 +84,10 @@ public class ClaimWorkerDoorbellLivenessTests {
         } else if (call == 3) {
           ThirdCallSignal.TrySetResult();
         }
+      }
+      // Outside the lock: the callback re-enters the worker, which must not contend for it.
+      if (call == 1) {
+        DuringFirstClaim?.Invoke();
       }
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
@@ -115,10 +133,12 @@ public class ClaimWorkerDoorbellLivenessTests {
     var coord = new EdgeCoordinator();
     var liveness = new SignalBusLivenessState();
     var worker = _buildWorker(coord, liveness);
+    // Subscribed before starting for the same reason as its sibling: the edge can be judged
+    // before a post-StartAsync subscription is attached.
+    var judged = _judgement(liveness);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    var judged = _judgement(liveness);
     await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
     await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
     await judged.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -141,12 +161,16 @@ public class ClaimWorkerDoorbellLivenessTests {
     // thread's SignalNewWork below — discovering the fresh work without a doorbell and
     // recording a miss this test asserts against.
     var worker = _buildWorker(coord, liveness, pollingIntervalMs: 60_000);
+    // Ring from inside claim #1 so the flag is already set when the loop decides whether to nap.
+    // Ringing from the test thread after observing FirstCallSignal raced that decision, and a
+    // ring that lost the race was swallowed for the full 60s floor.
+    coord.DuringFirstClaim = worker.SignalNewWork;
+    // Subscribe before the worker starts: .NET 10 runs ExecuteAsync on the thread pool, so the
+    // edge could be judged before a subscription taken after StartAsync was attached.
+    var judged = _judgement(liveness);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    var judged = _judgement(liveness);
-    await coord.FirstCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
-    worker.SignalNewWork();
     await coord.SecondCallSignal.Task.WaitAsync(TimeSpan.FromSeconds(30));
     await judged.Task.WaitAsync(TimeSpan.FromSeconds(30));
 

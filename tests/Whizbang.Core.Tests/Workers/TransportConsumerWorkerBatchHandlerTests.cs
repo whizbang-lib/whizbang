@@ -42,9 +42,13 @@ public class TransportConsumerWorkerBatchHandlerTests {
     var worker = _createWorker(transport, options);
 
     using var cts = new CancellationTokenSource();
-    _ = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
-    cts.Cancel();
+    await worker.StartAsync(cts.Token);
+
+    // Await the transport's own batch-subscribe signal rather than sleeping. StartAsync returning
+    // only proves ExecuteAsync was queued (.NET 10 dispatches it via Task.Run), so a 200 ms delay
+    // left this test failing under load whenever the thread pool was slower than the sleep.
+    await transport.FirstBatchSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
 
     // Assert — worker should use SubscribeBatchAsync
     await Assert.That(transport.BatchSubscribeCallCount).IsGreaterThanOrEqualTo(1)
@@ -356,6 +360,18 @@ public class TransportConsumerWorkerBatchHandlerTests {
   /// </summary>
   private sealed class BatchTestTransport : ITransport {
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
+    private readonly TaskCompletionSource _firstBatchSubscribe =
+      new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Completes the moment the worker issues its first batch subscribe against this transport.
+    /// </summary>
+    /// <remarks>
+    /// A body-emitted signal to await instead of sleeping: .NET 10 dispatches
+    /// <c>ExecuteAsync</c> via <c>Task.Run</c>, so a fixed delay is a bet on the thread pool
+    /// rather than proof the subscribe path ran.
+    /// </remarks>
+    public Task FirstBatchSubscribe => _firstBatchSubscribe.Task;
 
     public int BatchSubscribeCallCount { get; private set; }
     public bool IsInitialized => true;
@@ -374,6 +390,7 @@ public class TransportConsumerWorkerBatchHandlerTests {
         CancellationToken cancellationToken = default) {
       BatchSubscribeCallCount++;
       _batchHandler = batchHandler;
+      _firstBatchSubscribe.TrySetResult();
       return Task.FromResult<ISubscription>(new BatchTestSubscription());
     }
 

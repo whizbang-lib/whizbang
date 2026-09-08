@@ -19,6 +19,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 public class PerspectiveMigrationWorkerCoverageTests {
 
+  /// <summary>
+  /// Upper bound on every wait for a worker-emitted signal. Generous on purpose: it is a deadlock
+  /// guard, not a timing assumption — the signals themselves are what the tests synchronize on.
+  /// </summary>
+  private static readonly TimeSpan _wait = TimeSpan.FromSeconds(20);
+
   // If a migrated-in-background perspective is silently never rebuilt because the hosting
   // infrastructure never wired GetPendingRebuilds/UpdateMigrationStatus, downstream reads keep
   // observing the pre-migration shape forever with no error anywhere — this early return exists
@@ -35,14 +41,18 @@ public class PerspectiveMigrationWorkerCoverageTests {
       logger: NullLogger<PerspectiveMigrationWorker>.Instance,
       schemaReadyGate: SchemaReadyGate.AlreadyReady());
 
+    // The unwired path touches no collaborator, so it emits no signal of its own — the settled
+    // state of the worker's own task IS the signal. Awaiting it BEFORE anything cancels means the
+    // only way it can finish is the body running to its early return; a body the thread pool never
+    // dequeued settles Canceled instead, which is what the assertion below rules out.
     await worker.StartAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(_wait);
     await worker.StopAsync(CancellationToken.None);
 
-    await Assert.That(worker.ExecuteTask!.IsCompleted).IsTrue()
-      .Because("StopAsync awaits ExecuteAsync, so the task must have settled by now");
-    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
       .Because("an unwired worker must be inert, not a startup crash that names neither the "
-             + "worker nor the missing wiring");
+             + "worker nor the missing wiring — and RanToCompletion is the only settled state "
+             + "that proves the guard itself ran rather than the body being skipped");
   }
 
   [Test]
@@ -54,8 +64,12 @@ public class PerspectiveMigrationWorkerCoverageTests {
       schemaReadyGate: SchemaReadyGate.AlreadyReady());
 
     await worker.StartAsync(CancellationToken.None);
+    await worker.ExecuteTask!.WaitAsync(_wait);
     await worker.StopAsync(CancellationToken.None);
 
+    await Assert.That(worker.ExecuteTask!.Status).IsEqualTo(TaskStatus.RanToCompletion)
+      .Because("the guard has to have executed for the zero-rebuild assertion below to mean "
+             + "anything — a worker that never started would satisfy it too");
     await Assert.That(rebuilder.RebuildCount).IsEqualTo(0)
       .Because("with neither callback wired, ExecuteAsync must return immediately rather than crash on a null callback invocation.");
   }
@@ -66,23 +80,34 @@ public class PerspectiveMigrationWorkerCoverageTests {
   [Test]
   public async Task ExecuteAsync_SchemaReadyWaitCanceled_ReturnsWithoutProcessingAsync() {
     var rebuilder = new FakeRebuilder();
-    var neverReadyGate = new SchemaReadyGate(); // MarkReady() is never called
+    var fetchCalled = false;
+    // A gate that never opens AND announces the moment a worker begins waiting on it. The plain
+    // never-ready SchemaReadyGate this used to hold could not do that: StartAsync only schedules
+    // ExecuteAsync, so StopAsync's cancellation could beat the worker to the gate entirely and the
+    // zero-rebuild assertion would be answered by a body that never waited on anything.
+    var neverReadyGate = new ParkedGate();
     var worker = new PerspectiveMigrationWorker(
       rebuilder: rebuilder,
       logger: NullLogger<PerspectiveMigrationWorker>.Instance,
       schemaReadyGate: neverReadyGate) {
-      GetPendingRebuilds = _ => Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
-        new PendingMigrationRebuild("ShouldNotRun", "perspective:ShouldNotRun")
-      ]),
+      GetPendingRebuilds = _ => {
+        Volatile.Write(ref fetchCalled, true);
+        return Task.FromResult<IReadOnlyList<PendingMigrationRebuild>>([
+          new PendingMigrationRebuild("ShouldNotRun", "perspective:ShouldNotRun")
+        ]);
+      },
       UpdateMigrationStatus = (_, _, _, _) => Task.CompletedTask
     };
 
-    // StartAsync returns once ExecuteAsync is parked on the never-completing schema wait;
-    // StopAsync cancels that wait and awaits ExecuteAsync's real completion (BackgroundService's
-    // own await, not a bare "StartAsync returned" check) — a deterministic signal, not a race.
     await worker.StartAsync(CancellationToken.None);
+    await neverReadyGate.Entered.WaitAsync(_wait);
     await worker.StopAsync(CancellationToken.None);
 
+    await Assert.That(worker.ExecuteTask!.IsFaulted).IsFalse()
+      .Because("a host stopped mid-migration is an ordinary shutdown, not a faulted hosted service");
+    await Assert.That(Volatile.Read(ref fetchCalled)).IsFalse()
+      .Because("the canceled wait must RETURN at the gate — even the pending-rebuild query reads "
+             + "a table the migration may not have created yet");
     await Assert.That(rebuilder.RebuildCount).IsEqualTo(0)
       .Because("a canceled schema-ready wait must abandon the run before touching any rebuild — never process pending migrations against a schema that was never confirmed ready.");
   }
@@ -159,6 +184,25 @@ public class PerspectiveMigrationWorkerCoverageTests {
   }
 
   // ===== fakes =====
+
+  /// <summary>
+  /// A schema gate that never opens and announces the moment a worker begins waiting on it.
+  /// <see cref="Entered"/> is the deterministic "the worker is parked at the barrier" signal; the
+  /// infinite delay then observes the stopping token exactly as the real gate's
+  /// <c>Task.WaitAsync</c> does.
+  /// </summary>
+  private sealed class ParkedGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+    }
+  }
 
   private sealed class FakeRebuilder : IPerspectiveRebuilder {
     public int RebuildCount { get; private set; }

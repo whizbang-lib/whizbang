@@ -288,6 +288,10 @@ public class OutboxDrainWorkerGapTests {
     /// await the background ExecuteAsync reaching that branch instead of racing StopAsync.</summary>
     public TaskCompletionSource NoTransportWarningLogged { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    /// <summary>Completes once the killswitch's own log line has been captured — the same trick
+    /// for the <c>Enabled=false</c> branch, which otherwise has no observable effect at all.</summary>
+    public TaskCompletionSource DisabledLogged { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
@@ -296,6 +300,31 @@ public class OutboxDrainWorkerGapTests {
       if (message.Contains("no IMessagePublishStrategy registered", StringComparison.Ordinal)) {
         NoTransportWarningLogged.TrySetResult();
       }
+      if (eventId.Id == 3) {   // LogDisabled
+        DisabledLogged.TrySetResult();
+      }
+    }
+  }
+
+  /// <summary>
+  /// A schema gate that never opens and announces when a waiter arrives. <see cref="Entered"/> is
+  /// the deterministic "the worker is parked at the barrier" signal. Since .NET 10,
+  /// <c>BackgroundService.StartAsync</c> dispatches ExecuteAsync through
+  /// <c>Task.Run(action, stoppingToken)</c>: StartAsync returning proves only that the body was
+  /// scheduled, and cancelling before the thread pool dequeues the work item settles the task
+  /// Canceled with the delegate never invoked — satisfying <c>IsCompleted</c>, <c>!IsFaulted</c>
+  /// and "zero fetches" all at once.
+  /// </summary>
+  private sealed class GapBlockingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Entered => _entered.Task;
+    public bool IsReady => false;
+    public void MarkReady() { }
+
+    public async Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
     }
   }
 
@@ -412,14 +441,20 @@ public class OutboxDrainWorkerGapTests {
     var completion = new GapCompletionChannel();
     var failure = new GapFailureChannel();
     var publish = new GapPublishStrategy();
+    var logger = new GapCapturingLogger();
     var sp = _sp(coord);
 
     var worker = _worker(sp, drainChannel, completion, failure,
-      new OutboxDrainWorkerOptions { Enabled = false }, publish);
+      new OutboxDrainWorkerOptions { Enabled = false }, publish, logger: logger);
 
     await drainChannel.WriteAsync((Guid)TrackedGuid.NewMedo());
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Wait for the killswitch branch to actually be reached. Since .NET 10 StartAsync only
+    // queues ExecuteAsync onto the thread pool, and cancelling before the work item is dequeued
+    // settles the task Canceled with the body never invoked — which satisfies every assertion
+    // below, including "never fetched". The log line is the branch's only observable effect.
+    await logger.DisabledLogged.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -483,13 +518,16 @@ public class OutboxDrainWorkerGapTests {
     var failure = new GapFailureChannel();
     var publish = new GapPublishStrategy();
     var sp = _sp(coord);
-    var neverReadyGate = new SchemaReadyGate();  // MarkReady intentionally NOT called
+    var neverReadyGate = new GapBlockingSchemaGate();  // never opens; announces the waiter
 
     var worker = _worker(sp, drainChannel, completion, failure,
       new OutboxDrainWorkerOptions { Enabled = true }, publish, gate: neverReadyGate);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Park first, then cancel: without this the body may never be invoked at all, and "never
+    // fetched" is then true for the wrong reason.
+    await neverReadyGate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 

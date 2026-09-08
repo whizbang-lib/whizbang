@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -22,6 +23,28 @@ namespace Whizbang.Core.Tests.Workers;
 [NotInParallel("WhizbangBackgroundServiceTests")]
 public class LeaseRenewalWorkerCoverageTests {
 
+  /// <summary>
+  /// Completes on the first message containing the awaited fragment. The killswitch log is
+  /// ExecuteAsync's first statement on the disabled path, so waiting for it is a deterministic
+  /// "the body actually ran" signal: on .NET 10 the base class dispatches ExecuteAsync through
+  /// <c>Task.Run</c>, so StartAsync returning proves only that the body was scheduled, and a work
+  /// item dequeued after the stopping token is canceled never invokes the delegate at all.
+  /// </summary>
+  private sealed class _signalLogger(string fragment) : ILogger<LeaseRenewalWorker> {
+    private readonly TaskCompletionSource _matched = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Matched => _matched.Task;
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (formatter(state, exception).Contains(fragment, StringComparison.OrdinalIgnoreCase)) {
+        _matched.TrySetResult();
+      }
+    }
+  }
+
   private sealed class _recordingCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
     public List<(WorkCategory Category, IReadOnlyList<Guid> Ids)> Calls { get; } = [];
 
@@ -40,18 +63,27 @@ public class LeaseRenewalWorkerCoverageTests {
   [Timeout(30000)]
   public async Task ExecuteAsync_WhenDisabled_ParksThenStopsCleanlyOnShutdownAsync(CancellationToken testToken) {
     var services = new ServiceCollection().BuildServiceProvider();
+    var logger = new _signalLogger("disabled via options");
     var worker = new LeaseRenewalWorker(
       services.GetRequiredService<IServiceScopeFactory>(),
       Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       Options.Create(new LeaseRenewalWorkerOptions { Enabled = false }),
-      NullLogger<LeaseRenewalWorker>.Instance);
+      logger);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
+    // Wait for the killswitch log before stopping. Without it a task that was never invoked
+    // settles Canceled, which satisfies IsCompleted && !IsFaulted just as well as a worker that
+    // parked and unparked — the park this test exists to pin would go entirely unexercised.
+    await logger.Matched.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     var executeTask = worker.ExecuteTask;
-    await worker.StopAsync(CancellationToken.None);
+    await Assert.That(executeTask!.IsCompleted).IsFalse()
+      .Because("the disabled arm parks rather than returning — a completed ExecuteTask reads to "
+             + "the host as a worker that fell over");
 
-    await executeTask!.WaitAsync(TimeSpan.FromSeconds(5), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    await worker.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
+    await executeTask.WaitAsync(TimeSpan.FromSeconds(10), testToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
     await Assert.That(executeTask.IsCompleted).IsTrue()
       .Because("a disabled worker's infinite park exists to keep the hosted service alive without polling, not to survive past StopAsync");
     await Assert.That(executeTask.IsFaulted).IsFalse()

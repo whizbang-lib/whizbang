@@ -150,7 +150,13 @@ public class RepairDrainWorkerCoverageTests {
     // that could not leave the process, while the ledger keeps the backlog durable either way.
     var origin = TrackedGuid.NewMedo().Value;
     var (worker, coordinator, _, tracker) = _buildTick(
-      new StreamIntegrityOptions { RepairDrainRatePerSecond = 10 }, includeTransport: false);
+      // RepairMode defaults to ReportOnly, and DrainTickAsync returns on its first line unless the
+      // mode is AutoRepairCapped. Without this the assertion below passes without ever reaching
+      // the missing-dispatch-infrastructure guard this test is named for.
+      new StreamIntegrityOptions {
+        RepairMode = IntegrityRepairMode.AutoRepairCapped,
+        RepairDrainRatePerSecond = 10
+      }, includeTransport: false);
     tracker.RecordCheckpoint(origin, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
     coordinator.Eligible.Add(
       new IntegrityRepairDrainItem(origin, "tenant-a", "Contracts.TypeA", TrackedGuid.NewMedo().Value, 1, 10));

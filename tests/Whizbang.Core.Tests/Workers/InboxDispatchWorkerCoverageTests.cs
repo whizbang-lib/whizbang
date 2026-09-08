@@ -256,7 +256,7 @@ public class InboxDispatchWorkerCoverageTests {
     var inbox = new FakeInboxChannelWriter();
     var handlerCommit = new FakeHandlerCommitChannel();
     var failure = new FakeFailureChannel();
-    var gate = new SchemaReadyGate(); // never marked ready
+    var gate = new _enteredSignallingGate(); // never marked ready
 
     var sp = new ServiceCollection().BuildServiceProvider();
     var worker = new InboxDispatchWorker(
@@ -270,8 +270,14 @@ public class InboxDispatchWorkerCoverageTests {
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
 
-    // The gate is never marked ready, so ExecuteAsync is parked on WaitForReadyAsync. Canceling
-    // the stopping token now must resolve that await via OperationCanceledException, caught at
+    // Wait until the worker is provably parked on the gate before canceling. .NET 10 dispatches
+    // ExecuteAsync via Task.Run(_, stoppingToken), which never invokes the delegate at all if the
+    // token is already canceled when the work item is dequeued -- the task then settles Canceled,
+    // IsCompletedSuccessfully is false, and this test fails in about a millisecond. Cancelling
+    // straight after StartAsync was losing that race intermittently under full-suite load.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Now the cancellation must resolve the gate await via OperationCanceledException, caught at
     // the ExecuteAsync call site, which returns rather than propagating.
     await cts.CancelAsync();
 
@@ -691,6 +697,30 @@ public class InboxDispatchWorkerCoverageTests {
       lock (_gate) {
         _eventIds.Add(eventId.Id);
       }
+    }
+  }
+
+  /// <summary>
+  /// A never-ready schema gate that publishes when a waiter arrives.
+  /// </summary>
+  /// <remarks>
+  /// Needed because <c>StartAsync</c> returning does not mean <c>ExecuteAsync</c> has reached the
+  /// gate: .NET 10 queues it with <c>Task.Run</c>. Cancelling before it is dequeued skips the body
+  /// entirely, so a test that cancels straight after starting can pass or fail on scheduling luck.
+  /// </remarks>
+  private sealed class _enteredSignallingGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _ready.Task.IsCompleted;
+    public void MarkReady() => _ready.TrySetResult();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
     }
   }
 }

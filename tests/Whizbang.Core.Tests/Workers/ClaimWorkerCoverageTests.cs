@@ -109,6 +109,30 @@ public class ClaimWorkerCoverageTests {
       Task.CompletedTask;
   }
 
+  /// <summary>
+  /// A never-ready schema gate that publishes when a waiter arrives.
+  /// </summary>
+  /// <remarks>
+  /// Distinguishes "the worker is parked on the closed gate" from "the thread pool has not
+  /// dequeued ExecuteAsync yet". Only the first makes zero claims and zero heartbeats evidence
+  /// that the early return fired, rather than evidence that nothing ran.
+  /// </remarks>
+  private sealed class SignallingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes the moment the worker begins waiting on this gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _ready.Task.IsCompleted;
+    public void MarkReady() => _ready.TrySetResult();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
+    }
+  }
+
   private static (ClaimWorker Worker, RecordingCoordinator Coord) _build(
       RecordingCoordinator coord,
       ClaimWorkerOptions options,
@@ -196,7 +220,7 @@ public class ClaimWorkerCoverageTests {
   [Test]
   [Timeout(30000)]
   public async Task SchemaGateWaitCanceled_StopsTheWorkerBeforeAnyClaimAsync(CancellationToken testToken) {
-    var gate = new SchemaReadyGate(); // Never marked ready — the wait blocks until canceled.
+    var gate = new SignallingSchemaGate(); // Never marked ready — the wait blocks until canceled.
     var coord = new RecordingCoordinator();
     var (worker, _) = _build(coord, new ClaimWorkerOptions {
       PollingIntervalMilliseconds = 20,
@@ -205,6 +229,14 @@ public class ClaimWorkerCoverageTests {
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(testToken);
     await worker.StartAsync(cts.Token);
+
+    // Wait until the worker is provably parked on the gate before canceling. StartAsync only
+    // queues ExecuteAsync via Task.Run(_, stoppingToken); Task.Run never runs the delegate when
+    // the token is already canceled at dequeue time and the task settles Canceled instead — which
+    // satisfies IsCompleted, leaves IsFaulted false, and leaves both call counts at zero. Every
+    // assertion below was therefore equally true of a worker that never started, so canceling
+    // straight after StartAsync tested the thread pool rather than the catch.
+    await gate.Entered.WaitAsync(TimeSpan.FromSeconds(10), testToken);
     await cts.CancelAsync();
 
     // ExecuteTask completing on its own is the signal that the early return fired, rather than the

@@ -25,13 +25,22 @@ public class ReadModelsReadyDriverCoverageTests {
   /// </summary>
   [Test]
   public async Task ExecuteAsync_CanceledWhileWaitingForSchemaGate_CompletesWithoutFaultingAsync() {
-    var schemaGate = new SchemaReadyGate();   // never marked ready
+    var schemaGate = new SignallingSchemaGate();   // never marked ready
     var readGate = new ReadModelsReadyGate();
     await using var sp = new ServiceCollection().BuildServiceProvider();
     var driver = new ReadModelsReadyDriver(readGate, schemaGate, sp);
 
     using var cts = new CancellationTokenSource();
     await driver.StartAsync(cts.Token);
+
+    // Wait until the driver is provably parked on the gate before canceling. StartAsync only
+    // queues ExecuteAsync via Task.Run(_, stoppingToken), and Task.Run never invokes the delegate
+    // at all when the token is already canceled at dequeue time — the task settles Canceled, which
+    // satisfies IsCompleted && !IsFaulted just as well as a real graceful exit does. Canceling
+    // straight after StartAsync therefore passed whether the body ran or not; measured under load
+    // it took the never-ran branch and still reported green.
+    await schemaGate.Entered.WaitAsync(TimeSpan.FromSeconds(10));
+
     await cts.CancelAsync();
 
     // SuppressThrowing, and assert IsCompleted/!IsFaulted rather than an exact TaskStatus: a task
@@ -49,5 +58,29 @@ public class ReadModelsReadyDriverCoverageTests {
       .Because("a canceled wait must never open the barrier — lens reads must keep refusing");
 
     await driver.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// A never-ready schema gate that publishes when a waiter arrives.
+  /// </summary>
+  /// <remarks>
+  /// Lets the test tell "the driver is parked on the closed gate" apart from "the thread pool has
+  /// not dequeued ExecuteAsync yet" — indistinguishable otherwise, and only the first makes the
+  /// graceful-exit assertions mean anything.
+  /// </remarks>
+  private sealed class SignallingSchemaGate : ISchemaReadyGate {
+    private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes the moment the driver begins waiting on this gate.</summary>
+    public Task Entered => _entered.Task;
+
+    public bool IsReady => _ready.Task.IsCompleted;
+    public void MarkReady() => _ready.TrySetResult();
+
+    public Task WaitForReadyAsync(CancellationToken cancellationToken) {
+      _entered.TrySetResult();
+      return _ready.Task.WaitAsync(cancellationToken);
+    }
   }
 }
