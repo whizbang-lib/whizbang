@@ -265,7 +265,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     // No Schema property set, derive from namespace
-    var namespaceName = symbol.ContainingNamespace.ToDisplayString();
+    // Roslyn renders the global namespace as the literal "<global namespace>", which is never
+    // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
+    var namespaceName = symbol.ContainingNamespace.IsGlobalNamespace ? "" : symbol.ContainingNamespace.ToDisplayString();
     return _deriveSchemaFromNamespace(namespaceName);
   }
 

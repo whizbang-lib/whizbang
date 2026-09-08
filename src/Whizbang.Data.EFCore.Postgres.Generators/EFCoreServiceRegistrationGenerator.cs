@@ -288,7 +288,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Extract schema from attribute's Schema property, or derive from namespace if not specified
     var schema = _extractSchemaFromAttribute(attribute);
     if (string.IsNullOrEmpty(schema)) {
-      schema = _deriveSchemaFromNamespace(symbol.ContainingNamespace.ToDisplayString());
+      // Roslyn renders the global namespace as the literal "<global namespace>", which is never
+      // empty (issue #707): ask the symbol, and let an empty string reach the default-schema arm.
+      schema = _deriveSchemaFromNamespace(
+        symbol.ContainingNamespace.IsGlobalNamespace ? "" : symbol.ContainingNamespace.ToDisplayString());
     }
 
     // Extract connection string name from attribute, or derive from class name
@@ -298,7 +301,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return new DbContextInfo(
         ClassName: symbol.Name,
         FullyQualifiedName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        Namespace: symbol.ContainingNamespace.ToDisplayString(),
+        // Empty for the global namespace (issue #707): Roslyn's display string for it is the
+        // literal "<global namespace>", which is neither a schema name nor a namespace declaration.
+        Namespace: symbol.ContainingNamespace.IsGlobalNamespace ? "" : symbol.ContainingNamespace.ToDisplayString(),
         Schema: schema ?? "public", // Should never be null, but satisfy compiler
         Keys: keys,
         ConnectionStringName: connectionStringName
@@ -423,6 +428,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Always quotes to ensure safety regardless of the identifier value.
   /// Example: "user" → "\"user\"", "bff" → "\"bff\""
   /// </summary>
+  /// <summary>
+  /// The namespace the generated helpers live in: the consumer's namespace plus <c>.Generated</c>,
+  /// or just <c>Generated</c> when the consumer's type sits in the global namespace (issue #707).
+  /// </summary>
+  private static string _generatedNamespace(string consumerNamespace) =>
+    string.IsNullOrEmpty(consumerNamespace) ? "Generated" : $"{consumerNamespace}.Generated";
+
   private static string _quotePostgresIdentifier(string identifier) {
     // Double quotes are the PostgreSQL standard for quoting identifiers
     // This handles reserved keywords like "user", "table", "select", etc.
@@ -1179,8 +1191,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using global::Whizbang.Data.EFCore.Postgres.Configuration;");
       sb.AppendLine();
 
-      sb.AppendLine($"namespace {dbContext.Namespace};");
-      sb.AppendLine();
+      if (!string.IsNullOrEmpty(dbContext.Namespace)) {
+        sb.AppendLine($"namespace {dbContext.Namespace};");
+        sb.AppendLine();
+      }
 
       sb.AppendLine(XML_DOC_SUMMARY_OPEN);
       sb.AppendLine($"/// Auto-generated partial class with DbSet properties for {uniqueModels.Count} perspective model(s).");
@@ -1406,7 +1420,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
     sb.AppendLine();
 
-    sb.AppendLine($"namespace {consumerNamespace}.Generated;");
+    sb.AppendLine($"namespace {_generatedNamespace(consumerNamespace)};");
     sb.AppendLine();
 
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);
@@ -1551,7 +1565,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using Pgvector.EntityFrameworkCore;");
     }
     sb.AppendLine();
-    sb.AppendLine($"namespace {consumerNamespace}.Generated;");
+    sb.AppendLine($"namespace {_generatedNamespace(consumerNamespace)};");
     sb.AppendLine();
     sb.AppendLine(XML_DOC_SUMMARY_OPEN);
     sb.AppendLine("/// Auto-generated registry for pgvector configuration.");
@@ -1680,8 +1694,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       }
       sb.AppendLine();
 
-      sb.AppendLine($"namespace {dbContext.Namespace};");
-      sb.AppendLine();
+      if (!string.IsNullOrEmpty(dbContext.Namespace)) {
+        sb.AppendLine($"namespace {dbContext.Namespace};");
+        sb.AppendLine();
+      }
 
       sb.AppendLine(XML_DOC_SUMMARY_OPEN);
       sb.AppendLine($"/// Turnkey extension methods for registering {dbContext.ClassName} with dependency injection.");
@@ -2094,6 +2110,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string perspectiveRegistryJson = _generatePerspectiveRegistryJson(matchingPerspectives, assemblyName);
 
       // Replace placeholders
+      template = template.Replace("__DBCONTEXT_NAMESPACE__.Generated", _generatedNamespace(dbContext.Namespace));
       template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContext.Namespace);
       template = template.Replace("__DBCONTEXT_CLASS__", dbContext.ClassName);
       template = template.Replace("__DBCONTEXT_FQN__", dbContext.FullyQualifiedName);
