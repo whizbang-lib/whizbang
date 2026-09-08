@@ -26,6 +26,32 @@ public class AzureBlobOffloadFromConfigurationTests {
     new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
   [Test]
+  public async Task FromConfiguration_WithACipherInSettings_BindsTheCipherName_AndRegistersTheCipherAsync() {
+    // The whole sealed path from settings alone: provider, selector and cipher, no consumer code.
+    var configuration = _config(new() {
+      ["Whizbang:Offloads:AzureBlob:consumer-offload:ConnectionString"] = "UseDevelopmentStorage=true",
+      ["Whizbang:Offloads:AzureBlob:consumer-offload:ContainerName"] = "whizbang-offload-bodies-prod",
+      ["Whizbang:BodyOffload:ProviderName"] = "consumer-offload",
+      ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
+      ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
+      ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+    });
+    var services = new ServiceCollection();
+
+    services.AddWhizbangAzureBlobOffloadsFromConfiguration(configuration);
+    var provider = services.BuildServiceProvider();
+
+    var bodyOptions = provider.GetRequiredService<IOptionsMonitor<MessageBodyOffloadOptions>>().CurrentValue;
+    await Assert.That(bodyOptions.CipherName).IsEqualTo("body-aes-v1")
+      .Because("the send side seals only when the options name the cipher");
+    var cipher = provider.GetKeyedService<IMessageBodyCipher>("body-aes-v1");
+    await Assert.That(cipher).IsNotNull()
+      .Because("the cipher named in settings is registered under that name from the same settings");
+    var sealedBody = await cipher!.SealAsync(new byte[] { 1, 2, 3 });
+    await Assert.That(sealedBody.Descriptor.KeyId).IsEqualTo("kek-2026-09");
+  }
+
+  [Test]
   public async Task FromConfiguration_RegistersProvider_BindsOptions_AndSelectorAsync() {
     var configuration = _config(new() {
       ["Whizbang:Offloads:AzureBlob:consumer-offload:ConnectionString"] = "UseDevelopmentStorage=true",

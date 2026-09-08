@@ -92,6 +92,9 @@ public static class AzureBlobOffloadServiceCollectionExtensions {
     services.AddWhizbangBodyOffload();
     var bodyOffload = configuration.GetSection(BODY_OFFLOAD_SECTION);
     services.Configure<MessageBodyOffloadOptions>(opts => _bindBodyOffloadOptions(bodyOffload, opts));
+    // The cipher named in Whizbang:BodyOffload:CipherName, keyed from Whizbang:BodyOffload:Cipher,
+    // so the whole sealed path comes from settings. No cipher name registers nothing.
+    services.AddWhizbangBodyCipherFromConfiguration(configuration);
     return services;
   }
 
@@ -128,6 +131,11 @@ public static class AzureBlobOffloadServiceCollectionExtensions {
 
     if (bool.TryParse(section["ActiveCleanup"], out var activeCleanup)) {
       options.ActiveCleanup = activeCleanup;
+    }
+
+    var cipherName = section["CipherName"];
+    if (!string.IsNullOrWhiteSpace(cipherName)) {
+      options.CipherName = cipherName;
     }
   }
 }
