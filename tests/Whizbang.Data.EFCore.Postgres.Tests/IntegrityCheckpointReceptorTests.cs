@@ -269,6 +269,13 @@ public class IntegrityCheckpointReceptorTests {
     };
     listener.SetMeasurementEventCallback<long>((_, value, _, _) => Interlocked.Add(ref gaps, value));
     listener.Start();
+    // Passive counters (#711) report every series' cumulative value at collection, so a read is a
+    // fresh collection, not an accumulation across reads.
+    long readGaps() {
+      Interlocked.Exchange(ref gaps, 0);
+      listener.RecordObservableInstruments();
+      return Interlocked.Read(ref gaps);
+    }
 
     var fx = _fixture(metrics: metrics);
     fx.Coordinator.Counts = _ => [];
@@ -281,7 +288,7 @@ public class IntegrityCheckpointReceptorTests {
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));                     // deficit -> pending
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true)); // would confirm today
 
-    await Assert.That(Interlocked.Read(ref gaps)).IsEqualTo(0L)
+    await Assert.That(readGaps()).IsEqualTo(0L)
       .Because("a deficit measured while the consumer is visibly behind is expected back-"
              + "pressure — CONFIRMED must mean the pipeline is drained and the events are "
              + "genuinely absent");
@@ -289,7 +296,7 @@ public class IntegrityCheckpointReceptorTests {
     fx.Coordinator.Backlog = new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true)); // settled -> confirms
 
-    await Assert.That(Interlocked.Read(ref gaps)).IsEqualTo(1L)
+    await Assert.That(readGaps()).IsEqualTo(1L)
       .Because("the deferral carries the pending forward — a deficit that survives the "
              + "drain is a real gap and must still confirm");
   }
@@ -423,6 +430,7 @@ public class IntegrityCheckpointReceptorTests {
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));   // deficit → pending
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));   // confirms
+    listener.RecordObservableInstruments();   // passive counters (#711) report at collection
 
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.checkpoints_received")).IsEqualTo(2L);
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.gaps_detected")).IsEqualTo(1L)
@@ -454,6 +462,7 @@ public class IntegrityCheckpointReceptorTests {
 
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 0, to: 5, count: 3));   // deficit → pending
     await fx.Receptor.HandleAsync(_checkpoint(fx, from: 5, to: 5, count: 0, emptyBuckets: true));   // confirms
+    listener.RecordObservableInstruments();   // passive counters (#711) report at collection
 
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.checkpoints_received")).IsEqualTo(2L);
     await Assert.That(measurements.GetValueOrDefault("whizbang.stream_integrity.gaps_detected")).IsEqualTo(1L)

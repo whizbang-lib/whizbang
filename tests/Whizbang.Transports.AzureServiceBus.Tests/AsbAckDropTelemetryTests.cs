@@ -70,6 +70,7 @@ public class AsbAckDropTelemetryTests {
     await Assert.That(transportLogger.Entries.Count).IsEqualTo(0);
     await Assert.That(policyLogger.Entries.Count).IsEqualTo(1);
     await Assert.That(policyLogger.Entries[0].Level).IsEqualTo(LogLevel.Debug);
+    listener.RecordObservableInstruments();   // passive counter (#711): the series report their cumulative values at collection
     await Assert.That(skippedCount).IsEqualTo(1L);
   }
 
@@ -108,6 +109,7 @@ public class AsbAckDropTelemetryTests {
     await Assert.That(transportLogger.Entries.Count).IsEqualTo(1);
     await Assert.That(transportLogger.Entries[0].Level).IsEqualTo(LogLevel.Warning);
     await Assert.That(policyLogger.Entries.Count).IsEqualTo(0);
+    listener.RecordObservableInstruments();   // passive counter (#711): the series report their cumulative values at collection
     await Assert.That(skippedCount).IsEqualTo(0L);
   }
 

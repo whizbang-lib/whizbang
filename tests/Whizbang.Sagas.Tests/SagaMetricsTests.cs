@@ -16,9 +16,10 @@ namespace Whizbang.Sagas.Tests;
 public class SagaMetricsTests {
 
   [Test]
-  public async Task Constructor_SeedsEveryCounterAtZeroAsync() {
-    // Issue #711: a counter exports no series until its first measurement, so a service that has
-    // run no saga since its restart would show no saga meter at all. Seeded at construction.
+  public async Task Constructor_EveryCounterReportsZeroAtTheFirstCollectionAsync() {
+    // Issue #711: a pushed counter exports no series until its first measurement, so a service that
+    // has run no saga since its restart would show no saga meter at all. The counters are passive:
+    // the meter reports every series at collection, so they read as zero from construction.
     var seededAtZero = new HashSet<string>(StringComparer.Ordinal);
     using var listener = new System.Diagnostics.Metrics.MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
@@ -36,6 +37,7 @@ public class SagaMetricsTests {
     listener.Start();
 
     _ = new SagaMetrics(new WhizbangMetrics());
+    listener.RecordObservableInstruments();   // what an exporter does at collection
 
     foreach (var counter in new[] {
       "whizbang.sagas.initiated", "whizbang.sagas.completed", "whizbang.sagas.failed",
