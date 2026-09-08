@@ -272,49 +272,86 @@ jobs:
             echo "✅ Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"
           fi
 
-      # Every new library line is covered before a PR merges. The list Sonar shows as "uncovered new
-      # lines" is computed here from the same merged reports and the diff against the base branch,
-      # published as an artifact and a PR comment, and fails the job when it is not empty.
-      - name: Uncovered New Lines Gate
+      - name: SonarScanner End
+        if: (github.event_name != 'push' || github.ref == 'refs/heads/main') && github.event_name != 'merge_group'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
+
+      # ---- PR quality gate: 100% coverage of new lines, zero open Sonar findings ----------------------
+      # Both lists are computed after the scanner has submitted the analysis, uploaded, posted on the
+      # PR in one comment, and only then does one step fail the job when either list is not empty.
+      - name: Uncovered New Lines
         if: github.event_name == 'pull_request'
         id: uncovered
         shell: pwsh
         run: |
           git fetch --no-tags origin "${{ github.base_ref }}"
-          $result = & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -BaseRef "origin/${{ github.base_ref }}" -OutFile coverage/uncovered-new-lines.txt
-          $code = $LASTEXITCODE
-          $result | Write-Host
-          $count = (Get-Content coverage/uncovered-new-lines.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
+          & pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage -BaseRef "origin/${{ github.base_ref }}" -OutFile coverage/uncovered-new-lines.txt | Write-Host
+          $count = @(Get-Content coverage/uncovered-new-lines.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
           "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          if ($code -ne 0) { exit $code }
 
-      - name: Upload Uncovered New Lines
+      - name: Sonar Findings on New Code
+        if: github.event_name == 'pull_request'
+        id: sonar-findings
+        shell: pwsh
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          & pwsh scripts/Get-SonarPrFindings.ps1 -PullRequest ${{ github.event.pull_request.number }} -WaitForAnalysis .sonarqube/out/.sonar/report-task.txt -OutFile coverage/sonar-findings.txt | Write-Host
+          $count = @(Get-Content coverage/sonar-findings.txt -ErrorAction SilentlyContinue | Where-Object { $_ }).Count
+          "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload PR Gate Reports
         if: github.event_name == 'pull_request' && always()
         uses: actions/upload-artifact@v4
         with:
-          name: uncovered-new-lines
-          path: coverage/uncovered-new-lines.txt
+          name: pr-quality-gate
+          path: |
+            coverage/uncovered-new-lines.txt
+            coverage/sonar-findings.txt
           if-no-files-found: ignore
 
-      - name: Comment Uncovered New Lines on PR
+      - name: Comment PR Gate Results
         if: github.event_name == 'pull_request' && always() && steps.uncovered.outputs.count != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          COUNT: ${{ steps.uncovered.outputs.count }}
+          UNCOVERED: ${{ steps.uncovered.outputs.count }}
+          FINDINGS: ${{ steps.sonar-findings.outputs.count }}
         run: |
-          MARKER="<!-- uncovered-new-lines -->"
-          if [ "${COUNT}" = "0" ]; then
-            BODY="${MARKER}
-          **Coverage of new lines: 100%.** Every library line this PR adds is executed by a test."
-          else
-            BODY="${MARKER}
-          **${COUNT} new line(s) have no test coverage.** Every new line is covered before a PR merges.
+          MARKER="<!-- pr-quality-gate -->"
+          BODY="${MARKER}
+          ## PR quality gate
+
+          | Check | Result |
+          |---|---|
+          | Coverage of new lines | $([ "${UNCOVERED}" = "0" ] && echo "100%, every added library line is executed by a test" || echo "**${UNCOVERED} line(s) not executed by any test**") |
+          | Sonar findings on new code | $([ "${FINDINGS:-?}" = "0" ] && echo "none" || echo "**${FINDINGS:-?} open finding(s)**") |
+          "
+          if [ "${UNCOVERED}" != "0" ]; then
+            BODY="${BODY}
+          <details><summary>Uncovered new lines</summary>
 
           \`\`\`
           $(cat coverage/uncovered-new-lines.txt)
-          \`\`\`"
+          \`\`\`
+          </details>
+          "
           fi
+          if [ -s coverage/sonar-findings.txt ]; then
+            BODY="${BODY}
+          <details><summary>Sonar findings</summary>
+
+          \`\`\`
+          $(cat coverage/sonar-findings.txt)
+          \`\`\`
+          </details>
+          "
+          fi
+          BODY="${BODY}
+          Reproduce locally: \`pwsh scripts/Invoke-PrHealth.ps1 -PullRequest ${{ github.event.pull_request.number }}\`"
           EXISTING=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" --paginate --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" | head -1)
           if [ -n "${EXISTING}" ]; then
             gh api --method PATCH "repos/${{ github.repository }}/issues/comments/${EXISTING}" -f body="${BODY}" >/dev/null
@@ -322,15 +359,8 @@ jobs:
             gh api --method POST "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" -f body="${BODY}" >/dev/null
           fi
 
-      - name: Fail on Uncovered New Lines
-        if: github.event_name == 'pull_request' && steps.uncovered.outputs.count != '' && steps.uncovered.outputs.count != '0'
+      - name: Fail on PR Gate Violations
+        if: github.event_name == 'pull_request' && (steps.uncovered.outputs.count != '0' || steps.sonar-findings.outputs.count != '0')
         run: |
-          echo "::error::${{ steps.uncovered.outputs.count }} new line(s) have no test coverage (see the uncovered-new-lines artifact and the PR comment)."
+          echo "::error::PR quality gate: ${{ steps.uncovered.outputs.count }} uncovered new line(s), ${{ steps.sonar-findings.outputs.count }} open Sonar finding(s). Both must be zero (see the pr-quality-gate artifact and the PR comment)."
           exit 1
-
-      - name: SonarScanner End
-        if: (github.event_name != 'push' || github.ref == 'refs/heads/main') && github.event_name != 'merge_group'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"

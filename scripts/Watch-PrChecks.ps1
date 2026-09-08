@@ -29,6 +29,10 @@
 .PARAMETER Json
     Emit the final state as JSON on stdout (for an AI to parse) instead of the human summary.
 
+.PARAMETER OutFile
+    Optional path; the final state is written there as JSON whatever the console mode, so a recipe
+    can keep the report.
+
 .EXAMPLE
     pwsh scripts/Watch-PrChecks.ps1 -PullRequest 732
     pwsh scripts/Watch-PrChecks.ps1 -PullRequest 732 -Once -Json
@@ -40,7 +44,8 @@ param(
   [int]$IntervalSeconds = 60,
   [int]$TimeoutMinutes = 90,
   [switch]$Once,
-  [switch]$Json
+  [switch]$Json,
+  [string]$OutFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,16 +78,19 @@ while ($true) {
     $fail = @($checks | Where-Object { $_.bucket -eq 'fail' })
     $pass = @($checks | Where-Object { $_.bucket -eq 'pass' })
     $skip = @($checks | Where-Object { $_.bucket -eq 'skipping' })
+    $state = [pscustomobject]@{
+      pullRequest = $PullRequest
+      settled     = $settled
+      pass        = $pass.Count
+      fail        = $fail.Count
+      skipping    = $skip.Count
+      pending     = $pending.Count
+      failed      = @($fail | ForEach-Object { [pscustomobject]@{ name = $_.name; link = $_.link } })
+      checks      = @($checks | ForEach-Object { [pscustomobject]@{ name = $_.name; bucket = $_.bucket; link = $_.link } })
+    }
+    if ($OutFile) { $state | ConvertTo-Json -Depth 4 | Set-Content -Path $OutFile }
     if ($Json) {
-      [pscustomobject]@{
-        pullRequest = $PullRequest
-        settled     = $settled
-        pass        = $pass.Count
-        fail        = $fail.Count
-        skipping    = $skip.Count
-        pending     = $pending.Count
-        failed      = @($fail | ForEach-Object { [pscustomobject]@{ name = $_.name; link = $_.link } })
-      } | ConvertTo-Json -Depth 4
+      $state | ConvertTo-Json -Depth 4
     } else {
       Write-Host ""
       Write-Host ("{0}: pass={1} fail={2} skipping={3} pending={4}" -f ($(if ($settled) { 'ALL CHECKS SETTLED' } else { 'SNAPSHOT' }), $pass.Count, $fail.Count, $skip.Count, $pending.Count))

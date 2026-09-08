@@ -1,32 +1,36 @@
 ---
-description: Watch a PR's CI, read the Sonar gate and security findings, list uncovered new lines, and fix what fails
+description: Run the PR health recipe (checks, Sonar findings, uncovered new lines), read its saved report, and fix what it lists
 ---
 
 # /pr-health <pr-number>
 
-Monitor a pull request the way a contributor's AI should: with the repository's own scripts, so the
-procedure improves in one place and needs no memory. Run from the repository root; `gh` must be
-authenticated. Every script prints a human report by default and JSON with `-Json`.
+The standard for every pull request: all checks green, **zero open Sonar findings of any type on new
+code**, and **100% coverage of new lines**. One script runs the whole recipe and saves one report:
 
-1. **Wait for the checks.** `pwsh scripts/Watch-PrChecks.ps1 -PullRequest <n>` prints each check as it
-   settles and exits 0 when all passed, 1 when any failed (with links), 2 on timeout. Use `-Once` for a
-   snapshot. Do not poll by hand.
-2. **If "SonarCloud Code Analysis" or "Quality / Quality Analysis" failed:**
-   `pwsh scripts/Get-SonarPrFindings.ps1 -PullRequest <n>` prints the failing gate conditions and every
-   open vulnerability, bug and hotspot with file, line, rule and message. Fix each finding at its source.
-   A schema-qualified function name in a SQL string (S2077) is not injection: it is a validated
-   constant, and the accepted fix is the documented `#pragma warning disable S2077` with the reason,
-   as the coordinators do.
-3. **Coverage of new lines must be 100%.** The Quality job posts the uncovered lines on the PR and
-   uploads them as the `uncovered-new-lines` artifact. To reproduce locally:
-   `pwsh scripts/Find-UncoveredNewLines.ps1 -CoverageRoot coverage-ci -BaseRef origin/develop -DownloadFromRun <run id>`
-   (the run id is in the "CI Result" check's link). Cover every listed line with a test: a fake
-   `TimeProvider` for latency and cadence branches, a throwing fake for failure logs, a canceled token
-   for cancellation rethrows. A branch that the SQL contract makes unreachable may be restructured so
-   the guard disappears, with the reason in a comment; nothing else is removed for coverage.
-4. **Re-run the affected test projects one at a time** (never in parallel on a shared machine), format,
-   build Release, commit, push, and go back to step 1.
+```
+pwsh scripts/Invoke-PrHealth.ps1 -PullRequest <n>
+```
 
-Read `ai-docs/tdd-strict.md` and `ai-docs/coverage-exclusions.md` before deciding a line cannot be
-covered. The contributor guide on the docs site ("Keeping new code at 100% coverage") explains the
-same process for people.
+It waits for the checks to settle (add `-Snapshot` for the current state), reads the SonarCloud gate
+and every open finding, downloads the CI run's coverage artifacts for the head commit and computes the
+uncovered new lines, then writes `.whizbang/cache/pr-health/pr-<n>-<timestamp>.md` with the raw JSON
+and text beside it. Exit code 0 means clean; 1 means the report lists what to fix.
+
+Read the report, then:
+
+1. **Failed checks**: open the linked job log, fix the cause, and re-run the affected test projects
+   one at a time (never in parallel on a shared machine).
+2. **Sonar findings**: fix each at its source, tests included. A finding that is wrong for a documented
+   reason (a schema-qualified function name in SQL text is S2077 but not injection; Npgsql's own array
+   idiom) is resolved with the reason in a comment or a pragma on the line, never left open and never
+   suppressed silently.
+3. **Uncovered new lines**: cover each with a test. Fake `TimeProvider` for latency and cadence
+   branches, a throwing fake for failure logs, a canceled token for cancellation rethrows. A branch a
+   contract makes unreachable may be restructured so the guard disappears, with the reason in a
+   comment; nothing else is removed for coverage.
+4. Format, build Release, commit, push, and run the recipe again.
+
+The individual scripts behind the recipe (`Watch-PrChecks.ps1`, `Get-SonarPrFindings.ps1`,
+`Find-UncoveredNewLines.ps1`) take `-OutFile` and `-Json` for a narrower question. Improve the scripts
+when they fall short; every contributor's assistant gets the improvement. The contributor guide on the
+docs site ("Keeping New Code at 100% Coverage and Zero Sonar Findings") explains the same process for people.
