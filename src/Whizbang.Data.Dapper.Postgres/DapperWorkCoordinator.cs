@@ -118,6 +118,8 @@ public partial class DapperWorkCoordinator(
           now,
           partitionCount
         });
+      // #720: ring the doorbells the store queued, after its commit.
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
@@ -153,6 +155,8 @@ public partial class DapperWorkCoordinator(
       projection = await connection.ExecuteScalarAsync<string>(
         Whizbang.Data.Postgres.InboxRedeliveryObservationSql.ObservationQuery(string.Empty),
         new { observedIds });
+      // #720: ring the doorbells the store queued, after its commit.
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
 
     return Whizbang.Core.Messaging.InboxRedeliveryObservation.ParseProjection(projection);
@@ -179,6 +183,8 @@ public partial class DapperWorkCoordinator(
           now,
           partitionCount
         });
+      // #720: ring the doorbells the store queued, after its commit.
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
@@ -735,9 +741,20 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     // record_heartbeat returns BOOLEAN (migration 106): false means this instance_id has been
     // tombstoned in wh_instance_evictions and the caller must stop heartbeating.
+    // Migration 147: phase, version and the writer's stale threshold ride along; nulls keep the
+    // SQL defaults.
     return await connection.ExecuteScalarAsync<bool>(
-      "SELECT record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb)",
-      new { request.InstanceId, request.ServiceName, request.HostName, request.ProcessId, Metadata = metadataJson });
+      "SELECT record_heartbeat(@InstanceId, @ServiceName, @HostName, @ProcessId, @Metadata::jsonb, @LifecyclePhase, @LibraryVersion, @StaleThresholdSeconds)",
+      new {
+        request.InstanceId,
+        request.ServiceName,
+        request.HostName,
+        request.ProcessId,
+        Metadata = metadataJson,
+        request.LifecyclePhase,
+        request.LibraryVersion,
+        request.StaleThresholdSeconds
+      });
   }
 
   /// <inheritdoc />
@@ -745,8 +762,13 @@ public partial class DapperWorkCoordinator(
     using var __ = _gate is null ? default : await _gate.AcquireAsync(cancellationToken).ConfigureAwait(false);
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireAsync(_connectionString, cancellationToken);
     var connection = __scope.Connection;
-    return await connection.ExecuteScalarAsync<int>(
+    var due = await connection.ExecuteScalarAsync<int>(
       "SELECT COALESCE(SUM(stream_count), 0)::int FROM notify_scheduled_retry_due()");
+    if (due > 0) {
+      // #720: the probe queued a doorbell per due stream; ring them after its commit.
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+    }
+    return due;
   }
 
   /// <inheritdoc />
@@ -782,6 +804,8 @@ public partial class DapperWorkCoordinator(
     await connection.ExecuteAsync(
       "SELECT complete_perspective(@Cursors::jsonb, @Ids, @DebugMode)",
       new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode });
+    // #720: ring the doorbells the completion queued, after its commit.
+    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -830,6 +854,8 @@ public partial class DapperWorkCoordinator(
     var connection = __scope.Connection;
     await connection.ExecuteAsync(
       "SELECT commit_handler_result(@Payload::jsonb)", new { Payload = payload });
+    // #720: ring the doorbells the commit queued, after the commit.
+    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -854,6 +880,8 @@ public partial class DapperWorkCoordinator(
     var rows = await connection.QueryAsync<HandlerBatchRow>(
       "SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage FROM commit_handler_batch(@Results::jsonb)",
       new { Results = batchJson });
+    // #720: ring the doorbells the commits queued, after the commits.
+    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
     return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage))];
   }
 
@@ -873,6 +901,8 @@ public partial class DapperWorkCoordinator(
     await connection.ExecuteAsync(
       "SELECT flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb)",
       new { Outbox = outboxIds, Cursors = cursorsJson, Persp = perspIds, Failures = failuresJson });
+    // #720: ring the doorbells the flush queued, after its commit.
+    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -907,7 +937,7 @@ public partial class DapperWorkCoordinator(
     // Phase C lands the full envelope-deserializing path. For now Dapper backend
     // returns perspective_stream rows + throws on outbox/inbox to keep callers safe.
     var rows = await connection.QueryAsync<ClaimWorkRow>(
-      "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh)",
+      "SELECT source AS Source, work_id AS WorkId, work_stream_id AS StreamId FROM claim_work(@Id, @Svc, @Host, @Pid, @Max, @Part, @Lease, @Fresh, @Rows, @Steal, @Persp)",
       new {
         Id = request.InstanceId,
         Svc = request.ServiceName,
@@ -916,7 +946,11 @@ public partial class DapperWorkCoordinator(
         Max = request.MaxStreams,
         Part = request.PartitionCount,
         Lease = request.LeaseSeconds,
-        Fresh = request.FreshWorkShare
+        Fresh = request.FreshWorkShare,
+        // 145: acquisition row bound (null = bounded by the stream count) and the steal flag.
+        Rows = request.MaxAcquireRows,
+        Steal = request.AllowSteal,
+        Persp = request.MaxPerspectiveStreams
       });
     var perspectiveStreamIds = new List<Guid>();
     var sawOutboxOrInbox = false;
@@ -931,6 +965,10 @@ public partial class DapperWorkCoordinator(
       throw new NotImplementedException(
         "DapperWorkCoordinator.ClaimWorkAsync: full envelope deserialization for outbox/inbox lands in Phase C polish. " +
         "Use ProcessWorkBatchAsync until then.");
+    }
+    if (perspectiveStreamIds.Count > 0) {
+      // #720: a claim that leased work may have queued ownership doorbells; ring them after its commit.
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
     }
     return new WorkBatch {
       OutboxWork = [],

@@ -79,6 +79,12 @@ public class SyncInquiryWakeSqlTests : EFCoreTestBase {
       fire.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = new[] { workId } });
       _ = await fire.ExecuteScalarAsync();
     }
+    // 146 (#720): the completion queued its doorbell instead of notifying inside its transaction; the
+    // driver rings after the commit, and this raw call models that ring.
+    await using (var ring = fireConn.CreateCommand()) {
+      ring.CommandText = "SELECT ring_doorbells()";
+      _ = await ring.ExecuteScalarAsync();
+    }
 
     // Drive notification delivery on the listener side. Npgsql delivers notifications
     // only when the connection is read from. Use a cancellable WaitAsync so the call

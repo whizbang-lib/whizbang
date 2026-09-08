@@ -736,6 +736,27 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     await Assert.That(n).IsEqualTo(0);
   }
 
+  [Test]
+  public async Task NotifyScheduledRetryDueAsync_DueWork_ReturnsTheStreamCountAndRingsAsync() {
+    // A scheduled retry whose time has come, on a stream, is what the probe wakes owners for. The
+    // count it returns is also what decides whether the queued doorbells are rung (#720).
+    var c = _build();
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(@"
+      INSERT INTO wh_inbox
+        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+         stream_id, partition_number, is_event, scheduled_for)
+      VALUES (@mid, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 0, 1, NOW() - INTERVAL '2 minutes',
+              @sid, 0, TRUE, NOW() - INTERVAL '1 minute')",
+      new { mid = (Guid)TrackedGuid.NewMedo(), sid = (Guid)TrackedGuid.NewMedo() });
+
+    var n = await c.NotifyScheduledRetryDueAsync();
+
+    await Assert.That(n).IsGreaterThanOrEqualTo(1)
+      .Because("one stream holds a retry that is due; the probe reports it and rings the doorbells it queued");
+  }
+
   // ----- FetchEventsByIdsAsync row mapping -----
 
   [Test]

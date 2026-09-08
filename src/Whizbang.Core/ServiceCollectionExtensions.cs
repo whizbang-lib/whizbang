@@ -373,6 +373,10 @@ public static class ServiceCollectionExtensions {
     services.TryAddSingleton<LifecycleMetrics>();
     services.TryAddSingleton<InboxMetrics>();
     services.TryAddSingleton<LifecycleCoordinatorMetrics>();
+    // Liveness (heartbeat watchdog beats, death announcements and retractions) and probe cadence
+    // (idle footprint per periodic worker): both passive, every series present at zero.
+    services.TryAddSingleton<InstanceLivenessMetrics>();
+    services.TryAddSingleton<ProbeCadenceMetrics>();
     // Turn-key: registered here so a governor's decisions and the evidence behind them reach
     // OpenTelemetry with no consumer wiring. A component that silently changes concurrency and
     // cannot be observed doing it is undebuggable in production, so the observable path must be

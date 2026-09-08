@@ -46,6 +46,27 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
     private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
   }
 
+  /// <summary>
+  /// Announces deaths normally and fails the FIRST retraction (InstanceJoinedSignal) with the given
+  /// exception, then succeeds: the retract path's failure and shutdown arms.
+  /// </summary>
+  private sealed class RetractFailingOnceBus(Exception toThrow) : ISignalBus {
+    private bool _failed;
+    public List<Type> Published { get; } = [];
+    public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target = default, CancellationToken cancellationToken = default)
+      where TSignal : ISignal {
+      if (typeof(TSignal) == typeof(InstanceJoinedSignal) && !_failed) {
+        _failed = true;
+        return ValueTask.FromException(toThrow);
+      }
+      Published.Add(typeof(TSignal));
+      return ValueTask.CompletedTask;
+    }
+    public ISignalSubscription Subscribe<TSignal>(Func<TSignal, ValueTask> handler) where TSignal : ISignal
+      => new NoopSub();
+    private sealed class NoopSub : ISignalSubscription { public void Dispose() { } }
+  }
+
   private async Task _insertHeartbeatAsync(Guid instanceId, DateTimeOffset lastHeartbeatAt) {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
@@ -193,5 +214,140 @@ public class PgInstanceLifecycleMonitorIntegrationTests : EFCoreTestBase {
       using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
       await monitor.StopAsync(stopCts.Token);
     }
+  }
+
+  // ============================================================
+  // Two-signal liveness (heartbeat OR alive-lock), derived threshold, reversible announcements
+  // ============================================================
+
+  /// <summary>Holds the instance's session alive-lock on a connection the caller keeps open.</summary>
+  private async Task<NpgsqlConnection> _holdAliveLockAsync(Guid instanceId, CancellationToken ct) {
+    var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var cmd = new NpgsqlCommand("SELECT claim_instance_alive_lock(@id)", conn);
+    cmd.Parameters.AddWithValue("id", instanceId);
+    var held = (bool)(await cmd.ExecuteScalarAsync(ct))!;
+    if (!held) {
+      await conn.DisposeAsync();
+      throw new InvalidOperationException("precondition: the alive-lock could not be taken");
+    }
+    return conn;
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_StaleHeartbeatButAliveLockHeld_DoesNotAnnounceDeathAsync(CancellationToken cancellationToken) {
+    // The failure mode this closes: an instance whose heartbeat write is stuck behind a commit
+    // stall is still holding its session lock, which is the primary liveness signal. Judging by
+    // the timestamp alone announced it dead while it was running, and its work was handed away.
+    var stuckId = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(stuckId, DateTimeOffset.UtcNow.AddMinutes(-10));
+    await using var lockHolder = await _holdAliveLockAsync(stuckId, cancellationToken);
+    var bus = new CountingBus();
+    var monitor = _createMonitor(bus);
+
+    await monitor.TickForTestsAsync(cancellationToken);
+
+    await Assert.That(bus.Published.Contains(typeof(InstanceDiedSignal))).IsFalse()
+      .Because("a held session lock means the process is alive whatever its last timestamp says; the monitor must ask is_instance_alive, not compare timestamps");
+    await Assert.That(monitor.AnnouncedDeaths.Contains(stuckId)).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_HeartbeatFortySecondsOldWithoutLock_IsNotDeadUnderTheDerivedThresholdAsync(CancellationToken cancellationToken) {
+    // Under the old 30 s constant this row was a corpse; a writer on the 60 s slow cadence produced
+    // one every minute. The threshold is now derived from the cadence (150 s with the defaults).
+    var lateId = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(lateId, DateTimeOffset.UtcNow.AddSeconds(-40));
+    var bus = new CountingBus();
+    var monitor = _createMonitor(bus);
+
+    await monitor.TickForTestsAsync(cancellationToken);
+
+    await Assert.That(bus.Published.Contains(typeof(InstanceDiedSignal))).IsFalse()
+      .Because("forty seconds is inside two slow intervals plus a fast one; the beat is late, not missing");
+    await Assert.That(monitor.StaleThreshold).IsEqualTo(TimeSpan.FromSeconds(150));
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_AnnouncedInstanceBeatsAgain_RetractsWithInstanceJoinedAsync(CancellationToken cancellationToken) {
+    // A false announcement must be reversible. When a heartbeat lands after the death was
+    // published, the monitor publishes InstanceJoined so subscribers that reassigned the
+    // instance's work can let it back in, and forgets the death so a later real one is announced.
+    var id = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    var bus = new CountingBus();
+    var monitor = _createMonitor(bus);
+    await monitor.TickForTestsAsync(cancellationToken);
+    await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsTrue().Because("precondition: the stale row was announced");
+
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+    await monitor.TickForTestsAsync(cancellationToken);
+
+    await Assert.That(bus.Published).Contains(typeof(InstanceJoinedSignal))
+      .Because("the retraction is the same signal a fresh instance raises, so subscribers need no new handler");
+    await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsFalse()
+      .Because("once retracted, the same instance dying for real later must be announced again");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_RetractionPublishFails_ReArmsTheRetractionForTheNextTickAsync(CancellationToken cancellationToken) {
+    // A retraction that cannot be published must not be forgotten: the death stays announced so the
+    // next tick tries again, otherwise a subscriber that reassigned the instance's work never lets it back in.
+    var id = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    var bus = new RetractFailingOnceBus(new InvalidOperationException("signal transport down"));
+    var monitor = _createMonitor(bus);
+    await monitor.TickForTestsAsync(cancellationToken);
+    await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsTrue().Because("precondition: the stale row was announced");
+
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+    await monitor.TickForTestsAsync(cancellationToken);
+    await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsTrue()
+      .Because("the failed retraction re-arms the announcement so the next tick retries it");
+    await Assert.That(bus.Published.Contains(typeof(InstanceJoinedSignal))).IsFalse();
+
+    await monitor.TickForTestsAsync(cancellationToken);
+
+    await Assert.That(bus.Published).Contains(typeof(InstanceJoinedSignal))
+      .Because("the retry on the next tick publishes the retraction");
+    await Assert.That(monitor.AnnouncedDeaths.Contains(id)).IsFalse();
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_RetractionCanceledByShutdown_SurfacesRatherThanRetryingAsync(CancellationToken cancellationToken) {
+    var id = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    var bus = new RetractFailingOnceBus(new OperationCanceledException("shutting down"));
+    var monitor = _createMonitor(bus);
+    await monitor.TickForTestsAsync(cancellationToken);
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+
+    await Assert.That(async () => await monitor.TickForTestsAsync(cancellationToken))
+      .Throws<OperationCanceledException>()
+      .Because("shutdown is not a transport failure to retry; it ends the tick loop");
+  }
+
+  [Test]
+  [Timeout(60000)]
+  public async Task Tick_RetractedThenDeadAgain_AnnouncesASecondTimeAsync(CancellationToken cancellationToken) {
+    var id = Guid.CreateVersion7();
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    var bus = new CountingBus();
+    var monitor = _createMonitor(bus);
+    await monitor.TickForTestsAsync(cancellationToken);
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow);
+    await monitor.TickForTestsAsync(cancellationToken);
+
+    await _insertHeartbeatAsync(id, DateTimeOffset.UtcNow.AddMinutes(-10));
+    await monitor.TickForTestsAsync(cancellationToken);
+
+    var deaths = bus.Published.Count(t => t == typeof(InstanceDiedSignal));
+    await Assert.That(deaths).IsEqualTo(2)
+      .Because("dead, back, dead again is two deaths; the retraction cleared the first");
   }
 }

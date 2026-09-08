@@ -34,7 +34,9 @@ public sealed partial class PgDurableSignalTailWorker(
   ILogger<PgDurableSignalTailWorker> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null,
-  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null
+  Whizbang.Core.Workers.ISchemaReadyGate? schemaReadyGate = null,
+  ProbeCadenceMetrics? probeMetrics = null,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -44,9 +46,31 @@ public sealed partial class PgDurableSignalTailWorker(
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
   private readonly Whizbang.Core.Workers.ISchemaReadyGate? _schemaReadyGate = schemaReadyGate;
+  private readonly ProbeCadenceMetrics? _probeMetrics = probeMetrics;
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+  private readonly Whizbang.Core.Workers.AdaptiveIdleBackoff _cadence = CreateBackoff(options?.Value ?? throw new ArgumentNullException(nameof(options)));
 
-  /// <summary>Tail interval. Kept modest — the fast path is NOTIFY; this just plugs missed notifies.</summary>
-  private static readonly TimeSpan _tickInterval = TimeSpan.FromSeconds(2);
+  /// <summary>
+  /// The fastest tail cadence, used while signals are flowing. Kept modest: the fast path is
+  /// NOTIFY; this only plugs missed notifies.
+  /// </summary>
+  internal static readonly TimeSpan TickFloor = TimeSpan.FromSeconds(2);
+
+  /// <summary>
+  /// Builds the tail cadence: <see cref="TickFloor"/> while ticks deliver signals, doubling on
+  /// each empty tick up to the polling fallback interval, and snapping back to the floor on the
+  /// first tick that delivers. An idle fleet therefore costs one scan per instance per fallback
+  /// interval instead of one every two seconds, and a busy one keeps the original cadence. The
+  /// ceiling is an option that already exists, so no new knob is introduced.
+  /// </summary>
+  /// <param name="options">The notification options; the ceiling is its polling fallback interval.</param>
+  /// <returns>The backoff for one worker.</returns>
+  public static Whizbang.Core.Workers.AdaptiveIdleBackoff CreateBackoff(WhizbangNotificationOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+    var ceiling = options.PollingFallbackInterval < TickFloor ? TickFloor : options.PollingFallbackInterval;
+    return new Whizbang.Core.Workers.AdaptiveIdleBackoff(TickFloor, ceiling);
+  }
+
 
   private Dictionary<string, SignalTypeEntry>? _wireNameToEntry;
 
@@ -85,16 +109,21 @@ public sealed partial class PgDurableSignalTailWorker(
     }
 
     while (!stoppingToken.IsCancellationRequested) {
+      var delivered = 0;
       try {
-        await _tickOnceAsync(plan, stoppingToken);
+        delivered = await _tickOnceAsync(plan, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
         LogTickFailed(_logger, ex);
       }
 
+      // A failed tick counts as idle: backing off is the right response to a struggling database too.
+      var found = delivered > 0;
+      _probeMetrics?.RecordTick(ProbeCadenceMetrics.PROBE_DURABLE_SIGNAL_TAIL, found);
+      var delay = _cadence.Next(found);
       try {
-        await Task.Delay(_tickInterval, stoppingToken);
+        await Task.Delay(delay, _time, stoppingToken);
       } catch (OperationCanceledException) {
         break;
       }
@@ -111,10 +140,15 @@ public sealed partial class PgDurableSignalTailWorker(
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
-  private async Task _tickOnceAsync(NotificationConnectionPlan plan, CancellationToken ct) {
+  /// <summary>
+  /// One tail pass: reads the signals past this instance's cursor, delivers them to local
+  /// subscribers, and advances the cursor. The count it returns drives the idle backoff.
+  /// </summary>
+  /// <returns>The number of signals delivered to local subscribers by this tick.</returns>
+  private async Task<int> _tickOnceAsync(NotificationConnectionPlan plan, CancellationToken ct) {
     var map = _wireNameToEntry;
     if (map is null || map.Count == 0) {
-      return;   // no signal types discovered — nothing to dispatch
+      return 0;   // no signal types discovered, nothing to dispatch
     }
 
     await using var conn = await plan.OpenAsync(ct);
@@ -169,6 +203,8 @@ public sealed partial class PgDurableSignalTailWorker(
       upd.Parameters.AddWithValue("max_id", maxSeenId);
       await upd.ExecuteNonQueryAsync(ct);
     }
+
+    return dispatched.Count;
   }
 
   private static Dictionary<string, SignalTypeEntry> _buildWireMap() {

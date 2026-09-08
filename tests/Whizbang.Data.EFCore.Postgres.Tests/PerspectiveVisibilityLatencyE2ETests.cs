@@ -424,6 +424,11 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
     call.CommandText = "SELECT commit_handler_result(@req::jsonb)";
     call.Parameters.AddWithValue("req", request);
     _ = await call.ExecuteScalarAsync(ct);
+    // 146 (#720): the commit queued its doorbells; the coordinator rings right after the commit, and
+    // this raw call models that ring so the measured latency is the production path's.
+    await using var ring = conn.CreateCommand();
+    ring.CommandText = "SELECT ring_doorbells()";
+    _ = await ring.ExecuteScalarAsync(ct);
   }
 
   private static async Task<long> _countOrderRowsAsync(NpgsqlConnection conn, Guid streamId, CancellationToken ct) {

@@ -260,19 +260,23 @@ public partial class PerspectiveWorker(
   private readonly LeaseHandleOptions _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
   private readonly LeaseRegistry? _leaseRegistry = leaseRegistry;
   private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _perspectiveNotificationListener = perspectiveNotificationListener;
-  private readonly SemaphoreSlim _perspectiveWake = new(0, 1);
+  // A coalescing single-waiter signal, not a SemaphoreSlim(0, 1): the consumer loop abandons its
+  // wake task whenever a channel or the idle timeout wins the race, and a semaphore queued one
+  // more stale waiter per abandoned iteration (108,992 in one long-running instance) while
+  // Release() went to the oldest of them, so a real signal could be swallowed. WakeSignal hands the
+  // same pending task back on every iteration and completes exactly that one.
+  private readonly Whizbang.Core.Async.WakeSignal _perspectiveWake = new();
   private bool _perspectiveSignalSubscribed;
 
-  /// <summary>NOTIFY signal handler — releases the wake semaphore when a Perspective signal arrives.</summary>
+  /// <summary>Number of parked wake waiters the consumer loop currently holds: 0 or 1, never more.</summary>
+  internal int PendingWakeWaiters => _perspectiveWake.PendingWaiters;
+
+  /// <summary>NOTIFY signal handler — wakes the consumer loop when a Perspective signal arrives (signals coalesce).</summary>
   private void _onPerspectiveSignal(Whizbang.Core.Notifications.WorkSignalCategory category) {
     if (category != Whizbang.Core.Notifications.WorkSignalCategory.Perspective) {
       return;
     }
-    try {
-      _perspectiveWake.Release();
-    } catch (SemaphoreFullException) {
-      // Already pending wake — coalesce.
-    }
+    _perspectiveWake.Set();
   }
 
   /// <inheritdoc />
@@ -595,6 +599,10 @@ public partial class PerspectiveWorker(
         ? _options.PollingIntervalMilliseconds
         : Math.Max(_options.PollingIntervalMilliseconds, _options.NotifyHealthyPollingIntervalMilliseconds);
       var idleTimeout = Task.Delay(pollMs, stoppingToken);
+      // WaitAsync returns the SAME pending task while a wait is outstanding, so an iteration that
+      // ends on a channel or the timeout leaves no extra waiter behind (#728); the next Set() wakes
+      // this one task, and a Set() that lands while the loop is busy completes it ahead of the next
+      // WhenAny so the wake is coalesced, never lost.
       var perspectiveSignal = _perspectiveNotificationListener is not null
         ? _perspectiveWake.WaitAsync(stoppingToken)
         : new TaskCompletionSource<bool>().Task;   // never completes when no listener

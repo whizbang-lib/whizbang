@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -39,7 +40,9 @@ public sealed partial class PgDutyElector(
   IServiceInstanceProvider instanceProvider,
   ILogger<PgDutyElector> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
-  INotificationDataSource? notificationDataSource = null
+  INotificationDataSource? notificationDataSource = null,
+  TimeProvider? timeProvider = null,
+  ProbeCadenceMetrics? probeMetrics = null
 ) : IDutyElector {
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -47,19 +50,63 @@ public sealed partial class PgDutyElector(
   private readonly ILogger<PgDutyElector> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
   private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
+  private readonly ProbeCadenceMetrics? _probeMetrics = probeMetrics;
+  private readonly ConcurrentDictionary<string, DutyContentionBackoff> _backoffs = new(StringComparer.Ordinal);
+
+  /// <summary>The first suppression window after a contended attempt.</summary>
+  internal static readonly TimeSpan ContentionBackoffFloor = TimeSpan.FromSeconds(2);
+
+  /// <summary>
+  /// The longest suppression window: the notification stack's polling fallback interval, which is
+  /// already the bound on how long any doorbell-less recovery may take on this host. Failover after
+  /// a holder's death is therefore at most one polling fallback interval slower than the caller's
+  /// own cadence, and no new option is introduced.
+  /// </summary>
+  internal TimeSpan ContentionBackoffCeiling =>
+    _options.PollingFallbackInterval < ContentionBackoffFloor ? ContentionBackoffFloor : _options.PollingFallbackInterval;
+
+  /// <summary>
+  /// True while attempts for <paramref name="duty"/> are being answered from memory because the
+  /// last attempt found another instance holding it; <paramref name="remaining"/> is the time left.
+  /// </summary>
+  /// <param name="duty">The duty name.</param>
+  /// <param name="remaining">Time left in the suppression window, or zero.</param>
+  /// <returns>True when a window is open.</returns>
+  public bool IsBackingOff(string duty, out TimeSpan remaining) {
+    ArgumentException.ThrowIfNullOrEmpty(duty);
+    if (_backoffs.TryGetValue(duty, out var backoff)) {
+      return backoff.IsSuppressed(_time.GetUtcNow(), out remaining);
+    }
+    remaining = TimeSpan.Zero;
+    return false;
+  }
 
   /// <inheritdoc />
   public async Task<DutyAttempt> TryAcquireAsync(string duty, CancellationToken cancellationToken) {
     ArgumentException.ThrowIfNullOrEmpty(duty);
 
+    // Contention damping: while the previous attempt's window is open, answer from memory. The
+    // holder is healthy (a dead holder releases the session lock and its window would have been
+    // the caller's last), so a round trip could only confirm what was already known.
+    var backoff = _backoffs.GetOrAdd(duty, _ => new DutyContentionBackoff(ContentionBackoffFloor, ContentionBackoffCeiling));
+    var now = _time.GetUtcNow();
+    if (backoff.IsSuppressed(now, out var remaining)) {
+      _probeMetrics?.SuppressedDutyAttempts.Add(1, new KeyValuePair<string, object?>("duty", duty));
+      return DutyAttempt.Lost(DutyRefusal.Contended,
+        $"advisory lock held by another instance; backing off for {Math.Ceiling(remaining.TotalSeconds):F0}s after "
+        + $"{backoff.ConsecutiveContentions} contended attempt(s)");
+    }
+
     var resolution = NotificationConnectionStringResolver.Resolve(_options, _configuration, _connectionStringFallback).WithAppliedSearchPath();
     var plan = NotificationConnectionPlan.Create(_notificationDataSource, resolution);
     if (!plan.IsAvailable) {
+      backoff.Reset();
       LogNoConnection(_logger, duty);
       // A standing condition, not a race: no coordination connection is configured at all.
       // Saying so is what lets the caller fail loudly instead of retrying forever (issue #494).
       return DutyAttempt.Lost(DutyRefusal.Unavailable,
-        $"no notification connection is available to contend for duty '{duty}' — "
+        $"no notification connection is available to contend for duty '{duty}'; "
         + "configure Whizbang:Database (ConnectionStringKey / DirectConnectionString)");
     }
     if (!plan.UsesDataSource && resolution.Source == NotificationConnectionStringResolver.ResolutionSource.PooledKeyFallback) {
@@ -76,6 +123,8 @@ public sealed partial class PgDutyElector(
         var won = await tryLock.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false);
         if (won is not true) {
           await connection.DisposeAsync().ConfigureAwait(false);
+          var window = backoff.RecordContended(_time.GetUtcNow());
+          LogContended(_logger, duty, (int)window.TotalSeconds);
           return DutyAttempt.Lost(DutyRefusal.Contended, "advisory lock held by another instance");
         }
       }
@@ -102,6 +151,7 @@ public sealed partial class PgDutyElector(
         }
       }
 
+      backoff.Reset();
       LogAcquired(_logger, duty, _instanceProvider.InstanceId);
       return DutyAttempt.Granted(new PgDutyGrant(connection, key, duty, _instanceProvider.InstanceId, _logger));
     } catch {
@@ -187,4 +237,8 @@ public sealed partial class PgDutyElector(
   [LoggerMessage(EventId = 5, Level = LogLevel.Warning,
     Message = "PgDutyElector: grant for duty '{Duty}' on instance {InstanceId} lost its session — another instance may already hold it")]
   static partial void LogGrantLost(ILogger logger, string duty, Guid instanceId, Exception ex);
+
+  [LoggerMessage(EventId = 6, Level = LogLevel.Debug,
+    Message = "PgDutyElector: duty '{Duty}' is held by another instance; answering attempts from memory for the next {WindowSeconds}s")]
+  static partial void LogContended(ILogger logger, string duty, int windowSeconds);
 }

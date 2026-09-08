@@ -501,13 +501,16 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     if (_lifecycleMessageDeserializer is null) {
       return null;
     }
+    // The handler name rides on the typed envelope's dispatch context so an emission made while handling
+    // this row derives an identity that names the handler; a sibling handler row of the same message
+    // then cannot derive the same id (EmissionIdentity).
     if (_deserializeCache is not null && _deserializeCache.TryGet(work.MessageId, out var cached) && cached is not null) {
-      return work.Envelope.ReconstructWithPayload(cached);
+      return work.Envelope.ReconstructWithPayload(cached, work.HandlerName);
     }
     try {
       var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
       _deserializeCache?.Set(work.MessageId, message);
-      return work.Envelope.ReconstructWithPayload(message);
+      return work.Envelope.ReconstructWithPayload(message, work.HandlerName);
     } catch (Exception ex) {
       // Deserialize is now best-effort at the top of dispatch; per-stage code logs lifecycle
       // errors but a fail here would silently skip ALL stages. Surface it once.

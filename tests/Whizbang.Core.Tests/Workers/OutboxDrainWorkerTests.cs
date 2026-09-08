@@ -134,10 +134,32 @@ public class OutboxDrainWorkerTests {
     /// coordinator whose <c>wh_service_config</c> lookup cannot run (issue #630).</summary>
     public Exception? LocalServiceIdFailure { get; set; }
 
-    public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) =>
-      LocalServiceIdFailure is null
-        ? Task.FromResult(Guid.Empty)
-        : Task.FromException<Guid>(LocalServiceIdFailure);
+    /// <summary>
+    /// When set together with <see cref="LocalServiceIdFailure"/>, only this many lookups fail and
+    /// later ones succeed with <see cref="LocalServiceId"/>: the shape of a transient startup failure
+    /// that clears once the schema is reachable (issue #727). Null keeps every lookup failing.
+    /// </summary>
+    public int? LocalServiceIdFailuresRemaining { get; set; }
+
+    /// <summary>The identity a successful lookup returns. Empty by default, like a coordinator with no <c>wh_service_config</c> row.</summary>
+    public Guid LocalServiceId { get; set; } = Guid.Empty;
+
+    /// <summary>How many times the worker asked for the identity, across startup and per-batch retries.</summary>
+    public int LocalServiceIdLookups;
+
+    public Task<Guid> GetLocalServiceIdAsync(CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref LocalServiceIdLookups);
+      if (LocalServiceIdFailure is not null) {
+        if (LocalServiceIdFailuresRemaining is null) {
+          return Task.FromException<Guid>(LocalServiceIdFailure);
+        }
+        if (LocalServiceIdFailuresRemaining > 0) {
+          LocalServiceIdFailuresRemaining--;
+          return Task.FromException<Guid>(LocalServiceIdFailure);
+        }
+      }
+      return Task.FromResult(LocalServiceId);
+    }
 
     // Required (non-default-implemented) interface members — minimal stubs.
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken ct = default) =>
@@ -1661,6 +1683,212 @@ public class OutboxDrainWorkerTests {
              + "is the only evidence that origin attribution is now wrong on every published envelope");
     await Assert.That(warning!).Contains("attribute")
       .Because("the message must name the consequence, not just the failure");
+  }
+
+  /// <summary>
+  /// The startup lookup used to be the only lookup: a transient failure (the schema not yet reachable,
+  /// the database saturated at boot) stamped an empty <c>SourceServiceId</c> on every envelope for the
+  /// life of the process, and downstream inboxes recorded the producer as nobody (issue #727). The
+  /// worker must ask again before the next batch and, once it knows who it is, say so.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_LocalServiceIdLookupFailsOnceAtStartup_ResolvesBeforeTheNextBatchAsync() {
+    var serviceId = (Guid)TrackedGuid.NewMedo();
+    var coord = new FakeWorkCoordinator {
+      LocalServiceIdFailure = new InvalidOperationException("57P03: the database system is starting up"),
+      LocalServiceIdFailuresRemaining = 1,
+      LocalServiceId = serviceId,
+    };
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sink = new List<string>();
+    using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    await using var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      loggerFactory.CreateLogger<OutboxDrainWorker>(),
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await completion.WaitForCountAsync(1, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(publish.Published).Count().IsEqualTo(1);
+    await Assert.That(publish.Published[0].Envelope.SourceServiceId).IsEqualTo(serviceId)
+      .Because("the first batch after a failed startup lookup must publish with the resolved identity, not the empty fallback");
+    await Assert.That(coord.LocalServiceIdLookups).IsEqualTo(2)
+      .Because("one lookup at startup (failed) and one before the first batch (succeeded)");
+
+    List<string> lines;
+    lock (sink) { lines = [.. sink]; }
+    var resolved = lines.FirstOrDefault(l => l.Contains("resolved to", StringComparison.Ordinal));
+    await Assert.That(resolved).IsNotNull()
+      .Because("the startup warning said attribution is wrong; the log must also say when it became right");
+    await Assert.That(resolved!).Contains(serviceId.ToString());
+  }
+
+  /// <summary>
+  /// Once resolved, the identity is settled: the worker must not pay a lookup per batch forever.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_LocalServiceIdResolvedAtStartup_DoesNotLookItUpAgainAsync() {
+    var coord = new FakeWorkCoordinator { LocalServiceId = (Guid)TrackedGuid.NewMedo() };
+    var streamA = (Guid)TrackedGuid.NewMedo();
+    var streamB = (Guid)TrackedGuid.NewMedo();
+    coord.RowsByStream[streamA] = [_row((Guid)TrackedGuid.NewMedo(), streamA)];
+    coord.RowsByStream[streamB] = [_row((Guid)TrackedGuid.NewMedo(), streamB)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    await using var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<OutboxDrainWorker>.Instance,
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamA);
+    await completion.WaitForCountAsync(1, TimeSpan.FromSeconds(30));
+    await drainChannel.WriteAsync(streamB);
+    await completion.WaitForCountAsync(2, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coord.LocalServiceIdLookups).IsEqualTo(1)
+      .Because("a resolved identity is final; retrying is for the unresolved case only");
+    await Assert.That(publish.Published.All(w => w.Envelope.SourceServiceId == coord.LocalServiceId)).IsTrue();
+  }
+
+  /// <summary>
+  /// A lookup that returns nothing (a coordinator with no service configuration row) is as invisible
+  /// as one that throws. The worker must warn once at startup, keep asking, and keep draining.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_LocalServiceIdEmptyAtStartup_WarnsAndRetriesBeforeEachBatchAsync() {
+    var coord = new FakeWorkCoordinator();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sink = new List<string>();
+    using var loggerFactory = LoggerFactory.Create(b => b.AddProvider(new ListLoggerProvider(sink)));
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    await using var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      loggerFactory.CreateLogger<OutboxDrainWorker>(),
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await completion.WaitForCountAsync(1, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(completion.AllIds).Contains(msgId);
+    await Assert.That(publish.Published[0].Envelope.SourceServiceId).IsEqualTo(Guid.Empty);
+    await Assert.That(coord.LocalServiceIdLookups).IsEqualTo(2)
+      .Because("startup returned empty, so the worker must ask again before the batch");
+
+    List<string> lines;
+    lock (sink) { lines = [.. sink]; }
+    await Assert.That(lines.Any(l => l.Contains("empty after startup", StringComparison.Ordinal))).IsTrue()
+      .Because("an empty identity is a degraded state; nothing else in the system says so");
+  }
+
+  /// <summary>
+  /// While the lookup keeps failing, each retry's failure is recorded at Debug: the startup warning
+  /// already named the consequence, and a warning per batch would be noise, but silence would hide
+  /// that the retry is even happening.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_LocalServiceIdLookupKeepsFailing_RecordsEachRetryAtDebugAsync() {
+    var coord = new FakeWorkCoordinator {
+      LocalServiceIdFailure = new InvalidOperationException("42P01: relation \"wh_service_config\" does not exist"),
+    };
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    coord.RowsByStream[streamId] = [_row((Guid)TrackedGuid.NewMedo(), streamId)];
+
+    var drainChannel = new FakeOutboxDrainChannel();
+    var completion = new FakeOutboxCompletionChannel();
+    var failure = new FakeFailureChannel();
+    var publish = new FakePublishStrategy();
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+
+    var sink = new List<string>();
+    using var loggerFactory = LoggerFactory.Create(b => {
+      b.SetMinimumLevel(LogLevel.Trace);
+      b.AddProvider(new ListLoggerProvider(sink));
+    });
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    await using var sp = services.BuildServiceProvider();
+
+    var worker = new OutboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drainChannel, completion, failure, gate,
+      Options.Create(new OutboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      loggerFactory.CreateLogger<OutboxDrainWorker>(),
+      publish);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await completion.WaitForCountAsync(1, TimeSpan.FromSeconds(30));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(coord.LocalServiceIdLookups).IsEqualTo(2);
+    await Assert.That(publish.Published[0].Envelope.SourceServiceId).IsEqualTo(Guid.Empty);
+
+    List<string> lines;
+    lock (sink) { lines = [.. sink]; }
+    await Assert.That(lines.Any(l => l.Contains("failed again", StringComparison.Ordinal))).IsTrue()
+      .Because("a retry that fails must leave a trace, even a quiet one");
   }
 
   private sealed class ListLoggerProvider(List<string> sink) : ILoggerProvider {

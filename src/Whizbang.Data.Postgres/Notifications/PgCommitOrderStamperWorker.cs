@@ -326,7 +326,12 @@ public sealed partial class PgCommitOrderStamperWorker(
     cmd.Parameters.AddWithValue("bs", _stamperOptions.BatchSize);
     cmd.Parameters.AddWithValue("notify", notifyOwners);
     var result = await cmd.ExecuteScalarAsync(ct);
-    return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    var stamped = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    if (notifyOwners && stamped > 0) {
+      // #720: the make-up doorbells were queued inside the stamp's transaction; ring them after it commits.
+      await DoorbellRinger.RingAsync(conn, "ring_doorbells", _logger, ct);
+    }
+    return stamped;
   }
 
   /// <summary>

@@ -2722,7 +2722,7 @@ public abstract partial class Dispatcher(
   /// </summary>
   private Guid _generateEventIdAndTrack(object msg, Type messageType, IMessageEnvelope? sourceEnvelope) {
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
-    var eventId = ValueObjects.TrackedGuid.NewMedo(); // Generate tracking ID for cascaded events (UUIDv7)
+    var eventId = _mintEmissionId(sourceEnvelope, messageType);
     var streamId = _streamIdExtractor?.ExtractStreamId(msg, messageType) ?? Guid.Empty;
 
     // Auto-generate StreamId based on [GenerateStreamId] attribute policy
@@ -2741,6 +2741,44 @@ public abstract partial class Dispatcher(
       var eventTypeName = messageType.Name;
       CascadeLogger.LogDebug("[CASCADE] CascadeEventsFromResult: Tracked event for sync - StreamId={StreamId}, EventType={EventType}, EventId={EventId}",
         streamId, eventTypeName, eventId);
+    }
+#pragma warning restore CA1848
+    return eventId;
+  }
+
+  /// <summary>
+  /// Mints the identity of an emitted event. When the emission is driven by an inbound message (the
+  /// source envelope carries a message id), the id is derived from the handling (source message,
+  /// producing service, handler, emitted type, ordinal within the handling), so a retry of that row
+  /// re-derives the same ids and the store's primary keys turn the second copy into a counted no-op
+  /// instead of a republish. A root emission with no source keeps a fresh time-ordered id.
+  /// </summary>
+  /// <docs>fundamentals/dispatcher/message-cascade#emission-identity</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherEmissionIdentityTests.cs</tests>
+  private Guid _mintEmissionId(IMessageEnvelope? sourceEnvelope, Type emittedType) {
+    if (sourceEnvelope is null) {
+      return ValueObjects.TrackedGuid.NewMedo();
+    }
+    // A nested local cascade hands receptors a wrapper that reports the inbound message's id and handler.
+    // Their emissions anchor on the cascaded message that caused them (carried by the wrapper) so they
+    // cannot collide with the top-level handler's emissions of the same type.
+    var anchor = sourceEnvelope is CascadeEnvelopeWrapper { EmissionAnchor: { } nestedAnchor }
+      ? nestedAnchor
+      : sourceEnvelope.MessageId.Value;
+    if (anchor == Guid.Empty) {
+      return ValueObjects.TrackedGuid.NewMedo();
+    }
+    var ordinal = EmissionSequence.Next(sourceEnvelope);
+    var eventId = EmissionIdentity.Derive(
+      anchor,
+      _instanceProvider.ServiceName,
+      sourceEnvelope.DispatchContext?.HandlerName,
+      TypeNameFormatter.Format(emittedType),
+      ordinal);
+#pragma warning disable CA1848 // Diagnostic logging - performance not critical
+    if (CascadeLogger.IsEnabled(LogLevel.Debug)) {
+      CascadeLogger.LogDebug("[CASCADE] Emission id derived from source {SourceMessageId} ordinal {Ordinal}: {EventId}",
+        anchor, ordinal, eventId);
     }
 #pragma warning restore CA1848
     return eventId;
@@ -3453,7 +3491,7 @@ public abstract partial class Dispatcher(
     // Track event for perspective sync - enables cross-scope sync via singleton tracker
     // CRITICAL: This is the primary path for receptor event cascading via DispatcherEventCascader
     if (message is IEvent) {
-      eventId = ValueObjects.TrackedGuid.NewMedo();
+      eventId = _mintEmissionId(sourceEnvelope, messageType);
       var streamId = _resolveStreamId(message, messageType, sourceEnvelope);
       _trackEventForSync(messageType, eventId.Value, streamId);
     }
@@ -3472,8 +3510,12 @@ public abstract partial class Dispatcher(
       // locally-dispatched detached-stage receptor still sees a hop carrying identity (co+ca+scope); only a
       // genuine root emit (no source hop AND no ambient) falls back to the identity-less default. The wrapper
       // forces IsDefaultDispatch=true regardless of what it wraps, preserving default-stage-only fan-out.
+      // The wrapper also carries the cascaded message's own id as the anchor for whatever the nested
+      // receptors emit: they see the inbound message's id and handler through the wrapper, and without an
+      // anchor their emissions would derive the same ids as this handler's and be deduplicated away. A
+      // cascaded command has no event id, so it takes the next ordinal of this handling as its anchor.
       var cascadeEnvelope = (sourceEnvelope ?? _captureAmbientSourceEnvelope()) is { } cascadeSource
-        ? (IMessageEnvelope)new CascadeEnvelopeWrapper(cascadeSource)
+        ? (IMessageEnvelope)new CascadeEnvelopeWrapper(cascadeSource) { EmissionAnchor = eventId ?? _mintEmissionId(sourceEnvelope, messageType) }
         : _cascadeDefaultEnvelope;
       if (publisher != null) {
         await publisher(message, cascadeEnvelope, cancellationToken);

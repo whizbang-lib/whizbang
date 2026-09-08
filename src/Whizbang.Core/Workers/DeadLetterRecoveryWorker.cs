@@ -42,7 +42,8 @@ public partial class DeadLetterRecoveryWorker(
   DeadLetterMetrics? metrics = null,
   Whizbang.Core.Notifications.IWorkNotificationListener? notificationListener = null,
   HousekeepingCoordinator? housekeeping = null,
-  Whizbang.Core.Observability.HousekeepingMetrics? metricsRollup = null
+  Whizbang.Core.Observability.HousekeepingMetrics? metricsRollup = null,
+  TimeProvider? timeProvider = null
 ) : BackgroundService {
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ISchemaReadyGate _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
@@ -61,7 +62,12 @@ public partial class DeadLetterRecoveryWorker(
   private readonly Whizbang.Core.Observability.HousekeepingMetrics? _metricsRollup = metricsRollup;
   private readonly DeadLetterMetrics? _metrics = metrics;
   private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _notificationListener = notificationListener;
-  private readonly SemaphoreSlim _wake = new(0, 1);
+  // The scan backstop delay runs on this provider so tests can drive idle cycles without waiting.
+  private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+  // A coalescing single-waiter signal, not a SemaphoreSlim(0, 1): every backstop timeout used to
+  // leave the losing WaitAsync queued forever, and Release() then woke the oldest stale waiter
+  // instead of the live one, so a DeadLetterReady signal could be swallowed (#728).
+  private readonly Whizbang.Core.Async.WakeSignal _wake = new();
   // #DLQ-adaptive: AIMD scan-batch controller (reuses the claim path's AdaptiveStreamBatch).
   // Lazily built on first scan so it reads the bound options. Null when adaptivity is off.
   private AdaptiveStreamBatch? _adaptiveBatch;
@@ -73,8 +79,11 @@ public partial class DeadLetterRecoveryWorker(
     if (category != Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady) {
       return;
     }
-    try { _wake.Release(); } catch (SemaphoreFullException) { /* coalesce */ }
+    _wake.Set();
   }
+
+  /// <summary>Number of parked wake waiters the scan loop currently holds: 0 or 1, never more.</summary>
+  internal int PendingWakeWaiters => _wake.PendingWaiters;
 
   /// <inheritdoc />
   public override Task StopAsync(CancellationToken cancellationToken) {
@@ -222,7 +231,9 @@ public partial class DeadLetterRecoveryWorker(
         // listener fires, the next scan runs within ms; otherwise the ScanIntervalMinutes
         // backstop poll still kicks in. When no listener is wired the wake task never
         // completes so behaviour collapses to the legacy polling-only loop.
-        var pollDelay = Task.Delay(TimeSpan.FromMinutes(_options.ScanIntervalMinutes), stoppingToken);
+        var pollDelay = Task.Delay(TimeSpan.FromMinutes(_options.ScanIntervalMinutes), _timeProvider, stoppingToken);
+        // WaitAsync hands back the same pending task while a wait is outstanding, so a backstop
+        // timeout leaves no extra waiter behind and the next signal wakes this one task (#728).
         var wakeTask = _notificationListener is not null
           ? _wake.WaitAsync(stoppingToken)
           : new TaskCompletionSource<bool>().Task;

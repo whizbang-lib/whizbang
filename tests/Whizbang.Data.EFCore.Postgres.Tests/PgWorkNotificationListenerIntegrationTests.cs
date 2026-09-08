@@ -295,6 +295,11 @@ public class PgWorkNotificationListenerIntegrationTests : EFCoreTestBase {
       fire.Parameters.AddWithValue("cursors", cursorsJson);
       _ = await fire.ExecuteScalarAsync();
     }
+    // 146 (#720): the completion queued its doorbell; the driver rings after the commit, modeled here.
+    await using (var ring = conn.CreateCommand()) {
+      ring.CommandText = "SELECT ring_doorbells()";
+      _ = await ring.ExecuteScalarAsync();
+    }
 
     var category = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
     await Assert.That(category).IsEqualTo(WorkSignalCategory.Perspective);

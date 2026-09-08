@@ -90,6 +90,14 @@ public sealed record OutstandingWork {
 }
 
 /// <summary>
+/// Result of <see cref="IWorkCoordinator.ReleaseUnstartedLeasesAsync"/>: rows released per kind.
+/// </summary>
+/// <param name="InboxReleased">Inbox rows returned to unassigned.</param>
+/// <param name="PerspectiveReleased">Perspective rows returned to unassigned.</param>
+/// <docs>fundamentals/work-coordinator/claim-loop</docs>
+public sealed record UnstartedLeaseRelease(int InboxReleased, int PerspectiveReleased);
+
+/// <summary>
 /// Coordinates work processing across multiple service instances using virtual partition assignment with consistent hashing.
 /// Provides atomic operations for heartbeat updates, message completion tracking,
 /// event store integration, and orphaned work recovery.
@@ -343,6 +351,39 @@ public interface IWorkCoordinator {
     CancellationToken cancellationToken = default)
     => throw new NotImplementedException(
       $"{GetType().Name} does not implement ReleaseUnprocessedInboxAsync.");
+
+  /// <summary>
+  /// Releases the rows this instance has leased but NOT started in the given streams, and ends the
+  /// instance's ownership of those streams, so a sibling may acquire them.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the stuck instance's own act, never a sibling's: work is never taken from a heartbeating
+  /// instance by anyone else. The claim loop calls it when it has re-offered the same work set for a
+  /// sustained streak while its dispatch consumers sit idle, naming only streams whose drain has not
+  /// begun. Rows are returned to unassigned with the optimistic attempt refunded (they never reached a
+  /// receptor), and the instance's stream ownership is ended so the unowned path opens to siblings.
+  /// </para>
+  /// <para>
+  /// Idempotent and scoped to the caller's own leases: rows held by anyone else are untouched. Stores
+  /// that do not implement it throw <see cref="NotImplementedException"/>; the caller treats that as
+  /// "leases lapse on their own", which is the previous behavior.
+  /// </para>
+  /// </remarks>
+  /// <param name="instanceId">The instance releasing its own leases.</param>
+  /// <param name="inboxStreamIds">Inbox streams whose leased, unstarted rows are released.</param>
+  /// <param name="perspectiveStreamIds">Perspective streams whose leased, unstarted rows are released.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>How many rows of each kind were released.</returns>
+  /// <docs>fundamentals/work-coordinator/claim-loop</docs>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BoundedAcquisitionRewriteSqlTests.cs</tests>
+  Task<UnstartedLeaseRelease> ReleaseUnstartedLeasesAsync(
+    Guid instanceId,
+    IReadOnlyList<Guid> inboxStreamIds,
+    IReadOnlyList<Guid> perspectiveStreamIds,
+    CancellationToken cancellationToken = default)
+    => throw new NotImplementedException(
+      $"{GetType().Name} does not implement ReleaseUnstartedLeasesAsync.");
 
   /// <summary>
   /// Reports failures for the supplied category. Increments retry counters and sets
@@ -3030,6 +3071,14 @@ public record InboxWork : IHasMessageIdAndStatus {
   /// Used for retry logic, poison message detection, and MaxInboxAttempts purge.
   /// </summary>
   public int Attempts { get; init; }
+
+  /// <summary>
+  /// The handler this inbox row is addressed to (the row's <c>handler_name</c>), when the store
+  /// supplied it. Rides on the typed envelope's dispatch context so an emission made while handling
+  /// the row derives an identity that names the handler (<see cref="EmissionIdentity"/>); null when
+  /// the row came from a store that does not carry it.
+  /// </summary>
+  public string? HandlerName { get; init; }
 
   /// <summary>
   /// Current processing status flags.

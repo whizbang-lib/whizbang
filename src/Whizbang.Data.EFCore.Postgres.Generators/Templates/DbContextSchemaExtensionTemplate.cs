@@ -101,6 +101,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         // Set when the fast path found stale duplicate overloads: the in-lock hash RE-CHECK must
         // not early-out on "hashes match", because hashes cannot see the duplicates.
         var duplicateSweepPending = false;
+        // Set when the fast path found a framework function whose deployed body is not its last-word
+        // migration's body (or is missing): hashes describe the files, not the database, so the in-lock
+        // RE-CHECK must not early-out on "hashes match" either.
+        var staleDefinitionSweepPending = false;
 
         try {
           var existingHashes = await _bulkGetHashesAsync(connection, cancellationToken);
@@ -118,10 +122,23 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
                 "__SCHEMA__", string.Join(", ", fastPathDuplicates));
               infraChanged = true;
             } else {
-              if (logger is not null) {
-                Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+              // Hashes also cannot see a function reverted to an earlier definition by a replay that
+              // predates the redefinition closure: every file is unchanged, the database is not. One
+              // catalog query compares deployed bodies with their last-word migrations; the slow path
+              // logs and re-runs (this probe stays silent so each stale file is logged once).
+              var fastPathStale = await _getStaleFunctionDefinitionFilesAsync(connection, GetMigrationScripts(), null, cancellationToken);
+              if (fastPathStale.Count > 0) {
+                staleDefinitionSweepPending = true;
+                logger?.LogInformation(
+                  "Schema '{Schema}' is hash-clean but {Count} migration(s) hold a later definition than the database does — taking the slow path to re-apply them.",
+                  "__SCHEMA__", fastPathStale.Count);
+                infraChanged = true;
+              } else {
+                if (logger is not null) {
+                  Whizbang.Data.EFCore.Postgres.SchemaInitializationLog.SchemaUpToDate(logger, "__SCHEMA__");
+                }
+                break; // Exit retry loop — no changes, no lock needed
               }
-              break; // Exit retry loop — no changes, no lock needed
             }
           }
 
@@ -215,9 +232,10 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
               await spCmd.ExecuteNonQueryAsync(cancellationToken);
             }
             (infraChanged, perspChanged, associationsChanged) = _compareHashes(existingHashes);
-            if (duplicateSweepPending) {
+            if (duplicateSweepPending || staleDefinitionSweepPending) {
               // Another instance completing initialization does not clear stale duplicate
-              // overloads — only the sweep does, and it runs through ExecuteMigrationsAsync.
+              // overloads or a stale function definition — only the sweeps do, and they run
+              // through ExecuteMigrationsAsync.
               infraChanged = true;
             }
 
@@ -475,6 +493,67 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     }
     duplicates.IntersectWith(frameworkNames);
     return duplicates;
+  }
+
+  /// <summary>
+  /// Returns the migration files whose last-word function definitions are not what the database holds:
+  /// a deployed body that differs from the last-word body, or a framework function that is missing.
+  /// Bodies are compared whitespace-normalized (the embedded runner indents the file text). Functions
+  /// with more than one overload are left to the duplicate-overload sweep. Logs one Information line per
+  /// stale file naming the functions that made it stale.
+  /// </summary>
+  /// <summary>
+  /// Renders the embedded migration text the way <c>ExecuteSqlRawAsync</c> renders it: the generator
+  /// doubles every brace so the text survives format-string handling, and the server receives single
+  /// braces. Comparisons against deployed bodies must see the single-brace form.
+  /// </summary>
+  private static string _renderFormatBraces(string sql) => sql.Replace("{{", "{").Replace("}}", "}");
+
+  private static async Task<System.Collections.Generic.IReadOnlyList<string>> _getStaleFunctionDefinitionFilesAsync(
+      Npgsql.NpgsqlConnection connection,
+      (string Name, string Sql)[] migrations,
+      ILogger? logger,
+      CancellationToken ct) {
+    // Compare what the database HOLDS with what the migration EXECUTES. The embedded text carries
+    // doubled braces because ExecuteSqlRawAsync treats it as a format string and un-doubles them on
+    // the way to the server; a comparison on the embedded text would report every function whose
+    // body contains a brace as stale, on every boot.
+    var lastWords = Whizbang.Data.Postgres.MigrationFunctionBodies.LastWord(
+      migrations.Select(m => (m.Name, _renderFormatBraces(_transformMigrationSql(m.Sql, "__SCHEMA__")))));
+    if (lastWords.Count == 0) {
+      return System.Array.Empty<string>();
+    }
+
+    var deployed = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IReadOnlyList<string>>(StringComparer.Ordinal);
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText = @"
+        SELECT p.proname, p.prosrc FROM pg_proc p
+        JOIN pg_namespace n ON p.pronamespace = n.oid
+        WHERE n.nspname = @schema AND p.proname = ANY(@names)";
+      var schemaName = "__SCHEMA__";
+      cmd.Parameters.AddWithValue("schema", string.IsNullOrEmpty(schemaName) ? "public" : schemaName);
+      cmd.Parameters.AddWithValue("names", lastWords.Keys.ToArray());
+      cmd.CommandTimeout = 30;
+      await using var reader = await cmd.ExecuteReaderAsync(ct);
+      while (await reader.ReadAsync(ct)) {
+        var proname = reader.GetString(0);
+        var prosrc = reader.IsDBNull(1) ? "" : reader.GetString(1);
+        if (!deployed.TryGetValue(proname, out var bodies)) {
+          bodies = new System.Collections.Generic.List<string>();
+          deployed[proname] = bodies;
+        }
+        ((System.Collections.Generic.List<string>)bodies).Add(prosrc);
+      }
+    }
+
+    var staleFunctionsByFile = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>(StringComparer.Ordinal);
+    var files = Whizbang.Data.Postgres.MigrationFunctionBodies.FilesToRerun(lastWords, deployed, staleFunctionsByFile);
+    foreach (var file in files) {
+      logger?.LogInformation(
+        "Migration {Migration}: re-running because the database's definition of {Functions} does not match this file, its last word. A replay that predates the redefinition closure left the function on an earlier definition while every hash read unchanged.",
+        file, string.Join(", ", staleFunctionsByFile[file]));
+    }
+    return files;
   }
 
   /// <summary>
@@ -883,6 +962,20 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
               "Migration {Migration}: re-running to sweep stale duplicate overload(s) of {Objects} — left behind by a pre-fix drop_all_overloads in a multi-schema deployment.",
               name, string.Join(", ", objects.Where(duplicateOverloadNames.Contains)));
           }
+        }
+      }
+
+      // Stale-definition sweep: the hashes above describe the FILES; this compares the DATABASE. A
+      // replay that predates the redefinition closure could re-run an earlier definer after the last
+      // word, leaving a function generations old while every hash says "unchanged" forever (nothing
+      // re-runs the last word because its file never changed). For each framework function, the
+      // deployed body must match its last-word migration's body; a mismatch or a missing function
+      // puts that last-word file back into the run. Self-limiting: a database that matches its
+      // files pays one catalog query per startup and re-runs nothing.
+      var staleDefinitionFiles = await _getStaleFunctionDefinitionFilesAsync(connection, migrations, logger, cancellationToken);
+      foreach (var staleFile in staleDefinitionFiles) {
+        if (!toRun.Contains(staleFile)) {
+          toRun.Add(staleFile);
         }
       }
 

@@ -63,6 +63,14 @@ public sealed class WorkCoordinatorMetrics {
   /// </summary>
   public PassiveCounter<long> CommitHandlerFallbacks { get; }
 
+  /// <summary>
+  /// Outbox rows the store skipped because a row with the same message id already existed. With
+  /// deterministic emission identity (<see cref="Messaging.EmissionIdentity"/>) this is the count of
+  /// republishes a retry would have produced; tagged by <c>message_type</c>. Sustained non-zero means
+  /// rows are being re-dispatched after their emissions committed, which points at the completion path.
+  /// </summary>
+  public PassiveCounter<long> OutboxEmissionDeduplicated { get; }
+
   /// <summary>Total FlushAsync calls.</summary>
   public PassiveCounter<long> FlushCalls { get; }
 
@@ -119,6 +127,9 @@ public sealed class WorkCoordinatorMetrics {
     CommitHandlerFallbacks = meter.CreatePassiveCounter<long>(
       "whizbang.work_coordinator.commit_handler.fallbacks",
       description: "Handler-commit batches that fell back from the bulk tier to the per-handler savepoint loop");
+    OutboxEmissionDeduplicated = meter.CreatePassiveCounter<long>(
+      "whizbang.work_coordinator.outbox.emission_deduplicated",
+      description: "Outbox rows skipped because the same message id was already stored: republishes a retry would have produced; tagged by message_type");
     FlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.calls", description: "Total FlushAsync calls");
     EmptyFlushCalls = meter.CreatePassiveCounter<long>("whizbang.work_coordinator.flush.empty_calls", description: "Flushes with no queued work");
 

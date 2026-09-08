@@ -310,6 +310,7 @@ Quick workflows via `/command-name`:
 **Code Quality**:
 - `/format` - Run dotnet format (MANDATORY before commit)
 - `/release-check` - Full release checklist
+- `/pr-health <n>` - Watch a PR's checks, read the Sonar gate and findings, list uncovered new lines (100% on new code is the standard), fix, repeat
 
 **Context Loading**:
 - `/context-tdd` - Load TDD documentation

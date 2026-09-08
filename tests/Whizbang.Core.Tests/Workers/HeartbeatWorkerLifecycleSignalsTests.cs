@@ -129,6 +129,8 @@ public class HeartbeatWorkerLifecycleSignalsTests {
       schemaGate,
       Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),
       NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version,
       signalBus: bus);
   }
 
@@ -218,6 +220,8 @@ public class HeartbeatWorkerLifecycleSignalsTests {
       schemaGate,
       Options.Create(new HeartbeatWorkerOptions { IntervalSeconds = 300 }),   // long interval — first heartbeat only
       NullLogger<HeartbeatWorker>.Instance,
+      HeartbeatTestDependencies.LifecycleState,
+      HeartbeatTestDependencies.Version,
       signalBus: bus);
     return (worker, coord, bus);
   }

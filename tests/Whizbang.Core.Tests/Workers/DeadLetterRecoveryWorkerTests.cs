@@ -413,7 +413,8 @@ public class DeadLetterRecoveryWorkerTests {
       DeadLetterRecoveryOptions? options = null,
       string generation = "test/0.0.1",
       FakeNotificationListener? listener = null,
-      Whizbang.Core.Messaging.StreamIntegrityOptions? integrity = null) {
+      Whizbang.Core.Messaging.StreamIntegrityOptions? integrity = null,
+      TimeProvider? timeProvider = null) {
     var svc = new FakeRecoveryService();
     var services = new ServiceCollection();
     services.AddSingleton<IDeadLetterRecoveryService>(svc);
@@ -427,8 +428,171 @@ public class DeadLetterRecoveryWorkerTests {
       new FixedGenerationProvider(generation),
       NullLogger<DeadLetterRecoveryWorker>.Instance,
       metrics: null,
-      notificationListener: listener);
+      notificationListener: listener,
+      timeProvider: timeProvider);
     return (worker, svc);
+  }
+
+  /// <summary>
+  /// A hand-driven clock for the scan backstop. The worker arms one timer per idle cycle through
+  /// <c>Task.Delay(delay, timeProvider, ct)</c>; a test awaits <see cref="TimerRegistered"/> so it
+  /// advances only after the loop is parked, then <see cref="Advance"/> fires the due timer. No
+  /// wall-clock waiting anywhere.
+  /// </summary>
+  private sealed class ManualTimeProvider : TimeProvider {
+    private readonly object _gate = new();
+    private readonly List<ManualTimer> _timers = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, TaskCompletionSource> _registered = new();
+    private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private int _timerCount;
+
+    public override DateTimeOffset GetUtcNow() {
+      lock (_gate) {
+        return _now;
+      }
+    }
+
+    /// <summary>Completes once the Nth (1-based) timer has been armed.</summary>
+    public Task TimerRegistered(int ordinal) =>
+      _registered.GetOrAdd(ordinal, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task;
+
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) {
+      ManualTimer timer;
+      int ordinal;
+      lock (_gate) {
+        timer = new ManualTimer(this, callback, state, dueTime == Timeout.InfiniteTimeSpan ? null : _now + dueTime);
+        _timers.Add(timer);
+        ordinal = ++_timerCount;
+      }
+      _registered.GetOrAdd(ordinal, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
+      return timer;
+    }
+
+    /// <summary>Moves the clock forward and fires every armed timer that is now due, once each.</summary>
+    public void Advance(TimeSpan by) {
+      List<ManualTimer> due;
+      lock (_gate) {
+        _now += by;
+        due = _timers.Where(t => t.IsDue(_now)).ToList();
+        foreach (var timer in due) {
+          timer.MarkFired();
+        }
+      }
+      foreach (var timer in due) {
+        timer.Fire();
+      }
+    }
+
+    private void _remove(ManualTimer timer) {
+      lock (_gate) {
+        _timers.Remove(timer);
+      }
+    }
+
+    private void _reschedule(ManualTimer timer, TimeSpan dueTime) {
+      lock (_gate) {
+        timer.Due = dueTime == Timeout.InfiniteTimeSpan ? null : _now + dueTime;
+        timer.Fired = false;
+      }
+    }
+
+    private sealed class ManualTimer(ManualTimeProvider owner, TimerCallback callback, object? state, DateTimeOffset? due) : ITimer {
+      public DateTimeOffset? Due { get; set; } = due;
+      public bool Fired { get; set; }
+      public bool IsDue(DateTimeOffset now) => Due is { } d && !Fired && d <= now;
+      public void MarkFired() => Fired = true;
+      public void Fire() => callback(state);
+      public bool Change(TimeSpan dueTime, TimeSpan period) {
+        owner._reschedule(this, dueTime);
+        return true;
+      }
+      public void Dispose() => owner._remove(this);
+      public ValueTask DisposeAsync() {
+        Dispose();
+        return ValueTask.CompletedTask;
+      }
+    }
+  }
+
+  /// <summary>
+  /// #728: each backstop timeout used to abandon the loop's <c>WaitAsync</c> on a
+  /// <c>SemaphoreSlim</c>, queuing one more stale waiter; <c>Release()</c> then woke the oldest of
+  /// them, which nothing awaited, and the live iteration slept on. Two expired backstops, then ONE
+  /// DeadLetterReady signal: the next scan must run.
+  /// </summary>
+  [Test]
+  public async Task NotificationListener_SignalAfterBackstopTimeouts_WakesOnTheFirstSignalAsync() {
+    var listener = new FakeNotificationListener();
+    var clock = new ManualTimeProvider();
+    var (worker, svc) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener,
+      timeProvider: clock);
+    var entry = _entry(MessageFailureReason.Throttled, recoveryAttempts: 0);
+    svc.FetchBatches.Enqueue([]);       // scan 1: startup
+    svc.FetchBatches.Enqueue([]);       // scan 2: first backstop
+    svc.FetchBatches.Enqueue([]);       // scan 3: second backstop
+    svc.FetchBatches.Enqueue([entry]);  // scan 4: the one the signal must produce
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Two backstop cycles: wait for the loop to arm its delay, then expire it.
+    for (var cycle = 1; cycle <= 2; cycle++) {
+      await clock.TimerRegistered(cycle).WaitAsync(TimeSpan.FromSeconds(5));
+      clock.Advance(TimeSpan.FromMinutes(60));
+      await svc.FetchSignal(cycle + 1).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+    // The loop is parked again on its third delay and its (single) wake waiter.
+    await clock.TimerRegistered(3).WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(worker.PendingWakeWaiters).IsLessThanOrEqualTo(1)
+      .Because("expired backstops must not stack wake waiters; one parked waiter is the ceiling");
+
+    // Act: exactly one signal.
+    listener.Raise(Whizbang.Core.Notifications.WorkSignalCategory.DeadLetterReady);
+
+    // Assert: the fourth scan runs and recovers the entry. With the semaphore idiom the release
+    // landed on a stale waiter from cycle 1 and this never completed.
+    await svc.RecoverSignal.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(svc.RecoverCalls).Contains(entry.DeadLetterId)
+      .Because("the one signal must reach the iteration the loop is actually awaiting");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// #728: the number of parked wake waiters stays at one no matter how many backstop cycles
+  /// have expired, and cancellation clears it.
+  /// </summary>
+  [Test]
+  public async Task NotificationListener_ManyBackstopTimeouts_HoldAtMostOneWakeWaiterAsync() {
+    var listener = new FakeNotificationListener();
+    var clock = new ManualTimeProvider();
+    var (worker, svc) = _newWorker(
+      new DeadLetterRecoveryOptions { ScanIntervalMinutes = 60, ScanBatchSize = 50 },
+      listener: listener,
+      timeProvider: clock);
+
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await svc.FetchSignal(1).WaitAsync(TimeSpan.FromSeconds(5));
+
+    for (var cycle = 1; cycle <= 5; cycle++) {
+      await clock.TimerRegistered(cycle).WaitAsync(TimeSpan.FromSeconds(5));
+      clock.Advance(TimeSpan.FromMinutes(60));
+      await svc.FetchSignal(cycle + 1).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+    await clock.TimerRegistered(6).WaitAsync(TimeSpan.FromSeconds(5));
+
+    await Assert.That(worker.PendingWakeWaiters).IsEqualTo(1)
+      .Because("five expired backstops must leave exactly the one live waiter, never five");
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
+    await Assert.That(worker.PendingWakeWaiters).IsEqualTo(0)
+      .Because("cancellation must clear the parked waiter");
   }
 
   /// <summary>

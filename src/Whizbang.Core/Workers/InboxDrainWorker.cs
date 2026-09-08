@@ -563,6 +563,7 @@ public sealed partial class InboxDrainWorker : BackgroundService {
       StreamId = row.StreamId,
       PartitionNumber = row.PartitionNumber,
       Attempts = row.Attempts,
+      HandlerName = row.HandlerName,
       Status = (MessageProcessingStatus)row.Status,
       Flags = WorkBatchOptions.None,
       Error = row.Error,
