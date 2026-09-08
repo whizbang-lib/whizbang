@@ -60,7 +60,7 @@ public class PerspectiveWorkerEventTypeProviderTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork {
       StreamId = streamId,
       PerspectiveName = "Test.FakePerspective",
@@ -74,7 +74,13 @@ public class PerspectiveWorkerEventTypeProviderTests {
     // half-written state the way a poll on the counter could.
     await eventStore.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
+    // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it was no shutdown barrier at
+    // all and left the worker running past the end of the test. SuppressThrowing because a body
+    // leaving through a cancellation catch settles RanToCompletion or Canceled depending on
+    // thread-pool timing — either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — If lazy-resolve works, the worker should have resolved IEventTypeProvider from scope
     // and used it to load events from the event store for trace context extraction.
@@ -123,7 +129,7 @@ public class PerspectiveWorkerEventTypeProviderTests {
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     await harness.EnqueueWorkAsync(new PerspectiveWork {
       StreamId = streamId,
       PerspectiveName = "Test.FakePerspective",
@@ -138,7 +144,8 @@ public class PerspectiveWorkerEventTypeProviderTests {
     // that no amount of extra deadline would have fixed.
     await eventTypeProvider.Called.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert — The resolved provider should have been called and returned non-empty types
     await Assert.That(eventTypeProvider.GetEventTypesCallCount).IsGreaterThanOrEqualTo(1)

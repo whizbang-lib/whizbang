@@ -74,13 +74,13 @@ public class PerspectiveWorkerRewindTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(400);
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _waitForWorkerStoppedAsync(worker);
 
     // Assert - RewindAndRunAsync was called
     await Assert.That(runner.RewindAndRunCallCount).IsGreaterThanOrEqualTo(1);
@@ -128,13 +128,13 @@ public class PerspectiveWorkerRewindTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(400);
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _waitForWorkerStoppedAsync(worker);
 
     // Assert - RunAsync was called, RewindAndRunAsync was NOT called
     await Assert.That(runner.RunCallCount).IsGreaterThanOrEqualTo(1);
@@ -196,13 +196,13 @@ public class PerspectiveWorkerRewindTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(400);
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _waitForWorkerStoppedAsync(worker);
 
     // Assert - Lock was acquired and released
     await Assert.That(locker.AcquireCallCount).IsGreaterThanOrEqualTo(1);
@@ -265,13 +265,13 @@ public class PerspectiveWorkerRewindTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(400);
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _waitForWorkerStoppedAsync(worker);
 
     // Assert - RewindAndRunAsync was NOT called (lock failed, processing deferred)
     await Assert.That(runner.RewindAndRunCallCount).IsEqualTo(0);
@@ -338,13 +338,13 @@ public class PerspectiveWorkerRewindTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(400);
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _waitForWorkerStoppedAsync(worker);
 
     // Assert - BootstrapSnapshotAsync was called
     await Assert.That(runner.BootstrapCallCount).IsGreaterThanOrEqualTo(1);
@@ -404,13 +404,13 @@ public class PerspectiveWorkerRewindTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(400);
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _waitForWorkerStoppedAsync(worker);
 
     // Assert - BootstrapSnapshotAsync was NOT called (snapshots already exist)
     await Assert.That(runner.BootstrapCallCount).IsEqualTo(0);
@@ -459,13 +459,13 @@ public class PerspectiveWorkerRewindTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(400);
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _waitForWorkerStoppedAsync(worker);
 
     // Assert - No bootstrap for brand new streams (no lastProcessedEventId)
     await Assert.That(runner.BootstrapCallCount).IsEqualTo(0);
@@ -526,13 +526,13 @@ public class PerspectiveWorkerRewindTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(600);
     await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await _waitForWorkerStoppedAsync(worker);
 
     // Assert - Event work IDs flow through the completion channel (channel architecture
     // replaces the legacy CapturedRequests.PerspectiveEventCompletions assertion).
@@ -596,17 +596,20 @@ public class PerspectiveWorkerRewindTests {
 
     // Act — worker should NOT crash despite the rewind throwing
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var __w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(__w, cts.Token);
     }
     await Task.Delay(400);
     await cts.CancelAsync();
+    await _waitForWorkerStoppedAsync(worker);
 
-    // Assert — worker should stop cleanly (no unhandled exception)
-    Exception? caught = null;
-    try { await workerTask; } catch (Exception ex) when (ex is not OperationCanceledException) { caught = ex; }
-    await Assert.That(caught).IsNull()
+    // Assert — worker should stop cleanly (no unhandled exception). The fault has to be read off
+    // the BODY: this used to await what StartAsync returned, which proves nothing because that is
+    // Task.CompletedTask. An async body that exits through OperationCanceledException settles
+    // Canceled (Exception stays null), so a non-null Exception here is exactly the crash the test
+    // is looking for.
+    await Assert.That(worker.ExecuteTask!.Exception).IsNull()
       .Because("A rewind failure should NOT crash the worker");
     await Assert.That(runner.RewindAndRunCallCount).IsGreaterThanOrEqualTo(1)
       .Because("RewindAndRunAsync should have been called");
@@ -615,6 +618,24 @@ public class PerspectiveWorkerRewindTests {
   #endregion
 
   #region Test Doubles
+
+  /// <summary>
+  /// Waits for the worker's <c>ExecuteAsync</c> BODY to finish after a stop request.
+  /// <c>BackgroundService.StartAsync</c> hands back
+  /// <see cref="Task.CompletedTask"/> as soon as <c>ExecuteAsync</c> is queued to the thread pool,
+  /// so awaiting the task it returned was no shutdown barrier at all — every assertion after it
+  /// could read state the worker's <c>finally</c> blocks had not settled yet.
+  /// <see cref="ConfigureAwaitOptions.SuppressThrowing"/> because a body leaving through a
+  /// cancellation catch settles RanToCompletion or Canceled depending on thread-pool timing, and
+  /// either one is a clean stop; callers that care about a fault read
+  /// <c>BackgroundService.ExecuteTask</c> afterwards.
+  /// </summary>
+  private static async Task _waitForWorkerStoppedAsync(PerspectiveWorker worker) {
+    if (worker.ExecuteTask is { } body) {
+      await body.WaitAsync(TimeSpan.FromSeconds(30))
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    }
+  }
 
   private sealed class ThrowingPerspectiveRunner(Exception exceptionToThrow) : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object);

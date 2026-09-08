@@ -46,7 +46,7 @@ public sealed class PerspectiveWorkerParallelTests {
         PerspectiveName = name
       }, cts.Token);
     }
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
 
     // Wait for all 5 runners to enter RunAsync simultaneously.
     // If sequential, only 1 enters at a time → CountdownEvent never reaches 0 → timeout.
@@ -56,8 +56,7 @@ public sealed class PerspectiveWorkerParallelTests {
     gate.Release(perspectiveCount);
 
     // Shut down
-    await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert
     await Assert.That(allEnteredInTime).IsTrue()
@@ -102,7 +101,7 @@ public sealed class PerspectiveWorkerParallelTests {
         PerspectiveName = name
       }, cts.Token);
     }
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
 
     // 1. The throttle admits EXACTLY maxConcurrency before any runner completes — and no more, because
     //    every admitted runner is blocked (holding its slot), so no slot is free for a 3rd to enter.
@@ -127,8 +126,7 @@ public sealed class PerspectiveWorkerParallelTests {
     await Assert.That(runner.TotalRunCount).IsEqualTo(perspectiveCount)
       .Because("All 5 perspectives eventually complete.");
 
-    await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
   }
 
   [Test]
@@ -175,13 +173,12 @@ public sealed class PerspectiveWorkerParallelTests {
     await harness.EnqueueWorkAsync(new PerspectiveWork { WorkId = Guid.CreateVersion7(), StreamId = streamId, PerspectiveName = "Test.ThrowingPerspective" }, cts.Token);
 
     // Worker will propagate the exception from the throwing perspective
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
 
     // Wait on the completion signal with the test-lifetime bound.
     var normalEntered = allNormalEntered.Wait(TimeSpan.FromSeconds(45));
 
-    await cts.CancelAsync();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await _stopAndAwaitWorkerBodyAsync(worker, cts);
 
     // Assert — normal perspectives should still have run
     await Assert.That(normalEntered).IsTrue()
@@ -191,6 +188,26 @@ public sealed class PerspectiveWorkerParallelTests {
   }
 
   #region Helper Methods
+
+  /// <summary>
+  /// Cancels <paramref name="cts"/> and waits for the worker's ExecuteAsync BODY to finish.
+  /// </summary>
+  /// <remarks>
+  /// The task <see cref="Microsoft.Extensions.Hosting.BackgroundService.StartAsync"/> hands back is
+  /// NOT the worker body: .NET returns Task.CompletedTask as soon as ExecuteAsync is queued to the
+  /// thread pool. Awaiting it completed instantly, so each test's assertions — and the disposal of
+  /// the gates its runners block inside — raced a worker that was still running. ExecuteTask IS the
+  /// body. SuppressThrowing because a body leaving through a cancellation catch settles
+  /// RanToCompletion or Canceled depending on thread-pool timing (and the throwing-runner test can
+  /// fault it) — what matters here is that the body has stopped, not how it stopped.
+  /// </remarks>
+  private static async Task _stopAndAwaitWorkerBodyAsync(PerspectiveWorker worker, CancellationTokenSource cts) {
+    await cts.CancelAsync();
+    if (worker.ExecuteTask is { } body) {
+      await body.WaitAsync(TimeSpan.FromSeconds(30))
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    }
+  }
 
   private static (PerspectiveWorker Worker, PerspectiveWorkerTestHarness Harness) _createWorker(
       ParallelTestWorkCoordinator coordinator,

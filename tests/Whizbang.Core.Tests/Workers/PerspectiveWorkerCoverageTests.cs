@@ -154,7 +154,7 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
 
     // Wait for idle event (work consumed on first call, then 2 empty polls)
@@ -165,8 +165,14 @@ public class PerspectiveWorkerCoverageTests {
       // May not fire in time; we verify below
     }
 
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
+    // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it was no barrier at all
+    // and the assertions below could read state the worker's finally blocks had not settled yet.
+    // SuppressThrowing because a body leaving through a cancellation catch settles
+    // RanToCompletion or Canceled depending on thread-pool timing, and either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
     await Assert.That(idleFired.Task.IsCompleted).IsTrue()
@@ -181,12 +187,13 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(1000); // Let several empty polls complete (generous for CI contention)
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
     await Assert.That(worker.ConsecutiveEmptyPolls).IsGreaterThan(0)
@@ -223,12 +230,13 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker processed work (no crash from metadata extraction)
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -265,12 +273,13 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300);
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker processed without crash (outbox metadata path exercised)
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -304,12 +313,13 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300);
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker processed without crash (inbox metadata path exercised)
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -328,12 +338,13 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await Task.Delay(300); // Let a cycle complete
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker processed without error (no metadata = 0 acknowledged)
     await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -381,14 +392,15 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await Task.Delay(300);
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker processed batch without crash (logged warning about missing registry/runner);
     // empty-poll counter advancing proves the consumer loop ran.
@@ -435,14 +447,15 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await Task.Delay(300);
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker continued processing without crash;
     // empty-poll counter advancing proves the consumer loop ran.
@@ -1003,20 +1016,18 @@ public class PerspectiveWorkerCoverageTests {
 
       // Act
       using var cts = new CancellationTokenSource();
-      var workerTask = worker.StartAsync(cts.Token);
+      await worker.StartAsync(cts.Token);
       foreach (var w in coordinator.PerspectiveWorkToReturn) {
         await harness.EnqueueWorkAsync(w, cts.Token);
       }
       await coordinator.WaitForFailureReportedAsync(timeout: TimeSpan.FromSeconds(10));
-      cts.Cancel();
+      await cts.CancelAsync();
 
-      try {
-        await workerTask;
-      } catch (OperationCanceledException) {
-        // Expected
-      } catch (InvalidOperationException) {
-        // Expected - the runner throws
-      }
+      // Await the worker BODY, not StartAsync's task. SuppressThrowing covers every way this
+      // body can settle: cancellation, or the runner's InvalidOperationException, which the
+      // worker's failure path has already reported by the time we get here.
+      await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+        .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
       // Assert - Failure should have been reported via the strategy
       await Assert.That(coordinator.ReportFailureCallCount).IsGreaterThanOrEqualTo(1)
@@ -1076,14 +1087,15 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker processed work with tracing enabled (no crash)
     await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1);
@@ -1146,14 +1158,15 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert
     await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1);
@@ -1206,14 +1219,15 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var w in coordinator.PerspectiveWorkToReturn) {
       await harness.EnqueueWorkAsync(w, cts.Token);
     }
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Event store should NOT be called because event types are empty
     await Assert.That(eventStore.GetEventsBetweenPolymorphicCallCount).IsEqualTo(0)
@@ -1237,12 +1251,13 @@ public class PerspectiveWorkerCoverageTests {
 
     // Act
     using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
     await coordinator.WaitForCompletionReportedAsync(timeout: TimeSpan.FromSeconds(5));
-    cts.Cancel();
+    await cts.CancelAsync();
 
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 
     // Assert - Worker completed without event loading (no event type provider)
     await Assert.That(coordinator.ReportCompletionCallCount).IsGreaterThanOrEqualTo(1);
@@ -1293,52 +1308,20 @@ public class PerspectiveWorkerCoverageTests {
 
   #region Graceful Shutdown Tests
 
-  [Test]
-  public async Task Worker_WhenServiceProviderDisposed_ExitsGracefullyAsync() {
-    // Arrange - create a worker whose service provider we can dispose mid-flight
-    var coordinator = new FakeWorkCoordinator();
-    var instanceProvider = new FakeServiceInstanceProvider();
-    var registry = new FakePerspectiveRunnerRegistry();
-    var services = new ServiceCollection();
-    services.AddSingleton<IWorkCoordinator>(coordinator);
-    services.AddSingleton<IPerspectiveRunnerRegistry>(registry);
-    services.AddSingleton<IServiceInstanceProvider>(instanceProvider);
-    services.AddLogging();
-
-    var serviceProvider = services.BuildServiceProvider();
-
-    var worker = new PerspectiveWorker(
-      instanceProvider: instanceProvider,
-      scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
-      options: Options.Create(new PerspectiveWorkerOptions {
-        PollingIntervalMilliseconds = 50
-      }),
-      tracingOptions: null,
-      completionStrategy: new InstantCompletionStrategy(),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
-
-    // Act - start the worker, then dispose the service provider to simulate host shutdown
-    using var cts = new CancellationTokenSource();
-    var workerTask = worker.StartAsync(cts.Token);
-
-    // Let the worker process at least one cycle
-    await Task.Delay(100);
-
-    // Dispose the service provider (simulates host teardown)
-    await serviceProvider.DisposeAsync();
-
-    // Give the worker time to hit the disposed provider
-    await Task.Delay(200);
-
-    // Cancel to ensure cleanup
-    await cts.CancelAsync();
-
-    // Assert - the worker task should complete without throwing
-    // (ObjectDisposedException should be caught internally, not propagated)
-    var completedWithinTimeout = workerTask.Wait(TimeSpan.FromSeconds(5));
-    await Assert.That(completedWithinTimeout).IsTrue()
-      .Because("Worker should exit gracefully when service provider is disposed during shutdown");
-  }
+  // Worker_WhenServiceProviderDisposed_ExitsGracefullyAsync was deleted here.
+  //
+  // It never tested what it was named for. The worker was constructed without the four channel
+  // arguments, so ExecuteAsync threw InvalidOperationException at PerspectiveWorker.cs:513 within
+  // milliseconds of starting -- long before the Task.Delay and the provider disposal it was built
+  // around. The disposed-provider path was never reached. It reported green only because its
+  // barrier was `workerTask.Wait(5s)` on what StartAsync returns, which is Task.CompletedTask, so
+  // the wait was unconditionally true; once that barrier became real the test failed 10 runs out
+  // of 10.
+  //
+  // Wiring the channels would have made it green again without making it meaningful: with no work
+  // enqueued the consumer loop never touches the provider. The guarantee it claimed is already
+  // covered deterministically by the two tests below, which drive ObjectDisposedException at a
+  // known point via CountingDisposedScopeFactory rather than racing a timer.
 
   [Test]
   public async Task Worker_WhenScopeFactoryDisposedDuringRegistryInit_ExitsGracefullyAsync() {

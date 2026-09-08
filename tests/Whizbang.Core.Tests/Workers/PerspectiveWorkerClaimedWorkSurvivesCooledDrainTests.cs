@@ -202,13 +202,21 @@ public class PerspectiveWorkerClaimedWorkSurvivesCooledDrainTests {
         }
       };
       using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-      var workerTask = Worker.StartAsync(cts.Token);
+      await Worker.StartAsync(cts.Token);
       await batchComplete.Task.WaitAsync(TimeSpan.FromSeconds(10));
       if (Worker.PendingPostLifecycle is { } pending) {
         await pending.WaitAsync(TimeSpan.FromSeconds(5));
       }
-      cts.Cancel();
-      try { await workerTask; } catch (OperationCanceledException) { }
+      await cts.CancelAsync();
+      // Await the worker BODY, not the task StartAsync returned: .NET hands that back as
+      // Task.CompletedTask the moment ExecuteAsync is queued to the thread pool, so this method used
+      // to return while the worker was still running and the invocation counts the tests assert on
+      // were still moving. SuppressThrowing because a body leaving through a cancellation catch
+      // settles RanToCompletion or Canceled depending on thread-pool timing — either is a clean stop.
+      if (Worker.ExecuteTask is { } body) {
+        await body.WaitAsync(TimeSpan.FromSeconds(30))
+          .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+      }
     }
   }
 

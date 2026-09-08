@@ -302,7 +302,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     };
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     // Channel-mode: pump the coordinator's drain stream IDs through the drain channel.
     foreach (var streamId in coordinator.StreamIdsToReturn) {
       await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
@@ -315,8 +315,14 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       await pending.WaitAsync(TimeSpan.FromSeconds(5));
     }
 
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { }
+    await cts.CancelAsync();
+    // Await the worker BODY, not StartAsync's task: BackgroundService.StartAsync hands back
+    // Task.CompletedTask as soon as ExecuteAsync is queued, so awaiting it was no barrier at all
+    // and a caller's assertions could read lifecycle state the worker's finally blocks had not
+    // settled yet. SuppressThrowing because a body leaving through a cancellation catch settles
+    // RanToCompletion or Canceled depending on thread-pool timing, and either is a clean stop.
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
   }
 
   // ========================================
@@ -735,7 +741,7 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
       if (Interlocked.Increment(ref batchCount) == 1) { batchComplete.TrySetResult(); }
     };
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-    var workerTask = worker.StartAsync(cts.Token);
+    await worker.StartAsync(cts.Token);
     foreach (var sid in coordinator.StreamIdsToReturn) {
       await harness.EnqueueDrainStreamAsync(sid, cts.Token);
     }
@@ -761,8 +767,9 @@ public class PerspectiveWorkerDrainModeLifecycleTests {
     await Assert.That(gatedInvoker.HasStage(LifecycleStage.PostLifecycleInline)).IsTrue()
       .Because("After releasing the gate, the stage should have been recorded");
 
-    cts.Cancel();
-    try { await workerTask; } catch (OperationCanceledException) { /* expected */ }
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
   }
 
   [Test]
