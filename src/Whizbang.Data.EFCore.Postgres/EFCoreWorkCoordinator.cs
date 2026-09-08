@@ -3767,7 +3767,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreOutboxEmissionDedupTests.cs</tests>
   private static void _logOutboxEmissionDeduplicated(ILogger? logger, Guid messageId, string messageType) {
-    if (logger?.IsEnabled(LogLevel.Debug) != true) {
+    if (logger is null) {
+      return;
+    }
+    if (!logger.IsEnabled(LogLevel.Debug)) {
       return;
     }
 #pragma warning disable CA1848 // Diagnostic logging - performance not critical
