@@ -102,10 +102,10 @@ public class MigrationFunctionBodiesTests {
 
   [Test]
   public async Task LastWord_LaterFileWins_EarlierFileKeepsItsOtherFunctionsAsync() {
-    var lastWord = MigrationFunctionBodies.LastWord(new[] {
+    var lastWord = MigrationFunctionBodies.LastWord([
       ("040_first.sql", "CREATE OR REPLACE FUNCTION rec(p JSONB) RETURNS VOID AS $$ BEGIN RETURN; END; $$ LANGUAGE plpgsql; CREATE OR REPLACE FUNCTION other() RETURNS VOID AS $$ BEGIN END; $$ LANGUAGE plpgsql;"),
       ("064_second.sql", "CREATE OR REPLACE FUNCTION rec(p JSONB) RETURNS VOID AS $$ BEGIN PERFORM 2; END; $$ LANGUAGE plpgsql;"),
-    });
+    ]);
 
     await Assert.That(lastWord["rec"].FileName).IsEqualTo("064_second.sql");
     await Assert.That(lastWord["rec"].NormalizedBody).IsEqualTo("BEGIN PERFORM 2; END;");
@@ -152,11 +152,11 @@ public class MigrationFunctionBodiesTests {
 
   [Test]
   public async Task FilesToRerun_DeployedBodyMatchesLastWord_NothingRerunsAsync() {
-    var lastWord = MigrationFunctionBodies.LastWord(new[] {
+    var lastWord = MigrationFunctionBodies.LastWord([
       ("064_second.sql", "CREATE OR REPLACE FUNCTION rec() RETURNS VOID AS $$\nBEGIN\n  PERFORM 2;\nEND;\n$$ LANGUAGE plpgsql;"),
-    });
+    ]);
     var deployed = new Dictionary<string, IReadOnlyList<string>> {
-      ["rec"] = new[] { "\n      BEGIN\n        PERFORM 2;\n      END;\n      " },
+      ["rec"] = ["\n      BEGIN\n        PERFORM 2;\n      END;\n      "],
     };
     var stale = new Dictionary<string, List<string>>();
 
@@ -169,12 +169,12 @@ public class MigrationFunctionBodiesTests {
   [Test]
   public async Task FilesToRerun_DeployedBodyIsAnEarlierDefinition_RerunsTheLastWordFileAsync() {
     // The production shape: 040's body deployed while 064 is the last word and hash-unchanged.
-    var lastWord = MigrationFunctionBodies.LastWord(new[] {
+    var lastWord = MigrationFunctionBodies.LastWord([
       ("040_first.sql", "CREATE OR REPLACE FUNCTION rec() RETURNS VOID AS $$ BEGIN RETURN; END; $$ LANGUAGE plpgsql;"),
       ("064_second.sql", "CREATE OR REPLACE FUNCTION rec() RETURNS VOID AS $$ BEGIN PERFORM 2; END; $$ LANGUAGE plpgsql;"),
-    });
+    ]);
     var deployed = new Dictionary<string, IReadOnlyList<string>> {
-      ["rec"] = new[] { " BEGIN RETURN; END; " },
+      ["rec"] = [" BEGIN RETURN; END; "],
     };
     var stale = new Dictionary<string, List<string>>();
 
@@ -186,9 +186,9 @@ public class MigrationFunctionBodiesTests {
 
   [Test]
   public async Task FilesToRerun_FunctionMissingFromTheDatabase_RerunsItsLastWordFileAsync() {
-    var lastWord = MigrationFunctionBodies.LastWord(new[] {
+    var lastWord = MigrationFunctionBodies.LastWord([
       ("050_only.sql", "CREATE OR REPLACE FUNCTION gone() RETURNS VOID AS $$ BEGIN END; $$ LANGUAGE plpgsql;"),
-    });
+    ]);
     var stale = new Dictionary<string, List<string>>();
 
     var files = MigrationFunctionBodies.FilesToRerun(lastWord, new Dictionary<string, IReadOnlyList<string>>(), stale);
@@ -199,11 +199,11 @@ public class MigrationFunctionBodiesTests {
 
   [Test]
   public async Task FilesToRerun_DuplicateOverloads_AreLeftToTheOverloadSweepAsync() {
-    var lastWord = MigrationFunctionBodies.LastWord(new[] {
+    var lastWord = MigrationFunctionBodies.LastWord([
       ("050_only.sql", "CREATE OR REPLACE FUNCTION dup() RETURNS VOID AS $$ BEGIN END; $$ LANGUAGE plpgsql;"),
-    });
+    ]);
     var deployed = new Dictionary<string, IReadOnlyList<string>> {
-      ["dup"] = new[] { " BEGIN END; ", " BEGIN RETURN; END; " },
+      ["dup"] = [" BEGIN END; ", " BEGIN RETURN; END; "],
     };
     var stale = new Dictionary<string, List<string>>();
 
@@ -214,12 +214,12 @@ public class MigrationFunctionBodiesTests {
 
   [Test]
   public async Task FilesToRerun_TwoStaleFunctionsInOneFile_ListsTheFileOnceAsync() {
-    var lastWord = MigrationFunctionBodies.LastWord(new[] {
+    var lastWord = MigrationFunctionBodies.LastWord([
       ("070_both.sql", "CREATE OR REPLACE FUNCTION x() RETURNS VOID AS $$ BEGIN PERFORM 1; END; $$ LANGUAGE plpgsql; CREATE OR REPLACE FUNCTION y() RETURNS VOID AS $$ BEGIN PERFORM 2; END; $$ LANGUAGE plpgsql;"),
-    });
+    ]);
     var deployed = new Dictionary<string, IReadOnlyList<string>> {
-      ["x"] = new[] { " BEGIN END; " },
-      ["y"] = new[] { " BEGIN END; " },
+      ["x"] = [" BEGIN END; "],
+      ["y"] = [" BEGIN END; "],
     };
     var stale = new Dictionary<string, List<string>>();
 

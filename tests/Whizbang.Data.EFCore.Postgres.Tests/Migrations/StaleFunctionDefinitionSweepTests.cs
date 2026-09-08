@@ -151,7 +151,7 @@ public class StaleFunctionDefinitionSweepTests : EFCoreTestBase {
       SELECT p.prosrc FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE p.proname = @name AND n.nspname = 'public'
       """;
-    cmd.Parameters.AddWithValue("name", name);
+    cmd.Parameters.AddWithValue(nameof(name), name);
     return (string)(await cmd.ExecuteScalarAsync(ct))!;
   }
 
@@ -161,7 +161,7 @@ public class StaleFunctionDefinitionSweepTests : EFCoreTestBase {
       SELECT COUNT(*) FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
       WHERE p.proname = @name AND n.nspname = 'public'
       """;
-    cmd.Parameters.AddWithValue("name", name);
+    cmd.Parameters.AddWithValue(nameof(name), name);
     return (long)(await cmd.ExecuteScalarAsync(ct))!;
   }
 

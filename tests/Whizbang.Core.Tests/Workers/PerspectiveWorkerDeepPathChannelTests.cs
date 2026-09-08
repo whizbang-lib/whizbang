@@ -592,14 +592,14 @@ public class PerspectiveWorkerDeepPathChannelTests {
         PollingIntervalMilliseconds = 50,
         NotifyHealthyPollingIntervalMilliseconds = 30_000
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      perspectiveNotificationListener: listener,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveNotificationListener: listener);
 
     // Act
     using var cts = new CancellationTokenSource();
@@ -669,14 +669,14 @@ public class PerspectiveWorkerDeepPathChannelTests {
         // One empty poll after work is enough to flip active -> idle, which is the observable wake.
         IdleThresholdPolls = 1,
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      perspectiveNotificationListener: listener,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveNotificationListener: listener);
     var idleTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     worker.OnWorkProcessingIdle += () => idleTick.TrySetResult();
 
@@ -744,14 +744,14 @@ public class PerspectiveWorkerDeepPathChannelTests {
         PollingIntervalMilliseconds = 1_000_000,
         NotifyHealthyPollingIntervalMilliseconds = 1_000_000,
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      perspectiveNotificationListener: listener,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveNotificationListener: listener);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -806,13 +806,13 @@ public class PerspectiveWorkerDeepPathChannelTests {
         // deterministically (sibling loops would otherwise keep idling forever).
         MaxConcurrentDrainConsumers = 1
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      perspectiveDrainChannel: harness.DrainChannel);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

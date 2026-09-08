@@ -109,12 +109,12 @@ public class HeartbeatWorkerRequestFieldsTests {
       schemaReadyGate: _readyGate(),
       options: Options.Create(options ?? new HeartbeatWorkerOptions()),
       logger: NullLogger<HeartbeatWorker>.Instance,
+      lifecycleState: lifecycle!,
+      libraryVersion: version!,
       pinnedPool: null,
       aliveLockSource: null,
       signalBus: null,
-      timeProvider: null,
-      lifecycleState: lifecycle!,
-      libraryVersion: version!);
+      timeProvider: null);
   }
 
   private sealed class StubLifecycle(LifecyclePhase phase) : IWhizbangLifecycleState {

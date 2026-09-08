@@ -440,7 +440,7 @@ public class DeadLetterRecoveryWorkerTests {
   /// wall-clock waiting anywhere.
   /// </summary>
   private sealed class ManualTimeProvider : TimeProvider {
-    private readonly object _gate = new();
+    private readonly Lock _gate = new();
     private readonly List<ManualTimer> _timers = [];
     private readonly System.Collections.Concurrent.ConcurrentDictionary<int, TaskCompletionSource> _registered = new();
     private DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
@@ -473,7 +473,7 @@ public class DeadLetterRecoveryWorkerTests {
       List<ManualTimer> due;
       lock (_gate) {
         _now += by;
-        due = _timers.Where(t => t.IsDue(_now)).ToList();
+        due = [.. _timers.Where(t => t.IsDue(_now))];
         foreach (var timer in due) {
           timer.MarkFired();
         }

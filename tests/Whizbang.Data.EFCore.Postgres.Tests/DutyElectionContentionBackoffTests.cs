@@ -77,10 +77,10 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
 
     await Assert.That(first.Refusal).IsEqualTo(DutyRefusal.Contended)
       .Because("the first attempt reaches the database and finds the holder");
-    await Assert.That(first.Detail!).DoesNotContain("backing off");
+    await Assert.That(first.Detail).DoesNotContain("backing off");
     await Assert.That(second.Refusal).IsEqualTo(DutyRefusal.Contended)
       .Because("the answer is the same, so the caller's retry logic is unchanged");
-    await Assert.That(second.Detail!).Contains("backing off")
+    await Assert.That(second.Detail).Contains("backing off")
       .Because("the detail says the attempt never left the process, so an operator reading a startup report knows why it was cheap");
     await Assert.That(elector.IsBackingOff("backoff-duty", out var remaining)).IsTrue();
     await Assert.That(remaining).IsEqualTo(TimeSpan.FromSeconds(2))
@@ -107,7 +107,7 @@ public class DutyElectionContentionBackoffTests : EFCoreTestBase {
 
     var real = await elector.TryAcquireAsync("backoff-duty-2", cancellationToken);   // real, still contended: window 4 s
 
-    await Assert.That(real.Detail!).DoesNotContain("backing off").Because("this attempt went to the database");
+    await Assert.That(real.Detail).DoesNotContain("backing off").Because("this attempt went to the database");
     await Assert.That(elector.IsBackingOff("backoff-duty-2", out var remaining)).IsTrue();
     await Assert.That(remaining).IsEqualTo(TimeSpan.FromSeconds(4))
       .Because("a second consecutive contention doubles the window");
