@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Core;
@@ -21,6 +22,7 @@ public class ReceiveLivenessWatchdogCoverageTests {
     // or, if the filter direction flipped instead, DisposeAsync would hang forever waiting for a
     // loop that no longer recognizes its own cancellation as a reason to return.
     var recoverInvoked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var logger = new _levelRecordingLogger();
     var time = new FakeTimeProvider();
     var interval = TimeSpan.FromMinutes(1);
     var watchdog = new ReceiveLivenessWatchdog(
@@ -37,16 +39,24 @@ public class ReceiveLivenessWatchdogCoverageTests {
         await Task.Delay(Timeout.Infinite, ct);
       },
       time,
-      NullLogger.Instance);
+      logger);
     watchdog.Track("topic-a", "sub-a");
 
     watchdog.Start();
     time.Advance(interval);
     await recoverInvoked.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-    // DisposeAsync awaits the loop task directly. Reaching this point without hanging or throwing
-    // is the assertion: the loop returned cleanly instead of being treated as a faulted sweep.
+    // DisposeAsync awaits the loop task directly, so returning from here at all already rules out
+    // the hang half of the regression (the [Timeout] would fire otherwise).
     await watchdog.DisposeAsync();
+
+    // The other half is quieter and therefore worse: if the shutdown cancellation fell through to
+    // the general catch, every ordinary stop mid-recovery would file a sweep FAILURE against a
+    // watchdog that did exactly the right thing -- an error an operator has no way to dismiss and
+    // no fault to find behind it.
+    await Assert.That(logger.Levels.Any(l => l == LogLevel.Error)).IsFalse()
+      .Because("a clean stop is not a failed sweep, and logging it as one sends an operator "
+             + "hunting a transport fault that never happened");
   }
 
   [Test]
@@ -93,5 +103,18 @@ public class ReceiveLivenessWatchdogCoverageTests {
       .Because("a sweep failure must be logged and survived, not left to kill the loop -- the next tick has to run");
 
     await watchdog.DisposeAsync();
+  }
+
+  /// <summary>Records only what this file asserts on: the level of each entry the loop emitted.</summary>
+  private sealed class _levelRecordingLogger : ILogger {
+    public List<LogLevel> Levels { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      lock (Levels) {
+        Levels.Add(logLevel);
+      }
+    }
   }
 }

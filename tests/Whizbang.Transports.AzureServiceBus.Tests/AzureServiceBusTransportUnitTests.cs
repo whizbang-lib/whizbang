@@ -562,16 +562,19 @@ public class AzureServiceBusTransportUnitTests {
   // ========================================
 
   /// <summary>
-  /// SubscribeAsync with EnableSessions=true exercises the session processor creation path.
-  /// The session processor creation itself succeeds (it's a local object), but starting
-  /// it will fail since there's no broker. This covers the session processor setup code.
+  /// SubscribeAsync with EnableSessions=true takes the session branch. The processor object
+  /// itself is unobservable here — creating it succeeds locally and StartProcessingAsync then
+  /// fails with no broker behind it — so what this pins is the branch's one durable side effect:
+  /// the admin-plane migration that gives the session processor a subscription it can actually
+  /// attach to.
   /// </summary>
   [Test]
   public async Task SubscribeAsync_WithEnableSessions_CreatesSessionProcessorAsync() {
     var adminClient = new TestableAdminClient {
       ExistingTopics = { "session-topic" }
     };
-    // Implement subscription methods on the testable admin client
+    // A subscription that already exists and does NOT require sessions — the shape left behind by
+    // any deployment that ran before EnableSessions was turned on.
     adminClient.ExistingSubscriptions.Add(("session-topic", "test-sub"));
 
     var options = new AzureServiceBusOptions {
@@ -588,12 +591,23 @@ public class AzureServiceBusTransportUnitTests {
     try {
       await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
     } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
-      // Expected - no broker, but session processor was created
+      // Expected - no broker, but the admin plane was already reconciled above
     }
+
+    // ASB will not toggle RequiresSession in place, so the only way to reach a session-capable
+    // subscription is delete-and-recreate. Skip it and the session processor attaches to a
+    // sessionless subscription: the receive side comes up looking healthy and takes delivery of
+    // nothing, indefinitely, with no error anywhere to explain the silence.
+    await Assert.That(adminClient.SessionShapeCreations.Any(
+        c => c is { Topic: "session-topic", Subscription: "test-sub", RequiresSession: true })).IsTrue()
+      .Because("a session processor on a sessionless subscription receives nothing and says nothing");
+    await Assert.That(adminClient.DeletedSubscriptions).Contains(("session-topic", "test-sub"))
+      .Because("the recreate is only reachable through the delete — RequiresSession is immutable");
   }
 
   /// <summary>
-  /// SubscribeAsync without EnableSessions uses the standard processor path.
+  /// SubscribeAsync without EnableSessions uses the standard processor path, whose observable
+  /// obligation is the mirror image: leave the existing subscription's shape alone.
   /// </summary>
   [Test]
   public async Task SubscribeAsync_WithoutEnableSessions_CreatesStandardProcessorAsync() {
@@ -618,6 +632,15 @@ public class AzureServiceBusTransportUnitTests {
     } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
       // Expected - no broker
     }
+
+    // The standard path must not touch the entity. Deleting a live subscription discards every
+    // message sitting in it and every message published while it is gone — a data-loss migration
+    // performed on a subscriber that only ever asked for a plain processor.
+    await Assert.That(adminClient.DeletedSubscriptions).IsEmpty()
+      .Because("deleting a live subscription drops its backlog; nothing about a standard processor "
+             + "justifies that");
+    await Assert.That(adminClient.SessionShapeCreations).IsEmpty()
+      .Because("an existing subscription needs no reshaping when sessions are off");
   }
 
   /// <summary>
@@ -770,8 +793,15 @@ public class AzureServiceBusTransportUnitTests {
     public Task CreateSubscriptionAsync(string topicName, string subscriptionName, bool requiresSession, int maxDeliveryCount, TimeSpan lockDuration, CancellationToken cancellationToken = default) {
       ExistingSubscriptions.Add((topicName, subscriptionName));
       LastMaxDeliveryCount = maxDeliveryCount;
+      SessionShapeCreations.Add((topicName, subscriptionName, requiresSession));
       return Task.CompletedTask;
     }
+
+    /// <summary>Every session-aware create, with the RequiresSession flag it was asked for.</summary>
+    public List<(string Topic, string Subscription, bool RequiresSession)> SessionShapeCreations { get; } = [];
+
+    /// <summary>Subscriptions deleted — the destructive half of the session migration.</summary>
+    public List<(string Topic, string Subscription)> DeletedSubscriptions { get; } = [];
 
     public Task UpdateSubscriptionLockDurationAsync(string topicName, string subscriptionName, TimeSpan lockDuration, CancellationToken cancellationToken = default) =>
       Task.CompletedTask;
@@ -798,6 +828,7 @@ public class AzureServiceBusTransportUnitTests {
 
     public Task DeleteSubscriptionAsync(string topicName, string subscriptionName, CancellationToken cancellationToken = default) {
       ExistingSubscriptions.Remove((topicName, subscriptionName));
+      DeletedSubscriptions.Add((topicName, subscriptionName));
       return Task.CompletedTask;
     }
 

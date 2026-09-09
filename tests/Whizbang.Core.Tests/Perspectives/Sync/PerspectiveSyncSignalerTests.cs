@@ -121,17 +121,27 @@ public class PerspectiveSyncSignalerTests {
   public async Task LocalSyncSignaler_MultipleSubscribers_AllReceiveSignalAsync() {
     using var signaler = new LocalSyncSignaler();
     var perspectiveType = typeof(TestPerspective);
-    var signal1Received = new TaskCompletionSource<bool>();
-    var signal2Received = new TaskCompletionSource<bool>();
+    var signal1Received = new TaskCompletionSource<PerspectiveCursorSignal>();
+    var signal2Received = new TaskCompletionSource<PerspectiveCursorSignal>();
 
-    using var subscription1 = signaler.Subscribe(perspectiveType, _ => signal1Received.TrySetResult(true));
-    using var subscription2 = signaler.Subscribe(perspectiveType, _ => signal2Received.TrySetResult(true));
+    using var subscription1 = signaler.Subscribe(perspectiveType, s => signal1Received.TrySetResult(s));
+    using var subscription2 = signaler.Subscribe(perspectiveType, s => signal2Received.TrySetResult(s));
 
-    signaler.SignalCheckpointUpdated(perspectiveType, Guid.NewGuid(), Guid.NewGuid());
+    var streamId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    signaler.SignalCheckpointUpdated(perspectiveType, streamId, eventId);
 
     // Wait for both signals with proper timeout
-    await signal1Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    await signal2Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var first = await signal1Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var second = await signal2Received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+    // Fan-out must hand every subscriber the SAME cursor, not a per-subscriber variant: a waiter
+    // that got a different stream/event id would resume on a checkpoint that never happened.
+    await Assert.That(first.StreamId).IsEqualTo(streamId);
+    await Assert.That(first.LastEventId).IsEqualTo(eventId);
+    await Assert.That(second.StreamId).IsEqualTo(streamId);
+    await Assert.That(second.LastEventId).IsEqualTo(eventId);
+    await Assert.That(second.PerspectiveType).IsEqualTo(perspectiveType);
   }
 
   // ==========================================================================

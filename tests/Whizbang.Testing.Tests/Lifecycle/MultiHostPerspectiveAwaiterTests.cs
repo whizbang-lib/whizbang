@@ -58,7 +58,12 @@ public class MultiHostPerspectiveAwaiterTests {
     using var awaiter = new MultiHostPerspectiveAwaiter<TestEvent>((host, 0));
 
     // Zero timeout: only passes because there is genuinely nothing to wait for.
-    await awaiter.WaitAsync(TimeSpan.Zero);
+    var wait = awaiter.WaitAsync(TimeSpan.Zero);
+
+    await Assert.That(wait.IsCompletedSuccessfully).IsTrue()
+      .Because("With no host registered there is nothing to wait on, so the call must return on "
+             + "the synchronous path — never park on a timeout the caller then has to sit out.");
+    await wait;
   }
 
   [Test]
@@ -78,8 +83,16 @@ public class MultiHostPerspectiveAwaiterTests {
     using var awaiter = new MultiHostPerspectiveAwaiter<TestEvent>((host, 2));
 
     await _invokeWithPerspectiveAsync(registry, typeof(PerspectiveA));
+
+    // One of two: the awaiter must NOT be satisfied yet. Without this half, a WaitAsync that
+    // returned unconditionally would pass the completion check below just as happily.
+    var tooEarly = await Assert.ThrowsAsync<TimeoutException>(
+      async () => await awaiter.WaitAsync(TimeSpan.Zero));
+    await Assert.That(tooEarly!.Message).Contains("1/2");
+
     await _invokeWithPerspectiveAsync(registry, typeof(PerspectiveB));
 
+    // Second DISTINCT perspective reaches the expected count — completes without waiting it out.
     await awaiter.WaitAsync(_longTimeout);
   }
 
@@ -90,8 +103,16 @@ public class MultiHostPerspectiveAwaiterTests {
 
     // Without a lifecycle context each invocation gets a unique "unknown-{guid}" key.
     await _invokeWithoutContextAsync(registry);
+
+    // One invocation counts once — the uniqueness claim is only meaningful against a count that
+    // was still short here (contrast the duplicate-perspective test, which stays at 1/2 forever).
+    var tooEarly = await Assert.ThrowsAsync<TimeoutException>(
+      async () => await awaiter.WaitAsync(TimeSpan.Zero));
+    await Assert.That(tooEarly!.Message).Contains("1/2");
+
     await _invokeWithoutContextAsync(registry);
 
+    // The second context-less invocation is counted as a NEW key, so the count reaches 2.
     await awaiter.WaitAsync(_longTimeout);
   }
 
@@ -130,6 +151,12 @@ public class MultiHostPerspectiveAwaiterTests {
   public async Task WaitAsync_MillisecondOverload_CompletesWhenSignaledAsync() {
     var (registry, host) = _makeHost();
     using var awaiter = new MultiHostPerspectiveAwaiter<TestEvent>((host, 1));
+
+    // Unsignaled, the overload must honor its millisecond timeout — otherwise "completes when
+    // signaled" would also be satisfied by an overload that returns unconditionally.
+    var tooEarly = await Assert.ThrowsAsync<TimeoutException>(
+      async () => await awaiter.WaitAsync(timeoutMilliseconds: 0));
+    await Assert.That(tooEarly!.Message).Contains("0/1");
 
     await _invokeWithPerspectiveAsync(registry, typeof(PerspectiveA));
 

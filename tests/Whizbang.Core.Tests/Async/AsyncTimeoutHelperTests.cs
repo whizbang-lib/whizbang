@@ -116,6 +116,11 @@ public class AsyncTimeoutHelperTests {
 
     await AsyncTimeoutHelper.WaitWithTimeoutAsync(
         tcs.Task, TimeSpan.FromSeconds(5), "should not timeout");
+
+    await Assert.That(tcs.Task.IsCompletedSuccessfully).IsTrue()
+      .Because("the helper must WAIT for the task, not merely race a timer against it: the task is "
+             + "still running when the wait starts, so returning before it finished would leave "
+             + "callers observing a half-done operation as complete.");
   }
 
   [Test]

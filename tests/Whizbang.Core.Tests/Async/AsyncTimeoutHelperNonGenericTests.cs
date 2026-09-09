@@ -21,8 +21,24 @@ public class AsyncTimeoutHelperNonGenericTests {
 
   [Test]
   public async Task ATaskThatCompletesInTime_PassesThroughAsync() {
-    await AsyncTimeoutHelper.WaitWithTimeoutAsync(
-      Task.CompletedTask, TimeSpan.FromSeconds(30), "should not be reported");
+    // "Passes through" has two halves, and an already-completed task checks neither. The helper
+    // must track the task it was handed — returning ahead of it would let every caller proceed on
+    // work that has not happened — and a completion inside the budget must not be dressed up as an
+    // overrun, which would invent a slow dependency out of a wait that was never slow.
+    var work = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    var wait = AsyncTimeoutHelper.WaitWithTimeoutAsync(
+      work.Task, TimeSpan.FromSeconds(30), "should not be reported");
+
+    await Assert.That(wait.IsCompleted).IsFalse()
+      .Because("the wait belongs to the task it was given; finishing first would hand the caller a "
+             + "completion for work still in flight");
+
+    work.SetResult();
+
+    // Completes, and completes as a completion — a TimeoutException here would be fabricated out
+    // of a task that finished 30 seconds inside its budget.
+    await wait;
   }
 
   [Test]

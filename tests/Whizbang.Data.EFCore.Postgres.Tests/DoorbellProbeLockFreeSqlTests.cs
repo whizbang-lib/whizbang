@@ -116,8 +116,13 @@ public class DoorbellProbeLockFreeSqlTests : EFCoreTestBase {
     await using var cmd = claimer.CreateCommand();
     cmd.CommandText = "SELECT count(*) FROM claim_work(@i, 'test', 'test-host', 1, 10, 1, 300)";
     cmd.Parameters.AddWithValue("i", instance);
-    _ = await cmd.ExecuteScalarAsync();   // must return: the held row is skipped, not waited for
+    var claimed = (long)(await cmd.ExecuteScalarAsync() ?? 0L);   // must return rather than wait
 
+    // Skipped, not waited for -- and "skipped" is the half a statement timeout cannot show. The
+    // only pending work in this database is the row the holder has locked, so a tick that returns
+    // having leased nothing is the tick stepping over it; a tick that leased it would mean the
+    // completion in flight and the lease disagree about who owns the row.
+    await Assert.That(claimed).IsEqualTo(0);
     await tx.RollbackAsync();
   }
 

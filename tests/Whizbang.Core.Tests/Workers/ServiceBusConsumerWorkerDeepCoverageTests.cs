@@ -215,13 +215,18 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
 
   [Test]
   public async Task ResumeAllSubscriptionsAsync_NoSubscriptions_DoesNotThrowAsync() {
-    var worker = _createWorker(new DeepCoverageTransport(), new ServiceBusConsumerOptions());
+    var transport = new DeepCoverageTransport();
+    var worker = _createWorker(transport, new ServiceBusConsumerOptions());
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
     await worker.ResumeAllSubscriptionsAsync();
     await worker.StopAsync(CancellationToken.None);
-    // No assertion needed — test verifies no exception is thrown
+
+    // Nothing to resume, and nothing conjured to resume: an options set with no subscriptions
+    // must leave the transport untouched rather than subscribing to a default destination.
+    await Assert.That(transport.CreatedSubscriptions.Count).IsEqualTo(0);
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(0);
   }
 
   // ========================================

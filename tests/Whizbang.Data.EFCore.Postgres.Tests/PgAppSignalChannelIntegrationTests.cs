@@ -91,13 +91,42 @@ public class PgAppSignalChannelIntegrationTests : EFCoreTestBase {
   [Test]
   public async Task Publish_WithNoConnectionStringResolved_NoOpsAsync() {
     // Defensive: if the channel can't resolve a connection string, PublishAsync is a no-op
-    // (logged at Debug). No exception thrown.
-    var channel = _newChannel(new WhizbangNotificationOptions {
+    // (logged at Debug) rather than throwing. "No-op" is the part worth pinning — a half-wired
+    // channel that still reached SOME connection would emit signals the operator never configured.
+    const string topic = "any_topic";
+    const string channel = "wh_app_" + topic;
+    const string sentinel = "sentinel-from-the-configured-channel";
+
+    await using var listenerConn = new NpgsqlConnection(ConnectionString);
+    await listenerConn.OpenAsync();
+    var firstReceived = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    listenerConn.Notification += (_, args) => {
+      if (args.Channel == channel) {
+        firstReceived.TrySetResult(args.Payload);
+      }
+    };
+    await using (var listenCmd = listenerConn.CreateCommand()) {
+      listenCmd.CommandText = $"LISTEN {channel}";
+      await listenCmd.ExecuteNonQueryAsync();
+    }
+
+    var unresolvable = _newChannel(new WhizbangNotificationOptions {
       // No DirectConnectionString, no ConnectionStringKey → resolver returns null.
     });
+    await unresolvable.PublishAsync(topic, "must-never-reach-the-wire");
 
-    // No exception should propagate.
-    await channel.PublishAsync("any_topic", "any_payload");
+    // Deterministic negative: a configured channel publishes on the SAME channel afterwards, and
+    // notifications arrive in commit order — so if the unresolvable publish had emitted, its
+    // payload would be the one latched here.
+    await _newChannel().PublishAsync(topic, sentinel);
+
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+    _ = listenerConn.WaitAsync(cts.Token);   // pump: notifications dispatch only while reading
+    var received = await firstReceived.Task.WaitAsync(TimeSpan.FromSeconds(15), cts.Token);
+
+    await Assert.That(received).IsEqualTo(sentinel)
+      .Because("a channel with no connection string must drop the publish, not emit it through "
+             + "some other connection");
   }
 
   [Test]

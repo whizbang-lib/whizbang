@@ -80,9 +80,19 @@ public class NoOpNotificationTests {
   [Test]
   public async Task NoOpAppSignalChannel_PublishValidTopic_CompletesSilentlyAsync() {
     var channel = new NoOpAppSignalChannel();
+    var delivered = 0;
+    using var subscription = channel.Subscribe("ok_topic", (_, _) => {
+      Interlocked.Increment(ref delivered);
+      return Task.CompletedTask;
+    });
+
     await channel.PublishAsync("ok_topic", "payload");
-    // No assertion needed — successful completion is the contract.
-    // surviving the call without throwing IS the contract — no assertion needed
+
+    // "Silently" is the load-bearing word: the fallback validates and drops. It is not a local
+    // in-memory bus, so a subscriber on the very same topic hears nothing — code that works only
+    // because the no-op looped a signal back would break the moment Postgres was configured.
+    await Assert.That(delivered).IsEqualTo(0)
+      .Because("the no-op fallback delivers nothing to anyone, including subscribers in this process");
   }
 
   [Test]
@@ -131,6 +141,10 @@ public class NoOpNotificationTests {
     listener.OnHealthChanged += healthHandler;
     listener.OnHealthChanged -= healthHandler;
 
-    // surviving the call without throwing IS the contract — no assertion needed  // surviving the calls is the contract
+    // Subscribing changes nothing: the no-op listener never becomes healthy and never records a
+    // signal. A caller that waits for OnSignal here waits forever by design, and the health
+    // surface must keep saying so rather than reporting a listener that is merely subscribed to.
+    await Assert.That(listener.IsHealthy).IsFalse();
+    await Assert.That(listener.LastSignalAt).IsNull();
   }
 }

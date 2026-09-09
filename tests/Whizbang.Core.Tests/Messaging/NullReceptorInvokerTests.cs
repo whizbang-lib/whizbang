@@ -35,8 +35,13 @@ public class NullReceptorInvokerTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
     };
 
-    await invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
-    // contract: returns a completed ValueTask, throws no exception
+    var pending = invoker.InvokeAsync(envelope, LifecycleStage.PostInboxInline);
+
+    await Assert.That(pending.IsCompletedSuccessfully).IsTrue()
+      .Because("the null invoker sits on the hot dispatch path and is awaited at every lifecycle "
+             + "stage — it must hand back an already-completed ValueTask rather than something "
+             + "that forces a state-machine continuation per message");
+    await pending;
   }
 
   [Test]
@@ -53,7 +58,12 @@ public class NullReceptorInvokerTests {
 
     // Even with a pre-canceled token, the no-op invoker doesn't observe it
     // — it never awaits anything cancellable.
-    await invoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, cancellationToken: cts.Token);
+    var pending = invoker.InvokeAsync(envelope, LifecycleStage.LocalImmediateInline, cancellationToken: cts.Token);
+
+    await Assert.That(pending.IsCompletedSuccessfully).IsTrue()
+      .Because("a canceled ValueTask would report IsCanceled here — a receptor-less host must not "
+             + "start failing dispatches just because the caller's token was already canceled");
+    await pending;
   }
 
   [Test]

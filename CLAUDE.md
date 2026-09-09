@@ -195,6 +195,26 @@ complementing line coverage. Run via `/whizbang mutate` or scripts/mutation/run-
 has any tested behavior suppresses real coverage. The target is near-100%, not
 literal 100% — the file gives the decision procedure and worked examples.
 
+### 📖 **[flaky-tests.md](ai-docs/flaky-tests.md)** - CRITICAL for worker tests
+**Read when**:
+- A test passes locally but fails on CI, or fails in milliseconds rather than at a timeout
+- Writing or changing any test that starts a `BackgroundService`
+- Tempted to fix a flake by widening a timeout
+
+**Why critical**: Pattern 7 documents the .NET 10 `BackgroundService` change — `StartAsync`
+returning proves only that the worker was *scheduled*, and awaiting the task it returns is a
+no-op. 314 tests in this repo were found passing without running the code they named, and one
+production hang was hiding behind them. Fix the cause; never widen a timeout.
+
+### 📖 **AI-agent guide** (docs site: `contributors/ai-agent-guide`)
+**Read when**: starting agent-driven test or coverage work in this repository.
+
+Reachable through the `whizbang-docs` MCP server (`mcp__whizbang-docs__search-docs`) or at
+`whizbang-lib.github.io/src/assets/docs/contributors/ai-agent-guide.md`. Covers the four shapes of
+test that pass without testing anything, how to measure coverage truthfully (CI artifacts, not
+local runs; the collector failure modes that look like success), the detector discipline that
+avoids both over- and under-reporting, and changes that were investigated and correctly *not* made.
+
 ### 📖 **[type-naming.md](ai-docs/type-naming.md)** - CRITICAL
 **Read when**:
 - Writing or comparing a type name that is a key (`clr_type_name`, `event_type`, perspective names, registry JSON)

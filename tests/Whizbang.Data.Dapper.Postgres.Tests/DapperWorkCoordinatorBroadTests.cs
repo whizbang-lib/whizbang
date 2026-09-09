@@ -286,7 +286,15 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   [Test]
   public async Task ReportFailuresAsync_EmptyList_NoOpAsync() {
     var c = _build();
-    await c.ReportFailuresAsync(WorkCategory.Outbox, []);
+
+    var noOp = c.ReportFailuresAsync(WorkCategory.Outbox, []);
+
+    // The guard clause returns before the connection scope is acquired, so the call never
+    // suspends. The failure flush worker fires this on every idle tick — a round trip per tick
+    // is exactly the cost the guard exists to avoid.
+    await Assert.That(noOp.IsCompleted).IsTrue()
+      .Because("an empty failure batch must short-circuit before a connection is opened");
+    await noOp;
   }
 
   [Test]
@@ -349,8 +357,22 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
 
   [Test]
   public async Task FlushCompletionsAsync_EmptyRequest_NoOpAsync() {
+    // flush_completions guards every branch on a non-empty input, so an empty request must leave
+    // staged work alone. A guard that read "empty" as "all" would complete — in production mode,
+    // DELETE — outbox rows that were never published.
     var c = _build();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, (Guid)TrackedGuid.NewMedo())], partitionCount: 100);
+
     await c.FlushCompletionsAsync(new FlushCompletionsRequest());
+
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    var stillPending = await conn.ExecuteScalarAsync<long>(
+      "SELECT COUNT(*) FROM wh_outbox WHERE message_id = @m AND processed_at IS NULL",
+      new { m = msgId });
+    await Assert.That(stillPending).IsEqualTo(1L)
+      .Because("an empty flush must not complete work nobody reported");
   }
 
   [Test]
@@ -382,33 +404,54 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task ReportPerspectiveCompletionAsync_RunsWithoutErrorAsync() {
-    // The SQL function complete_perspective_cursor_work requires pre-staged
-    // perspective_events rows to actually persist a cursor row, but invoking it
-    // exercises the C# serialization + parameter-binding path which is what
-    // we're after for coverage. Side-effect assertion lives in the EFCore
-    // equivalent tests where the full pipeline is set up.
+  public async Task ReportPerspectiveCompletionAsync_AdvancesTheCursorAndClearsTheErrorAsync() {
+    // complete_perspective_cursor_work only ever UPDATEs — it never inserts — so the cursor row
+    // is staged first. Without a row the call reports success while writing nothing, which is why
+    // this test used to pass no matter what the parameter binding did.
     var c = _build();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var lastEventId = (Guid)TrackedGuid.NewMedo();
+    await _stageCursorAsync(streamId, "TestPerspective", error: "failure from the previous run");
+
     await c.ReportPerspectiveCompletionAsync(new PerspectiveCursorCompletion {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = streamId,
       PerspectiveName = "TestPerspective",
-      LastEventId = (Guid)TrackedGuid.NewMedo(),
-      ProcessedEventIds = [(Guid)TrackedGuid.NewMedo()],
+      LastEventId = lastEventId,
+      ProcessedEventIds = [lastEventId],
       Status = PerspectiveProcessingStatus.Completed,
     });
+
+    var cursor = await _readCursorAsync(streamId, "TestPerspective");
+    await Assert.That(cursor.LastEventId).IsEqualTo(lastEventId)
+      .Because("the cursor is where the runner resumes — a completion that fails to move it replays the same events forever");
+    await Assert.That(cursor.Status).IsEqualTo((short)PerspectiveProcessingStatus.Completed);
+    await Assert.That(cursor.Error).IsNull()
+      .Because("a successful run clears the stored error, or the row keeps reporting a failure that has since been fixed");
   }
 
   [Test]
-  public async Task ReportPerspectiveFailureAsync_RunsWithoutErrorAsync() {
+  public async Task ReportPerspectiveFailureAsync_RecordsTheErrorOnTheCursorAsync() {
+    // Same UPDATE-only function as the completion path: stage the cursor, then assert the failure
+    // actually lands on it. The error text on the cursor row is the only place an operator sees
+    // why a perspective stopped advancing.
     var c = _build();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var lastEventId = (Guid)TrackedGuid.NewMedo();
+    await _stageCursorAsync(streamId, "FailPerspective", error: null);
+
     await c.ReportPerspectiveFailureAsync(new PerspectiveCursorFailure {
-      StreamId = (Guid)TrackedGuid.NewMedo(),
+      StreamId = streamId,
       PerspectiveName = "FailPerspective",
-      LastEventId = (Guid)TrackedGuid.NewMedo(),
+      LastEventId = lastEventId,
       ProcessedEventIds = [],
       Status = PerspectiveProcessingStatus.Failed,
       Error = "boom",
     });
+
+    var cursor = await _readCursorAsync(streamId, "FailPerspective");
+    await Assert.That(cursor.Status).IsEqualTo((short)PerspectiveProcessingStatus.Failed);
+    await Assert.That(cursor.Error).IsEqualTo("boom")
+      .Because("the reported error is what an operator reads to find out why the perspective stalled");
   }
 
   [Test]
@@ -437,10 +480,15 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task CompletePerspectiveAsync_RunsWithoutErrorAsync() {
+  public async Task CompletePerspectiveAsync_MarksTheDrainedCursorCompletedAsync() {
+    // complete_perspective advances cursors by reading StreamId/PerspectiveName back out of the
+    // JSONB the C# side serialized. With no unprocessed perspective_events left for the pair, the
+    // stream is drained and the cursor's status becomes Completed — which only happens if those
+    // JSON property names survive serialization.
     var c = _build();
     var streamId = (Guid)TrackedGuid.NewMedo();
     var lastEventId = (Guid)TrackedGuid.NewMedo();
+    await _stageCursorAsync(streamId, "PerspectiveDone", error: null);
 
     await c.CompletePerspectiveAsync(
       [new PerspectiveCursorCompletion {
@@ -452,6 +500,42 @@ public class DapperWorkCoordinatorBroadTests : PostgresTestBase {
       }],
       eventWorkIds: [],
       debugMode: false);
+
+    var cursor = await _readCursorAsync(streamId, "PerspectiveDone");
+    await Assert.That(cursor.Status).IsEqualTo((short)PerspectiveProcessingStatus.Completed)
+      .Because("a drained stream's cursor must be marked Completed — a cursor stuck at its old status is re-claimed forever");
+  }
+
+  /// <summary>Stages a perspective cursor row so the UPDATE-only completion functions have
+  /// something to write to.</summary>
+  private async Task _stageCursorAsync(Guid streamId, string perspectiveName, string? error) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      """
+      INSERT INTO wh_perspective_cursors (stream_id, perspective_name, last_event_id, status, error)
+      VALUES (@stream, @perspective, @last, 0, @error)
+      """,
+      new { stream = streamId, perspective = perspectiveName, last = (Guid)TrackedGuid.NewMedo(), error });
+  }
+
+  private async Task<CursorRow> _readCursorAsync(Guid streamId, string perspectiveName) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    return await conn.QuerySingleAsync<CursorRow>(
+      """
+      SELECT last_event_id AS LastEventId, status AS Status, error AS Error
+      FROM wh_perspective_cursors
+      WHERE stream_id = @stream AND perspective_name = @perspective
+      """,
+      new { stream = streamId, perspective = perspectiveName });
+  }
+
+  /// <summary>The columns of wh_perspective_cursors this suite asserts on.</summary>
+  private sealed class CursorRow {
+    public Guid? LastEventId { get; init; }
+    public short Status { get; init; }
+    public string? Error { get; init; }
   }
 
   [Test]

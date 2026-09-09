@@ -133,6 +133,25 @@ public class DispatcherCoverageWave3Tests {
     }
 
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => _defaultRouting;
+
+    /// <summary>Messages handed to the base (no-op) outbox cascade hook — the generated dispatcher
+    /// overrides this, so recording it is how a test sees which branch CascadeMessageAsync took.</summary>
+    public List<IMessage> CascadedToOutbox { get; } = [];
+
+    /// <summary>Messages handed to the base (no-op) event-store-only cascade hook.</summary>
+    public List<IMessage> CascadedToEventStoreOnly { get; } = [];
+
+    protected override Task CascadeToOutboxAsync(
+        IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+      CascadedToOutbox.Add(message);
+      return base.CascadeToOutboxAsync(message, messageType, sourceEnvelope, eventId);
+    }
+
+    protected override Task CascadeToEventStoreOnlyAsync(
+        IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+      CascadedToEventStoreOnly.Add(message);
+      return base.CascadeToEventStoreOnlyAsync(message, messageType, sourceEnvelope, eventId);
+    }
   }
 
   // ========================================
@@ -941,22 +960,55 @@ public class DispatcherCoverageWave3Tests {
 
   [Test]
   public async Task CascadeMessageAsync_OutboxMode_CompletesWithoutErrorAsync() {
-    // Arrange - base implementation of CascadeToOutboxAsync is a no-op
-    var dispatcher = _createDispatcher();
+    // Arrange - base implementation of CascadeToOutboxAsync is a no-op, but which hook the mode
+    // selects is the routing decision worth pinning. A publisher is supplied so the "and NOT
+    // locally" half is observable too: Outbox carries no LocalDispatch flag.
+    var publisherInvoked = false;
+    Task publisher(object msg, IMessageEnvelope? env, CancellationToken ct) {
+      publisherInvoked = true;
+      return Task.CompletedTask;
+    }
+    var dispatcher = _createDispatcher(
+      untypedPublisher: publisher,
+      handleMessageType: typeof(W3Event));
     var evt = new W3Event(Guid.NewGuid());
 
     // Act - should not throw (base CascadeToOutboxAsync is no-op)
     await dispatcher.CascadeMessageAsync(evt, null, DispatchModes.Outbox);
+
+    // Assert
+    await Assert.That(dispatcher.CascadedToOutbox).Count().IsEqualTo(1);
+    await Assert.That(dispatcher.CascadedToEventStoreOnly).IsEmpty()
+      .Because("outbox writes already persist the event; also going down the event-store-only hook "
+             + "would store it twice");
+    await Assert.That(publisherInvoked).IsFalse()
+      .Because("Outbox is transport-only — fanning out to in-process receptors as well would double-"
+             + "handle every cascaded event once the transport delivered it back");
   }
 
   [Test]
   public async Task CascadeMessageAsync_EventStoreMode_CompletesWithoutErrorAsync() {
     // Arrange - base implementation of CascadeToEventStoreOnlyAsync is a no-op
-    var dispatcher = _createDispatcher();
+    var publisherInvoked = false;
+    Task publisher(object msg, IMessageEnvelope? env, CancellationToken ct) {
+      publisherInvoked = true;
+      return Task.CompletedTask;
+    }
+    var dispatcher = _createDispatcher(
+      untypedPublisher: publisher,
+      handleMessageType: typeof(W3Event));
     var evt = new W3Event(Guid.NewGuid());
 
     // Act - EventStore flag without Outbox flag -> calls CascadeToEventStoreOnlyAsync
     await dispatcher.CascadeMessageAsync(evt, null, DispatchModes.EventStore);
+
+    // Assert
+    await Assert.That(dispatcher.CascadedToEventStoreOnly).Count().IsEqualTo(1);
+    await Assert.That(dispatcher.CascadedToOutbox).IsEmpty()
+      .Because("EventStoreOnly exists precisely to persist without transport; reaching the outbox "
+             + "hook would publish an event the caller asked to keep local");
+    await Assert.That(publisherInvoked).IsFalse()
+      .Because("EventStore carries no LocalDispatch flag — persistence without immediate processing");
   }
 
   [Test]
@@ -1039,13 +1091,21 @@ public class DispatcherCoverageWave3Tests {
   [Test]
   public async Task LocalInvokeAsync_VoidAnyInvokerFallback_NullResult_CompletesAsync() {
     // Arrange - anyInvoker returns null
-    ValueTask<object?> anyInvoker(object msg) =>
-      new ValueTask<object?>((object?)null);
+    var anyInvokedWith = new List<object>();
+    ValueTask<object?> anyInvoker(object msg) {
+      anyInvokedWith.Add(msg);
+      return new ValueTask<object?>((object?)null);
+    }
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("any-null");
 
     // Act - should complete without error even with null result
     await dispatcher.LocalInvokeAsync((object)command, MessageContext.New());
+
+    // Assert - a null result means "the receptor returned nothing", not "no receptor ran". Treating
+    // it as unhandled would make every void receptor look missing on the fallback path.
+    await Assert.That(anyInvokedWith).Count().IsEqualTo(1);
+    await Assert.That(anyInvokedWith[0]).IsSameReferenceAs(command);
   }
 
   // ========================================

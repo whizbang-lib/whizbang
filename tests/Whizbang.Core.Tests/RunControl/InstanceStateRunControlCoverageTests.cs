@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -18,10 +19,18 @@ namespace Whizbang.Core.Tests.RunControl;
 public class InstanceStateRunControlCoverageTests {
 
   private sealed class _throwingCoordinator : IWorkCoordinator {
+    private int _recordAttempts;
+
+    /// <summary>How many times the recording was attempted. Must stay zero: OnPhaseAsync swallows
+    /// every exception, so the throw below is NOT observable to the caller on its own.</summary>
+    public int RecordAttempts => Volatile.Read(ref _recordAttempts);
+
     public Task<bool> RecordInstanceStateAsync(
         Guid instanceId, string lifecyclePhase, string? libraryVersion = null,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _recordAttempts);
       throw new InvalidOperationException("must never be reached without an instance identity");
+    }
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
@@ -46,11 +55,31 @@ public class InstanceStateRunControlCoverageTests {
     services.AddSingleton<IWorkCoordinator>(coordinator);
     using var sp = services.BuildServiceProvider();
 
+    var logger = new _recordingLogger();
     var control = new InstanceStateRunControl(
       sp.GetRequiredService<IServiceScopeFactory>(),
-      instanceProvider: null!);
+      instanceProvider: null!,
+      logger: logger);
 
-    // Reaching here without the throwing coordinator ever being invoked IS the assertion.
     await control.OnPhaseAsync(LifecyclePhase.Running, CancellationToken.None);
+
+    await Assert.That(coordinator.RecordAttempts).IsEqualTo(0)
+      .Because("no identity means no row to record onto — the coordinator must not be asked at all");
+    await Assert.That(logger.Entries).IsEmpty()
+      .Because("OnPhaseAsync catches every exception and logs it, so a missing guard surfaces as a "
+             + "logged failure rather than a thrown one; 'never attempted' has to be read off the "
+             + "log being empty, not off the call returning");
+  }
+
+  /// <summary>Captures every log line so the guard's silence is observable — without this, the
+  /// class's catch-all would absorb an NRE from the missing provider and the test would pass.</summary>
+  private sealed class _recordingLogger : ILogger<InstanceStateRunControl> {
+    public List<string> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) =>
+      Entries.Add(formatter(state, exception));
   }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using TUnit.Assertions;
@@ -40,6 +41,18 @@ public class IntegritySweepSchedulingTests {
     public Task<bool> CancelAsync(Guid scheduleId, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<Guid?> TriggerNowAsync(Guid scheduleId, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<ScheduleUpdateResult?> UpdateAsync(Guid scheduleId, ScheduleUpdate update, long? expectedVersion = null, CancellationToken ct = default) => throw new NotSupportedException();
+  }
+
+  /// <summary>Captures the receptor's log lines so "the guard returned" is observable — the firing
+  /// line is emitted only once a runner has been resolved.</summary>
+  private sealed class _recordingLogger : ILogger<ScheduledIntegritySweepReceptor> {
+    public List<string> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) =>
+      Entries.Add(formatter(state, exception));
   }
 
   private sealed class _runner : IIntegritySweepRunner {
@@ -179,11 +192,18 @@ public class IntegritySweepSchedulingTests {
   [Test]
   public async Task SweepReceptor_NoRunnerRegistered_IsANoOpAsync() {
     var sp = new ServiceCollection().BuildServiceProvider();
+    var logger = new _recordingLogger();
     var receptor = new ScheduledIntegritySweepReceptor(
-      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledIntegritySweepReceptor>.Instance);
+      sp.GetRequiredService<IServiceScopeFactory>(), logger);
 
     await receptor.HandleAsync(new ScheduledIntegritySweep());
-    // Reaching here without throwing is the assertion — schema-only hosts still boot and dispatch.
+
+    // "No-op" is stronger than "did not throw": the receptor has to stop at the missing-runner
+    // guard, which it announces by NOT logging the sweep as firing. A host that reported a sweep
+    // it never ran would make an unverified database look verified.
+    await Assert.That(logger.Entries).IsEmpty()
+      .Because("the firing log line sits after the runner guard — an empty log is what proves the "
+             + "guard returned rather than the sweep having run against nothing");
   }
 
   [Test]

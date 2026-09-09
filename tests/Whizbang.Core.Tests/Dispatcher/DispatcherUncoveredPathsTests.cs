@@ -138,6 +138,26 @@ public class DispatcherUncoveredPathsTests {
     }
 
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType) => _defaultRouting;
+
+    /// <summary>Messages handed to the outbox arm of the cascade, in order.</summary>
+    public List<IMessage> CascadedToOutbox { get; } = [];
+
+    /// <summary>Messages handed to the event-store-only arm of the cascade, in order.</summary>
+    public List<IMessage> CascadedToEventStoreOnly { get; } = [];
+
+    // The base implementations are no-ops that log a warning; recording instead of calling base
+    // changes nothing observable and gives the cascade's routing decision somewhere to land.
+    protected override Task CascadeToOutboxAsync(
+        IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+      CascadedToOutbox.Add(message);
+      return Task.CompletedTask;
+    }
+
+    protected override Task CascadeToEventStoreOnlyAsync(
+        IMessage message, Type messageType, IMessageEnvelope? sourceEnvelope = null, Guid? eventId = null) {
+      CascadedToEventStoreOnly.Add(message);
+      return Task.CompletedTask;
+    }
   }
 
   // ========================================
@@ -148,9 +168,14 @@ public class DispatcherUncoveredPathsTests {
     public int StoreCallCount { get; private set; }
     public List<IMessageEnvelope> StoredEnvelopes { get; } = [];
 
+    /// <summary>Runs after the envelope is recorded — lets a test act at the exact point the
+    /// dispatcher has finished tracing and has not yet reached its cancellation check.</summary>
+    public Action? OnStored { get; init; }
+
     public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {
       StoreCallCount++;
       StoredEnvelopes.Add(envelope);
+      OnStored?.Invoke();
       return Task.CompletedTask;
     }
 
@@ -217,7 +242,11 @@ public class DispatcherUncoveredPathsTests {
 
     public Guid AwaiterId { get; } = Guid.NewGuid();
 
+    /// <summary>Every set of event ids the dispatcher actually waited on, in order.</summary>
+    public List<IReadOnlyList<Guid>> WaitCalls { get; } = [];
+
     public Task<bool> WaitForEventsAsync(IReadOnlyList<Guid> eventIds, TimeSpan timeout, CancellationToken ct = default) {
+      WaitCalls.Add(eventIds);
       return Task.FromResult(_shouldComplete);
     }
 
@@ -501,21 +530,38 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_VoidWithOptions_WaitForPerspectives_Success_CompletesAsync() {
     // Arrange
+    var emittedEventId = Guid.NewGuid();
     var tracker = new StubScopedEventTracker();
-    tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), Guid.NewGuid());
+    tracker.TrackEmittedEvent(Guid.NewGuid(), typeof(TestEvent), emittedEventId);
     var awaiter = new StubEventCompletionAwaiter(shouldComplete: true);
+    var invoked = false;
     var dispatcher = _createDispatcher(
       scopedEventTracker: tracker,
       eventCompletionAwaiter: awaiter,
-      voidInvoker: _defaultVoidInvoker());
+      voidInvoker: msg => { invoked = true; return ValueTask.CompletedTask; });
     var command = new TestCommand("void-wait-success");
     var options = new DispatchOptions {
       WaitForPerspectives = true,
       PerspectiveWaitTimeout = TimeSpan.FromSeconds(5)
     };
 
-    // Act - should not throw
+    // Act
     await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert - the timeout sibling proves the failure branch is wired up; the danger on THIS side
+    // is the opposite and much quieter. A dispatch that returned without consulting the awaiter at
+    // all would look identical to this one from the caller's seat — and the caller asked to wait
+    // precisely because its next read goes to a perspective that is not caught up yet. Not
+    // throwing is not the guarantee; having waited is.
+    await Assert.That(invoked).IsTrue()
+      .Because("the receptor still has to run — the wait is in addition to the dispatch, not "
+             + "instead of it");
+    await Assert.That(awaiter.WaitCalls.Count).IsEqualTo(1)
+      .Because("WaitForPerspectives=true that silently skips the wait hands back a success the "
+             + "caller then reads stale data behind");
+    await Assert.That(awaiter.WaitCalls[0]).Contains(emittedEventId)
+      .Because("waiting on the wrong ids is the same as not waiting — it is the emitted event that "
+             + "the caller's next read depends on");
   }
 
   // ========================================
@@ -660,13 +706,25 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_VoidWithOptions_AnyInvokerFallback_CompletesAsync() {
     // Arrange - only any invoker, no void or sync
+    object? received = null;
     var dispatcher = _createDispatcher(
-      anyInvoker: msg => new ValueTask<object?>(new TestResult(Guid.NewGuid(), true)));
+      anyInvoker: msg => {
+        received = msg;
+        return new ValueTask<object?>(new TestResult(Guid.NewGuid(), true));
+      });
     var command = new TestCommand("void-any-options");
     var options = new DispatchOptions();
 
     // Act
     await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert - the any-invoker is the last resort after the void and sync lookups both miss. The
+    // sibling test proves that missing it entirely throws ReceptorNotFound, which is at least
+    // loud; the failure this pins is the silent one, where the fallback stops resolving and the
+    // void return type leaves the caller with no way to notice the command was never handled.
+    await Assert.That(received).IsSameReferenceAs(command)
+      .Because("a void dispatch returns nothing, so the receptor running is the only evidence the "
+             + "message was handled at all");
   }
 
   [Test]
@@ -728,12 +786,22 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_GenericVoidTyped_AnyInvokerFallback_CompletesAsync() {
     // Arrange - only anyInvoker available via generic void path
+    object? received = null;
     var dispatcher = _createDispatcher(
-      anyInvoker: msg => new ValueTask<object?>(new TestResult(Guid.NewGuid(), true)));
+      anyInvoker: msg => {
+        received = msg;
+        return new ValueTask<object?>(new TestResult(Guid.NewGuid(), true));
+      });
     var command = new TestCommand("generic-void-any");
 
     // Act
     await dispatcher.LocalInvokeAsync<TestCommand>(command, MessageContext.New());
+
+    // Assert - same last-resort fallback as the options overload, reached through the typed
+    // generic entry point. Each overload resolves its invoker independently, so one of them
+    // quietly losing the fallback drops every call that arrives through that door and no other.
+    await Assert.That(received).IsSameReferenceAs(command)
+      .Because("the generic void overload has to end at the same receptor the others do");
   }
 
   [Test]
@@ -976,11 +1044,21 @@ public class DispatcherUncoveredPathsTests {
       untypedPublisher: (msg, env, ct) => Task.CompletedTask);
     var testEvent = new TestEvent(Guid.NewGuid());
 
-    // Act - Outbox mode, base implementation is no-op but should not throw
+    // Act
     await dispatcher.CascadeMessageAsync(
       testEvent,
       sourceEnvelope: null,
       DispatchModes.Outbox);
+
+    // Assert - Outbox is the only arm that puts the event on the wire. These two destinations are
+    // not interchangeable: the event-store arm persists WITHOUT publishing, so a cascade that took
+    // that branch instead would record the event locally and never deliver it to the subscribers
+    // that Outbox exists to reach — a divergence nothing on the sending side can see.
+    await Assert.That(dispatcher.CascadedToOutbox).Contains(testEvent)
+      .Because("Outbox mode means cross-service delivery, and only this arm performs it");
+    await Assert.That(dispatcher.CascadedToEventStoreOnly).IsEmpty()
+      .Because("the event-store-only arm is guarded on the ABSENCE of Outbox — taking both would "
+             + "double-write the event");
   }
 
   [Test]
@@ -990,11 +1068,20 @@ public class DispatcherUncoveredPathsTests {
       untypedPublisher: (msg, env, ct) => Task.CompletedTask);
     var testEvent = new TestEvent(Guid.NewGuid());
 
-    // Act - EventStore mode without Outbox, base implementation is no-op
+    // Act
     await dispatcher.CascadeMessageAsync(
       testEvent,
       sourceEnvelope: null,
       DispatchModes.EventStore);
+
+    // Assert - the mirror of the outbox case, and the more expensive one to get wrong: an event
+    // the caller explicitly kept off the transport must not be broadcast to every subscribing
+    // service because the cascade picked the wrong arm.
+    await Assert.That(dispatcher.CascadedToEventStoreOnly).Contains(testEvent)
+      .Because("EventStore without Outbox persists the event and stops there");
+    await Assert.That(dispatcher.CascadedToOutbox).IsEmpty()
+      .Because("publishing an event the caller deliberately withheld from the transport cannot be "
+             + "taken back once other services have consumed it");
   }
 
   [Test]
@@ -1026,21 +1113,45 @@ public class DispatcherUncoveredPathsTests {
       testEvent,
       sourceEnvelope: null,
       DispatchModes.Local);
+
+    // Assert - Local is local dispatch AND persistence. Having no in-process subscriber is an
+    // ordinary composition, not a reason to skip the event store: if the missing publisher took
+    // the persistence arm down with it, the event would vanish entirely, and a stream that never
+    // records an event cannot be replayed back into existence later.
+    await Assert.That(dispatcher.CascadedToEventStoreOnly).Contains(testEvent)
+      .Because("nobody listening in-process says nothing about whether the event happened");
+    await Assert.That(dispatcher.CascadedToOutbox).IsEmpty()
+      .Because("Local deliberately withholds the event from the transport");
   }
 
   [Test]
   public async Task CascadeMessageAsync_NonEventMessage_DoesNotTrackForSyncAsync() {
     // Arrange - command (not IEvent) should not trigger sync tracking
+    var tracker = new StubScopedEventTracker();
+    var published = false;
     var dispatcher = _createDispatcher(
-      untypedPublisher: (msg, env, ct) => Task.CompletedTask,
+      scopedEventTracker: tracker,
+      untypedPublisher: (msg, env, ct) => { published = true; return Task.CompletedTask; },
       handleMessageType: typeof(TestCommandMsg));
     var command = new TestCommandMsg("non-event");
 
-    // Act - should complete without error
+    // Act
     await dispatcher.CascadeMessageAsync(
       command,
       sourceEnvelope: null,
       DispatchModes.Local);
+
+    // Assert - the cascade really ran (otherwise "tracked nothing" is true of a call that did
+    // nothing at all), and it tracked nothing.
+    await Assert.That(published).IsTrue()
+      .Because("the local arm must still dispatch the command — the claim under test is about "
+             + "tracking, not about skipping the cascade");
+    await Assert.That(tracker.GetEmittedEvents()).IsEmpty()
+      .Because("perspective sync waits on tracked EVENTS to be projected; a command tracked here "
+             + "would be waited on by a projection that is never going to process it, hanging the "
+             + "sync until it times out");
+    await Assert.That(dispatcher.CascadedToEventStoreOnly).IsEmpty()
+      .Because("the event-store arm is for events; a command has no stream to be appended to");
   }
 
   // ========================================
@@ -1662,11 +1773,19 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_GenericTMessage_VoidAutoContext_CompletesAsync() {
     // Arrange - exercises void LocalInvokeAsync<TMessage>(message) overload
-    var dispatcher = _createDispatcher(voidInvoker: _defaultVoidInvoker());
+    object? received = null;
+    var dispatcher = _createDispatcher(
+      voidInvoker: msg => { received = msg; return ValueTask.CompletedTask; });
     var command = new TestCommand("void-auto-context");
 
-    // Act - should not throw
+    // Act
     await dispatcher.LocalInvokeAsync<TestCommand>(command);
+
+    // Assert - the auto-context overloads exist to save the caller from building a MessageContext,
+    // and every one of them returns void here, so a break in the manufactured-context path is
+    // invisible: the call returns, and the command is simply never handled.
+    await Assert.That(received).IsSameReferenceAs(command)
+      .Because("supplying the context automatically must not change WHETHER the receptor runs");
   }
 
   [Test]
@@ -1685,11 +1804,18 @@ public class DispatcherUncoveredPathsTests {
   [Test]
   public async Task LocalInvokeAsync_Void_AutoContext_CompletesAsync() {
     // Arrange - exercises void LocalInvokeAsync(message) overload
-    var dispatcher = _createDispatcher(voidInvoker: _defaultVoidInvoker());
+    object? received = null;
+    var dispatcher = _createDispatcher(
+      voidInvoker: msg => { received = msg; return ValueTask.CompletedTask; });
     var command = new TestCommand("void-auto-context");
 
-    // Act - should not throw
+    // Act
     await dispatcher.LocalInvokeAsync(command);
+
+    // Assert - the non-generic twin of the overload above; it resolves its own invoker, so it can
+    // fail on its own.
+    await Assert.That(received).IsSameReferenceAs(command)
+      .Because("the untyped auto-context entry point has to reach the receptor too");
   }
 
   // ========================================
@@ -1792,24 +1918,39 @@ public class DispatcherUncoveredPathsTests {
 
   [Test]
   public async Task SendAsync_GenericInternal_WithOptions_CanceledAfterStore_ThrowsAsync() {
-    // Arrange - cancel after traceStore to exercise mid-path cancellation
+    // Arrange - this targets the SECOND cancellation check, the one inside the internal send. A
+    // token canceled before the call never reaches it: the public SendAsync overload throws
+    // eagerly on entry. The window this guard covers is the one where the trace write itself is
+    // where the caller's shutdown lands, so cancel from inside StoreAsync — that is the only way
+    // to arrive at the check canceled, and it arrives there every run.
     using var cts = new CancellationTokenSource();
-    var traceStore = new StubTraceStore();
+    var traceStore = new StubTraceStore { OnStored = cts.Cancel };
+    var invoked = false;
     var dispatcher = _createDispatcher(
       traceStore: traceStore,
       invoker: msg => {
-        cts.Cancel();
+        invoked = true;
         return new ValueTask<object>(new TestResult(Guid.NewGuid(), true));
       });
     var command = new TestCommand("generic-cancel-mid");
     var options = new DispatchOptions { CancellationToken = cts.Token };
 
-    // This may or may not throw depending on timing, but exercises the path
-    try {
-      await dispatcher.SendAsync<TestCommand>(command, options);
-    } catch (OperationCanceledException) {
-      // Expected
-    }
+    // Act & Assert - the caller must be told the send did not happen. Returning a Delivered
+    // receipt here would report a command as dispatched that no receptor ever saw, which is the
+    // one outcome a receipt exists to rule out.
+    await Assert.That(async () => await dispatcher.SendAsync<TestCommand>(command, options))
+      .Throws<OperationCanceledException>()
+      .Because("a canceled send must surface as canceled, not as a delivery receipt for work that "
+             + "never ran");
+
+    // The trace was written before the check and stays written — the envelope is the record that
+    // the attempt was made, and an abandoned attempt is exactly what an operator needs it for.
+    await Assert.That(traceStore.StoreCallCount).IsEqualTo(1)
+      .Because("the check sits after the trace write; an abandoned send is still a send that was "
+             + "attempted");
+    await Assert.That(invoked).IsFalse()
+      .Because("the guard's whole purpose is to stop before the receptor — running it anyway would "
+             + "apply the command's effects on a dispatch the caller was told was canceled");
   }
 
   // ========================================

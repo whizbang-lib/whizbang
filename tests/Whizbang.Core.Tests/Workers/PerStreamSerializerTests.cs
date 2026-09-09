@@ -56,12 +56,21 @@ public class PerStreamSerializerTests {
   public async Task StoppingWhileDraining_EndsWithoutSurfacingCancellationAsync() {
     // Shutdown mid-drain is not a processing failure and must not be reported as one, or every
     // deploy files an error per in-flight stream.
+    var processed = new ConcurrentQueue<Guid>();
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: (item, ct) => Task.CompletedTask);
+      processor: (item, ct) => { processed.Enqueue(item.MessageId); return Task.CompletedTask; });
 
-    await sut.EnqueueAsync(new StreamItem(_idProvider.NewGuid(), _idProvider.NewGuid()));
+    var item = new StreamItem(_idProvider.NewGuid(), _idProvider.NewGuid());
+    await sut.EnqueueAsync(item);
     await sut.FlushAndStopAsync();
+
+    // An uncanceled stop completes the writers and awaits every worker, so the queued item must be
+    // through the processor by the time it returns. That is the half of shutdown that is NOT
+    // cancellation — the abandon-the-drain path is FlushAndStopAsync_WithCanceledToken below.
+    await Assert.That(processed).Contains(item.MessageId)
+      .Because("FlushAndStop drains what is queued; dropping it here would silently lose the last "
+             + "items of every stream on each deploy");
   }
 
   // ===== Same-stream serial ordering =====
@@ -104,9 +113,17 @@ public class PerStreamSerializerTests {
     var bStarted = new TaskCompletionSource();
     var canFinish = new TaskCompletionSource();
 
+    var inFlight = 0;
+    var peakInFlight = 0;
+
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
       processor: async (item, ct) => {
+        var current = Interlocked.Increment(ref inFlight);
+        var observed = Volatile.Read(ref peakInFlight);
+        while (current > observed) {
+          observed = Interlocked.CompareExchange(ref peakInFlight, current, observed);
+        }
         if (item.Tag == "A") {
           aStarted.TrySetResult();
         }
@@ -114,17 +131,22 @@ public class PerStreamSerializerTests {
           bStarted.TrySetResult();
         }
         await canFinish.Task;
+        Interlocked.Decrement(ref inFlight);
       });
 
     await sut.EnqueueAsync(new StreamItem(streamA, _idProvider.NewGuid(), "A"));
     await sut.EnqueueAsync(new StreamItem(streamB, _idProvider.NewGuid(), "B"));
 
     // Both processors must have started before either is allowed to finish.
-    // Different-stream → parallel: this assertion times out if they were serialized.
+    // Different-stream → parallel: this times out if they were serialized.
     await Task.WhenAll(aStarted.Task, bStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
 
     canFinish.SetResult();
     await sut.FlushAndStopAsync();
+
+    await Assert.That(peakInFlight).IsEqualTo(2)
+      .Because("stream affinity serializes WITHIN a stream, not across them — one shared worker "
+             + "would cap concurrency at 1 and make a slow stream stall every other stream");
   }
 
   // ===== Null stream id routes to default channel =====
@@ -334,10 +356,12 @@ public class PerStreamSerializerTests {
     // and the stop token canceled, rather than waiting on it forever.
     var releaseProcessor = new TaskCompletionSource();
     var processorEntered = new TaskCompletionSource();
+    var processorToken = CancellationToken.None;
 
     var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: async (_, _) => {
+      processor: async (_, ct) => {
+        processorToken = ct;
         processorEntered.TrySetResult();
         await releaseProcessor.Task;
       });
@@ -348,7 +372,15 @@ public class PerStreamSerializerTests {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
+    // Returns while the processor is still parked on releaseProcessor — that it returns at all is
+    // the "abandoned" half.
     await sut.FlushAndStopAsync(cts.Token);
+
+    // The other half: the still-running processor has to be TOLD. Its token is the only channel
+    // shutdown has to it, so leaving that token uncanceled would strand the work with no deadline.
+    await Assert.That(processorToken.IsCancellationRequested).IsTrue()
+      .Because("the stop token is canceled when the shutdown deadline passes, so a processor that "
+             + "honors its token can unwind instead of holding the host open");
 
     releaseProcessor.TrySetResult();
   }

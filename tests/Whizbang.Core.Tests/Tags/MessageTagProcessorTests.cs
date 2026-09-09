@@ -26,30 +26,55 @@ namespace Whizbang.Core.Tests.Tags;
 public class MessageTagProcessorTests {
 
   [Test]
+  [NotInParallel("TagRegistry")]
   public async Task WithDebugLoggingOn_TheProcessorNarratesWhatItDecidedAsync() {
     // The processor's diagnostic logging is guarded on IsEnabled(Debug), and the suite has always
     // run it with a null logger — so the narration an operator turns on to find out WHY a tag hook
     // did or did not fire had never executed. That is the half of this class people reach for when
     // a hook silently does nothing.
+    _cleanupRegistry();
+    var logs = new List<string>();
     var services = new ServiceCollection();
-    services.AddLogging(b => b.SetMinimumLevel(LogLevel.Debug));
+    services.AddLogging(b => {
+      b.SetMinimumLevel(LogLevel.Debug);
+      b.AddProvider(new ListLoggerProvider(logs));
+    });
     var sp = services.BuildServiceProvider();
     var processor = new MessageTagProcessor(
       new TagOptions(), sp.GetRequiredService<IServiceScopeFactory>());
 
     await processor.ProcessTagsAsync(
       new { OrderId = "123" }, typeof(object), LifecycleStage.PreOutboxInline);
+
+    // The narration only earns its keep if it names the two things the operator came for: which
+    // message type and lifecycle stage the processor was asked about, and how many registrations it
+    // found for that type. A hook that never fires is diagnosed by the second line reading zero.
+    await Assert.That(logs).Contains(l =>
+      l.Contains("ProcessTagsAsync called for Object", StringComparison.Ordinal)
+      && l.Contains(nameof(LifecycleStage.PreOutboxInline), StringComparison.Ordinal));
+    await Assert.That(logs).Contains(l =>
+      l.Contains("Found 0 tag registrations for Object", StringComparison.Ordinal));
   }
 
   [Test]
+  [NotInParallel("TagRegistry")]
   public async Task WithNeitherResolverNorScopeFactory_ItReturnsWithoutWorkAsync() {
     // Nothing can resolve a hook, so there is no work to do and no reason to build a scope. The
     // early return is what keeps a host that registered no hooks from paying for tag processing
     // on every message.
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(TaggedTestMessage), typeof(SignalTagAttribute), "test-tag");
+    MessageTagRegistry.Register(registry, priority: 100);
     var processor = new MessageTagProcessor(new TagOptions());
 
     await processor.ProcessTagsAsync(
-      new { OrderId = "123" }, typeof(object), LifecycleStage.PreOutboxInline);
+      new TaggedTestMessage("123"), typeof(TaggedTestMessage), LifecycleStage.PreOutboxInline);
+
+    // "Without work" is the claim, and this message type does have a registration -- so a processor
+    // that had not returned early would have gone looking for it. The registry is never asked, which
+    // is the per-message cost the guard exists to avoid.
+    await Assert.That(registry.LookupCount).IsEqualTo(0);
   }
 
   [Test]
@@ -607,6 +632,9 @@ public class MessageTagProcessorTests {
   private sealed class TestMessageTagRegistry : IMessageTagRegistry {
     private readonly List<MessageTagRegistration> _registrations = [];
 
+    /// <summary>Number of times this registry has been asked for a message type's tags.</summary>
+    public int LookupCount { get; private set; }
+
     public void AddRegistration(Type messageType, Type attributeType, string tag, string? metricName = null) {
       _registrations.Add(new MessageTagRegistration {
         MessageType = messageType,
@@ -635,7 +663,36 @@ public class MessageTagProcessorTests {
     }
 
     public IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType) {
+      LookupCount++;
       return _registrations.Where(r => r.MessageType == messageType);
+    }
+  }
+
+  /// <summary>
+  /// Real <see cref="ILoggerProvider"/> collecting formatted messages, so a test can assert on the
+  /// narration the processor emits at Debug rather than only on it not throwing.
+  /// </summary>
+  private sealed class ListLoggerProvider(List<string> sink) : ILoggerProvider {
+    private readonly List<string> _sink = sink;
+
+    public ILogger CreateLogger(string categoryName) => new ListLogger(_sink);
+
+    public void Dispose() {
+      // Nothing to release -- the sink is owned by the test.
+    }
+
+    private sealed class ListLogger(List<string> sink) : ILogger {
+      private readonly List<string> _sink = sink;
+
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(
+          LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+          Exception? exception, Func<TState, Exception?, string> formatter) {
+        lock (_sink) {
+          _sink.Add(formatter(state, exception));
+        }
+      }
     }
   }
 

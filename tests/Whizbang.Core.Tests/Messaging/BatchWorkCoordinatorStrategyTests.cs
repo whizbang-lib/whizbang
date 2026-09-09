@@ -788,11 +788,12 @@ public class BatchWorkCoordinatorStrategyTests {
 
   [Test]
   public async Task BatchFlush_Error_WithLogger_LogsErrorAsync() {
-    // Arrange
-    var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    // The flush runs on a detached Task.Run, so a throwing coordinator surfaces NOWHERE except
+    // this log line: the queued messages are gone from the buffer, nothing was written, and the
+    // caller that queued them was told nothing. If the catch stopped logging, a service would
+    // drop outbox work silently for as long as the failure lasted.
+    var logger = new _batchCapturingLogger();
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
-    var flushErrorTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    throwingCoordinator.OnProcessCalled = () => flushErrorTcs.TrySetResult();
 
     var sut = new BatchWorkCoordinatorStrategy(
       throwingCoordinator,
@@ -806,9 +807,20 @@ public class BatchWorkCoordinatorStrategyTests {
       sut.QueueOutboxMessage(_createOutboxMessage());
       sut.QueueOutboxMessage(_createOutboxMessage());
 
-      // Wait for the flush attempt
-      await flushErrorTcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
-      // covers LogErrorDuringBatchFlush
+      // Wait on the log itself, not on the coordinator call: the catch runs after the throw, so
+      // signaling from the coordinator would race the very line under test.
+      await logger.WaitForEventAsync(EVENT_BATCH_FLUSH_ERROR, TimeSpan.FromSeconds(5));
+
+      await Assert.That(logger.Entries.Any(e => e.EventId == EVENT_BATCH_FLUSH_ERROR && e.Level == LogLevel.Error)).IsTrue()
+        .Because("dropped outbox work is an error, not a debug note -- at any lower level it is "
+               + "filtered out of the production log where it would have to be seen");
+
+      // The trigger has to be identifiable. Both flush paths fail the same way and leave the same
+      // empty buffer behind; only the distinct event id tells an operator whether the batch-size
+      // path or the quiet-period path is the one failing.
+      await Assert.That(logger.Entries.Any(e => e.EventId == EVENT_DEBOUNCE_FLUSH_ERROR)).IsFalse()
+        .Because("this flush was triggered by batch size, and reporting it as a debounce failure "
+               + "points the investigation at the wrong trigger");
     } finally {
       await sut.DisposeAsync();
     }
@@ -848,11 +860,11 @@ public class BatchWorkCoordinatorStrategyTests {
 
   [Test]
   public async Task DebounceTimer_Error_WithLogger_LogsErrorAsync() {
-    // Arrange
-    var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    // Same silent-drop exposure as the batch-size path, on the trigger that fires on LOW traffic --
+    // the one a quiet service lives on, and therefore the one whose failures are least likely to be
+    // noticed any other way.
+    var logger = new _batchCapturingLogger();
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
-    var flushErrorTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    throwingCoordinator.OnProcessCalled = () => flushErrorTcs.TrySetResult();
 
     var sut = new BatchWorkCoordinatorStrategy(
       throwingCoordinator,
@@ -865,9 +877,15 @@ public class BatchWorkCoordinatorStrategyTests {
       // Act - queue a message below batch size so debounce timer fires
       sut.QueueOutboxMessage(_createOutboxMessage());
 
-      // Wait for the debounce flush attempt
-      await flushErrorTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
-      // covers LogErrorDuringDebounceFlush
+      await logger.WaitForEventAsync(EVENT_DEBOUNCE_FLUSH_ERROR, TimeSpan.FromSeconds(10));
+
+      await Assert.That(logger.Entries.Any(e => e.EventId == EVENT_DEBOUNCE_FLUSH_ERROR && e.Level == LogLevel.Error)).IsTrue()
+        .Because("dropped outbox work is an error, not a debug note -- at any lower level it is "
+               + "filtered out of the production log where it would have to be seen");
+
+      await Assert.That(logger.Entries.Any(e => e.EventId == EVENT_BATCH_FLUSH_ERROR)).IsFalse()
+        .Because("one message against a batch size of 100 can only have been flushed by the "
+               + "debounce timer; attributing it to the batch-size trigger misreports the cause");
     } finally {
       await sut.DisposeAsync();
     }
@@ -1571,13 +1589,10 @@ public class BatchWorkCoordinatorStrategyTests {
   }
 
   private sealed class BatchThrowingWorkCoordinator : IWorkCoordinator {
-    public Action? OnProcessCalled { get; set; }
-
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
       CancellationToken cancellationToken = default) {
-      OnProcessCalled?.Invoke();
       throw new InvalidOperationException("Simulated flush error");
     }
 
@@ -1671,6 +1686,56 @@ public class BatchWorkCoordinatorStrategyTests {
         }
         return null;
       }
+    }
+  }
+
+  // BatchWorkCoordinatorStrategy's own LoggerMessage ids for the two flush-failure paths.
+  private const int EVENT_BATCH_FLUSH_ERROR = 10;
+  private const int EVENT_DEBOUNCE_FLUSH_ERROR = 11;
+
+  /// <summary>
+  /// Captures log entries and lets a test await a specific event id, so the assertion waits on the
+  /// log line under test rather than on a signal raised before the catch that writes it.
+  /// </summary>
+  private sealed class _batchCapturingLogger : ILogger<BatchWorkCoordinatorStrategy> {
+    private readonly List<(int EventId, LogLevel Level)> _entries = [];
+    private readonly Dictionary<int, TaskCompletionSource> _waiters = [];
+
+    public IReadOnlyList<(int EventId, LogLevel Level)> Entries {
+      get {
+        lock (_entries) {
+          return [.. _entries];
+        }
+      }
+    }
+
+    public Task WaitForEventAsync(int eventId, TimeSpan timeout) {
+      TaskCompletionSource tcs;
+      lock (_entries) {
+        if (_entries.Exists(e => e.EventId == eventId)) {
+          return Task.CompletedTask;
+        }
+        if (!_waiters.TryGetValue(eventId, out var existing)) {
+          existing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+          _waiters[eventId] = existing;
+        }
+        tcs = existing;
+      }
+      return tcs.Task.WaitAsync(timeout);
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      TaskCompletionSource? waiter;
+      lock (_entries) {
+        _entries.Add((eventId.Id, logLevel));
+        _waiters.TryGetValue(eventId.Id, out waiter);
+      }
+      waiter?.TrySetResult();
     }
   }
 }

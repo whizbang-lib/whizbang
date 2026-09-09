@@ -153,6 +153,13 @@ public class MessageBodyStoreContractTests {
 
     // Must not throw — provider impls MUST tolerate null options for all three operations.
     await store.DeleteAsync(claim);
+
+    // Tolerating null options means defaulting them, not skipping the work: the body has to be gone.
+    await Assert.That(async () => await store.DownloadAsync(claim))
+      .Throws<KeyNotFoundException>()
+      .Because("null options must still reach the override and remove the body — a provider that "
+             + "bailed out on null options would leave every PostInbox cleanup a silent no-op and "
+             + "the offload container would grow forever");
   }
 
   /// <summary>

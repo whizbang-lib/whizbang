@@ -424,12 +424,23 @@ public class SecurityCoverageTests {
       options: new MessageSecurityOptions { AllowAnonymous = true }
     );
     services.AddSingleton<IMessageSecurityContextProvider>(provider);
-    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    // Capturing accessor rather than the real one: the real accessor stores through an AsyncLocal,
+    // which does not flow back out of the async establishment call, so what it holds afterwards
+    // says nothing about what was established.
+    var capturingMessageAccessor = new CapturingMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(capturingMessageAccessor);
     // intentionally no IScopeContextAccessor
     var sp = services.BuildServiceProvider();
 
     // Act - should not throw (covers null scopeContextAccessor in _setMessageContextFromEnvelopeWithScope)
     await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Assert - the missing IScopeContextAccessor is optional plumbing, not a precondition: the
+    // extracted identity must still land on IMessageContextAccessor. If establishment bailed out
+    // when the scope accessor was absent, every receptor in such a host would run anonymous.
+    await Assert.That(capturingMessageAccessor.CapturedContext).IsNotNull();
+    await Assert.That(capturingMessageAccessor.CapturedContext!.TenantId).IsEqualTo("t");
+    await Assert.That(capturingMessageAccessor.CapturedContext.UserId).IsEqualTo("u");
   }
 
   // ========================================

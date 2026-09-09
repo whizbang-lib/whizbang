@@ -421,9 +421,11 @@ public class SlidingWindowOutboxBatchStrategyTests {
     // rather than waited on forever.
     var releaseFlush = new TaskCompletionSource();
     var flushEntered = new TaskCompletionSource();
+    var flushToken = CancellationToken.None;
 
     var sut = new SlidingWindowOutboxBatchStrategy(
-      flush: async (_, _) => {
+      flush: async (_, ct) => {
+        flushToken = ct;
         flushEntered.TrySetResult();
         await releaseFlush.Task;
       },
@@ -439,7 +441,14 @@ public class SlidingWindowOutboxBatchStrategyTests {
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
-    await sut.FlushAndStopAsync(cts.Token);
+    // "Without hanging" has to be enforced rather than hoped for: a stop that in fact waits on the
+    // drain would otherwise sit here until the suite-level timeout kills the whole run.
+    await sut.FlushAndStopAsync(cts.Token).WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Abandoning is more than returning early: the flush still in flight is TOLD to give up. That
+    // signal is what lets the deadline end the process, instead of leaving a batch writing into a
+    // host that has already torn its connections down.
+    await Assert.That(flushToken.IsCancellationRequested).IsTrue();
 
     releaseFlush.TrySetResult();
   }

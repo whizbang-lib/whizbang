@@ -523,13 +523,14 @@ public class PerspectiveWorkerCollectiveSinkTests {
   }
 
   [Test]
-  public async Task CollectiveSink_NoDispatcherRegistered_DoesNotThrow_Async() {
+  public async Task CollectiveSink_NoDispatcherRegistered_SkipsTheRunnerAndReturns_Async() {
     var streamId = TrackedGuid.NewMedo().Value;
+    var runner = new _trackingRunner();
     using var cts = new CancellationTokenSource();
     var (worker, harness, coordinator) = _createWorker(
       [_sinkWork(streamId)],
       eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(TrackedGuid.NewMedo().Value, new _testCollectiveEvent { Scope = new TenantCollectiveScope("t") })] } },
-      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      registry: new _registry(runner, [typeof(_testCollectiveEvent)]),
       dispatcher: null); // not configured
 
     await worker.StartAsync(cts.Token);
@@ -538,7 +539,11 @@ public class PerspectiveWorkerCollectiveSinkTests {
     await cts.CancelAsync();
     await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
       .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-    // No assertion needed beyond "did not throw" — the not-configured branch logs and returns.
+
+    // "Not configured" has to mean the sink branch logs and returns, not that the work falls
+    // through to the ordinary per-stream path — a collective event applied through the per-stream
+    // runner is applied against the wrong rows entirely.
+    await Assert.That(runner.RunWithEventsCount).IsEqualTo(0);
   }
 
   [Test]

@@ -205,13 +205,25 @@ public class RedeliveryRequestReceptorTests {
 
   [Test]
   public async Task Receptor_MissingInfrastructure_IsInertAsync() {
-    var services = new ServiceCollection();   // no coordinator / transport / store / provider
+    // Transport and serializer ARE wired; the coordinator — the piece that decides WHAT to ship —
+    // is not. Wiring the one component that can show a side effect is what makes "inert" observable
+    // rather than merely "did not throw": an empty provider has nothing to publish through.
+    var transport = new _captureTransport();
+    var services = new ServiceCollection();
+    services.AddSingleton<ITransport>(transport);
+    services.AddSingleton<IEnvelopeSerializer>(new _captureSerializer());
+    services.AddSingleton(Options.Create(new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped }));
     await using var sp = services.BuildServiceProvider();
     var receptor = new RedeliveryRequestReceptor(
       sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 
     // Must not throw — a host without the re-delivery infrastructure ignores the command.
     await receptor.HandleAsync(new RequestRedeliveryCommand { RequesterService = "svc", Topic = "t" });
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("an origin that cannot select anything has nothing to repair with — it must ignore the "
+             + "request outright, never ship an empty or half-built bundle the requester would then "
+             + "count as a repair.");
   }
 
   [Test]
@@ -238,8 +250,13 @@ public class RedeliveryRequestReceptorTests {
                "in-process (operator) and over the inbox (damaged consumer).");
   }
 
+  /// <summary>
+  /// Renamed from <c>Registrar_NoRegistry_IsInertAsync</c>: with no registry present there is nothing
+  /// for the registrar to touch and therefore nothing observable to call inert. Completing startup is
+  /// the whole guarantee — schema-only and diagnostic hosts have no registry and must still boot.
+  /// </summary>
   [Test]
-  public async Task Registrar_NoRegistry_IsInertAsync() {
+  public async Task Registrar_NoRegistry_DoesNotThrowAsync() {
     var services = new ServiceCollection();   // no IReceptorRegistry
     await using var sp = services.BuildServiceProvider();
     var registrar = new RedeliveryRequestReceptorRegistrar(

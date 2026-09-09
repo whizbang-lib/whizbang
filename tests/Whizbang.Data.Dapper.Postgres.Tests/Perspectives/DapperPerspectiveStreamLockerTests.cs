@@ -229,6 +229,10 @@ public class DapperPerspectiveStreamLockerTests : IDisposable {
 
     // Release a lock that was never acquired — should not throw
     await _locker.ReleaseLockAsync(streamId, perspectiveName, Guid.CreateVersion7());
+
+    // ...and must leave the cursor row exactly as it was: still present, still unlocked. A
+    // release keyed on the wrong instance must not delete the row or stamp lock fields onto it.
+    await _assertNoLockAsync(streamId, perspectiveName);
   }
 
   [Test]

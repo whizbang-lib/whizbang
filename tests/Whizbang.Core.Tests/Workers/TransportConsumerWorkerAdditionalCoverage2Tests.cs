@@ -111,7 +111,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
   // ========================================
 
   [Test]
-  public async Task HandleMessage_WithJsonElementPayloadButNonGenericEnvelope_ThrowsAsync() {
+  public async Task HandleMessage_WithJsonElementPayloadButNonGenericEnvelope_SkipsMessageWithoutStoringAsync() {
     // Arrange - create an envelope where payload is JsonElement but envelope is NOT IMessageEnvelope<JsonElement>
     var messageId = MessageId.New();
     var transport = new Cov2Transport();
@@ -128,6 +128,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new Cov2CapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -137,7 +138,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -155,6 +156,15 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
+
+    // Assert - a JsonElement payload carried by a non-generic envelope has no serializer that can
+    // handle it, and guessing would write an inbox row whose body does not match its declared type.
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("a message the worker cannot serialize must be dropped, not stored half-formed.");
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1)
+      .Because("the drop must be reported; asserting it also proves the handler actually ran.");
+    await Assert.That(contained[0].Message).Contains("Envelope has JsonElement payload");
   }
 
   // ========================================
@@ -297,7 +307,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
   // ========================================
 
   [Test]
-  public async Task HandleMessage_WithNullEnvelopeType_SkipsTimestampPopulationAndThrowsAsync() {
+  public async Task HandleMessage_WithNullEnvelopeType_SkipsTimestampPopulationAndStoresNothingAsync() {
     // This path is covered indirectly by existing null envelopeType tests
     // but exercises _populateDeliveredAtTimestamp's null guard (line 782)
     var messageId = MessageId.New();
@@ -315,6 +325,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new Cov2CapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -324,7 +335,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -347,6 +358,15 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     await transport.SimulateMessageReceivedAsync(envelope, null);
 
     cts.Cancel();
+
+    // Assert - the failure names the MISSING ENVELOPE TYPE, which is the step after the timestamp
+    // populator: with a null type that populator has to return early rather than parse it.
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1);
+    await Assert.That(contained[0].Message).Contains("EnvelopeType is required")
+      .Because("failing here and not inside _populateDeliveredAtTimestamp is what proves the null guard held.");
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("a delivery with no envelope type cannot produce a processable inbox row.");
   }
 
   // ========================================
@@ -548,7 +568,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
   // ========================================
 
   [Test]
-  public async Task HandleMessage_StronglyTypedEnvelope_NoSerializer_ThrowsAsync() {
+  public async Task HandleMessage_StronglyTypedEnvelope_NoSerializer_SkipsMessageWithoutStoringAsync() {
     // Arrange - strongly-typed envelope but no IEnvelopeSerializer
     var messageId = MessageId.New();
     var transport = new Cov2Transport();
@@ -566,6 +586,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new Cov2CapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -575,7 +596,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -600,6 +621,15 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
+
+    // Assert - a strongly-typed envelope can only be turned into an inbox row by the serializer;
+    // with none registered the message is dropped rather than stored with an unreadable body.
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("no serializer means no JSON envelope, and a row without one is unprocessable.");
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1)
+      .Because("a host missing IEnvelopeSerializer is a misconfiguration an operator has to see.");
+    await Assert.That(contained[0].Message).Contains("IEnvelopeSerializer is required but not registered");
   }
 
   // ========================================
@@ -1085,6 +1115,34 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
     public JsonElement? GetMetadata(string key) => null;
     public SecurityContext? GetCurrentSecurityContext() => null;
     public ScopeContext? GetCurrentScope() => null;
+  }
+
+  /// <summary>Logger that keeps the exceptions attached to its entries. The worker's per-message
+  /// isolation logs the fault and moves on, and the formatted message never carries the exception,
+  /// so this is the only place a contained failure is observable.</summary>
+  private sealed class Cov2CapturingLogger : ILogger<TransportConsumerWorker> {
+    private readonly Lock _lock = new();
+    private readonly List<Exception> _exceptions = [];
+
+    public IReadOnlyList<Exception> Exceptions {
+      get {
+        lock (_lock) {
+          return [.. _exceptions];
+        }
+      }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (exception is not null) {
+        lock (_lock) {
+          _exceptions.Add(exception);
+        }
+      }
+    }
   }
 
   private sealed class Cov2EnvelopeSerializer : IEnvelopeSerializer {
