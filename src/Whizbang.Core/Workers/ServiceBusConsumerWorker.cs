@@ -656,42 +656,15 @@ public partial class ServiceBusConsumerWorker(
       isEvent = payload is IEvent;
     }
 
-    // Extract simple type name for handler name
-    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
-    var handlerName = simpleTypeName + "Handler";
-
     var streamId = _extractStreamId(envelope);
-
-    // Guard: fail-fast if StreamId is Guid.Empty for events
-    if (isEvent) {
-      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "ServiceBusConsumer.Inbox", messageTypeName);
-    }
-
+    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
     LogSerializeInboxMessage(_logger, envelope.MessageId.Value, simpleTypeName, isEvent, streamId);
 
-    // Name-first flag derivation: transport payloads are typically JsonElement here, where
-    // `payload is ICollectiveEvent`-style checks are blind — the compile-time catalog stamp
-    // (looked up by the wire type name) is what keeps Collective/Composite/Ephemeral/Compacted
-    // flags intact across a service boundary. Same contract as TransportConsumerWorker.
-    var flags = Whizbang.Core.Messaging.EventFlagsDeriver.Derive(
-      payload, messageTypeName, _eventMarkerResolver, _ephemeralModeResolver);
-    var inboxMessage = new InboxMessage {
-      MessageId = envelope.MessageId.Value,
-      HandlerName = handlerName,
-      Envelope = jsonEnvelope,
-      EnvelopeType = envelopeTypeFromTransport,  // Use the original type from transport!
-      StreamId = streamId,
-      IsEvent = isEvent,
-      Flags = flags,
-      Scope = envelope.GetCurrentScope()?.Scope,
-      Metadata = new EnvelopeMetadata {
-        MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? [],
-        DispatchContext = envelope.DispatchContext,
-        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, messageTypeName, _ephemeralModeResolver)
-      },
-      MessageType = messageTypeName
-    };
+    // The row itself (handler name, stream guard, name-first flags and TTL, and the producer's identity
+    // from the envelope) is built by the helper both consumer workers share (#739).
+    var inboxMessage = ReceivedInboxMessageBuilder.Build(
+      envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent,
+      "ServiceBusConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
 
     LogCreatedInboxMessage(_logger, inboxMessage.MessageId, inboxMessage.IsEvent, inboxMessage.StreamId,
       inboxMessage.MessageType, inboxMessage.EnvelopeType, jsonEnvelope.Payload.ValueKind);
@@ -723,20 +696,7 @@ public partial class ServiceBusConsumerWorker(
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
   /// </summary>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
-    var firstHop = envelope.Hops?.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
-        streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-
-    // Fall back to message ID (ensures all messages have a stream)
-    return envelope.MessageId.Value;
-  }
+  private static Guid _extractStreamId(IMessageEnvelope envelope) => ReceivedInboxMessageBuilder.ExtractStreamId(envelope);
 
   /// <summary>
   /// Stops the worker and disposes all subscriptions.
