@@ -191,7 +191,7 @@ public abstract class ExecutionStrategyContractTests {
 
     var result = await strategy.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => {
+      (_, _) => {
         Interlocked.Increment(ref invocations);
         return ValueTask.FromResult(42);
       },
@@ -212,7 +212,7 @@ public abstract class ExecutionStrategyContractTests {
     // running after the one Stop a shutdown path issues, so its worker outlives the host.
     await strategy.StopAsync();
     await Assert.That(async () => await strategy.ExecuteAsync<int>(
-      envelope, (env, ctx) => ValueTask.FromResult(0), context))
+      envelope, (_, _) => ValueTask.FromResult(0), context))
       .Throws<InvalidOperationException>()
       .Because("one StopAsync has to stop it, however many times StartAsync was called");
   }

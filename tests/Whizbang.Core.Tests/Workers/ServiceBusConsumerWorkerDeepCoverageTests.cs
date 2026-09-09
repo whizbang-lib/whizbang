@@ -1180,7 +1180,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var stopped = new List<Activity>();
     using var listener = new ActivityListener {
       ShouldListenTo = source => source.Name == "Whizbang.Transport",
-      Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
       ActivityStopped = activity => {
         lock (stopped) {
           stopped.Add(activity);
@@ -1225,9 +1225,9 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     // an operator is looking at when a trace ends at the queue.
     List<Activity> inboxActivities;
     lock (stopped) {
-      inboxActivities = stopped
-        .Where(a => (a.GetTagItem("messaging.message_id") as string) == messageId.ToString())
-        .ToList();
+      inboxActivities = [
+        .. stopped.Where(a => (a.GetTagItem("messaging.message_id") as string) == messageId.ToString())
+      ];
     }
     await Assert.That(inboxActivities.Count).IsEqualTo(1);
     var inboxActivity = inboxActivities[0];

@@ -122,7 +122,7 @@ public class IntervalUnitOfWorkStrategyTests {
   public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
     // Arrange - a real, in-flight unit alongside the unknown id, so "did nothing" is visible.
     await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+    strategy.OnFlushRequested += async (_, _) => await Task.CompletedTask;
     var liveUnitId = await strategy.QueueMessageAsync(new TestMessage { Value = "keep me" });
     var nonExistentUnitId = Guid.NewGuid();
 

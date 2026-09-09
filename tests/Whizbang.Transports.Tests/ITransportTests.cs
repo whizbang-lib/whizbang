@@ -41,7 +41,7 @@ public class ITransportTests {
     var delivered = new TaskCompletionSource<IReadOnlyList<TransportMessage>>(
       TaskCreationOptions.RunContinuationsAsynchronously);
     using var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => { delivered.TrySetResult(batch); return Task.CompletedTask; },
+      (batch, _) => { delivered.TrySetResult(batch); return Task.CompletedTask; },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 5000, MaxWaitMs = 10000 },
       CancellationToken.None

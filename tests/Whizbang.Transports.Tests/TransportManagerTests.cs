@@ -159,7 +159,7 @@ public class TransportManagerTests {
     // passing because publishing is a no-op here, but because the empty list skipped it.
     await Assert.That(async () => await manager.PublishToTargetsAsync(
         message,
-        new List<PublishTarget> { new() { TransportType = TransportType.Kafka, Destination = "probe" } }))
+        [new PublishTarget { TransportType = TransportType.Kafka, Destination = "probe" }]))
       .ThrowsExactly<InvalidOperationException>()
       .Because("a non-empty target list does reach transport resolution, so the empty case demonstrably did not");
   }

@@ -333,7 +333,7 @@ public class ImmediateUnitOfWorkStrategyTests {
     // holds the unit id the message is already gone downstream.
     var strategy = _createStrategy();
     var flushCount = 0;
-    strategy.OnFlushRequested += async (unitId, ct) => {
+    strategy.OnFlushRequested += async (_, _) => {
       flushCount++;
       await Task.CompletedTask;
     };

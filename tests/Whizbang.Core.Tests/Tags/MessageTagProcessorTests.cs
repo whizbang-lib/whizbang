@@ -84,7 +84,7 @@ public class MessageTagProcessorTests {
     // WithNeitherResolverNorScopeFactory_ItReturnsWithoutWorkAsync already pins).
     var resolverCalls = 0;
     var options = new TagOptions();
-    var processor = new MessageTagProcessor(options, type => {
+    var processor = new MessageTagProcessor(options, _ => {
       resolverCalls++;
       return null;
     });

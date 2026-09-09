@@ -118,7 +118,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
     // Arrange - a live unit alongside the id being cancelled. Without it "does not throw" is the
     // only guarantee, and a CancelUnitAsync that cleared every unit would satisfy it.
     await using var strategy = CreateStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+    strategy.OnFlushRequested += async (_, _) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "survivor" };
     var liveUnitId = await strategy.QueueMessageAsync(message);

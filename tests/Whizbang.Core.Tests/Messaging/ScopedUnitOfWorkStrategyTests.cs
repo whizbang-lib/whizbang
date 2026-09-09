@@ -121,7 +121,7 @@ public class ScopedUnitOfWorkStrategyTests {
     // Arrange - a LIVE unit sits alongside the id being canceled. Cancel matches on unit id, so
     // the id that does not match is the one that proves the match is actually consulted.
     await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+    strategy.OnFlushRequested += async (_, _) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
     var liveUnitId = await strategy.QueueMessageAsync(message);

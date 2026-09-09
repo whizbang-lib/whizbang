@@ -87,7 +87,7 @@ public class InProcessTransportTests {
     var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (batch, _) => {
         foreach (var msg in batch) {
           received.Add(msg.Envelope.MessageId);
         }
