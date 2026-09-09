@@ -36,6 +36,7 @@ namespace Whizbang.Core.Workers;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public sealed partial class InboxDrainWorker(
   IServiceScopeFactory scopeFactory,
   IServiceInstanceProvider instanceProvider,
@@ -46,6 +47,7 @@ public sealed partial class InboxDrainWorker(
   JsonSerializerOptions jsonOptions,
   ILogger<InboxDrainWorker> logger,
   ClaimChurnFeedback? churnFeedback = null) : BackgroundService {
+#pragma warning restore S107
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ClaimChurnFeedback? _churnFeedback = churnFeedback;
   private readonly PoisonAdmissionPolicy _poisonPolicy = new(new PoisonAdmissionPolicy.Settings());

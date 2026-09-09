@@ -17,6 +17,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// claimer); the DB is the source of truth. Transition status codes: 0=resume/Active, 1=Pause, 3=Cancel.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public sealed class PgScheduleManager(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
@@ -26,6 +27,7 @@ public sealed class PgScheduleManager(
   ILogger<PgScheduleManager> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null) : IScheduleManager {
+#pragma warning restore S107
   private const short STATUS_ACTIVE = 0;
   private const short STATUS_PAUSED = 1;
   private const short STATUS_CANCELED = 3;

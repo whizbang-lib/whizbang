@@ -19,6 +19,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// are due (p_now omitted), so multi-instance clock skew can't fire early or double-fire.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public sealed partial class PgScheduleClaimer(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
@@ -28,6 +29,7 @@ public sealed partial class PgScheduleClaimer(
   ILogger<PgScheduleClaimer> logger,
   INotificationConnectionStringFallback? connectionStringFallback = null,
   INotificationDataSource? notificationDataSource = null) : IScheduleClaimer {
+#pragma warning restore S107
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
