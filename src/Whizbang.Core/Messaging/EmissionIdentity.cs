@@ -1,6 +1,4 @@
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 
 namespace Whizbang.Core.Messaging;
 
@@ -69,20 +67,7 @@ public static class EmissionIdentity {
       emittedTypeName, "\n",
       ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-    Span<byte> hash = stackalloc byte[32];
-    SHA256.HashData(Encoding.UTF8.GetBytes(canonical), hash);
-
-    Span<byte> source = stackalloc byte[16];
-    sourceMessageId.TryWriteBytes(source, bigEndian: true, out _);
-
-    Span<byte> id = stackalloc byte[16];
-    // Time prefix inherited from the source (bytes 0..5), then hash with version and variant bits.
-    source[..6].CopyTo(id);
-    id[6] = (byte)(0x70 | (hash[0] & 0x0F));   // version 7
-    id[7] = hash[1];
-    id[8] = (byte)(0x80 | (hash[2] & 0x3F));   // RFC variant 10xx
-    hash[3..10].CopyTo(id[9..]);
-    return new Guid(id, bigEndian: true);
+    return DerivedIdentity.FromCanonical(sourceMessageId, canonical);
   }
 }
 
