@@ -205,8 +205,15 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
-    // Act & Assert — should not throw
+    // Act — should not throw
     await sut.DisposeAsync();
+
+    // Assert — "swallows" is only a guarantee if a throw happened. Without a logger there is no
+    // message to inspect, so the coordinator itself is the witness: the disposal flush reached the
+    // store, the store threw, and DisposeAsync still returned. A disposal that quietly skipped the
+    // flush would satisfy "did not throw" while dropping every queued message on shutdown.
+    await Assert.That(throwingCoordinator.StoreOutboxCalls).IsEqualTo(1)
+      .Because("the disposal flush must have reached the coordinator for the swallow to mean anything");
   }
 
   // ============================================================
@@ -416,11 +423,19 @@ public class IntervalWorkCoordinatorStrategyFullCoverageTests {
   }
 
   private sealed class FullCoverageThrowingCoordinator : IWorkCoordinator {
+    private int _storeOutboxCalls;
+
+    /// <summary>How many times the disposal flush actually reached the store — a swallowed
+    /// exception only means something if one was raised.</summary>
+    public int StoreOutboxCalls => Volatile.Read(ref _storeOutboxCalls);
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
-      CancellationToken cancellationToken = default) =>
+      CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _storeOutboxCalls);
       throw new InvalidOperationException("Simulated failure");
+    }
 
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,

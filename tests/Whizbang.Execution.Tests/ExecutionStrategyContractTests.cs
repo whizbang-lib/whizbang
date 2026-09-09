@@ -181,13 +181,40 @@ public abstract class ExecutionStrategyContractTests {
   public async Task StartAsync_ShouldBeIdempotentAsync() {
     // Arrange
     var strategy = CreateStrategy();
+    var envelope = CreateTestEnvelope("test");
+    var context = CreateTestContext();
+    var invocations = 0;
 
     // Act
     await strategy.StartAsync();
-    await strategy.StartAsync(); // Second call should not throw
+    await strategy.StartAsync(); // Second call must be a no-op, not a second start
 
-    // Assert - No exception
+    var result = await strategy.ExecuteAsync<int>(
+      envelope,
+      (env, ctx) => {
+        Interlocked.Increment(ref invocations);
+        return ValueTask.FromResult(42);
+      },
+      context
+    );
+
+    // Assert - idempotent means the second call CHANGED NOTHING, which is more than "did not
+    // throw". Hosts start strategies from more than one place (a hosted service and the first
+    // dispatch that needs one), so the double call is routine.
+    await Assert.That(result).IsEqualTo(42)
+      .Because("the strategy has to remain usable — a second start that reset its state would "
+             + "leave a running-looking executor that no longer executes");
+    await Assert.That(Volatile.Read(ref invocations)).IsEqualTo(1)
+      .Because("a second start that spun up a second consumer of the same queue would run the "
+             + "handler twice — at-most-once processing lost to a duplicated startup call");
+
+    // A single Stop must undo a double Start: reference-counted state would leave the strategy
+    // running after the one Stop a shutdown path issues, so its worker outlives the host.
     await strategy.StopAsync();
+    await Assert.That(async () => await strategy.ExecuteAsync<int>(
+      envelope, (env, ctx) => ValueTask.FromResult(0), context))
+      .Throws<InvalidOperationException>()
+      .Because("one StopAsync has to stop it, however many times StartAsync was called");
   }
 
   [Test]

@@ -402,8 +402,13 @@ public class IntervalWorkCoordinatorStrategyTests {
       .ThrowsExactly<ObjectDisposedException>();
   }
 
+  /// <summary>
+  /// Repeated disposal is not merely non-throwing: the disposal drain must persist queued work
+  /// exactly once. A second drain would write the same outbox row again, which is a duplicate
+  /// publish downstream — so the queued message is what makes "idempotent" observable here.
+  /// </summary>
   [Test]
-  public async Task DisposeAsync_CalledMultipleTimes_ShouldNotThrowAsync() {
+  public async Task DisposeAsync_CalledMultipleTimes_FlushesQueuedWorkExactlyOnceAsync() {
     // Arrange
     var fakeCoordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -421,12 +426,32 @@ public class IntervalWorkCoordinatorStrategyTests {
       options
     );
 
+    var messageId = _idProvider.NewGuid();
+    sut.QueueOutboxMessage(new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = []
+      }
+    });
+
     // Act - Dispose multiple times
     await sut.DisposeAsync();
     await sut.DisposeAsync();
     await sut.DisposeAsync();
 
-    // Assert - Should not throw
+    // Assert - the drain reached the coordinator (so the count below is not vacuously zero) and
+    // it reached it exactly once across three disposals.
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("repeated disposal must not re-persist already-drained outbox work");
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
   }
 
   // ========================================

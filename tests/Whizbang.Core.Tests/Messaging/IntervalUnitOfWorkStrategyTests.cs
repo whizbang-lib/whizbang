@@ -120,12 +120,22 @@ public class IntervalUnitOfWorkStrategyTests {
 
   [Test]
   public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
-    // Arrange
+    // Arrange - a real, in-flight unit alongside the unknown id, so "did nothing" is visible.
     await using var strategy = _createStrategy();
+    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+    var liveUnitId = await strategy.QueueMessageAsync(new TestMessage { Value = "keep me" });
     var nonExistentUnitId = Guid.NewGuid();
 
-    // Act & Assert (should not throw)
+    // Act
     await strategy.CancelUnitAsync(nonExistentUnitId);
+
+    // Assert - cancelling an id nobody owns must not discard the batch that IS open. The guard
+    // that makes this true is a single `_currentUnit?.UnitId == unitId` check; drop it and every
+    // cancel silently drops the in-flight messages of an unrelated unit.
+    await Assert.That(strategy.GetMessagesForUnit(liveUnitId).Count).IsEqualTo(1)
+      .Because("the open unit is untouched by a cancel aimed at an id that was never queued");
+    await Assert.That(strategy.GetMessagesForUnit(nonExistentUnitId).Count).IsEqualTo(0)
+      .Because("and the unknown id still resolves to nothing rather than being created by the cancel");
   }
 
   [Test]

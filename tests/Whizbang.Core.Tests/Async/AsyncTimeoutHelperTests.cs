@@ -17,7 +17,12 @@ public class AsyncTimeoutHelperTests {
     var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     tcs.TrySetResult(true);
 
-    // Should not throw — task is already complete
+    // Should not throw — task is already complete. The completed await IS the guarantee here: the
+    // void overload returns nothing to inspect, and a TimeoutException on a task that finished
+    // inside its budget is the only failure this arrangement can produce.
+    // AsyncTimeoutHelperNonGenericTests.ATaskThatCompletesInTime_PassesThroughAsync carries the
+    // stronger form — a task that completes AFTER the wait starts, proving the helper tracks it
+    // rather than only short-circuiting on an already-completed one.
     await AsyncTimeoutHelper.WaitWithTimeoutAsync(
         tcs.Task, TimeSpan.FromSeconds(5), "should not timeout");
   }

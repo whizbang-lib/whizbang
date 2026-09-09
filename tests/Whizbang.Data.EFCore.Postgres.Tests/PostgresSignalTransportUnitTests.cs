@@ -301,23 +301,38 @@ public class PostgresSignalTransportUnitTests {
 
     // Options has no direct string, config has no ConnectionStrings entry -> Resolution returns
     // null and PublishAsync must return silently (logs a Debug and moves on).
-    var (transport, _, _) = _createTransport();
+    var logger = new CapturingSignalLogger();
+    var (transport, _, _) = _createTransport(logger: logger);
     await transport.StartAsync(new CountingSink());
 
     await transport.PublishAsync(new UnitBroadcastSignal(1), SignalTarget.Broadcast);
-    // Assertion: no exception thrown.
+
+    // Returning quietly is only correct if it happened at connection resolution. Nothing in the
+    // call itself separates that from the registry gate or the not-started gate, and an operator
+    // chasing a dead doorbell needs the log to say which one swallowed the publish.
+    await Assert.That(logger.Messages.Any(m =>
+      m.Contains("no connection string resolved", StringComparison.Ordinal))).IsTrue()
+      .Because("a publish that stops for want of a connection must say so, not report the signal "
+             + "type as unregistered or the bus as unstarted");
   }
 
   [Test]
   public async Task PublishAsync_UnregisteredSignal_ReturnsWithoutThrowAsync() {
     // The unregistered signal type has no wire-name mapping -> PublishAsync must warn+return
-    // instead of throwing.
-    var (transport, _, _) = _createTransport(connectionString: "Host=fake;Database=fake;Username=fake;Password=fake");
+    // instead of throwing. The connection string is deliberately unreachable: reaching OpenAsync
+    // at all would fault the publish, so surviving the call is itself evidence the gate fired
+    // before any connection was attempted.
+    var logger = new CapturingSignalLogger();
+    var (transport, _, _) = _createTransport(
+      connectionString: "Host=fake;Database=fake;Username=fake;Password=fake", logger: logger);
     await transport.StartAsync(new CountingSink());
 
     await transport.PublishAsync(new UnitUnregisteredSignal(1), SignalTarget.Broadcast);
-    // Assertion: no exception thrown; no attempt at opening the connection (unregistered path
-    // exits before the OpenAsync call).
+
+    await Assert.That(logger.Messages.Any(m =>
+      m.Contains("not in the SignalTypeRegistry", StringComparison.Ordinal))).IsTrue()
+      .Because("a signal that cannot be routed must name the missing registration — silence here "
+             + "reads as a delivered publish and hides the discovery gap that caused it");
   }
 
   private sealed class FakeSource(IReadOnlyList<SignalTypeEntry> entries) : ISignalTypeSource {
@@ -357,6 +372,9 @@ public class PostgresSignalTransportUnitTests {
   public async Task PublishBeforeStart_DoesNotThrowAsync() {
     // A doorbell that throws on a startup race would take down whatever was ringing it. Losing
     // one notify is survivable — every signal has a durable or polling backstop.
+    // Surviving the call is the whole guarantee: the only other observable on this path is which
+    // branch reported the skip, and PublishBeforeStart_ReportsTheStartOrderNotAMissingRegistrationAsync
+    // above already pins that. Asserting it twice would restate, not strengthen.
     var (transport, _, _) = _createTransport();
 
     await transport.PublishAsync(new ProbeSignal(), SignalTarget.Broadcast);

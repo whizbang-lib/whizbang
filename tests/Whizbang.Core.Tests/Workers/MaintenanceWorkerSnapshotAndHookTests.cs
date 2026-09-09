@@ -69,9 +69,15 @@ public class MaintenanceWorkerSnapshotAndHookTests {
       return Task.FromResult(AttemptToReport);
     }
 
+    /// <summary>Counts the target query so "the pass was skipped" is observable, not merely
+    /// inferred from nothing having been snapshotted.</summary>
+    public int SnapshotTargetQueries;
+
     public Task<IReadOnlyList<EphemeralSnapshotTarget>> GetEphemeralPairsNeedingSnapshotAsync(
-        CancellationToken ct = default)
-      => Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>(Targets);
+        CancellationToken ct = default) {
+      Interlocked.Increment(ref SnapshotTargetQueries);
+      return Task.FromResult<IReadOnlyList<EphemeralSnapshotTarget>>(Targets);
+    }
 
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken ct = default) => Task.CompletedTask;
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken ct = default)
@@ -169,9 +175,19 @@ public class MaintenanceWorkerSnapshotAndHookTests {
     var coord = new SnapshotCoordinator {
       Targets = { new EphemeralSnapshotTarget(Guid.CreateVersion7(), "P", Guid.CreateVersion7()) },
     };
-    var (worker, _) = _build(coord, registry: null);
+    var (worker, logger) = _build(coord, registry: null);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
+
+    // The coordinator was primed with a target on purpose: if the pass ran and merely found no
+    // runner, the query would still have happened. Zero queries is what "skipped" means — and it
+    // is what keeps the maintenance cycle off the database on every host that registers no
+    // perspectives, once a minute, forever.
+    await Assert.That(Volatile.Read(ref coord.SnapshotTargetQueries)).IsEqualTo(0)
+      .Because("with no runner registry there is nothing that could consume a target, so asking "
+             + "for one is a query whose answer can never be used");
+    await Assert.That(logger.Snapshot().Any(e => e.Level == LogLevel.Error)).IsFalse()
+      .Because("a host with no perspectives is a normal configuration, not a fault");
   }
 
   [Test]

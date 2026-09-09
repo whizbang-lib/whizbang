@@ -119,9 +119,12 @@ public class TransportManagerPublishingTests {
 
   [Test]
   public async Task PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync() {
-    // Arrange
+    // Arrange - the routing key only exists on the TransportDestination the manager builds; no
+    // subscriber can see it, because in-process delivery keys on the address alone. So the
+    // transport itself is the observer here. (This test previously only waited for delivery,
+    // which a manager that dropped the routing key entirely would have satisfied.)
     var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
-    var transport = new InProcessTransport();
+    var transport = new DestinationRecordingTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
     var message = new TestMessage { Content = "routed", Value = 123 };
@@ -133,22 +136,16 @@ public class TransportManagerPublishingTests {
       }
     };
 
-    // Track published destinations via completion signal
-    var received = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
-        received.TrySetResult(true);
-      },
-      new TransportDestination("dest"),
-      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
-      CancellationToken.None
-    );
-
     // Act
     await manager.PublishToTargetsAsync(message, targets);
 
-    // Assert - verify message was published (implicitly tests routing key was passed)
-    await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    // Assert - address and routing key both reach the transport. A broker that routes on the key
+    // (RabbitMQ topic exchanges, Service Bus subscription filters) silently delivers nowhere if
+    // the manager drops it, and delivery-only assertions cannot tell the difference.
+    await Assert.That(transport.Destinations).Count().IsEqualTo(1);
+    await Assert.That(transport.Destinations[0].Address).IsEqualTo("dest");
+    await Assert.That(transport.Destinations[0].RoutingKey).IsEqualTo("routing.key.test")
+      .Because("the target's routing key must be carried onto the destination handed to the transport");
   }
 
   [Test]
@@ -273,5 +270,51 @@ public class TransportManagerPublishingTests {
 
     // Assert - Manager should be usable
     await Assert.That(manager.HasTransport(TransportType.InProcess)).IsTrue();
+  }
+
+  /// <summary>
+  /// Records the <see cref="TransportDestination"/> each publish is addressed to. The routing key
+  /// never travels with the envelope, so this is the only place a test can see whether the
+  /// manager put it on the destination.
+  /// </summary>
+  private sealed class DestinationRecordingTransport : ITransport {
+    public List<TransportDestination> Destinations { get; } = [];
+
+    public bool IsInitialized => true;
+
+    public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    public Task PublishAsync(
+      IMessageEnvelope envelope,
+      TransportDestination destination,
+      string? envelopeType = null,
+      ReadOnlyMemory<byte>? preSerializedBytes = null,
+      CancellationToken cancellationToken = default) {
+      Destinations.Add(destination);
+      return Task.CompletedTask;
+    }
+
+    public Task<ISubscription> SubscribeBatchAsync(
+      Func<IReadOnlyList<TransportMessage>, CancellationToken, Task> batchHandler,
+      TransportDestination destination,
+      TransportBatchOptions batchOptions,
+      CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("This transport only records publishes.");
+
+    public Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
+      IMessageEnvelope requestEnvelope,
+      TransportDestination destination,
+      CancellationToken cancellationToken = default)
+      where TRequest : notnull
+      where TResponse : notnull =>
+      throw new NotSupportedException("This transport only records publishes.");
+
+    public Task<IReadOnlyList<BulkPublishItemResult>> PublishBatchAsync(
+      IReadOnlyList<BulkPublishItem> items,
+      TransportDestination destination,
+      CancellationToken cancellationToken = default) =>
+      throw new NotSupportedException("This transport only records publishes.");
   }
 }

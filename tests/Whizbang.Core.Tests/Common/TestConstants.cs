@@ -82,7 +82,13 @@ public static class TestConstants {
   ///     keep, pinning that a generic NON-receptor registration alongside it contributes
   ///     nothing)</para>
   ///
-  /// <para>Total: 122 receptors (includes coverage test types that implement ICommand/IEvent)</para>
+  ///
+  /// <para>- 1 receptor from Dispatcher/DispatcherEdgeCaseCoverageTests.cs
+  ///     (TestCascadeEventReceptor — a real receptor for the cascade event, so the
+  ///     "DispatchModes.None dispatched nothing" assertion cannot pass merely because no
+  ///     receptor was ever wired)</para>
+  ///
+  /// <para>Total: 123 receptors (includes coverage test types that implement ICommand/IEvent)</para>
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 122;
+  public const int EXPECTED_RECEPTOR_COUNT = 123;
 }

@@ -29,6 +29,17 @@ public class PgScheduleOccurrenceStoreCoverageTests {
       Options.Create(options), configuration, NullLogger<PgScheduleOccurrenceStore>.Instance);
   }
 
+  /// <summary>
+  /// The "nothing happened" these three cases claim, made observable without a database: with no
+  /// connection configured the store's <c>_openAsync</c> returns null on a purely synchronous path,
+  /// so the whole call finishes before it ever yields. An already-completed task is therefore proof
+  /// that no socket was opened and no command was issued — the moment one of these paths starts
+  /// doing I/O in a no-connection host, this stops holding.
+  /// </summary>
+  private static async Task _assertNoRoundTripAsync(Task call)
+    => await Assert.That(call.IsCompletedSuccessfully).IsTrue()
+      .Because("with no connection configured the call must return without a single asynchronous yield — anything else means it went to the network");
+
   // The pre-fire gate defers the SAME in-flight occurrence rather than dropping it. With no
   // connection configured there is nothing to defer against; if this threw instead of no-op'ing,
   // every caller in a minimal (notification-store-less) setup would crash on a path meant to be
@@ -37,7 +48,10 @@ public class PgScheduleOccurrenceStoreCoverageTests {
   public async Task DeferAsync_WithNoConnectionConfigured_CompletesWithoutThrowingAsync() {
     var store = _storeWithNoConnectionConfigured();
 
-    await store.DeferAsync(Guid.NewGuid(), DateTimeOffset.UtcNow.AddHours(1));
+    var deferred = store.DeferAsync(Guid.NewGuid(), DateTimeOffset.UtcNow.AddHours(1));
+
+    await _assertNoRoundTripAsync(deferred);
+    await deferred;
   }
 
   // LogRunAsync records the pre-fire gate's outcome for operator visibility. With no connection
@@ -47,7 +61,10 @@ public class PgScheduleOccurrenceStoreCoverageTests {
   public async Task LogRunAsync_WithNoConnectionConfigured_CompletesWithoutThrowingAsync() {
     var store = _storeWithNoConnectionConfigured();
 
-    await store.LogRunAsync(Guid.NewGuid(), Guid.NewGuid(), status: 1, note: "coverage");
+    var logged = store.LogRunAsync(Guid.NewGuid(), Guid.NewGuid(), status: 1, note: "coverage");
+
+    await _assertNoRoundTripAsync(logged);
+    await logged;
   }
 
   // RefreshAuthorityClaimsAsync writes back the snapshot every subsequent fire reads. A dropped
@@ -57,7 +74,10 @@ public class PgScheduleOccurrenceStoreCoverageTests {
   public async Task RefreshAuthorityClaimsAsync_WithNoConnectionConfigured_CompletesWithoutThrowingAsync() {
     var store = _storeWithNoConnectionConfigured();
 
-    await store.RefreshAuthorityClaimsAsync(Guid.NewGuid(), """{"roles":["billing"]}""");
+    var refreshed = store.RefreshAuthorityClaimsAsync(Guid.NewGuid(), """{"roles":["billing"]}""");
+
+    await _assertNoRoundTripAsync(refreshed);
+    await refreshed;
   }
 
   // RefreshAuthorityClaimsAsync validates its own input before ever touching a connection — blank

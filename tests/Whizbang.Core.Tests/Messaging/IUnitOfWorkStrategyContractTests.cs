@@ -114,13 +114,23 @@ public abstract class IUnitOfWorkStrategyContractTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
-    // Arrange
+  public async Task CancelUnitAsync_NonExistentUnit_LeavesOtherUnitsIntactAsync() {
+    // Arrange - a live unit alongside the id being cancelled. Without it "does not throw" is the
+    // only guarantee, and a CancelUnitAsync that cleared every unit would satisfy it.
     await using var strategy = CreateStrategy();
+    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+
+    var message = new TestMessage { Value = "survivor" };
+    var liveUnitId = await strategy.QueueMessageAsync(message);
     var nonExistentUnitId = Guid.NewGuid();
 
-    // Act & Assert (should not throw)
+    // Act
     await strategy.CancelUnitAsync(nonExistentUnitId);
+
+    // Assert - cancellation is keyed on the unit id: an unknown id is a no-op, not a reset.
+    await Assert.That(strategy.GetMessagesForUnit(liveUnitId)).Contains(message)
+      .Because("cancelling an unknown unit must not discard the units that do exist");
+    await Assert.That(strategy.GetMessagesForUnit(nonExistentUnitId).Count).IsEqualTo(0);
   }
 
   [Test]

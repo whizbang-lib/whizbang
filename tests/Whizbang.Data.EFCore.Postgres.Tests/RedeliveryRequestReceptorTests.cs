@@ -259,6 +259,12 @@ public class RedeliveryRequestReceptorTests {
   public async Task Registrar_NoRegistry_DoesNotThrowAsync() {
     var services = new ServiceCollection();   // no IReceptorRegistry
     await using var sp = services.BuildServiceProvider();
+
+    // Guard the premise: if anything ever starts supplying an IReceptorRegistry by default this test
+    // would quietly switch to exercising the registering path while still passing under a name that
+    // promises the opposite.
+    await Assert.That(sp.GetService<IReceptorRegistry>()).IsNull();
+
     var registrar = new RedeliveryRequestReceptorRegistrar(
       sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<RedeliveryRequestReceptor>.Instance);
 

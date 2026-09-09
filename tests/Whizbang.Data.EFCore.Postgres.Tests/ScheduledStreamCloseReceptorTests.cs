@@ -121,13 +121,28 @@ public class ScheduledStreamCloseReceptorTests {
       .Because("A receptor without [FireAt] fires at all three default stages, so the occurrence reaches it in-process and over the inbox.");
   }
 
+  /// <summary>
+  /// A schema-only or diagnostic host registers no dispatch pipeline; the registrar must still
+  /// start and stop cleanly there.
+  /// </summary>
+  /// <remarks>
+  /// Renamed from <c>Registrar_NoRegistry_IsInertAsync</c>: with no <see cref="IReceptorRegistry"/>
+  /// in the container there is nothing the registrar could have touched, so "inert" is not
+  /// observable here and the honest guarantee is the one this name now states. The positive half
+  /// (three stages registered when a registry IS present) is pinned by
+  /// <see cref="Registrar_RegistersReceptorAtThreeDefaultStagesAsync"/>.
+  /// </remarks>
   [Test]
-  public async Task Registrar_NoRegistry_IsInertAsync() {
+  public async Task Registrar_NoRegistry_StartsAndStopsWithoutThrowingAsync() {
     var services = new ServiceCollection();   // no IReceptorRegistry
     await using var sp = services.BuildServiceProvider();
     var registrar = new ScheduledStreamCloseReceptorRegistrar(
       sp, sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
 
-    await registrar.StartAsync(CancellationToken.None);   // must not throw
+    await registrar.StartAsync(CancellationToken.None);
+    await registrar.StopAsync(CancellationToken.None);
+
+    await Assert.That(sp.GetService<IReceptorRegistry>()).IsNull()
+      .Because("the registrar must leave a registry-less host registry-less — it may not conjure one to register into");
   }
 }

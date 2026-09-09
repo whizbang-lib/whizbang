@@ -166,7 +166,18 @@ public class DrainWorkerIdleSignalTests {
       if (worker.IsIdle) { tcs.TrySetResult(true); }
     }
 
-    await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
+    var reachedIdle = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(15));
+
+    // The race-closing guarantee is that idleness is readable as STATE, not only as a one-shot
+    // event: a subscriber that arrives after the transition can still learn it happened. Both
+    // halves of the pattern above depend on IsIdle being true here, and it must stay true — the
+    // worker has nothing on its drain channel and must not have flipped itself busy.
+    await Assert.That(reachedIdle).IsTrue()
+      .Because("the fixture pattern must resolve through the state re-check, not only through a live event");
+    await Assert.That(worker.IsIdle).IsTrue()
+      .Because("with an empty drain channel the worker stays idle; a busy worker here means the fixture would hang on cleanup");
+    await Assert.That(coord.OutboxRowsByStream.Count).IsEqualTo(0)
+      .Because("no work was ever enqueued, so reaching idle must not have come from processing something");
 
     await cts.CancelAsync();
     try { await worker.StopAsync(CancellationToken.None); } catch { }

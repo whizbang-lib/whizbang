@@ -140,13 +140,28 @@ public class TransportManagerTests {
 
   [Test]
   public async Task PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync() {
-    // Arrange
+    // Arrange - a manager with NO transports registered at all. Any attempt to reach the
+    // publish path would have to resolve a transport, and resolving one here throws.
     var manager = new TransportManager(new Whizbang.Core.Observability.ServiceInstanceProvider());
     var message = new TestMessage { Content = "test", Value = 42 };
     var targets = new List<PublishTarget>();
 
-    // Act & Assert - Should not throw
-    await manager.PublishToTargetsAsync(message, targets);
+    // Act - do NOT await yet: the empty-target early exit returns an already-completed task,
+    // so nothing (envelope creation, context creation, transport lookup) can have happened.
+    var published = manager.PublishToTargetsAsync(message, targets);
+
+    // Assert
+    await Assert.That(published.IsCompletedSuccessfully).IsTrue()
+      .Because("zero targets must short-circuit before an envelope or a message context is ever built");
+    await published;
+
+    // Control: the same manager, same message, one target - proving the assertion above is not
+    // passing because publishing is a no-op here, but because the empty list skipped it.
+    await Assert.That(async () => await manager.PublishToTargetsAsync(
+        message,
+        new List<PublishTarget> { new() { TransportType = TransportType.Kafka, Destination = "probe" } }))
+      .ThrowsExactly<InvalidOperationException>()
+      .Because("a non-empty target list does reach transport resolution, so the empty case demonstrably did not");
   }
 
   [Test]

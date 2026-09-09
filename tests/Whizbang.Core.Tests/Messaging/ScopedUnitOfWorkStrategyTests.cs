@@ -118,12 +118,25 @@ public class ScopedUnitOfWorkStrategyTests {
 
   [Test]
   public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
-    // Arrange
+    // Arrange - a LIVE unit sits alongside the id being canceled. Cancel matches on unit id, so
+    // the id that does not match is the one that proves the match is actually consulted.
     await using var strategy = _createStrategy();
+    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+
+    var message = new TestMessage { Value = "test" };
+    var liveUnitId = await strategy.QueueMessageAsync(message);
     var nonExistentUnitId = Guid.NewGuid();
 
-    // Act & Assert (should not throw)
+    // Act
     await strategy.CancelUnitAsync(nonExistentUnitId);
+
+    // Assert - not throwing is the easy half. The scope holds exactly one unit, so a cancel that
+    // skipped the id comparison would clear it for a stranger's unit id: every message queued in
+    // this scope silently discarded, with the caller told nothing and nothing left to flush.
+    var messages = strategy.GetMessagesForUnit(liveUnitId);
+    await Assert.That(messages.Count).IsEqualTo(1)
+      .Because("canceling an id this scope never issued must not discard the work it did issue");
+    await Assert.That(messages).Contains(message);
   }
 
   [Test]
@@ -371,10 +384,22 @@ public class ScopedUnitOfWorkStrategyTests {
     // Arrange
     var strategy = new ScopedUnitOfWorkStrategy();
     var message = new TestMessage { Value = "test" };
-    await strategy.QueueMessageAsync(message);
+    var unitId = await strategy.QueueMessageAsync(message);
 
-    // Act & Assert (should NOT throw - just skip flush if no callback)
+    // Act (should NOT throw - just skip flush if no callback)
     await strategy.DisposeAsync();
+
+    // Assert - the silent-skip branch has to run all the way to disposed, not bail at the missing
+    // callback. Leaving the unit in place would hand the next `await using` scope a strategy that
+    // reports the previous scope's messages; leaving `_disposed` false would let it keep accepting
+    // work that no callback will ever flush.
+    await Assert.That(strategy.GetMessagesForUnit(unitId).Count).IsEqualTo(0)
+      .Because("no callback means the unit is abandoned here — it must not survive into the next "
+             + "scope as phantom queued work");
+    await Assert.That(async () => await strategy.QueueMessageAsync(new TestMessage { Value = "after" }))
+      .ThrowsExactly<ObjectDisposedException>()
+      .Because("a missing callback skips the flush, not the disposal — a strategy that still "
+             + "accepts messages after DisposeAsync buffers them into an object nothing will drain");
   }
 
   /// <summary>

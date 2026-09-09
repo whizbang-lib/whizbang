@@ -266,18 +266,26 @@ public class TransportConsumerWorkerUncoveredPathsTests {
   }
 
   [Test]
-  public async Task HandleMessage_WhenObjectDisposed_WithMetrics_DropsWithoutFailCounterAsync() {
-    // Arrange - ObjectDisposedException with metrics to ensure InboxMessagesFailed is NOT incremented
+  public async Task HandleMessage_WithMetrics_WhenStored_LeavesTheFailedCounterUntouchedAsync() {
+    // Arrange - the counterpart to HandleMessage_WithMetrics_WhenException_RecordsFailedCounterAsync:
+    // a counter that also ticks on the success path would report a permanent failure rate and be
+    // useless as an alert. (This test was written as an ObjectDisposedException case, injecting the
+    // exception through an IWorkCoordinatorStrategy fake. The receive path resolves no such
+    // strategy any more — TransportConsumerWorker does not reference the interface at all — so the
+    // fake was never called, no exception was ever raised, and the test was quietly asserting
+    // nothing about the success path it was actually running. It now pins that success path, and
+    // the fake is gone. Its metrics were also unobservable: TransportMetrics built without a
+    // TestMeterFactory publishes to a meter no listener is attached to.)
     var messageId = MessageId.New();
     var transport = new UncoveredTransport();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
-    var workStrategy = new ObjectDisposedStrategy();
-    var metrics = new TransportMetrics(new WhizbangMetrics());
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
 
     var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
@@ -304,13 +312,19 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
-    // Act - should not throw
+    // Act
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
 
-    // Assert - should not throw, ObjectDisposedException path returns early before InboxMessagesFailed
-    // No assertion — test verifies no exception
+    // Assert - the message landed in the inbox, and nothing was counted as failed.
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(1)
+      .Because("the message must reach the inbox — otherwise a zero failure count means nothing");
+    var failed = metricHelper.GetByName("whizbang.transport.inbox.messages_failed")
+      .Where(m => m.Value > 0)
+      .ToList();
+    await Assert.That(failed).IsEmpty()
+      .Because("a successfully stored message must never be counted as a failure");
   }
 
   // ========================================

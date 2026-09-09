@@ -118,12 +118,20 @@ public class ImmediateUnitOfWorkStrategyTests {
 
   [Test]
   public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
-    // Arrange
+    // Arrange - a live unit stands alongside the unknown id so "no throw" is not the only thing
+    // observed. Cancellation is keyed on a single unit; a miss must not take the neighbors with it.
     await using var strategy = _createStrategy();
+    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+    var message = new TestMessage { Value = "survivor" };
+    var liveUnitId = await strategy.QueueMessageAsync(message);
     var nonExistentUnitId = Guid.NewGuid();
 
-    // Act & Assert (should not throw)
+    // Act (should not throw)
     await strategy.CancelUnitAsync(nonExistentUnitId);
+
+    // Assert - the unrelated unit is untouched
+    await Assert.That(strategy.GetMessagesForUnit(liveUnitId)).Contains(message)
+      .Because("cancelling an id the strategy never issued must not clear units it did issue");
   }
 
   [Test]
@@ -321,15 +329,26 @@ public class ImmediateUnitOfWorkStrategyTests {
 
   [Test]
   public async Task CancelUnitAsync_AfterFlush_IsNoOpAsync() {
-    // Arrange
+    // Arrange - the immediate strategy flushes inside QueueMessageAsync, so by the time the caller
+    // holds the unit id the message is already gone downstream.
     var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+    var flushCount = 0;
+    strategy.OnFlushRequested += async (unitId, ct) => {
+      flushCount++;
+      await Task.CompletedTask;
+    };
 
     var message = new TestMessage { Value = "test" };
     var unitId = await strategy.QueueMessageAsync(message);
+    await Assert.That(flushCount).IsEqualTo(1);
 
-    // Act & Assert (should not throw)
+    // Act
     await strategy.CancelUnitAsync(unitId);
+
+    // Assert - "no-op" means the already-completed flush is neither repeated nor rolled back.
+    // Re-entering the callback here would re-dispatch a message that has already been sent.
+    await Assert.That(flushCount).IsEqualTo(1)
+      .Because("cancelling a unit that already flushed must not push it through the flush path again");
   }
 
   /// <summary>

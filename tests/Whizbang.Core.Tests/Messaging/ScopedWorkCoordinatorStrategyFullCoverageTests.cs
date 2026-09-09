@@ -270,7 +270,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
   // ========================================
 
   [Test]
-  public async Task DisposeAsync_FlushThrows_WithoutLogger_SwallowsExceptionAsync() {
+  public async Task DisposeAsync_FlushThrows_WithoutLogger_SwallowsAndStillDisposesAsync() {
     // Arrange
     var throwingCoordinator = new ScopedCoverageThrowingCoordinator();
     var instanceProvider = new ScopedCoverageInstanceProvider();
@@ -282,8 +282,17 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
 
     _queueOutboxMessage(sut);
 
-    // Act & Assert — should not propagate
+    // Act — should not propagate out of the scope teardown
     await sut.DisposeAsync();
+
+    // Assert — the call count is what proves the drain reached the failing store at all; a
+    // swallowed exception leaves no other evidence, so without it this test would pass just as
+    // happily if disposal had skipped the flush entirely. And the strategy must end up disposed:
+    // a scope whose teardown throws halfway leaves a live strategy attached to a dead scope.
+    await Assert.That(throwingCoordinator.StoreOutboxCallCount).IsEqualTo(1)
+      .Because("no call means no exception, and the swallow branch is never exercised");
+    await Assert.That(() => sut.QueueOutboxCompletion(Guid.NewGuid(), MessageProcessingStatus.Published))
+      .ThrowsExactly<ObjectDisposedException>();
   }
 
   // ========================================
@@ -385,7 +394,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
   // ========================================
 
   [Test]
-  public async Task QueueOutboxMessage_NullStreamId_DoesNotThrowAsync() {
+  public async Task QueueOutboxMessage_NullStreamId_ReachesTheCoordinatorAsync() {
     // Arrange
     var coordinator = new ScopedCoverageCoordinator();
     var instanceProvider = new ScopedCoverageInstanceProvider();
@@ -406,7 +415,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
 
-    // Act & Assert — null StreamId should not throw
+    // Act — null StreamId is admitted by the guard, and the scope-teardown drain persists it
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
@@ -418,12 +427,18 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
     });
 
-    // Cleanup
     await sut.DisposeAsync();
+
+    // Assert — the message reaches the store with its null StreamId intact. Rejecting null would
+    // be a regression; so would substituting Guid.Empty, which the guard rejects on the next hop.
+    var stored = Array.Find(coordinator.LastNewOutboxMessages, m => m.MessageId == messageId);
+    await Assert.That(stored).IsNotNull()
+      .Because("a stream-less outbox message must still be stored, not dropped by the guard");
+    await Assert.That(stored!.StreamId).IsNull();
   }
 
   [Test]
-  public async Task QueueInboxMessage_NullStreamId_DoesNotThrowAsync() {
+  public async Task QueueInboxMessage_NullStreamId_ReachesTheCoordinatorAsync() {
     // Arrange
     var coordinator = new ScopedCoverageCoordinator();
     var instanceProvider = new ScopedCoverageInstanceProvider();
@@ -444,7 +459,7 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
 
-    // Act & Assert — null StreamId should not throw
+    // Act — same contract on the inbox side
     sut.QueueInboxMessage(new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
@@ -455,8 +470,13 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       MessageType = "TestMessage, TestAssembly"
     });
 
-    // Cleanup
     await sut.DisposeAsync();
+
+    // Assert — null is admitted and preserved all the way to the store.
+    var stored = Array.Find(coordinator.LastNewInboxMessages, m => m.MessageId == messageId);
+    await Assert.That(stored).IsNotNull()
+      .Because("a stream-less inbox message must still be stored, not dropped by the guard");
+    await Assert.That(stored!.StreamId).IsNull();
   }
 
   // ========================================
@@ -595,12 +615,24 @@ public class ScopedWorkCoordinatorStrategyFullCoverageTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
+  /// <summary>
+  /// Fails every store, and counts the calls. The count is the only evidence a swallowed
+  /// failure leaves behind — without it a test cannot tell a drain that failed from one that
+  /// never ran.
+  /// </summary>
   private sealed class ScopedCoverageThrowingCoordinator : IWorkCoordinator {
+    private int _storeOutboxCalls;
+
+    /// <summary>How many flushes reached this coordinator before it threw.</summary>
+    public int StoreOutboxCallCount => Volatile.Read(ref _storeOutboxCalls);
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
-      CancellationToken cancellationToken = default) =>
+      CancellationToken cancellationToken = default) {
+      Interlocked.Increment(ref _storeOutboxCalls);
       throw new InvalidOperationException("Simulated failure");
+    }
 
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,

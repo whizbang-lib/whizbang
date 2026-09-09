@@ -586,13 +586,24 @@ public class DispatcherEdgeCaseCoverageTests {
   // ========================================
 
   [Test]
-  public async Task CascadeMessageAsync_WithNoneMode_DoesNotThrowAsync() {
+  public async Task CascadeMessageAsync_WithNoneMode_DispatchesToNoReceptorAsync() {
     var dispatcher = _createDispatcher();
-    var evt = new TestCascadeEvent { Detail = "none-mode" };
+    var noneDetail = $"none-mode-{Guid.CreateVersion7()}";
+    var controlDetail = $"none-mode-control-{Guid.CreateVersion7()}";
 
-    // DispatchModes.None should skip all dispatch paths
-    await dispatcher.CascadeMessageAsync(evt, sourceEnvelope: null, mode: DispatchModes.None);
-    // No assertion needed beyond not throwing
+    // Act - None carries no LocalDispatch flag, so nothing should reach a receptor. The control
+    // cascade that follows uses the one mode that is pure local dispatch; without it a receptor
+    // that was never wired at all would make the None assertion pass for the wrong reason.
+    await dispatcher.CascadeMessageAsync(
+      new TestCascadeEvent { Detail = noneDetail }, sourceEnvelope: null, mode: DispatchModes.None);
+    await dispatcher.CascadeMessageAsync(
+      new TestCascadeEvent { Detail = controlDetail }, sourceEnvelope: null, mode: DispatchModes.LocalNoPersist);
+
+    // Assert
+    await Assert.That(TestCascadeEventReceptor.Handled.Contains(controlDetail)).IsTrue()
+      .Because("the control proves the receptor is registered and reachable through a cascade");
+    await Assert.That(TestCascadeEventReceptor.Handled.Contains(noneDetail)).IsFalse()
+      .Because("DispatchModes.None must not invoke in-process receptors");
   }
 
   [Test]
@@ -746,13 +757,19 @@ public class DispatcherEdgeCaseCoverageTests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_VoidWithOptions_HappyPath_CompletesAsync() {
+  public async Task LocalInvokeAsync_VoidWithOptions_HappyPath_ReachesTheReceptorAsync() {
     var dispatcher = _createDispatcher();
-    var command = new VoidEdgeCommand("void-options-happy");
+    var payload = $"void-options-happy-{Guid.CreateVersion7()}";
+    var command = new VoidEdgeCommand(payload);
     var options = new DispatchOptions();
 
-    // Should complete without exception
+    // Act
     await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert - the void overload returns nothing, so "completed" alone cannot distinguish a
+    // dispatch from a silent no-op. The receptor's own record can.
+    await Assert.That(VoidEdgeCommandReceptor.ObservedUserIds.ContainsKey(payload)).IsTrue()
+      .Because("the void + DispatchOptions overload must actually invoke the receptor");
   }
 
   [Test]
@@ -853,6 +870,21 @@ public class DispatcherEdgeCaseCoverageTests {
     [StreamId]
     public Guid StreamId { get; set; } = Guid.NewGuid();
     public string Detail { get; set; } = "";
+  }
+
+  /// <summary>
+  /// Records every cascade that actually reached a receptor, keyed by the event's Detail so
+  /// parallel tests never read each other's run. A cascade that skips local dispatch leaves
+  /// nothing else behind to observe.
+  /// </summary>
+  public class TestCascadeEventReceptor : IReceptor<TestCascadeEvent> {
+    public static ConcurrentBag<string> Handled { get; } = [];
+
+    public ValueTask HandleAsync(TestCascadeEvent message, CancellationToken cancellationToken = default) {
+      ArgumentNullException.ThrowIfNull(message);
+      Handled.Add(message.Detail);
+      return ValueTask.CompletedTask;
+    }
   }
 
   // ========================================

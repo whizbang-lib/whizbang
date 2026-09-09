@@ -189,11 +189,20 @@ public class LensEndpointBaseTests {
   public async Task OnBeforeQueryAsync_Default_ShouldCompleteImmediatelyAsync() {
     // Arrange
     var endpoint = new TestLensEndpoint();
-    var request = new LensRequest();
+    var request = new LensRequest { Page = 3, PageSize = 25, Sort = "-createdAt" };
     var ct = CancellationToken.None;
 
-    // Act & Assert - should not throw
-    await endpoint.TestOnBeforeQueryAsync(request, ct);
+    // Act - capture the ValueTask WITHOUT awaiting: "immediately" means synchronously.
+    var pending = endpoint.TestOnBeforeQueryAsync(request, ct);
+
+    // Assert
+    await Assert.That(pending.IsCompletedSuccessfully).IsTrue()
+      .Because("every lens query awaits this hook; a default that did not complete synchronously would allocate a state machine per request for endpoints that never override it");
+    await pending;
+    await Assert.That(request.Page).IsEqualTo(3);
+    await Assert.That(request.PageSize).IsEqualTo(25);
+    await Assert.That(request.Sort).IsEqualTo("-createdAt")
+      .Because("the default hook is a no-op - it must not reshape the request an override is meant to own");
   }
 
   [Test]
@@ -201,11 +210,21 @@ public class LensEndpointBaseTests {
     // Arrange
     var endpoint = new TestLensEndpoint();
     var request = new LensRequest();
-    var response = new LensResponse<TestReadModel>();
+    var item = new TestReadModel { Name = "unchanged" };
+    var response = new LensResponse<TestReadModel> { Data = [item], TotalCount = 1 };
     var ct = CancellationToken.None;
 
-    // Act & Assert - should not throw
-    await endpoint.TestOnAfterQueryAsync(request, response, ct);
+    // Act - capture the ValueTask WITHOUT awaiting: "immediately" means synchronously.
+    var pending = endpoint.TestOnAfterQueryAsync(request, response, ct);
+
+    // Assert
+    await Assert.That(pending.IsCompletedSuccessfully).IsTrue()
+      .Because("the hook runs on the response path of every lens query; the default must not yield");
+    await pending;
+    await Assert.That(response.Data).Count().IsEqualTo(1);
+    await Assert.That(response.TotalCount).IsEqualTo(1);
+    await Assert.That(response.Data[0].Name).IsEqualTo("unchanged")
+      .Because("the default hook is a no-op - it must hand the response back untouched");
   }
 
   [Test]

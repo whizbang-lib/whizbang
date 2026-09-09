@@ -215,6 +215,11 @@ public class SecurityContextHelperTests {
   private sealed class CapturingScopeContextAccessor : IScopeContextAccessor {
     public IScopeContext? CapturedContext { get; private set; }
 
+    public IMessageContext? CapturedInitiatingContext { get; private set; }
+
+    /// <summary>True once <see cref="InitiatingContext"/> has been assigned, even if assigned null.</summary>
+    public bool InitiatingContextWasSet { get; private set; }
+
     public IScopeContext? Current {
       get => ScopeContextAccessor.CurrentContext;
       set {
@@ -225,7 +230,11 @@ public class SecurityContextHelperTests {
 
     public IMessageContext? InitiatingContext {
       get => ScopeContextAccessor.CurrentInitiatingContext;
-      set => ScopeContextAccessor.CurrentInitiatingContext = value;
+      set {
+        CapturedInitiatingContext = value; // Capture for verification
+        InitiatingContextWasSet = true;
+        ScopeContextAccessor.CurrentInitiatingContext = value;
+      }
     }
   }
 
@@ -369,15 +378,24 @@ public class SecurityContextHelperTests {
 
   [Test]
   public async Task SetMessageContextFromEnvelope_NoAccessor_GracefulNoOpAsync() {
-    // Arrange
+    // Arrange - no IMessageContextAccessor registered. A scope accessor IS registered so the
+    // "no-op" is observable: establishment must bail out BEFORE stamping InitiatingContext,
+    // otherwise the scope accessor would be left pointing at a message context that was never
+    // published on IMessageContextAccessor.Current.
     var envelope = _createTestEnvelope(new TestSecurityMessage("test"));
-    var services = new ServiceCollection().BuildServiceProvider();
+    var scopeAccessor = new CapturingScopeContextAccessor();
+    var services = new ServiceCollection();
+    services.AddSingleton<IScopeContextAccessor>(scopeAccessor);
+    var sp = services.BuildServiceProvider();
 
     // Act - should not throw
-    SecurityContextHelper.SetMessageContextFromEnvelope(envelope, services);
+    SecurityContextHelper.SetMessageContextFromEnvelope(envelope, sp);
 
-    // Assert - no exception thrown
-    await Task.CompletedTask;
+    // Assert - nothing was established anywhere
+    await Assert.That(scopeAccessor.InitiatingContextWasSet).IsFalse()
+      .Because("without an IMessageContextAccessor there is no context to stamp as initiating");
+    await Assert.That(scopeAccessor.CapturedInitiatingContext).IsNull();
+    await Assert.That(scopeAccessor.CapturedContext).IsNull();
   }
 
   [Test]
@@ -1105,15 +1123,24 @@ public class SecurityContextHelperTests {
       options: new MessageSecurityOptions { AllowAnonymous = true }
     );
     services.AddSingleton<IMessageSecurityContextProvider>(provider);
-    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
+    // Capturing accessor: EstablishScopeContextAsync writes through an AsyncLocal that does NOT
+    // flow back out of the await, so the write is only observable via the accessor instance.
+    var scopeAccessor = new CapturingScopeContextAccessor();
+    services.AddSingleton<IScopeContextAccessor>(scopeAccessor);
     // intentionally no IMessageContextAccessor
     var sp = services.BuildServiceProvider();
 
     // Act - should not throw
     await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
 
-    // Assert - no exception
-    await Task.CompletedTask;
+    // Assert - the missing message accessor does not abort scope establishment...
+    await Assert.That(scopeAccessor.CapturedContext).IsNotNull();
+    await Assert.That(scopeAccessor.CapturedContext!.Scope.TenantId).IsEqualTo("t");
+    await Assert.That(scopeAccessor.CapturedContext.Scope.UserId).IsEqualTo("u");
+
+    // ...and no message context is half-established on the scope accessor
+    await Assert.That(scopeAccessor.InitiatingContextWasSet).IsFalse()
+      .Because("no IMessageContextAccessor means no MessageContext exists to stamp as initiating");
   }
 
   [Test]
@@ -1129,14 +1156,23 @@ public class SecurityContextHelperTests {
     );
     services.AddSingleton<IMessageSecurityContextProvider>(provider);
     // intentionally no IScopeContextAccessor
-    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var messageAccessor = new CapturingMessageContextAccessor();
+    services.AddSingleton<IMessageContextAccessor>(messageAccessor);
     var sp = services.BuildServiceProvider();
 
     // Act - should not throw
     await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
 
-    // Assert - no exception
-    await Task.CompletedTask;
+    // Assert - the envelope's scope is NOT lost just because there is nowhere ambient to publish it:
+    // it is still promoted and carried on the MessageContext.
+    await Assert.That(messageAccessor.CapturedContext).IsNotNull();
+    await Assert.That(messageAccessor.CapturedContext!.UserId).IsEqualTo("user-1");
+    await Assert.That(messageAccessor.CapturedContext.TenantId).IsEqualTo("tenant-1");
+
+    var promoted = messageAccessor.CapturedContext.ScopeContext as ImmutableScopeContext;
+    await Assert.That(promoted).IsNotNull()
+      .Because("envelope scope is promoted to a propagating ImmutableScopeContext before use");
+    await Assert.That(promoted!.ShouldPropagate).IsTrue();
   }
 
   // === SetMessageContextFromEnvelope InitiatingContext Tests ===
@@ -1460,12 +1496,29 @@ public class SecurityContextHelperTests {
       }
     );
     services.AddSingleton<IMessageSecurityContextProvider>(provider);
-    services.AddScoped<IScopeContextAccessor, ScopeContextAccessor>();
-    services.AddScoped<IMessageContextAccessor, MessageContextAccessor>();
+    var scopeAccessor = new CapturingScopeContextAccessor();
+    var messageAccessor = new CapturingMessageContextAccessor();
+    services.AddSingleton<IScopeContextAccessor>(scopeAccessor);
+    services.AddSingleton<IMessageContextAccessor>(messageAccessor);
     var sp = services.BuildServiceProvider();
 
     // Act & Assert: Should NOT throw
     await SecurityContextHelper.EstablishFullContextAsync(envelope, sp, CancellationToken.None);
+
+    // Exemption suppresses the security REQUIREMENT, not context establishment: the message context
+    // is still published (so correlation/causation survive), just with no user or tenant on it.
+    await Assert.That(messageAccessor.CapturedContext).IsNotNull()
+      .Because("an exempt message still needs a MessageContext for correlation");
+    await Assert.That(messageAccessor.CapturedContext!.MessageId).IsEqualTo(envelope.MessageId);
+    await Assert.That(messageAccessor.CapturedContext.UserId).IsNull();
+    await Assert.That(messageAccessor.CapturedContext.TenantId).IsNull();
+    await Assert.That(messageAccessor.CapturedContext.ScopeContext).IsNull();
+
+    // No scope context is fabricated for an exempt message...
+    await Assert.That(scopeAccessor.CapturedContext).IsNull();
+    // ...but the message context is still stamped as the initiating context.
+    await Assert.That(scopeAccessor.CapturedInitiatingContext).IsNotNull();
+    await Assert.That(scopeAccessor.CapturedInitiatingContext!.MessageId).IsEqualTo(envelope.MessageId);
   }
 
   [Test]
