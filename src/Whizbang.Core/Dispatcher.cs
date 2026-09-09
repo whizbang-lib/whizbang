@@ -310,6 +310,9 @@ public abstract partial class Dispatcher(
   // Ephemeral-mode resolver: stamps EventFlags.Ephemeral for [Ephemeral] events so the emit chain
   // offloads their body. Optional — null in minimal hosts, where the IEphemeralEvent marker still works.
   private readonly IEphemeralModeResolver? _ephemeralModeResolver = serviceProvider.GetService<IEphemeralModeResolver>();
+  // Priority step 1: the producer hooks that declare a message's priority at dispatch. Null when the host never
+  // registered the chain, in which case envelopes go out undeclared exactly as before.
+  private readonly Whizbang.Core.Priority.PriorityHookChain? _priorityHooks = serviceProvider.GetService<Whizbang.Core.Priority.PriorityHookChain>();
   // Outbox routing strategy for determining actual transport destinations (inbox for commands, namespace for events)
   private readonly IOutboxRoutingStrategy? _outboxRoutingStrategy = outboxRoutingStrategy ?? serviceProvider.GetService<IOutboxRoutingStrategy>();
   // Owned domains for routing decisions - resolved from RoutingOptions if available
@@ -4030,6 +4033,8 @@ public abstract partial class Dispatcher(
 
       // Serialize and create envelope
       var jsonEnvelope = _serializeToJsonEnvelope(eventData, eventType, messageId, new MessageDispatchContext { Mode = DispatchModes.Both, Source = MessageSource.Local }, _declaredUnscopedTypes);
+      // Priority step 1: a cascade emission is declared like any other send; the ambient parent supplies inheritance.
+      jsonEnvelope.Priority = _declarePriority(jsonEnvelope, TypeNameFormatter.AssemblyQualifiedNameOrNull(eventType) ?? TypeNameFormatter.DisplayName(eventType), scheduledFor: null);
 
       // Add hop with metadata and scope
       var hopMetadata = _createHopMetadata(eventData, eventType);
@@ -4131,6 +4136,22 @@ public abstract partial class Dispatcher(
   }
 
   /// <summary>
+  /// Declares the priority of an outgoing message through the registered producer hooks (priority step 1):
+  /// the dispatch context, whether it is scheduled, the ambient parent's number and whatever the envelope
+  /// already declares. Without a chain the envelope's own number is kept.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/DispatcherPriorityStampingTests.cs</tests>
+  private int _declarePriority(IMessageEnvelope envelope, string messageTypeName, DateTimeOffset? scheduledFor) {
+    if (_priorityHooks is null) {
+      return envelope.Priority;
+    }
+    return _priorityHooks.DeclarePriority(new Whizbang.Core.Priority.PriorityDeclarationContext(
+      envelope, messageTypeName, envelope.DispatchContext, scheduledFor is not null,
+      Whizbang.Core.Priority.PriorityContext.CurrentParent, envelope.Priority));
+  }
+
+  /// <summary>
   /// Builds an OutboxMessage from the serialized envelope and metadata.
   /// </summary>
   private static OutboxMessage _buildOutboxMessage(
@@ -4156,7 +4177,8 @@ public abstract partial class Dispatcher(
             | (eventData is Whizbang.Core.Messaging.ICollectiveEvent ? Whizbang.Core.Messaging.EventFlags.Collective : Whizbang.Core.Messaging.EventFlags.None)
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(eventData, ephemeralModeResolver),
       Scope = _extractScope(jsonEnvelope),
-      MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType)
+      MessageType = TypeNameFormatter.AssemblyQualifiedName(eventType),
+      Priority = jsonEnvelope.Priority
     };
   }
 
@@ -5247,6 +5269,13 @@ public abstract partial class Dispatcher(
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "Dispatcher.Outbox", TypeNameFormatter.DisplayName(payload.GetType()));
     }
 
+    // Priority step 1: declared before the row is built so the number travels inside the stored envelope
+    // and sits on the row for the store. The message type is rendered by the shared helper.
+    var declaredPriority = _declarePriority(envelope, TypeNameFormatter.AssemblyQualifiedNameOrNull(payloadType) ?? TypeNameFormatter.DisplayName(payloadType), scheduledFor);
+    if (envelope is MessageEnvelope<TMessage> concreteEnvelope) {
+      concreteEnvelope.Priority = declaredPriority;
+    }
+
     // Use centralized envelope serializer (REQUIRED)
     if (_envelopeSerializer == null) {
       throw new InvalidOperationException(
@@ -5255,6 +5284,7 @@ public abstract partial class Dispatcher(
     }
 
     var serialized = _envelopeSerializer.SerializeEnvelope(envelope);
+    serialized.JsonEnvelope.Priority = declaredPriority;   // the storage form carries the declaration too
 
     // DIAGNOSTIC: Log if MessageType is JsonElement (should never happen after serializer checks)
     if (serialized.MessageType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase)) {
@@ -5285,7 +5315,8 @@ public abstract partial class Dispatcher(
             | Whizbang.Core.Messaging.EphemeralFlagDeriver.Derive(payload, _ephemeralModeResolver),
       Scope = _extractScope(envelope),
       MessageType = serialized.MessageType,
-      ScheduledFor = scheduledFor
+      ScheduledFor = scheduledFor,
+      Priority = declaredPriority
     };
 
     // FINAL CHECK: Throw if ANY type string contains JsonElement

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Validation;
@@ -37,12 +38,26 @@ internal static class ReceivedInboxMessageBuilder {
     return envelope.MessageId.Value;
   }
 
+  /// <summary>
+  /// Classifies a received message's priority through the receive hooks registered in <paramref name="scope"/>
+  /// (priority step 1); without a chain the declared number's effective value is used, so a row is never stored
+  /// as zero.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/ConsumerPriorityClassificationTests.cs</tests>
+  internal static int Classify(IServiceProvider scope, IMessageEnvelope envelope, string messageTypeName) {
+    var chain = scope.GetService<Whizbang.Core.Priority.PriorityHookChain>();
+    return chain is null
+      ? Whizbang.Core.Priority.WorkPriority.Effective(envelope.Priority)
+      : chain.Classify(new Whizbang.Core.Priority.PriorityReceiveContext(envelope.Priority, envelope, messageTypeName));
+  }
+
   /// <summary>Builds the row. The caller has already resolved the storage-form envelope and the message's classification.</summary>
   /// <param name="envelope">The received envelope, typed or already in storage form.</param>
   /// <param name="jsonEnvelope">The envelope in storage form.</param>
   /// <param name="envelopeTypeFromTransport">The envelope type name the transport carried; authoritative.</param>
   /// <param name="messageTypeName">The message type name extracted from it by the shared helper.</param>
   /// <param name="isEvent">Whether the message is an event (catalog first, marker as the fallback).</param>
+  /// <param name="priority">The effective priority this consumer classified (<see cref="Classify"/>).</param>
   /// <param name="guardSite">Names the caller in the empty-stream guard's message.</param>
   /// <param name="eventMarkerResolver">Catalog-backed flag stamp, when registered.</param>
   /// <param name="ephemeralModeResolver">Catalog-backed ephemeral stamp, when registered.</param>
@@ -52,6 +67,7 @@ internal static class ReceivedInboxMessageBuilder {
       string envelopeTypeFromTransport,
       string messageTypeName,
       bool isEvent,
+      int priority,
       string guardSite,
       IEventMarkerResolver? eventMarkerResolver,
       IEphemeralModeResolver? ephemeralModeResolver) {
@@ -79,6 +95,7 @@ internal static class ReceivedInboxMessageBuilder {
       MessageType = messageTypeName,
       SourceServiceId = envelope.SourceServiceId,
       SourceCommitSequence = envelope.SourceCommitSequence,
+      Priority = priority,
     };
   }
 }

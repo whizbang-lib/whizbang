@@ -139,6 +139,12 @@ public static class OutboxSchema {
         Name: Columns.COALESCE_GROUP,
         DataType: WhizbangDataType.STRING,  // TEXT — no MaxLength
         Nullable: true
+      ),
+      new ColumnDefinition(
+        Name: Columns.PRIORITY,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(150)
       )
     ),
     Indexes: ImmutableArray.Create(
@@ -227,5 +233,10 @@ public static class OutboxSchema {
     /// consumer (Slice 3') preserves the value onto the inbox row.
     /// </summary>
     public const string FLAGS = "flags";
+    /// <summary>
+    /// The row's effective priority (priority step 1): one integer, lower is more urgent, 150 is the standard
+    /// band a row nothing classified lands in. The claim orders streams by it.
+    /// </summary>
+    public const string PRIORITY = "priority";
   }
 }

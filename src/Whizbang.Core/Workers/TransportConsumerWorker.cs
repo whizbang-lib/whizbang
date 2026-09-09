@@ -1100,6 +1100,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // from the envelope) is built by the helper both consumer workers share (#739).
     return ReceivedInboxMessageBuilder.Build(
       envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent,
+      ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
       "TransportConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
   }
 

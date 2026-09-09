@@ -2685,6 +2685,14 @@ public record OutboxMessage {
   public bool IsEvent { get; init; }
 
   /// <summary>
+  /// The priority the producer declared for this message (<see cref="Whizbang.Core.Priority.WorkPriority"/>),
+  /// stamped by the dispatcher from context and the producer hooks; zero when nothing was declared. Stored
+  /// in the row's <c>priority</c> column as the effective number.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
+
+  /// <summary>
   /// Whether this message is a composite event (implements
   /// <see cref="Whizbang.Core.Minting.ICompositeEvent"/>) that the
   /// receiver fans out into N inner events. Set at producer-side dispatch
@@ -2822,6 +2830,13 @@ public record InboxMessage {
   /// If true and stream_id is not null, it will be persisted to the event store.
   /// </summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// The effective priority this consumer stores for the row (<see cref="Whizbang.Core.Priority.WorkPriority"/>):
+  /// the declared number after the receive hooks, never zero once classified.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Categorization bitmask preserved from the originating
@@ -3065,6 +3080,14 @@ public record InboxWork : IHasMessageIdAndStatus {
   /// Used for load distribution and ensuring same stream goes to same instance.
   /// </summary>
   public int? PartitionNumber { get; init; }
+
+  /// <summary>
+  /// The row's effective priority (<see cref="Whizbang.Core.Priority.WorkPriority"/>), entered as the ambient
+  /// parent (<see cref="Whizbang.Core.Priority.PriorityContext"/>) while the row is handled so what the handler
+  /// produces inherits it.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Number of previous processing attempts.
@@ -3507,6 +3530,10 @@ public sealed record InboxBatchRow {
   public int? PartitionNumber { get; init; }
   /// <summary>True if this inbox message is also written to the event store.</summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>The row's effective priority (<see cref="Whizbang.Core.Priority.WorkPriority"/>).</summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
   /// <summary>
   /// Previous error text persisted on the inbox row (<c>wh_inbox.error</c>), populated
   /// by the most recent <c>process_inbox_failures</c> cycle. NULL when no prior failure

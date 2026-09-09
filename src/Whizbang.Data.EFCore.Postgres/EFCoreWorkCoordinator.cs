@@ -4985,6 +4985,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } catch (IndexOutOfRangeException) {
       // Pre-v0.651 fetch_inbox_batch without the error column — leave Error null.
     }
+    // 149: the row's priority; a fetch_inbox_batch that predates the column leaves it undeclared, which the
+    // dispatch worker reads as the standard band.
+    var priorityOrdinal = -1;
+    try {
+      priorityOrdinal = reader.GetOrdinal("priority");
+    } catch (IndexOutOfRangeException) {
+      // Pre-149 fetch_inbox_batch without the priority column.
+    }
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -5001,6 +5009,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Error = hasErrorCol && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetString(errorOrdinal)
           : null,
+        Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : 0,
       });
     }
     return results;

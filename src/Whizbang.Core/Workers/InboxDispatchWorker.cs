@@ -257,6 +257,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // Timed via the injected TimeProvider (not raw Stopwatch) so tests can cross the
     // slow-dispatch threshold with a FakeTimeProvider instead of wall-clock delays.
     var dispatchStartTicks = _timeProvider.GetTimestamp();
+    // Priority step 1: the row's effective number is the ambient parent for the whole handling, so every
+    // lifecycle stage and everything a receptor dispatches from inside one inherits it.
+    using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.Effective(work.Priority));
     try {
       await ProcessOneInnerAsync(work, stoppingToken);
     } finally {

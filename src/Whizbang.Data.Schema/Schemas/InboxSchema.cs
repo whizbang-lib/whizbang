@@ -40,6 +40,11 @@ public static class InboxSchema {
     /// </summary>
     public const string FLAGS = "flags";
     public const string RECEIVED_AT = "received_at";
+    /// <summary>
+    /// The row's effective priority (priority step 1): one integer, lower is more urgent, 150 is the standard
+    /// band a row nothing classified lands in. The claim orders streams by it.
+    /// </summary>
+    public const string PRIORITY = "priority";
   }
 
   /// <summary>
@@ -156,6 +161,12 @@ public static class InboxSchema {
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(0)
+      ),
+      new ColumnDefinition(
+        Name: Columns.PRIORITY,
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: false,
+        DefaultValue: DefaultValue.Integer(150)
       )
     ),
     Indexes: ImmutableArray.Create(

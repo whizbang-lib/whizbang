@@ -664,6 +664,7 @@ public partial class ServiceBusConsumerWorker(
     // from the envelope) is built by the helper both consumer workers share (#739).
     var inboxMessage = ReceivedInboxMessageBuilder.Build(
       envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent,
+      ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
       "ServiceBusConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
 
     LogCreatedInboxMessage(_logger, inboxMessage.MessageId, inboxMessage.IsEvent, inboxMessage.StreamId,
