@@ -346,7 +346,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   }
 
   [Test]
-  public async Task QueueOutboxMessage_WithNullStreamId_DoesNotThrowAsync() {
+  public async Task QueueOutboxMessage_WithNullStreamId_ReachesTheCoordinatorAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
@@ -366,15 +366,24 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     };
 
     try {
-      // Act & Assert - null StreamId should not throw
+      // Act
       sut.QueueOutboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert - the guard admits a null StreamId, and the message survives the flush with the
+      // null intact. Only rejecting null would be a regression; so would quietly substituting
+      // Guid.Empty, which the guard itself rejects on the next hop.
+      await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1)
+        .Because("a stream-less outbox message must still be stored, not dropped by the guard");
+      await Assert.That(coordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(id);
+      await Assert.That(coordinator.LastNewOutboxMessages[0].StreamId).IsNull();
     } finally {
       await sut.DisposeAsync();
     }
   }
 
   [Test]
-  public async Task QueueInboxMessage_WithNullStreamId_DoesNotThrowAsync() {
+  public async Task QueueInboxMessage_WithNullStreamId_ReachesTheCoordinatorAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
@@ -393,8 +402,15 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     };
 
     try {
-      // Act & Assert
+      // Act
       sut.QueueInboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert - same contract on the inbox side: null is admitted and preserved to the store.
+      await Assert.That(coordinator.LastNewInboxMessages.Length).IsEqualTo(1)
+        .Because("a stream-less inbox message must still be stored, not dropped by the guard");
+      await Assert.That(coordinator.LastNewInboxMessages[0].MessageId).IsEqualTo(id);
+      await Assert.That(coordinator.LastNewInboxMessages[0].StreamId).IsNull();
     } finally {
       await sut.DisposeAsync();
     }
@@ -681,7 +697,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // ============================================================
 
   [Test]
-  public async Task DisposeAsync_WithoutLogger_DoesNotThrowAsync() {
+  public async Task DisposeAsync_WithoutLogger_DrainsTheQueueAndMarksDisposedAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
@@ -689,10 +705,20 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
 
     // Queue something so disposal flush has work
-    sut.QueueOutboxMessage(_createOutboxMessage());
+    var messageId = Guid.CreateVersion7();
+    sut.QueueOutboxMessage(_createOutboxMessage(messageId));
 
-    // Act & Assert - no exception
+    // Act
     await sut.DisposeAsync();
+
+    // Assert - the shutdown drain is the last chance queued work has to be persisted; a
+    // null-logger host must not skip it. And disposal must actually complete: a strategy that
+    // drained but never flipped to disposed would keep accepting work nothing will ever flush.
+    await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1)
+      .Because("disposal must drain queued work even with no logger configured");
+    await Assert.That(coordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(() => sut.QueueOutboxMessage(_createOutboxMessage()))
+      .ThrowsExactly<ObjectDisposedException>();
   }
 
   [Test]
@@ -722,7 +748,7 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // ============================================================
 
   [Test]
-  public async Task DisposeAsync_WhenFlushThrows_WithoutLogger_DoesNotThrowAsync() {
+  public async Task DisposeAsync_WhenFlushThrows_WithoutLogger_SwallowsAndStillDisposesAsync() {
     // Arrange
     var throwingCoordinator = new ThrowingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
@@ -731,8 +757,16 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
-    // Act & Assert - should swallow exception gracefully
+    // Act - should swallow the failing drain rather than throwing out of DisposeAsync
     await sut.DisposeAsync();
+
+    // Assert - the call count proves the drain really reached the failing coordinator, so the
+    // swallow is exercised rather than skipped; and a failed drain must still leave the strategy
+    // disposed, otherwise a shutdown that hits a broken store leaves a live timer behind.
+    await Assert.That(throwingCoordinator.StoreOutboxCallCount).IsEqualTo(1)
+      .Because("without a call there is no exception, and the swallow branch is never reached");
+    await Assert.That(() => sut.QueueOutboxMessage(_createOutboxMessage()))
+      .ThrowsExactly<ObjectDisposedException>();
   }
 
   // ============================================================
@@ -944,16 +978,27 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // ============================================================
 
   [Test]
-  public async Task DisposeAsync_CalledTwice_DoesNotThrowAsync() {
+  public async Task DisposeAsync_CalledTwice_DoesNotDrainTwiceAsync() {
     // Arrange
     var coordinator = new TrackingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
 
-    // Act & Assert
+    // Queue work so the first disposal has something to drain — with empty queues both
+    // disposals are indistinguishable and the second one proves nothing.
+    sut.QueueOutboxMessage(_createOutboxMessage());
+
+    // Act
     await sut.DisposeAsync();
+    var afterFirstDispose = coordinator.ProcessWorkBatchCallCount;
     await sut.DisposeAsync();
+
+    // Assert - the second disposal returns at the _disposed guard. Re-running the drain would
+    // re-store whatever the first one already stored, which is a duplicate insert, not a no-op.
+    await Assert.That(afterFirstDispose).IsEqualTo(1);
+    await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(afterFirstDispose)
+      .Because("disposal is idempotent — a second call must not re-run the drain");
   }
 
   // ============================================================
@@ -1049,25 +1094,31 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
   // ============================================================
 
   [Test]
-  public async Task TimerCallback_WhenFlushThrows_WithoutLogger_SwallowsExceptionAsync() {
+  public async Task TimerCallback_WhenFlushThrows_WithoutLogger_KeepsTickingAsync() {
     // Arrange
     var throwingCoordinator = new ThrowingWorkCoordinator();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions(intervalMs: 50); // Short interval for timer to fire quickly
     var sut = new IntervalWorkCoordinatorStrategy(throwingCoordinator, instanceProvider, options);
 
-    sut.QueueOutboxMessage(_createOutboxMessage());
+    try {
+      // Act - the coordinator signals each call, so this waits on the flush itself rather than
+      // on a delay that has to be guessed.
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      await throwingCoordinator.FirstStoreOutboxCall.WaitAsync(TimeSpan.FromSeconds(30));
 
-    // Wait enough time for timer to fire and hit the catch branch
-    var tcs = new TaskCompletionSource();
-    _ = Task.Run(async () => {
-      await Task.Delay(200);
-      tcs.SetResult();
-    });
-    await tcs.Task;
+      // The first tick threw. Queue again: if the exception had escaped the callback the timer
+      // would be dead and this second flush would never happen.
+      sut.QueueOutboxMessage(_createOutboxMessage());
+      await throwingCoordinator.SecondStoreOutboxCall.WaitAsync(TimeSpan.FromSeconds(30));
 
-    // Act & Assert - should not propagate exception from timer callback
-    await sut.DisposeAsync();
+      // Assert - swallowing is only correct if the timer survives it; a strategy that stops
+      // flushing after one bad batch strands every message queued afterwards.
+      await Assert.That(throwingCoordinator.StoreOutboxCallCount).IsGreaterThanOrEqualTo(2)
+        .Because("a failed interval flush must not stop the timer");
+    } finally {
+      await sut.DisposeAsync();
+    }
   }
 
   // ============================================================
@@ -1188,12 +1239,38 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       Task.FromResult<PerspectiveCursorInfo?>(null);
   }
 
+  /// <summary>
+  /// Fails every store. Counts and signals the calls so a test can prove the flush actually
+  /// reached the failing seam — a swallowed exception leaves no other trace, and without the
+  /// count a test that never flushed at all is indistinguishable from one that flushed and
+  /// recovered.
+  /// </summary>
   private sealed class ThrowingWorkCoordinator : IWorkCoordinator {
+    private readonly TaskCompletionSource _firstCall = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _secondCall = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _storeOutboxCalls;
+
+    /// <summary>How many flushes reached <see cref="StoreOutboxMessagesAsync"/> before throwing.</summary>
+    public int StoreOutboxCallCount => Volatile.Read(ref _storeOutboxCalls);
+
+    /// <summary>Completes when the first store call arrives — a signal to wait on instead of a delay.</summary>
+    public Task FirstStoreOutboxCall => _firstCall.Task;
+
+    /// <summary>Completes when the second store call arrives, i.e. the timer survived the first failure.</summary>
+    public Task SecondStoreOutboxCall => _secondCall.Task;
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
-      CancellationToken cancellationToken = default) =>
+      CancellationToken cancellationToken = default) {
+      var call = Interlocked.Increment(ref _storeOutboxCalls);
+      if (call == 1) {
+        _firstCall.TrySetResult();
+      } else if (call == 2) {
+        _secondCall.TrySetResult();
+      }
       throw new InvalidOperationException("Simulated coordinator failure");
+    }
 
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,

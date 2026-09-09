@@ -120,8 +120,18 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
-    // Act & Assert — should not throw
+    // Act — the store throws inside the shutdown drain and there is no logger to report it
     await sut.DisposeAsync();
+
+    // Assert — swallowing is only correct if disposal still FINISHES. The catch sits before
+    // `_disposed = true`, so a rethrow (or an early return from the catch) would leave a strategy
+    // whose debounce timer is already torn down but which still accepts queue calls — messages
+    // buffered into an object that can never flush again. Post-disposal ObjectDisposedException
+    // is the observable that the swallow ran to completion rather than short-circuiting.
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
+      .ThrowsExactly<ObjectDisposedException>()
+      .Because("a failed shutdown flush must still leave the strategy disposed — half-disposed, "
+             + "it silently accepts work it can no longer write");
   }
 
   // ============================================================
@@ -438,8 +448,16 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     };
 
     try {
-      // Act & Assert
+      // Act
       sut.QueueOutboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert — the StreamId guard rejects Guid.Empty and must let null through. "Did not throw"
+      // alone would also hold for a guard that quietly discarded the message instead, which is the
+      // worse failure: the caller is told nothing and the row never appears.
+      await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+        .Because("null StreamId means 'not stream-bound', which is ordinary work — it has to be "
+               + "accepted AND stored, not accepted and dropped");
     } finally {
       await sut.DisposeAsync();
     }
@@ -465,8 +483,15 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     };
 
     try {
-      // Act & Assert
+      // Act
       sut.QueueInboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert — same guard, inbox side. A dropped inbox row is a message the consumer will never
+      // be asked to handle and that nothing will ever retry, so "accepted" has to mean "stored".
+      await Assert.That(coordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+        .Because("null StreamId means 'not stream-bound', which is ordinary work — it has to be "
+               + "accepted AND stored, not accepted and dropped");
     } finally {
       await sut.DisposeAsync();
     }

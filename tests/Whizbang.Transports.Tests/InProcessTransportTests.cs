@@ -74,11 +74,39 @@ public class InProcessTransportTests {
   public async Task PublishAsync_WithNoSubscribers_CompletesSuccessfullyAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = _createTestEnvelope("test-message");
+    var droppedEnvelope = _createTestEnvelope("published-before-anyone-listened");
     var destination = new TransportDestination("test-topic");
 
-    // Act & Assert - Should not throw
-    await transport.PublishAsync(envelope, destination);
+    // Act - publishing into a topic nobody is listening on must not throw...
+    await transport.PublishAsync(droppedEnvelope, destination);
+
+    // ...and must DROP the message rather than hold it. A subscriber attaching afterwards is a
+    // new listener, not a late one: buffering here would replay history into every component that
+    // subscribes after startup.
+    var received = new ConcurrentBag<MessageId>();
+    var batchHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    await transport.SubscribeBatchAsync(
+      (batch, _) => {
+        foreach (var msg in batch) {
+          received.Add(msg.Envelope.MessageId);
+        }
+        batchHandled.TrySetResult();
+        return Task.CompletedTask;
+      },
+      destination,
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
+    );
+
+    var liveEnvelope = _createTestEnvelope("published-with-a-subscriber");
+    await transport.PublishAsync(liveEnvelope, destination);
+    await batchHandled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+    // Assert - exactly the live message reached the subscriber, and nothing from before it existed
+    await Assert.That(received.Count).IsEqualTo(1)
+      .Because("a publish with no subscribers is a drop — replaying it to a later subscriber "
+             + "would deliver messages that were addressed to nobody");
+    await Assert.That(received.Single()).IsEqualTo(liveEnvelope.MessageId);
   }
 
   [Test]

@@ -591,10 +591,13 @@ public class DispatcherCoverageWave3Tests {
   }
 
   [Test]
-  public async Task LocalInvokeAsync_WithOptions_Void_AnyInvokerFallback_CompletesAsync() {
+  public async Task LocalInvokeAsync_WithOptions_Void_AnyInvokerFallback_UsesTheAnyInvokerAsync() {
     // Arrange - only anyInvoker, no void or sync
-    ValueTask<object?> anyInvoker(object msg) =>
-      new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
+    object? invokedWith = null;
+    ValueTask<object?> anyInvoker(object msg) {
+      invokedWith = msg;
+      return new ValueTask<object?>(new W3Result(Guid.NewGuid(), true));
+    }
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new W3Command("any-fallback-options");
     var options = new DispatchOptions();
@@ -602,7 +605,12 @@ public class DispatcherCoverageWave3Tests {
     // Act
     await dispatcher.LocalInvokeAsync((object)command, options);
 
-    // Assert - should complete without error (anyInvoker was used)
+    // Assert - the void overload discards the result, so completion alone cannot tell the
+    // fallback from a silent no-op. Falling through to the any-invoker when no void invoker is
+    // registered is the whole behavior this covers, and the invoker's own record is the only
+    // place it shows.
+    await Assert.That(invokedWith).IsSameReferenceAs(command)
+      .Because("with no void or sync invoker registered the call must fall back to the any-invoker");
   }
 
   // ========================================

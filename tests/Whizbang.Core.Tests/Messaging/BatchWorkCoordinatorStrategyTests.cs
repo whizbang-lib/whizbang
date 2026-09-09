@@ -433,23 +433,35 @@ public class BatchWorkCoordinatorStrategyTests {
 
   [Test]
   public async Task DisposeAsync_CalledMultipleTimes_DoesNotThrowAsync() {
-    // Arrange
+    // Arrange - a message still in the buffer, so the disposal flush has something to do and a
+    // repeated disposal has something to do twice.
     var fakeCoordinator = new BatchFakeWorkCoordinator();
     var instanceProvider = new BatchFakeInstanceProvider();
-    var options = _createOptions();
+    var options = _createOptions(batchSize: 100, debounceMs: 60000);
+    var logger = new _batchCapturingLogger();
 
     var sut = new BatchWorkCoordinatorStrategy(
       fakeCoordinator,
       instanceProvider,
-      options
+      options,
+      logger: logger
     );
+    sut.QueueOutboxMessage(_createOutboxMessage());
 
     // Act - Dispose multiple times
     await sut.DisposeAsync();
     await sut.DisposeAsync();
     await sut.DisposeAsync();
 
-    // Assert - Should not throw
+    // Assert - "does not throw" is the weaker half. The `_disposed` guard has to make calls two
+    // and three genuine no-ops: a host that disposes a container twice (or disposes a strategy it
+    // also owns a scope for) must not re-run the shutdown drain.
+    await Assert.That(fakeCoordinator.TotalOutboxMessagesReceived).IsEqualTo(1)
+      .Because("the buffered message is stored by the disposal flush -- storing it again on a "
+             + "second dispose is a duplicate outbox row, not a harmless retry");
+    await Assert.That(logger.Entries.Count(e => e.EventId == EVENT_STRATEGY_DISPOSED)).IsEqualTo(1)
+      .Because("one strategy shuts down once; a second 'disposed' line makes a shutdown log "
+             + "count instances that do not exist");
   }
 
   [Test]
@@ -508,34 +520,65 @@ public class BatchWorkCoordinatorStrategyTests {
 
   [Test]
   public async Task Constructor_WithLogger_LogsStrategyStartedAsync() {
-    // Arrange & Act
-    var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    // Arrange & Act - values chosen to be unmistakable in the rendered line.
+    var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       new BatchFakeWorkCoordinator(),
       new BatchFakeInstanceProvider(),
-      _createOptions(batchSize: 5, debounceMs: 200),
+      _createOptions(batchSize: 7, debounceMs: 250),
       logger: logger
     );
 
-    // Assert - no exception, logger branch covered
+    // Assert - the startup line is the only place the EFFECTIVE batch configuration is visible.
+    // Batch size and debounce interval trade write amplification against latency, and a
+    // misconfigured host looks identical to a correctly configured one until this line is read.
+    var started = logger.Entries.Where(e => e.EventId == EVENT_STRATEGY_STARTED).ToList();
+    await Assert.That(started.Count).IsEqualTo(1)
+      .Because("construction announces the strategy exactly once");
+    await Assert.That(started[0].Level).IsEqualTo(LogLevel.Information)
+      .Because("configuration an operator has to be able to read back cannot sit below the "
+             + "default production level");
+    await Assert.That(started[0].Message.Contains("batch size 7", StringComparison.Ordinal)).IsTrue()
+      .Because("announcing a batch size without the number tells an operator nothing they did "
+             + "not already know from the fact that batching is on");
+    await Assert.That(started[0].Message.Contains("250", StringComparison.Ordinal)).IsTrue()
+      .Because("the debounce interval bounds how long a partial batch sits unwritten -- it is "
+             + "half of the latency answer and belongs in the same line");
+
     await sut.DisposeAsync();
   }
 
   [Test]
   public async Task QueueOutboxMessage_WithLogger_LogsQueuedMessageAsync() {
     // Arrange
-    var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       new BatchFakeWorkCoordinator(),
       new BatchFakeInstanceProvider(),
       _createOptions(batchSize: 100, debounceMs: 5000),
       logger: logger
     );
+    var message = _createOutboxMessage(destination: "orders.placed");
 
     try {
       // Act
-      sut.QueueOutboxMessage(_createOutboxMessage());
-      // Assert - no exception, logger branch covered
+      sut.QueueOutboxMessage(message);
+
+      // Assert - a queued message is buffered in memory and not yet durable anywhere. When a host
+      // dies before the flush, this trace is the only record that the message existed at all, so
+      // it has to name WHICH message and WHERE it was headed.
+      var queued = logger.Entries.Where(e => e.EventId == EVENT_QUEUED_OUTBOX_MESSAGE).ToList();
+      await Assert.That(queued.Count).IsEqualTo(1)
+        .Because("one queue call buffers one message and should account for it once");
+      await Assert.That(queued[0].Level).IsEqualTo(LogLevel.Trace)
+        .Because("a per-message line on the hot path must stay at Trace -- above that it is "
+               + "enabled in production and the log becomes the bottleneck");
+      await Assert.That(queued[0].Message.Contains(message.MessageId.ToString(), StringComparison.Ordinal)).IsTrue()
+        .Because("without the message id this line cannot be joined to the outbox row that "
+               + "never appeared, which is the only reason to read it");
+      await Assert.That(queued[0].Message.Contains("orders.placed", StringComparison.Ordinal)).IsTrue()
+        .Because("the destination distinguishes a message buffered for the wrong topic from one "
+               + "that was simply never flushed");
     } finally {
       await sut.DisposeAsync();
     }
@@ -544,18 +587,33 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueInboxMessage_WithLogger_LogsQueuedMessageAsync() {
     // Arrange
-    var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       new BatchFakeWorkCoordinator(),
       new BatchFakeInstanceProvider(),
       _createOptions(batchSize: 100, debounceMs: 5000),
       logger: logger
     );
+    var message = _createInboxMessage(handlerName: "OrderPlacedHandler");
 
     try {
       // Act
-      sut.QueueInboxMessage(_createInboxMessage());
-      // Assert - no exception, logger branch covered
+      sut.QueueInboxMessage(message);
+
+      // Assert - same exposure as the outbox side: buffered, not durable. The handler name is the
+      // inbox equivalent of the destination -- it identifies which consumer's work was lost.
+      var queued = logger.Entries.Where(e => e.EventId == EVENT_QUEUED_INBOX_MESSAGE).ToList();
+      await Assert.That(queued.Count).IsEqualTo(1)
+        .Because("one queue call buffers one message and should account for it once");
+      await Assert.That(queued[0].Level).IsEqualTo(LogLevel.Trace)
+        .Because("a per-message line on the hot path must stay at Trace -- above that it is "
+               + "enabled in production and the log becomes the bottleneck");
+      await Assert.That(queued[0].Message.Contains(message.MessageId.ToString(), StringComparison.Ordinal)).IsTrue()
+        .Because("without the message id this line cannot be joined to the inbox row that never "
+               + "appeared, which is the only reason to read it");
+      await Assert.That(queued[0].Message.Contains("OrderPlacedHandler", StringComparison.Ordinal)).IsTrue()
+        .Because("the handler name says whose work was buffered -- one message id means nothing "
+               + "when several handlers claim the same message");
     } finally {
       await sut.DisposeAsync();
     }
@@ -620,7 +678,7 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task DisposeAsync_WithLogger_LogsDisposingAndDisposedAsync() {
     // Arrange
-    var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       new BatchFakeWorkCoordinator(),
       new BatchFakeInstanceProvider(),
@@ -630,13 +688,27 @@ public class BatchWorkCoordinatorStrategyTests {
 
     // Act
     await sut.DisposeAsync();
-    // Assert - no exception, logger branches covered
+
+    // Assert - the pair BRACKETS the shutdown drain, and that is the whole point of there being
+    // two lines. "disposing" with no matching "disposed" is how a shutdown that hung inside the
+    // final flush is told apart from one that completed: without the closing line, a host killed
+    // by a shutdown timeout looks exactly like a clean exit.
+    var entries = logger.Entries.ToList();
+    var disposing = entries.FindIndex(e => e.EventId == EVENT_STRATEGY_DISPOSING);
+    var disposed = entries.FindIndex(e => e.EventId == EVENT_STRATEGY_DISPOSED);
+    await Assert.That(disposing).IsGreaterThanOrEqualTo(0)
+      .Because("entering disposal must be announced before the drain that can hang");
+    await Assert.That(disposed).IsGreaterThan(disposing)
+      .Because("the closing line has to come after the opening one -- reversed or missing, the "
+             + "pair no longer distinguishes a completed shutdown from a stuck one");
+    await Assert.That(entries[disposing].Level).IsEqualTo(LogLevel.Information);
+    await Assert.That(entries[disposed].Level).IsEqualTo(LogLevel.Information);
   }
 
   [Test]
   public async Task DisposeAsync_WithLogger_UnflushedOperations_LogsWarningAsync() {
     // Arrange
-    var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    var logger = new _batchCapturingLogger();
     var sut = new BatchWorkCoordinatorStrategy(
       new BatchFakeWorkCoordinator(),
       new BatchFakeInstanceProvider(),
@@ -644,7 +716,8 @@ public class BatchWorkCoordinatorStrategyTests {
       logger: logger
     );
 
-    // Queue operations without flushing
+    // Queue operations without flushing: 1 outbox message, 1 inbox message,
+    // 2 completions (one each side) and 2 failures (one each side).
     sut.QueueOutboxMessage(_createOutboxMessage());
     sut.QueueInboxMessage(_createInboxMessage());
     sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
@@ -654,13 +727,32 @@ public class BatchWorkCoordinatorStrategyTests {
 
     // Act
     await sut.DisposeAsync();
-    // Assert - covers LogDisposingWithUnflushedOperations path
+
+    // Assert - work still buffered at shutdown is the one moment the batch strategy can lose
+    // messages. The warning has to say HOW MUCH, per category: "some unflushed work" cannot tell
+    // a routine one-message drain from a host going down with a full buffer, and the two
+    // completion/failure counts are SUMS across outbox and inbox, which is exactly where an
+    // off-by-one hides.
+    var warnings = logger.Entries.Where(e => e.EventId == EVENT_UNFLUSHED_ON_DISPOSAL).ToList();
+    await Assert.That(warnings.Count).IsEqualTo(1)
+      .Because("one disposal with buffered work reports it once");
+    await Assert.That(warnings[0].Level).IsEqualTo(LogLevel.Warning)
+      .Because("work that may not survive shutdown is a warning; at Debug it is filtered out of "
+             + "the production log where the loss would have to be noticed");
+    await Assert.That(warnings[0].Message.Contains("1 outbox messages", StringComparison.Ordinal)).IsTrue();
+    await Assert.That(warnings[0].Message.Contains("1 inbox messages", StringComparison.Ordinal)).IsTrue();
+    await Assert.That(warnings[0].Message.Contains("2 completions", StringComparison.Ordinal)).IsTrue()
+      .Because("completions are summed across outbox and inbox -- reporting one side only "
+             + "understates what is at risk");
+    await Assert.That(warnings[0].Message.Contains("2 failures", StringComparison.Ordinal)).IsTrue()
+      .Because("failures are summed the same way and matter more: an unreported failure leaves "
+             + "the message looking in-flight forever");
   }
 
   [Test]
   public async Task DisposeAsync_WithLogger_FlushError_LogsErrorAsync() {
     // Arrange
-    var logger = NullLogger<BatchWorkCoordinatorStrategy>.Instance;
+    var logger = new _batchCapturingLogger();
     var throwingCoordinator = new BatchThrowingWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
       throwingCoordinator,
@@ -671,9 +763,25 @@ public class BatchWorkCoordinatorStrategyTests {
 
     sut.QueueOutboxMessage(_createOutboxMessage());
 
-    // Act - DisposeAsync should catch the exception and log it
+    // Act - DisposeAsync catches the store failure rather than throwing out of a shutdown path
     await sut.DisposeAsync();
-    // Assert - covers LogErrorFlushingOnDisposal path
+
+    // Assert - containment plus identity. Letting the fault escape would fail the surrounding
+    // `await using`/host shutdown over work that is already lost either way; swallowing it
+    // silently would delete the only evidence that a message was dropped at shutdown.
+    var entries = logger.Entries.ToList();
+    var errorIndex = entries.FindIndex(e => e.EventId == EVENT_DISPOSAL_FLUSH_ERROR);
+    await Assert.That(errorIndex).IsGreaterThanOrEqualTo(0)
+      .Because("a shutdown drain that failed has to leave a record -- the buffered message is "
+             + "gone and nothing else will ever mention it");
+    await Assert.That(entries[errorIndex].Level).IsEqualTo(LogLevel.Error)
+      .Because("dropped outbox work is an error, not a debug note");
+    await Assert.That(entries[errorIndex].Exception).IsTypeOf<InvalidOperationException>()
+      .Because("the store's own fault must reach the log intact -- 'error flushing on disposal' "
+             + "without the cause cannot distinguish a transient database blip from a bug");
+    await Assert.That(entries.FindIndex(e => e.EventId == EVENT_STRATEGY_DISPOSED)).IsGreaterThan(errorIndex)
+      .Because("disposal must still COMPLETE after the failed drain; stopping at the catch would "
+             + "leave the strategy undisposed with its debounce timer torn down");
   }
 
   // ========================================
@@ -1234,8 +1342,9 @@ public class BatchWorkCoordinatorStrategyTests {
   [Test]
   public async Task QueueOutboxMessage_NullStreamId_SucceedsAsync() {
     // Arrange
+    var fakeCoordinator = new BatchFakeWorkCoordinator();
     var sut = new BatchWorkCoordinatorStrategy(
-      new BatchFakeWorkCoordinator(),
+      fakeCoordinator,
       new BatchFakeInstanceProvider(),
       _createOptions(batchSize: 100, debounceMs: 5000)
     );
@@ -1252,8 +1361,21 @@ public class BatchWorkCoordinatorStrategyTests {
     };
 
     try {
-      // Act & Assert - should not throw
+      // Act
       sut.QueueOutboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert - "succeeds" has to mean the message REACHED THE STORE, not merely that the guard
+      // declined to throw. Null and Guid.Empty are one keystroke apart and the guard rejects only
+      // the second; a guard that also silently dropped nulls would leave every message not bound
+      // to a stream (a plain command, an audit record) accepted at the API and absent from the
+      // outbox, with nothing thrown anywhere to say so.
+      await Assert.That(fakeCoordinator.LastNewOutboxMessages.Length).IsEqualTo(1)
+        .Because("a stream-less message is legitimate work and must be stored like any other");
+      await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(message.MessageId);
+      await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].StreamId).IsNull()
+        .Because("null means 'not stream-bound' and must survive the flush -- substituting an id "
+               + "would file the message under a stream it never belonged to");
     } finally {
       await sut.DisposeAsync();
     }
@@ -1689,19 +1811,32 @@ public class BatchWorkCoordinatorStrategyTests {
     }
   }
 
-  // BatchWorkCoordinatorStrategy's own LoggerMessage ids for the two flush-failure paths.
+  // BatchWorkCoordinatorStrategy's own LoggerMessage ids.
+  private const int EVENT_STRATEGY_STARTED = 1;
+  private const int EVENT_QUEUED_OUTBOX_MESSAGE = 2;
+  private const int EVENT_QUEUED_INBOX_MESSAGE = 3;
   private const int EVENT_BATCH_FLUSH_ERROR = 10;
   private const int EVENT_DEBOUNCE_FLUSH_ERROR = 11;
+  private const int EVENT_STRATEGY_DISPOSING = 12;
+  private const int EVENT_UNFLUSHED_ON_DISPOSAL = 13;
+  private const int EVENT_DISPOSAL_FLUSH_ERROR = 14;
+  private const int EVENT_STRATEGY_DISPOSED = 15;
 
   /// <summary>
   /// Captures log entries and lets a test await a specific event id, so the assertion waits on the
   /// log line under test rather than on a signal raised before the catch that writes it.
   /// </summary>
+  /// <remarks>
+  /// The formatted message and the attached exception are captured too: several of these events
+  /// exist only to carry a value (the effective batch size, the id of a message that never made it
+  /// out of the buffer, the fault that ended a shutdown flush), and the event id alone does not
+  /// pin whether that value is actually in the line an operator reads.
+  /// </remarks>
   private sealed class _batchCapturingLogger : ILogger<BatchWorkCoordinatorStrategy> {
-    private readonly List<(int EventId, LogLevel Level)> _entries = [];
+    private readonly List<(int EventId, LogLevel Level, string Message, Exception? Exception)> _entries = [];
     private readonly Dictionary<int, TaskCompletionSource> _waiters = [];
 
-    public IReadOnlyList<(int EventId, LogLevel Level)> Entries {
+    public IReadOnlyList<(int EventId, LogLevel Level, string Message, Exception? Exception)> Entries {
       get {
         lock (_entries) {
           return [.. _entries];
@@ -1732,7 +1867,7 @@ public class BatchWorkCoordinatorStrategyTests {
         LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       TaskCompletionSource? waiter;
       lock (_entries) {
-        _entries.Add((eventId.Id, logLevel));
+        _entries.Add((eventId.Id, logLevel, formatter(state, exception), exception));
         _waiters.TryGetValue(eventId.Id, out waiter);
       }
       waiter?.TrySetResult();

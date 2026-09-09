@@ -31,15 +31,43 @@ public class PerspectiveRunnerCallbackRegistryTests {
     await Assert.That(wasCalled).IsTrue();
   }
 
+  /// <summary>
+  /// A callback that registers nothing must contribute nothing: invoking the registry with it in
+  /// place yields exactly the same service descriptors as invoking without it.
+  /// </summary>
+  /// <remarks>
+  /// The name says "WithNoCallback" but the registry's callback list is process-static, has no public
+  /// reset, and is already populated by this assembly's generated module initializer — so the genuine
+  /// zero-callback early return in InvokeRegistration is unreachable from any test here, and an
+  /// absolute "the collection is empty" assertion is simply false. What is reachable, and asserted
+  /// here, is the delta: a baseline invocation, then the same invocation with one no-op callback
+  /// appended, must produce the same count. Renaming would break the &lt;tests&gt; link in
+  /// PerspectiveRunnerCallbackRegistry.cs.
+  /// </remarks>
   [Test]
   public async Task InvokeRegistration_WithNoCallback_DoesNotThrowAsync() {
-    // Arrange - Reset by registering empty callback
-    PerspectiveRunnerCallbackRegistry.RegisterCallback(services => { });
+    // Arrange - baseline: what the callbacks already registered contribute to a fresh collection.
+    // _invoked is keyed per ServiceCollection, so every fresh collection re-runs all callbacks.
+    var baselineServices = new ServiceCollection();
+    PerspectiveRunnerCallbackRegistry.InvokeRegistration(baselineServices);
+    var baselineCount = baselineServices.Count;
+
+    // A callback that deliberately registers nothing
+    var noOpCallbackRan = false;
+    PerspectiveRunnerCallbackRegistry.RegisterCallback(_ => noOpCallbackRan = true);
 
     var services = new ServiceCollection();
 
-    // Act & Assert - Should not throw
+    // Act
     PerspectiveRunnerCallbackRegistry.InvokeRegistration(services);
+
+    // Assert - the no-op callback really ran, so the unchanged count below is not the trivial
+    // consequence of the callback never being invoked...
+    await Assert.That(noOpCallbackRan).IsTrue();
+
+    // ...and it contributed no descriptors of its own.
+    await Assert.That(services.Count).IsEqualTo(baselineCount)
+      .Because("a callback that registers nothing must leave the service collection as it found it");
   }
 
   [Test]

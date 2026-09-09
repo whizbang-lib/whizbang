@@ -118,19 +118,29 @@ public class DispatcherTests {
 
   [Test]
   public async Task Publish_WithEvent_ShouldNotifyAllHandlersAsync() {
-    // Arrange
+    // Arrange - no receptor is registered for OrderCreated in this fixture, so "all handlers" is
+    // the empty set. What IS observable here is that the publish reached the routing decision and
+    // reported it: the receipt is the caller's only evidence that the event went anywhere. Local
+    // receptor invocation on publish is pinned separately, where a probe receptor exists, by
+    // DispatcherScheduledForLocalReceptorTests.PublishAsync_WithoutScheduledFor_InvokesLocalReceptorInlineAsync.
     var dispatcher = _createDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
 
-    // Subscribe multiple handlers (this will be via perspectives in implementation)
-    // For now, test that Publish doesn't throw
-
     // Act
-    await dispatcher.PublishAsync(orderCreated);
+    var receipt = await dispatcher.PublishAsync(orderCreated);
 
-    // Assert
-    // Should complete without error
-    // In full implementation, verify all perspectives were notified
+    // Assert - an event with no local subscriber must still be minted and routed, not quietly
+    // discarded: subscribers live in OTHER services, reached through the outbox, and the receipt's
+    // message id is what ties this call to the row they will eventually read.
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered)
+      .Because("having no local handler is not a delivery failure — the event still goes to the "
+             + "outbox for every subscribing service");
+    await Assert.That(receipt.MessageId.Value).IsNotEqualTo(Guid.Empty)
+      .Because("a receipt with no message id cannot be correlated to anything downstream");
+    await Assert.That(receipt.Destination).Contains(nameof(OrderCreated))
+      .Because("the destination names the event type that was routed — a receipt naming another "
+             + "type would mean the publish went to the wrong entity");
   }
 
   [Test]
@@ -1055,15 +1065,24 @@ public class DispatcherTests {
 
   [Test]
   public async Task PublishAsync_WithDispatchOptions_CompletesAsync() {
-    // Arrange
+    // Arrange - default options: no ScheduledFor, no cancellation.
     var dispatcher = _createDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
     var options = new Whizbang.Core.Dispatch.DispatchOptions();
 
-    // Act - Should complete without throwing
-    await dispatcher.PublishAsync(orderCreated, options);
+    // Act
+    var receipt = await dispatcher.PublishAsync(orderCreated, options);
 
-    // Assert - No exception means success for fire-and-forget
+    // Assert - the options overload carries the ScheduledFor gate, whose whole job is to DEFER
+    // publication. Default options must not trip it: an event published with a plain
+    // DispatchOptions has to be delivered now, exactly as the no-options overload does. A regression
+    // that treated "no ScheduledFor" as "not yet due" would still complete without throwing.
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered)
+      .Because("default options carry no deferral — anything less than Delivered means the "
+             + "options overload gated a publish that was due immediately");
+    await Assert.That(receipt.MessageId.Value).IsNotEqualTo(Guid.Empty);
+    await Assert.That(receipt.Destination).Contains(nameof(OrderCreated));
   }
 
   [Test]

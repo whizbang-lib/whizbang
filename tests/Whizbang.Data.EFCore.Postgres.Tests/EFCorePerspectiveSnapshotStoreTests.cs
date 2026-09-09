@@ -436,7 +436,28 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
 
   [Test]
   public async Task PruneOldSnapshotsAsync_NoSnapshots_DoesNotThrowAsync() {
-    await _store.PruneOldSnapshotsAsync(Guid.CreateVersion7(), "TestPerspective", keepCount: 5);
+    // Pruning a stream that has never been snapshotted has to be a true no-op, and "no-op" is only
+    // checkable against a neighbor: a prune whose WHERE clause failed to bind the stream would take
+    // the neighbor's history instead, silently — the caller gets no result either way.
+    var emptyStream = Guid.CreateVersion7();
+    var neighborStream = Guid.CreateVersion7();
+    const string perspectiveName = "TestPerspective";
+
+    for (var i = 0; i < 3; i++) {
+      using var neighborData = JsonDocument.Parse($$$"""{"v": {{{i + 1}}}}""");
+      await _store.CreateSnapshotAsync(neighborStream, perspectiveName, Guid.CreateVersion7(), neighborData);
+    }
+
+    await _store.PruneOldSnapshotsAsync(emptyStream, perspectiveName, keepCount: 5);
+
+    await Assert.That(await _store.HasAnySnapshotAsync(emptyStream, perspectiveName)).IsFalse()
+      .Because("pruning a stream with no snapshots must not conjure one");
+
+    var neighborLatest = await _store.GetLatestSnapshotAsync(neighborStream, perspectiveName);
+    await Assert.That(neighborLatest).IsNotNull()
+      .Because("an unrelated stream's snapshots must survive a prune aimed at an empty stream");
+    await Assert.That(neighborLatest!.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(3);
+    neighborLatest.Value.SnapshotData.Dispose();
   }
 
   [Test]
@@ -497,7 +518,19 @@ public class EFCorePerspectiveSnapshotStoreTests : EFCoreTestBase {
 
   [Test]
   public async Task DeleteAllSnapshotsAsync_NoSnapshots_DoesNotThrowAsync() {
-    await _store.DeleteAllSnapshotsAsync(Guid.CreateVersion7(), "TestPerspective");
+    // Same shape as the prune no-op: the danger in a delete against an empty stream is not an
+    // exception, it is a WHERE clause that matched more than the caller asked for.
+    var emptyStream = Guid.CreateVersion7();
+    var neighborStream = Guid.CreateVersion7();
+    const string perspectiveName = "TestPerspective";
+    using var neighborData = JsonDocument.Parse("""{"v": 1}""");
+    await _store.CreateSnapshotAsync(neighborStream, perspectiveName, Guid.CreateVersion7(), neighborData);
+
+    await _store.DeleteAllSnapshotsAsync(emptyStream, perspectiveName);
+
+    await Assert.That(await _store.HasAnySnapshotAsync(emptyStream, perspectiveName)).IsFalse();
+    await Assert.That(await _store.HasAnySnapshotAsync(neighborStream, perspectiveName)).IsTrue()
+      .Because("a delete aimed at a stream with no snapshots must not widen to its neighbors");
   }
 
   #endregion

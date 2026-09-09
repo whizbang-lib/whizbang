@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -65,13 +67,25 @@ public class OrphanInboxJanitorTests {
   public async Task StartAsync_NoWorkCoordinator_ReturnsCleanlyAsync() {
     using var sp = new ServiceCollection().BuildServiceProvider();
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
+    var logger = new _CapturingLogger();
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+  logger: logger);
 
-    // Should not throw.
     await _runToCompletionAsync(janitor);
+
+    // "Returns cleanly" has two halves, and only asserting the second leaves the first free to
+    // rot: the sweep must take the no-coordinator branch (not fail its way to the same silence),
+    // and it must leave the background task faulted-free so the host keeps running.
+    await Assert.That(janitor.ExecuteTask!.IsCompletedSuccessfully).IsTrue()
+      .Because("a faulted ExecuteTask is an unobserved exception on the host, not a clean return");
+    await Assert.That(logger.Exceptions.Count).IsEqualTo(0)
+      .Because("no IWorkCoordinator is a supported configuration, not an error to log");
+    await Assert.That(logger.Messages.Count(m => m.Contains("no IWorkCoordinator registered", StringComparison.Ordinal)))
+      .IsEqualTo(1)
+      .Because("the skip must be traceable — a silent no-op looks identical to a sweep that ran and found nothing");
   }
 
   /// <summary>
@@ -148,13 +162,28 @@ public class OrphanInboxJanitorTests {
     var coordinator = new _RecordingCoordinator { ThrowOnPurge = true };
     using var sp = _buildProviderWith(coordinator);
     var snapshot = new HandledReceptorTypeSnapshot([typeof(_SnapshotMsg)]);
+    var logger = new _CapturingLogger();
     var janitor = new OrphanInboxJanitor(
   services: sp,
   receptorSnapshot: snapshot,
-  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+  schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+  logger: logger);
 
-    // Should not bubble out.
     await _runToCompletionAsync(janitor);
+
+    // The failure has to actually be injected — otherwise this test passes by never reaching
+    // the purge at all, which is how a rotted fake goes unnoticed.
+    await Assert.That(coordinator.PurgeCallCount).IsEqualTo(1)
+      .Because("the throwing seam must be the one the janitor calls, or this is the success path in disguise");
+    await Assert.That(janitor.ExecuteTask!.IsCompletedSuccessfully).IsTrue()
+      .Because("a purge failure must be contained: the background task may not fault and take the host's startup with it");
+
+    // Contained is not the same as swallowed: the operator has to be able to see what failed.
+    var logged = logger.Exceptions;
+    await Assert.That(logged.Count).IsEqualTo(1);
+    await Assert.That(logged[0]).IsTypeOf<InvalidOperationException>();
+    await Assert.That(logged[0].Message).IsEqualTo("simulated purge failure")
+      .Because("the contained exception's identity must reach the log, not just its existence");
   }
 
   /// <summary>
@@ -247,6 +276,47 @@ public class OrphanInboxJanitorTests {
       services.AddSingleton(raw);
     }
     return services.BuildServiceProvider();
+  }
+
+  /// <summary>
+  /// Captures formatted messages and attached exceptions. The formatted message never carries
+  /// the exception, so <see cref="Exceptions"/> is the only way to see a fault the janitor
+  /// contained rather than propagated.
+  /// </summary>
+  private sealed class _CapturingLogger : ILogger<OrphanInboxJanitor> {
+    private readonly Lock _lock = new();
+    private readonly List<string> _messages = [];
+    private readonly List<Exception> _exceptions = [];
+
+    public IReadOnlyList<string> Messages {
+      get {
+        lock (_lock) {
+          return [.. _messages];
+        }
+      }
+    }
+
+    public IReadOnlyList<Exception> Exceptions {
+      get {
+        lock (_lock) {
+          return [.. _exceptions];
+        }
+      }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) {
+      var message = formatter(state, exception);
+      lock (_lock) {
+        _messages.Add(message);
+        if (exception is not null) {
+          _exceptions.Add(exception);
+        }
+      }
+    }
   }
 
   /// <summary>

@@ -1237,9 +1237,29 @@ public class TransportConsumerWorkerDeepCoverageTests {
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
-    // Act & Assert - should not throw with null subscriptions
+    // Act - an admin or health-probe pause arriving before the host finished starting
     await worker.PauseAllSubscriptionsAsync();
     await worker.ResumeAllSubscriptionsAsync();
+
+    // Assert - there was genuinely nothing to pause: neither call reached the transport
+    await Assert.That(transport.SubscriptionCount).IsEqualTo(0)
+      .Because("no subscription exists before ExecuteAsync runs, so pause/resume touch nothing");
+
+    // ...and the premature pause left no latch behind. This is the failure that would actually
+    // hurt: a pause landing during startup that made the subscriptions come up paused would stop
+    // consumption for the life of the process with nothing in the logs to say why.
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await transport.FirstSubscribe.WaitAsync(TimeSpan.FromSeconds(10));
+
+    await Assert.That(transport.SubscriptionCount).IsGreaterThan(0);
+    foreach (var subscription in transport.Subscriptions) {
+      await Assert.That(subscription.IsActive).IsTrue()
+        .Because("subscriptions created after a pre-start pause must come up active");
+    }
+
+    await cts.CancelAsync();
+    await worker.StopAsync(CancellationToken.None);
   }
 
   // ========================================
