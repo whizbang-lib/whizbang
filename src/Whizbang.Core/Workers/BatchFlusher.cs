@@ -33,8 +33,23 @@ public sealed partial class BatchFlusher<T> : IAsyncDisposable {
   /// <summary>Items dropped after <see cref="BatchFlusherOptions.MaxFlushAttempts"/> consecutive failed flushes (diagnostic).</summary>
   public long ItemsDropped { get; private set; }
 
-  /// <summary>Producer-side writer for callers to enqueue items.</summary>
+  /// <summary>Producer-side writer for callers to enqueue items. Items written here are not counted in <see cref="Pending"/>; use <see cref="EnqueueAsync"/> for that.</summary>
   public ChannelWriter<T> Writer => _channel.Writer;
+
+  private long _accepted;
+
+  /// <summary>Enqueues one item and counts it toward <see cref="Pending"/> until it is flushed or dropped.</summary>
+  public ValueTask EnqueueAsync(T item, CancellationToken cancellationToken = default) {
+    Interlocked.Increment(ref _accepted);
+    return _channel.Writer.WriteAsync(item, cancellationToken);
+  }
+
+  /// <summary>
+  /// Items accepted through <see cref="EnqueueAsync"/> that are neither flushed nor dropped yet: what waits
+  /// in the channel plus what the loop has taken up and is flushing. Counted on the producer side so a
+  /// reading never misses an item the loop has read but not yet flushed.
+  /// </summary>
+  public long Pending => Math.Max(0, Interlocked.Read(ref _accepted) - ItemsFlushed - ItemsDropped);
 
   /// <summary>
   /// Creates the flusher and starts the background coalescing loop.
