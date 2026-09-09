@@ -376,6 +376,8 @@ public static class ServiceCollectionExtensions {
     // Liveness (heartbeat watchdog beats, death announcements and retractions) and probe cadence
     // (idle footprint per periodic worker): both passive, every series present at zero.
     services.TryAddSingleton<InstanceLivenessMetrics>();
+    services.TryAddSingleton<CompositeMetrics>();
+    services.AddWhizbangPriority();
     services.TryAddSingleton<ProbeCadenceMetrics>();
     // Turn-key: registered here so a governor's decisions and the evidence behind them reach
     // OpenTelemetry with no consumer wiring. A component that silently changes concurrency and
@@ -647,5 +649,19 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   private sealed class InnerEventStoreHolder(object instance) {
     public object Instance { get; } = instance;
+  }
+
+  /// <summary>
+  /// Registers the priority hook chain and the framework's default producer and receive hooks
+  /// (<see cref="Whizbang.Core.Priority.ContextPriorityProducerHook"/>, <see cref="Whizbang.Core.Priority.AcceptDeclaredPriorityReceiveHook"/>)
+  /// with TryAddEnumerable, so a host's own hooks add to the chain and a repeated call is a no-op.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#hooks</docs>
+  public static IServiceCollection AddWhizbangPriority(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityProducerHook, Whizbang.Core.Priority.ContextPriorityProducerHook>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityReceiveHook, Whizbang.Core.Priority.AcceptDeclaredPriorityReceiveHook>());
+    services.TryAddSingleton<Whizbang.Core.Priority.PriorityHookChain>();
+    return services;
   }
 }

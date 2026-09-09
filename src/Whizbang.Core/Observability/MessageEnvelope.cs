@@ -158,6 +158,15 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public bool StateOnly { get; set; }
 
   /// <summary>
+  /// The priority the producer declared (lower is more urgent; 0 = not declared). One small field on the
+  /// wire, omitted when undeclared. The consumer decides the effective number at its receive boundary.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#the-number-and-the-bucket</docs>
+  [JsonPropertyName("pri")]
+  [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+  public int Priority { get; set; }
+
+  /// <summary>
   /// Parameterless constructor for object initializer syntax.
   /// </summary>
   public MessageEnvelope() {

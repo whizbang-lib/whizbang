@@ -205,6 +205,10 @@ public interface IMessageEnvelope {
   [JsonPropertyName("sto")]
   bool StateOnly => false;
 
+  /// <summary>The priority the producer declared (lower is more urgent; 0 = not declared).</summary>
+  /// <docs>fundamentals/messaging/message-priority#the-number-and-the-bucket</docs>
+  int Priority => 0;
+
 }
 
 /// <summary>
