@@ -220,15 +220,15 @@ public class RealWorldCrossScopeBugReproductionTests {
   }
 
   /// <summary>
-  /// VERIFICATION: Confirm the EventTypeFilter format is correct.
+  /// The awaiter answers a stream with no tracked events from the tracker alone.
   /// </summary>
   [Test]
-  public async Task VERIFY_EventTypeFilter_HasCorrectFormatAsync() {
+  public async Task WaitForStream_WithNothingTracked_NeverQueriesTheCoordinatorAsync() {
     var streamId = Guid.NewGuid();
-    string[]? capturedFilter = null;
+    var queryCount = 0;
 
     var mockCoordinator = new MockWorkCoordinator((request, _) => {
-      capturedFilter = (request.Count > 0 ? request[0].EventTypeFilter : null);
+      queryCount++;
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],
@@ -248,16 +248,18 @@ public class RealWorldCrossScopeBugReproductionTests {
     var logger = NullLogger<PerspectiveSyncAwaiter>.Instance;
     var awaiter = new PerspectiveSyncAwaiter(mockCoordinator, clock, logger, new SyncEventTracker());
 
-    await awaiter.WaitForStreamAsync(
+    var result = await awaiter.WaitForStreamAsync(
       typeof(FakeProjection),
       streamId,
       [typeof(SimulatedStartedEvent), typeof(SimulatedCompletedEvent)],
       timeout: TimeSpan.FromMilliseconds(50)
     );
 
-    // With empty SyncEventTracker, WaitForStreamAsync returns NoPendingEvents immediately
-    // and may not call the coordinator at all. The EventTypeFilter verification
-    // is no longer applicable since DB polling fallback was removed.
-    // This test now just verifies the call completes without error.
+    // The DB polling fallback this test was originally about (and its EventTypeFilter) is gone, so
+    // there is no filter left to check the format of. What replaced it is worth locking instead:
+    // an empty tracker means nothing to wait for, and the awaiter answers from the tracker alone —
+    // a sync point on a stream with no tracked events costs no round trip.
+    await Assert.That(result.Outcome).IsEqualTo(SyncOutcome.NoPendingEvents);
+    await Assert.That(queryCount).IsEqualTo(0);
   }
 }

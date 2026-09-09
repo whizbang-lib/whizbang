@@ -1,3 +1,5 @@
+using System.Data;
+using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -13,16 +15,67 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// connection acquired and a function invoked for nothing, on a schedule, in every host.
 /// </summary>
 /// <remarks>
-/// The assertions are deliberately about the documented empty result rather than about SQL
-/// not being issued — the guard is observable through the return value, and asserting on
-/// the absence of a query would need a connection interceptor that pins the implementation.
+/// The calls that return something are pinned by their documented empty result. The ones that
+/// return <see cref="Task"/> have no return value to check, so they are pinned by
+/// <see cref="ConnectionOpenProbe"/> instead: the guard's whole point is that no connection is
+/// acquired, and that is observable without pinning any particular SQL.
 /// </remarks>
 [Category("Integration")]
 [Category("Shard2")]
 public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
 
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator()
-    => new(CreateDbContext(), Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+    => _coordinator(CreateDbContext());
+
+  private static EFCoreWorkCoordinator<WorkCoordinationDbContext> _coordinator(WorkCoordinationDbContext dbContext)
+    => new(dbContext, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+  /// <summary>
+  /// Counts how many times the DbContext's connection leaves <see cref="ConnectionState.Closed"/>
+  /// while the probe is subscribed.
+  /// </summary>
+  /// <remarks>
+  /// Every coordinator path that reaches PostgreSQL travels over this one connection: the raw
+  /// <c>NpgsqlCommand</c> paths take it from <c>Database.GetDbConnection()</c> and open it through
+  /// <c>CoordinatorConnectionScope</c>, and the <c>ExecuteSqlRawAsync</c> paths have EF open the same
+  /// instance. Zero opens is therefore the observable form of "no round trip happened", which is what
+  /// the empty-input guards exist to guarantee. It has to be counted as it happens rather than read
+  /// afterwards — both paths close the connection again on the way out, so the resting state of a
+  /// guarded call and an executed one are identical.
+  /// </remarks>
+  private sealed class ConnectionOpenProbe : IDisposable {
+    private readonly System.Data.Common.DbConnection _connection;
+    private int _opens;
+
+    public ConnectionOpenProbe(DbContext dbContext) {
+      _connection = dbContext.Database.GetDbConnection();
+      _connection.StateChange += _onStateChange;
+    }
+
+    /// <summary>Transitions out of <see cref="ConnectionState.Closed"/> observed so far.</summary>
+    public int Opens => Volatile.Read(ref _opens);
+
+    private void _onStateChange(object sender, StateChangeEventArgs e) {
+      if (e.OriginalState == ConnectionState.Closed && e.CurrentState != ConnectionState.Closed) {
+        Interlocked.Increment(ref _opens);
+      }
+    }
+
+    public void Dispose() => _connection.StateChange -= _onStateChange;
+  }
+
+  [Test]
+  public async Task TheConnectionOpenProbe_CountsACommandThatIsActuallyIssuedAsync() {
+    // Keeps the eleven "issues no command" assertions below from passing vacuously. If the
+    // coordinator ever stopped routing through the DbContext's own connection, every one of them
+    // would read zero for a reason that has nothing to do with the guard under test.
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).RegisterConsumedTypesAsync(["Contracts.ProbeType"], asBaseline: true);
+
+    await Assert.That(probe.Opens).IsGreaterThan(0);
+  }
 
   [Test]
   public async Task ReclassifyEventsEphemeralAsync_WithNoTypes_ReturnsEmptyAsync() {
@@ -32,13 +85,23 @@ public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task SyncPerspectiveRetentionAsync_WithNoDeclarations_DoesNothingAsync() {
-    await _coordinator().SyncPerspectiveRetentionAsync([]);
+  public async Task SyncPerspectiveRetentionAsync_WithNoDeclarations_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).SyncPerspectiveRetentionAsync([]);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
-  public async Task HoldEphemeralDestructionAsync_WithNoEvents_DoesNothingAsync() {
-    await _coordinator().HoldEphemeralDestructionAsync([], DateTimeOffset.UtcNow);
+  public async Task HoldEphemeralDestructionAsync_WithNoEvents_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).HoldEphemeralDestructionAsync([], DateTimeOffset.UtcNow);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
@@ -49,8 +112,13 @@ public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task RemoveOffloadClaimsAsync_WithNoKeys_DoesNothingAsync() {
-    await _coordinator().RemoveOffloadClaimsAsync([]);
+  public async Task RemoveOffloadClaimsAsync_WithNoKeys_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).RemoveOffloadClaimsAsync([]);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
@@ -61,13 +129,23 @@ public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task HoldPerspectiveRowDestructionAsync_WithNoRows_DoesNothingAsync() {
-    await _coordinator().HoldPerspectiveRowDestructionAsync([], DateTimeOffset.UtcNow);
+  public async Task HoldPerspectiveRowDestructionAsync_WithNoRows_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).HoldPerspectiveRowDestructionAsync([], DateTimeOffset.UtcNow);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
-  public async Task ReleasePerspectiveRowHoldsAsync_WithNoRows_DoesNothingAsync() {
-    await _coordinator().ReleasePerspectiveRowHoldsAsync([]);
+  public async Task ReleasePerspectiveRowHoldsAsync_WithNoRows_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).ReleasePerspectiveRowHoldsAsync([]);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
@@ -79,8 +157,13 @@ public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task RequeueRowEvictionsAsync_WithNoRows_DoesNothingAsync() {
-    await _coordinator().RequeueRowEvictionsAsync([]);
+  public async Task RequeueRowEvictionsAsync_WithNoRows_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).RequeueRowEvictionsAsync([]);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
@@ -119,23 +202,43 @@ public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task RegisterConsumedTypesAsync_WithNoTypes_DoesNothingAsync() {
-    await _coordinator().RegisterConsumedTypesAsync([], asBaseline: false);
+  public async Task RegisterConsumedTypesAsync_WithNoTypes_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).RegisterConsumedTypesAsync([], asBaseline: false);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
-  public async Task MarkConsumedTypeBackfillRequestedAsync_WithNoTypes_DoesNothingAsync() {
-    await _coordinator().MarkConsumedTypeBackfillRequestedAsync([]);
+  public async Task MarkConsumedTypeBackfillRequestedAsync_WithNoTypes_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).MarkConsumedTypeBackfillRequestedAsync([]);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
-  public async Task StoreInboxMessagesAsync_WithNoMessages_DoesNothingAsync() {
-    await _coordinator().StoreInboxMessagesAsync([], partitionCount: 4);
+  public async Task StoreInboxMessagesAsync_WithNoMessages_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).StoreInboxMessagesAsync([], partitionCount: 4);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
-  public async Task CompleteCoalesceFoldAsync_WithNothingFolded_DoesNothingAsync() {
-    await _coordinator().CompleteCoalesceFoldAsync([], [], partitionCount: 4);
+  public async Task CompleteCoalesceFoldAsync_WithNothingFolded_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).CompleteCoalesceFoldAsync([], [], partitionCount: 4);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]
@@ -153,9 +256,14 @@ public class EFCoreWorkCoordinatorEmptyInputTests : EFCoreTestBase {
   }
 
   [Test]
-  public async Task IntegrityStampRepairWindowsAsync_WithNoKeys_DoesNothingAsync() {
-    await _coordinator().IntegrityStampRepairWindowsAsync(
+  public async Task IntegrityStampRepairWindowsAsync_WithNoKeys_IssuesNoCommandAsync() {
+    await using var db = CreateDbContext();
+    using var probe = new ConnectionOpenProbe(db);
+
+    await _coordinator(db).IntegrityStampRepairWindowsAsync(
       Guid.CreateVersion7(), [], windowFrom: 0, windowUntil: 10);
+
+    await Assert.That(probe.Opens).IsEqualTo(0);
   }
 
   [Test]

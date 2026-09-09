@@ -73,9 +73,20 @@ public class PgSharedNotifyResyncCoalesceTests : EFCoreTestBase {
 
     using var listenWait = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
     listenWait.CancelAfter(TimeSpan.FromSeconds(10));
-    foreach (var channel in channels) {
-      await shared.WaitForChannelListenedAsync(channel, listenWait.Token);
+    try {
+      foreach (var channel in channels) {
+        await shared.WaitForChannelListenedAsync(channel, listenWait.Token);
+      }
+    } catch (OperationCanceledException) {
+      // Fall through: the assertion below names the channels that were dropped, which a bare
+      // cancellation from the wait would not.
     }
+
+    var listened = shared.ListenedChannelsForTesting;
+    await Assert.That(channels.Where(c => !listened.Contains(c)).ToList()).IsEmpty()
+      .Because("a resync request that lands while the loop is mid-sync must be latched — a dropped "
+             + "one leaves its channel unlistened, and every pg_notify on it is lost for the life "
+             + "of the connection");
 
     await ((IHostedService)shared).StopAsync(CancellationToken.None);
   }

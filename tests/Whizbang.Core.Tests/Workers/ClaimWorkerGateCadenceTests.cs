@@ -235,6 +235,12 @@ public class ClaimWorkerGateCadenceTests {
 
     await cts.CancelAsync();
     await worker.StopAsync(CancellationToken.None);
+
+    // Three polls, one per wake: the startup poll and one for each transition. The hour-long
+    // cadence contributes none, so this also pins the other direction — a flip wakes the loop
+    // ONCE, and a flapping gate cannot multiply into a claim storm.
+    await Assert.That(coord.ClaimCallTimes.Count).IsEqualTo(3)
+      .Because("each gate transition must wake exactly one poll, and the cadence must wake none");
   }
 
   [Test]

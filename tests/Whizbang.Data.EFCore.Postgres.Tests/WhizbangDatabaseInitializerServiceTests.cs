@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
@@ -24,8 +25,15 @@ public class WhizbangDatabaseInitializerServiceTests {
   [Test]
   public async Task TryRecompute_QueryCancellation_NonShutdownToken_IsSwallowedAsync() {
     // A plain OCE with a live (uncanceled) token is a query cancellation — must NOT escape.
-    var service = _create(coordinator: new _ThrowingCoordinator(new OperationCanceledException()));
+    var logger = new _CapturingLogger();
+    var service = _create(coordinator: new _ThrowingCoordinator(new OperationCanceledException()), logger: logger);
+
     await service.TryRecomputePartitionsAsync(CancellationToken.None);
+
+    // Swallowed, not hidden: recompute is best-effort and self-heals on the next claim cycle, but a
+    // startup that quietly skips it with no trace is indistinguishable from one that ran it.
+    await Assert.That(logger.Failures.Count).IsEqualTo(1);
+    await Assert.That(logger.Failures[0]).IsTypeOf<OperationCanceledException>();
   }
 
   [Test]
@@ -39,8 +47,14 @@ public class WhizbangDatabaseInitializerServiceTests {
 
   [Test]
   public async Task TryRecompute_NonCancellationFailure_IsSwallowedAsync() {
-    var service = _create(coordinator: new _ThrowingCoordinator(new InvalidOperationException("boom")));
+    var logger = new _CapturingLogger();
+    var service = _create(coordinator: new _ThrowingCoordinator(new InvalidOperationException("boom")), logger: logger);
+
     await service.TryRecomputePartitionsAsync(CancellationToken.None);
+
+    await Assert.That(logger.Failures.Count).IsEqualTo(1);
+    await Assert.That(logger.Failures[0]).IsTypeOf<InvalidOperationException>()
+      .Because("the failure is reported with its cause — MarkReady is never blocked, but the skip is on the record");
   }
 
   // ---------- blocking (default) initialization ----------
@@ -207,7 +221,8 @@ public class WhizbangDatabaseInitializerServiceTests {
       TimeSpan? migrationTimeout = null,
       TimeProvider? timeProvider = null,
       IWhizbangLifecycleState? lifecycle = null,
-      TimeSpan? initRetryDelay = null) {
+      TimeSpan? initRetryDelay = null,
+      ILogger<WhizbangDatabaseInitializerService>? logger = null) {
     var services = new ServiceCollection();
     if (coordinator is not null) {
       services.AddSingleton(coordinator);
@@ -227,7 +242,22 @@ public class WhizbangDatabaseInitializerServiceTests {
         InitRetryDelay = initRetryDelay ?? TimeSpan.FromSeconds(30),
       }),
       timeProvider ?? TimeProvider.System,
-      NullLogger<WhizbangDatabaseInitializerService>.Instance);
+      logger ?? NullLogger<WhizbangDatabaseInitializerService>.Instance);
+  }
+
+  /// <summary>Captures the exceptions the service logged instead of rethrowing.</summary>
+  private sealed class _CapturingLogger : ILogger<WhizbangDatabaseInitializerService> {
+    private readonly Lock _lock = new();
+    private readonly List<Exception> _failures = [];
+    public List<Exception> Failures { get { lock (_lock) { return [.. _failures]; } } }
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (exception is not null) {
+        lock (_lock) { _failures.Add(exception); }
+      }
+    }
   }
 
   /// <summary>Runner whose migration blocks until <see cref="Complete"/> is called.</summary>

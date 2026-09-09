@@ -151,8 +151,12 @@ public class ReceptorFiringObserverTests {
 
       await invoker.InvokeAsync(_envelope(), LifecycleStage.PostInboxInline);
 
-      await waitTask; // completes deterministically once the receptor's finally ran
-      // If we reach this line, the observer fired and the test is green — no timeout path needed.
+      await waitTask; // throws TimeoutException rather than hanging if the firing never lands
+
+      // Unblocked BY the receptor completing rather than by the timeout elapsing: the fired
+      // callback ran, and it ran for this receptor.
+      await Assert.That(observer.Completed.Count).IsEqualTo(1);
+      await Assert.That(observer.Completed.First().ReceptorId).IsEqualTo("Target");
     }
   }
 

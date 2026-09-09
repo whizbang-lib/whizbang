@@ -112,6 +112,11 @@ public sealed class DispatcherSyncModeBehaviorTests {
       // No awaiter → the wait function returns Synced without ever blocking. The outer
       // ValueTask method should still complete without throwing.
       await dispatcher.LocalInvokeAndSyncAsync(new VoidCommand("x"), SyncMode.AllProjections);
+
+      await Assert.That(scopedEventTracker.GetEmittedEventsCallCount).IsEqualTo(1)
+        .Because("AllProjections must still enter the perspective wait when no awaiter is wired — "
+               + "reading the tracked events is what shows it did not quietly degrade into the "
+               + "StreamOnly fast path. There is simply nothing to wait ON, so it returns.");
     } finally {
       ScopedEventTrackerAccessor.CurrentTracker = null;
     }
@@ -119,10 +124,23 @@ public sealed class DispatcherSyncModeBehaviorTests {
 
   [Test]
   public async Task StreamOnly_NoAwaiterRegistered_StillReturnsAsync() {
+    var scopedEventTracker = new RecordingScopedEventTracker();
     var dispatcher = _createDispatcher(eventCompletionAwaiter: null);
 
-    // StreamOnly never touches the awaiter path; assert this works even without one wired.
-    await dispatcher.LocalInvokeAndSyncAsync(new VoidCommand("x"), SyncMode.StreamOnly);
+    ScopedEventTrackerAccessor.CurrentTracker = scopedEventTracker;
+    try {
+      scopedEventTracker.TrackEmittedEvent(Guid.NewGuid(), typeof(object), Guid.NewGuid());
+
+      // StreamOnly never touches the awaiter path; assert this works even without one wired.
+      await dispatcher.LocalInvokeAndSyncAsync(new VoidCommand("x"), SyncMode.StreamOnly);
+
+      await Assert.That(scopedEventTracker.GetEmittedEventsCallCount).IsEqualTo(0)
+        .Because("StreamOnly returns as soon as the handler is done — it never reads the emitted-event "
+               + "set, which is why a missing awaiter cannot even be reached on this path. Tracked "
+               + "events are present here precisely so an accidental wait would be visible.");
+    } finally {
+      ScopedEventTrackerAccessor.CurrentTracker = null;
+    }
   }
 
   [Test]
@@ -190,9 +208,17 @@ public sealed class DispatcherSyncModeBehaviorTests {
 
   private sealed class RecordingScopedEventTracker : IScopedEventTracker {
     private readonly List<TrackedEvent> _events = [];
+
+    /// <summary>Times the emitted-event set was read. Reading it is the first step of the
+    /// perspective wait, so it separates "took the AllProjections path" from "returned early".</summary>
+    public int GetEmittedEventsCallCount { get; private set; }
+
     public void TrackEmittedEvent(Guid streamId, Type eventType, Guid eventId) =>
       _events.Add(new TrackedEvent(streamId, eventType, eventId));
-    public IReadOnlyList<TrackedEvent> GetEmittedEvents() => _events;
+    public IReadOnlyList<TrackedEvent> GetEmittedEvents() {
+      GetEmittedEventsCallCount++;
+      return _events;
+    }
     public IReadOnlyList<TrackedEvent> GetEmittedEvents(SyncFilterNode filter) => _events;
     public bool AreAllProcessed(SyncFilterNode filter, IReadOnlySet<Guid> processedEventIds) =>
       _events.All(e => processedEventIds.Contains(e.EventId));

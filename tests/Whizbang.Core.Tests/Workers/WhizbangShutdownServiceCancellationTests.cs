@@ -41,6 +41,12 @@ public class WhizbangShutdownServiceCancellationTests {
 
     // Must not escape StopAsync — Host.StopAsync rethrows, which is what produces the crash exit.
     await service.StopAsync(CancellationToken.None);
+
+    // The swallow has to come from an attempted deregistration, not from never attempting one: a
+    // StopAsync that quietly skipped cleanup would also "not throw", and would strand the instance
+    // row on every clean stop rather than only on the ones that fail.
+    await Assert.That(coordinator.WasCalled).IsTrue()
+      .Because("not throwing is only the right outcome if the DELETE was actually tried");
   }
 
   [Test]

@@ -13,6 +13,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
@@ -148,17 +149,21 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
   [Test]
   public async Task HandleMessage_WithMetrics_WhenException_RecordsFailedCounterAsync() {
-    // Arrange - strategy throws on FlushAsync to exercise error path with metrics
+    // Arrange - a strongly-typed envelope with no IEnvelopeSerializer registered: building the
+    // inbox message throws, which is the failure the per-message isolation catches and counts.
+    // (This test used to inject the failure through IWorkCoordinatorStrategy.QueueInboxMessage —
+    // a call the receive path no longer makes since it moved to a direct bulk insert, so the
+    // injected exception never fired and the "failed counter" it is named for was never touched.)
     var messageId = MessageId.New();
     var transport = new UncoveredTransport();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
-    var workStrategy = new ThrowingFlushStrategy();
-    var metrics = new TransportMetrics(new WhizbangMetrics());
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
 
     var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
@@ -182,13 +187,29 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     _ = worker.StartAsync(cts.Token);
     await transport.WaitForSubscriptionAsync(TimeSpan.FromSeconds(5));
 
-    var envelope = _createJsonEnvelope(messageId);
+    var envelope = new MessageEnvelope<UncoveredTestEvent> {
+      MessageId = messageId,
+      Payload = new UncoveredTestEvent(),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
+    };
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestCommand, TestApp]], Whizbang.Core";
 
     // Act - per-message error isolation catches the exception; InboxMessagesFailed counter, activity error tags, and InboxReceiveDuration in finally are still exercised
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
+
+    // Assert - the failure is recorded, and the unbuildable message is NOT stored. Without the
+    // counter a message that dies on the way to the inbox disappears with no operational trace.
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("a message that threw while being built must never reach the inbox");
+    var failed = metricHelper.GetByName("whizbang.transport.inbox.messages_failed")
+      .Where(m => m.Value > 0)
+      .ToList();
+    await Assert.That(failed).Count().IsEqualTo(1)
+      .Because("the per-message failure path must record exactly one failed-message measurement");
+    await Assert.That(failed[0].Value).IsEqualTo(1d);
   }
 
   // ========================================
@@ -366,6 +387,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new RecordingWorkerLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -375,7 +397,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -391,6 +413,15 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
+
+    // Assert - the guard fired (the caught exception is the evidence, since isolation keeps it off
+    // the transport thread) and the streamless event is kept OUT of the inbox. Storing an event
+    // with an empty stream id writes a row no perspective or replay can ever address.
+    await Assert.That(logger.Exceptions.OfType<InvalidStreamIdException>().Count()).IsEqualTo(1)
+      .Because("an event whose StreamId is Guid.Empty must trip StreamIdGuard on the receive path");
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("the guarded message must not be stored — contrast the sibling test, where a valid "
+             + "stream id on the same envelope type does reach the inbox");
   }
 
   [Test]
@@ -548,6 +579,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new RecordingWorkerLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -557,7 +589,7 @@ public class TransportConsumerWorkerUncoveredPathsTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -571,6 +603,16 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     await transport.SimulateMessageReceivedAsync(envelope, null);
 
     cts.Cancel();
+
+    // Assert - the guard fired on the missing envelope type, and the untypeable message stayed out
+    // of the inbox. A row whose EnvelopeType is null cannot be deserialized by anything downstream,
+    // so storing it would create work no worker can ever complete.
+    var thrown = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(thrown).Count().IsEqualTo(1)
+      .Because("a transport message with no envelope type must be rejected by the build guard");
+    await Assert.That(thrown[0].Message).Contains("EnvelopeType is required");
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("the rejected message must not be stored");
   }
 
   // ========================================
@@ -587,7 +629,9 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var workStrategy = new UncoveredWorkStrategy(messageId.Value);
-    var metrics = new TransportMetrics(new WhizbangMetrics());
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
@@ -620,7 +664,30 @@ public class TransportConsumerWorkerUncoveredPathsTests {
     await transport.SimulateMessageReceivedAsync(envelope, null);
 
     cts.Cancel();
+
+    // Assert - a message with no envelope type still gets counted, under the literal "Unknown"
+    // tag. Dropping the tag (or the measurement) would make untyped traffic invisible on the
+    // dashboards that are the only way to notice a producer publishing without a type.
+    var receivedTags = _taggedMessageTypes(metricHelper, "whizbang.transport.inbox.messages_received");
+    await Assert.That(receivedTags).Count().IsEqualTo(1)
+      .Because("the receive counter must count an unidentifiable message, not skip it");
+    await Assert.That(receivedTags[0]).IsEqualTo("Unknown")
+      .Because("with no envelope type there is no name to report, and 'Unknown' is that name");
+
+    var failedTags = _taggedMessageTypes(metricHelper, "whizbang.transport.inbox.messages_failed");
+    await Assert.That(failedTags).Count().IsEqualTo(1);
+    await Assert.That(failedTags[0]).IsEqualTo("Unknown")
+      .Because("the failure it causes must carry the same tag, so the two series line up");
   }
+
+  /// <summary>
+  /// The <c>message_type</c> tag of every non-zero series on one counter. The untagged series
+  /// always reports (at zero), so the tagged ones are what say which path actually counted.
+  /// </summary>
+  private static List<string> _taggedMessageTypes(MetricAssertionHelper helper, string instrumentName) =>
+    [.. helper.GetByName(instrumentName)
+      .Where(m => m.Value > 0)
+      .Select(m => m.Tags.TryGetValue("message_type", out var t) ? t : "(untagged)")];
 
   // ========================================
   // _populateDeliveredAtTimestamp - with concrete MessageEnvelope<JsonElement>
@@ -975,6 +1042,34 @@ public class TransportConsumerWorkerUncoveredPathsTests {
 
   internal sealed class UncoveredTestEvent : IEvent { }
 
+  /// <summary>
+  /// Keeps the exceptions the worker caught. Per-message error isolation deliberately keeps a
+  /// failure off the transport thread, so the log is the only place a test can see WHICH failure
+  /// happened — without it, "the message was dropped" cannot be told apart from "the message was
+  /// dropped for the reason this test is named after".
+  /// </summary>
+  private sealed class RecordingWorkerLogger : ILogger<TransportConsumerWorker> {
+    private readonly Lock _sync = new();
+    private readonly List<Exception> _exceptions = [];
+
+    public IReadOnlyList<Exception> Exceptions {
+      get {
+        lock (_sync) { return [.. _exceptions]; }
+      }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (exception is null) {
+        return;
+      }
+      lock (_sync) { _exceptions.Add(exception); }
+    }
+  }
+
   private sealed class UncoveredTransport : ITransport, IDisposable {
     private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
     private Func<IReadOnlyList<TransportMessage>, CancellationToken, Task>? _batchHandler;
@@ -1122,24 +1217,6 @@ public class TransportConsumerWorkerUncoveredPathsTests {
         OutboxWork = [],
         PerspectiveWork = []
       });
-    }
-  }
-
-  private sealed class ThrowingFlushStrategy : IWorkCoordinatorStrategy {
-    public void QueueInboxMessage(InboxMessage message) =>
-      throw new InvalidOperationException("Simulated flush failure for metrics coverage");
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
-    public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
-
-    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return FlushAndGetBatchAsync(flags, ct);
-    }
-
-    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
     }
   }
 

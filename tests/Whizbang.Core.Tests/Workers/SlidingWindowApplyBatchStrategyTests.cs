@@ -172,8 +172,13 @@ public class SlidingWindowApplyBatchStrategyTests {
   public async Task FlushAndStopAsync_CallerCanceled_CancelsStopCtsAsync() {
     var streamId = _idProvider.NewGuid();
     var keepFlushBusy = new TaskCompletionSource();
+    // The token the in-flight flush was handed — the strategy's own stop token.
+    var flushToken = CancellationToken.None;
     var sut = new SlidingWindowApplyBatchStrategy(
-      flush: async (_, _, _) => await keepFlushBusy.Task.ConfigureAwait(false),
+      flush: async (_, _, ct) => {
+        flushToken = ct;
+        await keepFlushBusy.Task.ConfigureAwait(false);
+      },
       options: new SlidingWindowApplyOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(10),
         MaxWait = TimeSpan.FromMilliseconds(50),
@@ -188,6 +193,11 @@ public class SlidingWindowApplyBatchStrategyTests {
     } catch (OperationCanceledException) {
       // expected when WaitAsync surfaces the cancellation
     }
+    await Assert.That(flushToken.IsCancellationRequested).IsTrue()
+      .Because("when the caller's token gives up first, the strategy cancels its OWN stop token so the "
+             + "flush still in flight is told to abandon the drain. Without it that flush keeps running "
+             + "past a shutdown nobody is waiting on any more.");
+
     // Release the stuck flush so the worker can drain.
     keepFlushBusy.TrySetResult();
   }

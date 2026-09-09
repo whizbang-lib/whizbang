@@ -298,6 +298,15 @@ public class TransportConsumerWorkerTests {
 
     await worker.StopAsync(CancellationToken.None);
     await worker.StopAsync(CancellationToken.None); // must not throw ObjectDisposedException
+
+    // Idempotent means the second pass did nothing, not merely that it survived: the subscription
+    // is torn down once, and nothing is resubscribed on the way out.
+    await Assert.That(transport.Subscriptions).Count().IsEqualTo(1);
+    await Assert.That(transport.Subscriptions[0].DisposeCallCount).IsEqualTo(1)
+      .Because("a second teardown pass would dispose the transport's subscription twice, which real "
+             + "transports report as a protocol error rather than ignoring");
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(1)
+      .Because("stopping must never re-enter the subscribe loop");
   }
 }
 
@@ -384,6 +393,7 @@ internal class FakeTransport : ITransport, IDisposable {
 internal class FakeSubscription : ISubscription {
   public bool IsActive { get; private set; } = true;
   public bool IsDisposed { get; private set; }
+  public int DisposeCallCount { get; private set; }
   public int PauseCallCount { get; private set; }
   public int ResumeCallCount { get; private set; }
 
@@ -405,6 +415,7 @@ internal class FakeSubscription : ISubscription {
 
   public void Dispose() {
     IsDisposed = true;
+    DisposeCallCount++;
   }
 }
 

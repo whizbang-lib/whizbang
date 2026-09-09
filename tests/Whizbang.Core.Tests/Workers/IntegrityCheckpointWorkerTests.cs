@@ -568,8 +568,12 @@ public class IntegrityCheckpointWorkerTests {
   public async Task RunCheckpointOnce_OnAHostWithNoCoordinator_IsInertAsync(
       CancellationToken testToken) {
     // Schema-only and diagnostic hosts build the worker but have nothing to checkpoint with.
+    // A dispatcher IS present, so the missing coordinator is the only thing making this host
+    // different from a checkpointing one — and it is what the assertion below pins.
+    var dispatcher = new _captureDispatcher();
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(new _instanceProvider("origin-svc"));
+    services.AddSingleton<IDispatcher>(dispatcher);
     var sp = services.BuildServiceProvider();
 
     var worker = new IntegrityCheckpointWorker(
@@ -579,6 +583,11 @@ public class IntegrityCheckpointWorkerTests {
       NullLogger<IntegrityCheckpointWorker>.Instance);
 
     await worker.RunCheckpointOnceAsync(testToken);
+
+    await Assert.That(dispatcher.Published).IsEmpty()
+      .Because("With no coordinator there is no advanced window and no watermark to describe, so "
+             + "the worker must publish NOTHING — a checkpoint invented without one would claim "
+             + "an empty commit range consumers would read as 'this origin has no gaps'.");
   }
 
   /// <summary>

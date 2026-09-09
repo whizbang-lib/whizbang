@@ -545,13 +545,25 @@ public class DispatcherComprehensiveCoverageTests {
   [Test]
   public async Task LocalInvokeAsync_Void_WithOptions_AnyInvoker_CompletesAsync() {
     // Arrange - covers anyInvoker fallback in _localInvokeVoidWithOptionsAsync
-    ValueTask<object?> anyInvoker(object msg) => new(new TestResult(Guid.NewGuid(), true));
+    object? received = null;
+    ValueTask<object?> anyInvoker(object msg) {
+      received = msg;
+      return new ValueTask<object?>(new TestResult(Guid.NewGuid(), true));
+    }
     var dispatcher = _createDispatcher(anyInvoker: anyInvoker);
     var command = new TestCommand("void-options-any");
     var options = new DispatchOptions();
 
     // Act
     await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert - the fallback is the last invoker the void path tries, so "completed" and "silently
+    // dispatched nothing" are the same observation from the caller's side. The receptor running is
+    // the whole point of the call; a fallback that quietly stopped resolving would drop the message
+    // and still return successfully.
+    await Assert.That(received).IsSameReferenceAs(command)
+      .Because("falling through to the any-invoker has to end in the receptor actually seeing this "
+             + "message, not in a call that returns having done nothing");
   }
 
   [Test]

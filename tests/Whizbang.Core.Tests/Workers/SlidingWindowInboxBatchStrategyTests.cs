@@ -422,8 +422,9 @@ public class SlidingWindowInboxBatchStrategyTests {
   public async Task DisposeAsync_IsIdempotentAsync(CancellationToken testToken) {
     // `await using` plus an explicit stop in the host's shutdown is an ordinary shape, and the
     // second pass must not re-dispose the timer or cancel an already-disposed source.
+    var flushCount = 0;
     var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => Task.CompletedTask,
+      flush: (msgs, ct) => { Interlocked.Increment(ref flushCount); return Task.CompletedTask; },
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -433,13 +434,22 @@ public class SlidingWindowInboxBatchStrategyTests {
     await sut.FlushAndStopAsync(testToken);
     await sut.DisposeAsync();
     await sut.DisposeAsync();
+
+    await Assert.That(flushCount).IsEqualTo(0)
+      .Because("nothing was ever appended, so no pass may invent a flush — a second stop that re-ran "
+             + "the drain would re-deliver whatever the first one had already handed downstream.");
+    await Assert.ThrowsAsync<ObjectDisposedException>(async () => await sut.AppendAsync(_makeMessage()))
+      .Because("repeat disposal leaves the strategy DISPOSED rather than resetting it — the same "
+             + "guarantee a single stop gives (AppendAsync_AfterStop_ThrowsAsync), unchanged by "
+             + "however many times the host's shutdown path disposes it.");
   }
 
   [Test]
   [Timeout(30000)]
   public async Task FlushAndStop_WithNothingBuffered_IsCleanAsync(CancellationToken testToken) {
+    var flushCount = 0;
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => Task.CompletedTask,
+      flush: (msgs, ct) => { Interlocked.Increment(ref flushCount); return Task.CompletedTask; },
       options: new SlidingWindowInboxOptions {
         SlidingWindow = TimeSpan.FromMilliseconds(30),
         MaxWait = TimeSpan.FromMilliseconds(200),
@@ -447,6 +457,12 @@ public class SlidingWindowInboxBatchStrategyTests {
       });
 
     await sut.FlushAndStopAsync(testToken);
+
+    await Assert.That(flushCount).IsEqualTo(0)
+      .Because("'clean' means the shutdown drains nothing rather than pushing an empty batch: every "
+             + "flush is a store round-trip, and one per idle shutdown is a cost with no message behind it.");
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0)
+      .Because("a strategy that never received a message must not have created a stream buffer.");
   }
 
   /// <summary>Captures error-level messages so a dropped batch can be shown to be reported.</summary>

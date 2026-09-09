@@ -34,8 +34,17 @@ public class InMemorySignalTransportTests {
   [Test]
   public async Task PublishAsync_BeforeStart_IsNoOpAsync() {
     var transport = new InMemorySignalTransport();
+    var sink = new CountingSink();
+
     // No sink yet — publish must NOT throw (a not-started transport is a no-op, not a failure).
     await transport.PublishAsync(new MemProbe(1), SignalTarget.Broadcast);
+
+    // Starting afterwards is what makes "no-op" observable: the dropped signal must stay dropped.
+    await transport.StartAsync(sink);
+
+    await Assert.That(sink.Received).IsEqualTo(0)
+      .Because("a pre-start publish is discarded, not buffered — replaying it onto the first sink "
+             + "to start would deliver a signal from before that subscriber existed");
   }
 
   [Test]

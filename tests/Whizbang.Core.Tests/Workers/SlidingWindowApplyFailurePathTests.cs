@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -67,12 +68,25 @@ public class SlidingWindowApplyFailurePathTests {
   public async Task StopWhileFlushing_EndsWithoutSurfacingCancellationAsync() {
     // Shutdown arriving mid-flush is not a flush failure, and must not be logged as one — every
     // deploy would otherwise file an error per in-flight stream.
+    var flushed = new ConcurrentQueue<Guid>();
+    var logger = new _recordingLogger();
     await using var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (sid, count, ct) => Task.CompletedTask,
-      options: _fastWindow());
+      flush: (sid, count, ct) => { flushed.Enqueue(sid); return Task.CompletedTask; },
+      options: _fastWindow(),
+      logger: logger);
 
-    await sut.AppendAsync(Guid.CreateVersion7());
+    var streamId = Guid.CreateVersion7();
+    await sut.AppendAsync(streamId);
     await sut.FlushAndStopAsync();
+
+    // FlushAndStop completes the writers and awaits the workers, so the buffered signal has to have
+    // been flushed by the time it returns — a stop that abandoned it would lose the apply until the
+    // reclaim path noticed.
+    await Assert.That(flushed).Contains(streamId)
+      .Because("FlushAndStopAsync drains the buffer; it does not just cancel it");
+    await Assert.That(logger.Errors).IsEmpty()
+      .Because("shutdown is not a flush failure — logging one per in-flight stream would make every "
+             + "deploy look like an incident");
   }
 
   [Test]
@@ -87,9 +101,41 @@ public class SlidingWindowApplyFailurePathTests {
       timeProvider: time);
 
     await sut.AppendAsync(Guid.CreateVersion7());
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(1)
+      .Because("without a buffer to evict the sweep below would prove nothing");
+
     time.Advance(TimeSpan.FromSeconds(5));   // past the eviction window
-    time.Advance(TimeSpan.FromSeconds(11));  // trip the sweep timer
+
+    // The periodic timer's callback is fire-and-forget, so driving one pass directly is the only
+    // way to observe what the sweep did rather than racing it.
+    await sut.RunIdleSweepNowForTestAsync();
+
+    await Assert.That(sut.ActiveStreamCount).IsEqualTo(0)
+      .Because("the buffer AND its worker task are held per stream — a service that has seen many "
+             + "streams keeps both forever unless the idle sweep actually removes them");
 
     await sut.FlushAndStopAsync();
+  }
+
+  /// <summary>Captures error-level lines so "shutdown was not logged as a failure" is checkable.</summary>
+  private sealed class _recordingLogger : ILogger<SlidingWindowApplyBatchStrategy> {
+    private readonly List<string> _errors = [];
+    private readonly Lock _lock = new();
+
+    public IReadOnlyList<string> Errors {
+      get { lock (_lock) { return [.. _errors]; } }
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      if (logLevel < LogLevel.Error) {
+        return;
+      }
+      lock (_lock) { _errors.Add(formatter(state, exception)); }
+    }
   }
 }

@@ -513,13 +513,17 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
 
     var poisoned = true;
     var replayAwaiter = new Whizbang.Testing.Transport.SignalAwaiter();
+    var deliveriesBeforeCure = 0;
+    var replayedMessageId = Guid.Empty;
     var subscription = await transport.SubscribeAsync(
       (envelope, _, _) => {
         if (envelope is MessageEnvelope<WbTopo.Orders.Commands.PlaceOrder> order
             && order.Payload.Marker == failureMarker) {
           if (Volatile.Read(ref poisoned)) {
+            Interlocked.Increment(ref deliveriesBeforeCure);
             throw new InvalidOperationException(failureMarker);
           }
+          replayedMessageId = order.MessageId.Value;
           replayAwaiter.Signal();
         }
         return Task.CompletedTask;
@@ -529,7 +533,8 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
     try {
       var publish = _flipPublishStrategy(transport);
       var work = _commandWork(new WbTopo.Orders.Commands.PlaceOrder(failureMarker));
-      await publish.PublishAsync(work, ct);
+      var publishResult = await publish.PublishAsync(work, ct);
+      await Assert.That(publishResult.Success).IsTrue();
 
       // DLQ arrival IS the completion signal for nack → redeliver → dead-letter — consumed
       // via a dedicated DLQ consumer (signal-based, no polling).
@@ -546,6 +551,14 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
 
       var deadLettered = await deadLetteredTcs.Task.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
+      // It is OUR command sitting on THIS namespace's DLQ, not an unrelated arrival on a shared
+      // broker: the dead-lettered copy carries the published message id.
+      await Assert.That(deadLettered.Properties.MessageId).IsEqualTo(work.MessageId.ToString());
+      // MaxDeliveryAttempts=2 is the reason it got here: first delivery nacks and requeues, the
+      // second dead-letters. One delivery would mean it never retried; three would mean the cap
+      // is not being honored and a poison command loops.
+      await Assert.That(Volatile.Read(ref deliveriesBeforeCure)).IsEqualTo(2);
+
       // REPLAY from the new entity: cure the handler, republish the dead-lettered body to
       // the SAME flipped exchange, ack the DLQ copy.
       Volatile.Write(ref poisoned, false);
@@ -561,6 +574,11 @@ public sealed class NamespaceInboxFlipE2ELockTests : IAsyncDisposable {
       await dlqChannel.BasicAckAsync(deadLettered.DeliveryTag, multiple: false, ct);
 
       await replayAwaiter.WaitAsync(TimeSpan.FromSeconds(15), ct);
+
+      // Recovery republishes the dead-lettered body through the flipped exchange, so what comes
+      // back is the ORIGINAL command, not a newly minted one -- an id change here would break
+      // every downstream idempotency key the message already travelled under.
+      await Assert.That(replayedMessageId).IsEqualTo(work.MessageId);
     } finally {
       subscription.Dispose();
     }

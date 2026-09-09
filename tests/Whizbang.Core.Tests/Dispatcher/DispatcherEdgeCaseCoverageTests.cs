@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -8,6 +9,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Routing;
+using Whizbang.Core.Security;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
@@ -52,7 +54,17 @@ public class DispatcherEdgeCaseCoverageTests {
   public record VoidEdgeCommand(string Data);
 
   public class VoidEdgeCommandReceptor : IReceptor<VoidEdgeCommand> {
+    /// <summary>
+    /// What the ambient <see cref="MessageContextAccessor.CurrentContext"/> looked like from inside
+    /// the receptor, keyed by the command's payload so parallel tests never read each other's run.
+    /// The void overloads return nothing, so this is the only place the caller's context is
+    /// observable at all.
+    /// </summary>
+    public static ConcurrentDictionary<string, string?> ObservedUserIds { get; } = new();
+
     public ValueTask HandleAsync(VoidEdgeCommand message, CancellationToken cancellationToken = default) {
+      ArgumentNullException.ThrowIfNull(message);
+      ObservedUserIds[message.Data] = MessageContextAccessor.CurrentContext?.UserId;
       return ValueTask.CompletedTask;
     }
   }
@@ -547,7 +559,13 @@ public class DispatcherEdgeCaseCoverageTests {
 
     // Exercises _getScopeDeltaForHop with UserId set
     await dispatcher.LocalInvokeAsync(command, context);
-    // No assertion needed beyond not throwing
+
+    // The void overload returns nothing, so the receptor's own view of the ambient context is the
+    // only evidence the caller's identity survived the hop. A context that stopped flowing here
+    // would silently strip the user from everything the receptor goes on to cascade.
+    await Assert.That(VoidEdgeCommandReceptor.ObservedUserIds.TryGetValue("scope-void-test", out var seen)).IsTrue()
+      .Because("the void LocalInvokeAsync overload must actually reach the receptor");
+    await Assert.That(seen).IsEqualTo("user-789");
   }
 
   [Test]

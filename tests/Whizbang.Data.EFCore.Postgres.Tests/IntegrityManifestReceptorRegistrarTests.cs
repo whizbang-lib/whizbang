@@ -23,6 +23,9 @@ public class IntegrityManifestReceptorRegistrarTests {
   private sealed class CountingRegistry : IReceptorRegistry {
     public List<(Type Message, LifecycleStage Stage)> Registrations { get; } = [];
 
+    /// <summary>Receptors this registry has been asked to remove. Expected to stay empty.</summary>
+    public List<(Type Message, LifecycleStage Stage)> Unregistrations { get; } = [];
+
     public IReadOnlyList<ReceptorInfo> GetReceptorsFor(Type messageType, LifecycleStage stage)
       => Array.Empty<ReceptorInfo>();
 
@@ -35,10 +38,16 @@ public class IntegrityManifestReceptorRegistrarTests {
       => Registrations.Add((typeof(TMessage), stage));
 
     public bool Unregister<TMessage>(IReceptor<TMessage> receptor, LifecycleStage stage)
-        where TMessage : IMessage => false;
+        where TMessage : IMessage {
+      Unregistrations.Add((typeof(TMessage), stage));
+      return false;
+    }
 
     public bool Unregister<TMessage, TResponse>(IReceptor<TMessage, TResponse> receptor, LifecycleStage stage)
-        where TMessage : IMessage => false;
+        where TMessage : IMessage {
+      Unregistrations.Add((typeof(TMessage), stage));
+      return false;
+    }
   }
 
   private static IntegrityManifestReceptorRegistrar _registrar(IServiceProvider services)
@@ -92,9 +101,21 @@ public class IntegrityManifestReceptorRegistrarTests {
   }
 
   [Test]
-  public async Task StopAsync_CompletesAsync() {
-    var services = new ServiceCollection().BuildServiceProvider();
+  public async Task StopAsync_LeavesTheReceptorsRegisteredAsync() {
+    // Stopping the registrar is not a deregistration. The registry outlives it, and a stop that
+    // pulled the manifest receptors back out would silently drop convergence traffic on any host
+    // that stops and restarts its hosted services.
+    var registry = new CountingRegistry();
+    var services = new ServiceCollection()
+      .AddSingleton<IReceptorRegistry>(registry)
+      .BuildServiceProvider();
+    var registrar = _registrar(services);
+    await registrar.StartAsync(CancellationToken.None);
+    var registeredAtStart = registry.Registrations.Count;
 
-    await _registrar(services).StopAsync(CancellationToken.None);
+    await registrar.StopAsync(CancellationToken.None);
+
+    await Assert.That(registry.Unregistrations).IsEmpty();
+    await Assert.That(registry.Registrations.Count).IsEqualTo(registeredAtStart);
   }
 }

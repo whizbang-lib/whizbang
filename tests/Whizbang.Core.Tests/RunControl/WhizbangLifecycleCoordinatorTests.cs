@@ -104,6 +104,18 @@ public class WhizbangLifecycleCoordinatorTests {
   [Test]
   public async Task Transition_NoParticipants_IsNoOpAsync() {
     var coordinator = new WhizbangLifecycleCoordinator([], new WhizbangLifecycleOptions());
-    await coordinator.TransitionAsync(LifecyclePhase.Running, CancellationToken.None); // does not throw
+
+    var transition = coordinator.TransitionAsync(LifecyclePhase.Running, CancellationToken.None).AsTask();
+
+    // An empty barrier has no acks to wait on, so it is already done — no ack timeout to serve out,
+    // no scheduling round-trip on a host that registered no participants.
+    await Assert.That(transition.IsCompletedSuccessfully).IsTrue();
+    await transition;
+
+    // ...and the queue was released rather than left held: a no-op that kept the serialize
+    // semaphore would deadlock every transition after it.
+    var next = coordinator.TransitionAsync(LifecyclePhase.Stopping, CancellationToken.None).AsTask();
+    await Assert.That(next.IsCompletedSuccessfully).IsTrue();
+    await next;
   }
 }

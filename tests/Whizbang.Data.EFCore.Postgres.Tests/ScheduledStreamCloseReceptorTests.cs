@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -30,6 +32,19 @@ public class ScheduledStreamCloseReceptorTests {
       Calls++;
       LastCall = (streamId, throughVersion, archive);
       return Task.FromResult(new StreamCloseResult("closed", 5));
+    }
+  }
+
+  /// <summary>Captures what the receptor logged, so a "did nothing" path can be told apart from
+  /// a "did nothing and said nothing" one.</summary>
+  private sealed class RecordingLogger : ILogger<ScheduledStreamCloseReceptor> {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+      Func<TState, Exception?, string> formatter) {
+      ArgumentNullException.ThrowIfNull(formatter);
+      Entries.Add((logLevel, formatter(state, exception)));
     }
   }
 
@@ -66,11 +81,21 @@ public class ScheduledStreamCloseReceptorTests {
   public async Task Receptor_NoStreamCloserRegistered_IsInertAsync() {
     var services = new ServiceCollection();   // no IStreamCloser
     await using var sp = services.BuildServiceProvider();
+    var logger = new RecordingLogger();
     var receptor = new ScheduledStreamCloseReceptor(
-      sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<ScheduledStreamCloseReceptor>.Instance);
+      sp.GetRequiredService<IServiceScopeFactory>(), logger);
+    var streamId = Guid.NewGuid();
 
     // Must not throw — a host without an IStreamCloser simply ignores the occurrence.
-    await receptor.HandleAsync(new ScheduledStreamClose(Guid.NewGuid(), 1, false));
+    await receptor.HandleAsync(new ScheduledStreamClose(streamId, 1, false));
+
+    // Inert is not the same as silent: a scheduled close that fired and closed nothing is a
+    // configuration fault, so the ignored occurrence must name the stream it dropped.
+    var warnings = logger.Entries.Count(e =>
+      e.Level == LogLevel.Warning
+      && e.Message.Contains(streamId.ToString(), StringComparison.Ordinal));
+    await Assert.That(warnings).IsEqualTo(1)
+      .Because("A fired ScheduledStreamClose with no IStreamCloser must warn once, naming the stream.");
   }
 
   [Test]

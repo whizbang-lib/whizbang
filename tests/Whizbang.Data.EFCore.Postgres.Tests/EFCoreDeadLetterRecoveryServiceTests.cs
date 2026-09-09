@@ -129,10 +129,10 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
 
   [Test]
   public async Task ScheduleNextAttemptAsync_CompletesWithoutErrorAsync() {
-    // Coverage smoke for ScheduleNextAttemptAsync's wrapper round-trip. The persisted
-    // effect (next_recovery_at column update) is locked by DeadLetterRecoverySqlTests at
-    // the SQL function level; this test exercises the C# parameter wiring + Npgsql
-    // round-trip without re-asserting the SQL semantic.
+    // The SQL function's semantics are locked by DeadLetterRecoverySqlTests; what is only
+    // reachable here is the C# parameter wiring — that the id and the timestamp this wrapper
+    // was handed are the ones that reach the row. Swapped or dropped parameters produce no
+    // error, just a retry scheduled for the wrong moment (or for every row).
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
     var svc = _newService(ctx);
@@ -140,7 +140,13 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     var future = DateTimeOffset.UtcNow.AddHours(3);
 
     await svc.ScheduleNextAttemptAsync(dlqId, future);
-    // No throw == wrapper path succeeded.
+
+    var scheduled = await _getNextRecoveryAtAsync(conn, dlqId);
+    await Assert.That(scheduled).IsNotNull()
+      .Because("scheduling the next attempt must land on the row the caller named");
+    await Assert.That((scheduled!.Value - future).Duration()).IsLessThan(TimeSpan.FromSeconds(1))
+      .Because("the caller's instant is the retry deadline — a wrapper that dropped or reordered "
+             + "the timestamp parameter would silently reschedule to NOW() instead");
   }
 
   // ===== ResetForGenerationAsync =====
@@ -217,6 +223,21 @@ public class EFCoreDeadLetterRecoveryServiceTests : EFCoreTestBase {
     move.Parameters.AddWithValue("gen", generation);
     await move.ExecuteNonQueryAsync();
     return (dlqId, messageId);
+  }
+
+  private static async Task<DateTimeOffset?> _getNextRecoveryAtAsync(NpgsqlConnection conn, Guid dlqId) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT next_recovery_at FROM wh_dead_letters WHERE dead_letter_id = @id";
+    cmd.Parameters.AddWithValue("id", dlqId);
+    var result = await cmd.ExecuteScalarAsync();
+    // Npgsql surfaces timestamptz as a UTC DateTime by default, DateTimeOffset only when the
+    // provider is configured for it — accept either so the helper does not depend on that setting.
+    return result switch {
+      null or DBNull => null,
+      DateTimeOffset dto => dto,
+      DateTime dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc)),
+      _ => throw new InvalidOperationException($"Unexpected next_recovery_at type {result.GetType()}")
+    };
   }
 
   private static async Task<int> _getStatusAsync(NpgsqlConnection conn, Guid dlqId) {

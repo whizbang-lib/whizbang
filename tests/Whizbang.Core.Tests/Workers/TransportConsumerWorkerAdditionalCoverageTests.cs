@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -150,19 +151,35 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   // Error path in _handleMessageAsync - Activity status set to Error
   // ========================================
 
+  /// <summary>
+  /// The receive span for a failed delivery is marked as an error AND hangs off the producer's trace.
+  /// <c>TransportConsumerWorkerDeepCoverageTests.HandleMessage_WithException_SetsActivityErrorTagsAsync</c>
+  /// covers the error status from the other side of the same seam; the parent-span linkage asserted
+  /// here — the reason the traceparent is in this test's name — is not covered there.
+  /// </summary>
   [Test]
   public async Task HandleMessage_WhenExceptionWithTraceParent_SetsActivityErrorStatusAsync() {
+    // The inbox span only exists while something is listening, so the listener is not just the
+    // observer here — it is what makes the SetStatus path run at all.
+    var stopped = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = source => source.Name == "Whizbang.Transport",
+      Sample = (ref ActivityCreationOptions<ActivityContext> options) => ActivitySamplingResult.AllData,
+      ActivityStopped = activity => {
+        lock (stopped) {
+          stopped.Add(activity);
+        }
+      }
+    };
+    ActivitySource.AddActivityListener(listener);
+
     // Arrange
     var messageId = MessageId.New();
     var transport = new AdditionalCoverageTransport();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
-    // Strategy that throws to exercise error path
-    var workStrategy = new ThrowingOnFlushWorkCoordinatorStrategy();
-
     var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
     var noOpCoordinator = new NoOpWorkCoordinator();
     services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
@@ -190,12 +207,32 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     // Create envelope WITH a valid traceparent so Activity is created
     const string traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, traceParent);
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    // Unparseable envelope type: the failure has to happen INSIDE the span, which is where the
+    // error status is recorded. A throwing IWorkCoordinatorStrategy cannot be used for this —
+    // TransportConsumerWorker never resolves that interface, so such a fake is never called.
+    const string unusableEnvelopeType = "SomeType.Without.Brackets";
 
-    // Act - per-message error isolation catches the exception (Activity error path still exercised internally)
-    await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
+    // Act - per-message error isolation catches the InvalidOperationException (logged, not propagated)
+    await transport.SimulateMessageReceivedAsync(envelope, unusableEnvelopeType);
 
     cts.Cancel();
+
+    List<Activity> inboxActivities;
+    lock (stopped) {
+      inboxActivities = [.. stopped.Where(a =>
+        (string?)a.GetTagItem("messaging.message_id") == messageId.ToString())];
+    }
+
+    await Assert.That(inboxActivities.Count).IsEqualTo(1)
+      .Because("the hop's traceparent is what attaches this consumer span to the producer's trace.");
+    await Assert.That(inboxActivities[0].ParentSpanId.ToHexString()).IsEqualTo("b7ad6b7169203331")
+      .Because("the span continues the incoming trace instead of starting a new root.");
+    await Assert.That(inboxActivities[0].Status).IsEqualTo(ActivityStatusCode.Error)
+      .Because("a message that could not be turned into an inbox row is a FAILED receive. The batch "
+             + "guard contains the fault, so the span is where the drop stays visible — left Unset, "
+             + "the trace shows a clean receive for a message that was thrown away.");
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("nothing may be written for a message whose envelope type cannot be read back.");
   }
 
   // ========================================
@@ -284,6 +321,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new AdditionalCoverageCapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -293,7 +331,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -310,6 +348,16 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
+
+    // Assert - the run reached the SERIALIZER step, which is only possible if the timestamp
+    // populator returned early: with a non-MessageEnvelope<JsonElement> envelope it must skip
+    // rather than try to parse the envelope type and rewrite a payload it cannot address.
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1);
+    await Assert.That(contained[0].Message).Contains("IEnvelopeSerializer is required but not registered")
+      .Because("failing here and not earlier is what proves _populateDeliveredAtTimestamp skipped.");
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("an envelope that cannot be serialized must never produce an inbox row.");
   }
 
   // ========================================
@@ -482,7 +530,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
   // ========================================
 
   [Test]
-  public async Task HandleMessage_WithReversedBracketsInEnvelopeType_ThrowsAsync() {
+  public async Task HandleMessage_WithReversedBracketsInEnvelopeType_SkipsMessageWithoutStoringAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new AdditionalCoverageTransport();
@@ -499,6 +547,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new AdditionalCoverageCapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -508,7 +557,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -524,10 +573,18 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await transport.SimulateMessageReceivedAsync(envelope, invalidType);
 
     cts.Cancel();
+
+    // Assert - closing brackets before opening ones is not a name the parser can repair.
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("an envelope type that yields no message type cannot produce a processable inbox row.");
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1)
+      .Because("the drop must be reported; asserting it also proves the handler actually ran.");
+    await Assert.That(contained[0].Message).Contains("Invalid envelope type name format");
   }
 
   [Test]
-  public async Task HandleMessage_WithEmptyMessageTypeInBrackets_ThrowsAsync() {
+  public async Task HandleMessage_WithEmptyMessageTypeInBrackets_SkipsMessageWithoutStoringAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new AdditionalCoverageTransport();
@@ -544,6 +601,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new AdditionalCoverageCapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -553,7 +611,7 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -569,6 +627,15 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     await transport.SimulateMessageReceivedAsync(envelope, emptyTypeEnvelope);
 
     cts.Cancel();
+
+    // Assert - well-formed brackets around nothing parse cleanly and still name no type, so the
+    // whitespace guard after the parse is the one that has to reject this.
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("an envelope type that yields no message type cannot produce a processable inbox row.");
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1)
+      .Because("the drop must be reported; asserting it also proves the handler actually ran.");
+    await Assert.That(contained[0].Message).Contains("Failed to extract message type");
   }
 
   // ========================================
@@ -1179,21 +1246,31 @@ public class TransportConsumerWorkerAdditionalCoverageTests {
     }
   }
 
-  private sealed class ThrowingOnFlushWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    public void QueueInboxMessage(InboxMessage message) =>
-      throw new InvalidOperationException("Simulated flush failure for coverage");
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
-    public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+  /// <summary>Logger that keeps the exceptions attached to its entries. The worker's per-message
+  /// isolation logs the fault and moves on, and the formatted message never carries the exception,
+  /// so this is the only place a contained failure is observable.</summary>
+  private sealed class AdditionalCoverageCapturingLogger : ILogger<TransportConsumerWorker> {
+    private readonly Lock _lock = new();
+    private readonly List<Exception> _exceptions = [];
 
-    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return FlushAndGetBatchAsync(flags, ct);
+    public IReadOnlyList<Exception> Exceptions {
+      get {
+        lock (_lock) {
+          return [.. _exceptions];
+        }
+      }
     }
 
-    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (exception is not null) {
+        lock (_lock) {
+          _exceptions.Add(exception);
+        }
+      }
     }
   }
 

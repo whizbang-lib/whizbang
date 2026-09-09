@@ -99,10 +99,23 @@ public class ImmediateBatchStrategyBehaviorTests {
 
   [Test]
   public async Task ImmediateInbox_FlushAndStop_IsIdempotentAsync() {
-    var sut = new ImmediateInboxBatchStrategy((_, _) => Task.CompletedTask);
+    var flushes = 0;
+    var sut = new ImmediateInboxBatchStrategy((_, _) => {
+      flushes++;
+      return Task.CompletedTask;
+    });
+    await sut.AppendAsync(_makeInboxMessage());   // the one legitimate flush
+
     await sut.FlushAndStopAsync();
     await sut.FlushAndStopAsync();   // second call must not throw
     await sut.DisposeAsync();        // dispose must not throw
+
+    await Assert.That(flushes).IsEqualTo(1)
+      .Because("Idempotent means no repeated work: a second stop (or a stop followed by dispose) "
+             + "must not re-issue the flush — a duplicate flush is a duplicate inbox write.");
+    // ...and the repeat calls must leave the strategy stopped, not reopen it.
+    await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+      await sut.AppendAsync(_makeInboxMessage()));
   }
 
   // ===== ImmediateOutboxBatchStrategy =====
@@ -144,10 +157,23 @@ public class ImmediateBatchStrategyBehaviorTests {
 
   [Test]
   public async Task ImmediateOutbox_FlushAndStop_IsIdempotentAsync() {
-    var sut = new ImmediateOutboxBatchStrategy((_, _) => Task.CompletedTask);
+    var flushes = 0;
+    var sut = new ImmediateOutboxBatchStrategy((_, _) => {
+      flushes++;
+      return Task.CompletedTask;
+    });
+    await sut.AppendAsync(_makeOutboxMessage());   // the one legitimate flush
+
     await sut.FlushAndStopAsync();
     await sut.FlushAndStopAsync();   // second call must not throw
     await sut.DisposeAsync();        // dispose must not throw
+
+    await Assert.That(flushes).IsEqualTo(1)
+      .Because("Idempotent means no repeated work: a second stop (or a stop followed by dispose) "
+             + "must not re-issue the flush — a duplicate flush is a duplicate publish.");
+    // ...and the repeat calls must leave the strategy stopped, not reopen it.
+    await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+      await sut.AppendAsync(_makeOutboxMessage()));
   }
 
   // ===== Cross-cutting: passthrough propagates flush exceptions =====

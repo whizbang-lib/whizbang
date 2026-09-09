@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -472,7 +473,18 @@ public class TransportConsumerWorkerDeepCoverageTests {
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
-    var workStrategy = new ThrowingOnQueueStrategy();
+    var workStrategy = new DeepCoverageWorkStrategy(messageId.Value);
+
+    // StartActivity returns null with nobody listening, so the whole tagging path is dead unless
+    // the test subscribes. Activities are process-wide; the delivery below is matched by its
+    // message id rather than by being the only one in the list.
+    var captured = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = source => source.Name == "Whizbang.Transport",
+      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      ActivityStopped = a => { lock (captured) { captured.Add(a); } }
+    };
+    ActivitySource.AddActivityListener(listener);
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
@@ -517,20 +529,38 @@ public class TransportConsumerWorkerDeepCoverageTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
-    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
+    // Not an envelope type name at all: the inner-type parser rejects it, and it does so inside the
+    // try that owns the inbox activity. That is the failure this test is about -- the receive span
+    // has to come back marked as an error, or a failed delivery is indistinguishable from a healthy
+    // one in a trace.
+    const string envelopeType = "TestApp.NotAnEnvelopeTypeName, TestApp";
 
-    // Act - per-message error isolation catches the exception (Activity error tags still set internally)
+    // Act - per-message error isolation catches the exception; the span records it
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
+
+    // Assert
+    Activity? inboxActivity;
+    lock (captured) {
+      inboxActivity = captured.Find(
+        a => (a.GetTagItem("messaging.message_id") as string) == messageId.ToString());
+    }
+    await Assert.That(inboxActivity).IsNotNull()
+      .Because("the envelope carries a traceparent, so the receive is traced");
+    await Assert.That(inboxActivity!.Status).IsEqualTo(ActivityStatusCode.Error);
+    await Assert.That(inboxActivity.StatusDescription).Contains("TestApp.NotAnEnvelopeTypeName");
+    // The failed message is dropped rather than stored: a row that cannot be deserialized would be
+    // redelivered forever.
+    await Assert.That(noOpCoordinator.StoreInboxCallCount).IsEqualTo(0);
   }
 
   // ========================================
-  // _handleMessageAsync with whitespace envelopeType throws
+  // _handleMessageAsync with whitespace envelopeType is logged and dropped
   // ========================================
 
   [Test]
-  public async Task HandleMessage_WithWhitespaceEnvelopeType_ThrowsInvalidOperationExceptionAsync() {
+  public async Task HandleMessage_WithWhitespaceEnvelopeType_LogsTheFailureAndDropsTheMessageAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new DeepCoverageTransport();
@@ -538,6 +568,13 @@ public class TransportConsumerWorkerDeepCoverageTests {
     options.Destinations.Add(new TransportDestination("test-topic"));
 
     var workStrategy = new DeepCoverageWorkStrategy(messageId.Value);
+
+    var loggedFailures = new List<Exception>();
+    var loggerFactory = LoggerFactory.Create(builder => {
+      builder.SetMinimumLevel(LogLevel.Error);
+      builder.AddProvider(new ExceptionCollectingLoggerProvider(loggedFailures));
+    });
+    var logger = loggerFactory.CreateLogger<TransportConsumerWorker>();
 
     var services = new ServiceCollection();
     services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
@@ -556,7 +593,7 @@ public class TransportConsumerWorkerDeepCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -572,6 +609,12 @@ public class TransportConsumerWorkerDeepCoverageTests {
     await transport.SimulateMessageReceivedAsync(envelope, "   ");
 
     cts.Cancel();
+
+    // Assert - the exception does not escape the handler (an escape would abandon the whole batch),
+    // so the two things that DO leave the worker are what the guarantee rests on: the message is
+    // dropped instead of stored, and the reason is on record.
+    await Assert.That(noOpCoordinator.StoreInboxCallCount).IsEqualTo(0);
+    await Assert.That(loggedFailures).Contains(e => e is InvalidOperationException);
   }
 
   // ========================================
@@ -1538,27 +1581,34 @@ public class TransportConsumerWorkerDeepCoverageTests {
     }
   }
 
-  private sealed class ThrowingOnQueueStrategy : IWorkCoordinatorStrategy {
-    public void QueueInboxMessage(InboxMessage message) {
-      throw new InvalidOperationException("Simulated queue failure");
+  /// <summary>
+  /// Collects the exceptions handed to <c>LogError</c>, so a test can assert on the failure the
+  /// worker swallowed. Per-message error isolation means the exception itself never reaches the
+  /// caller, and the log entry is the only place it survives.
+  /// </summary>
+  private sealed class ExceptionCollectingLoggerProvider(List<Exception> sink) : ILoggerProvider {
+    private readonly List<Exception> _sink = sink;
+
+    public ILogger CreateLogger(string categoryName) => new CollectingLogger(_sink);
+
+    public void Dispose() {
+      // Nothing to release -- the sink is owned by the test.
     }
 
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
-    public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+    private sealed class CollectingLogger(List<Exception> sink) : ILogger {
+      private readonly List<Exception> _sink = sink;
 
-    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return FlushAndGetBatchAsync(flags, ct);
-    }
-
-    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return Task.FromResult(new WorkBatch {
-        InboxWork = [],
-        OutboxWork = [],
-        PerspectiveWork = []
-      });
+      public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+      public bool IsEnabled(LogLevel logLevel) => true;
+      public void Log<TState>(
+          LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state,
+          Exception? exception, Func<TState, Exception?, string> formatter) {
+        if (exception is not null) {
+          lock (_sink) {
+            _sink.Add(exception);
+          }
+        }
+      }
     }
   }
 

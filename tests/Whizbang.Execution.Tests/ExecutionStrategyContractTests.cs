@@ -236,6 +236,14 @@ public abstract class ExecutionStrategyContractTests {
     // Call DrainAsync (should wait for handler)
     var drainTask = strategy.DrainAsync();
 
+    // The handler is provably still in flight — it is parked on handlerCompleted, which nothing
+    // has set. A drain that has already finished here has not drained anything; the shutdown that
+    // called it proceeds to tear down while a handler is mid-write, which is exactly the partial
+    // work draining exists to prevent. The realistic regression (returning Task.CompletedTask)
+    // fails this deterministically.
+    await Assert.That(drainTask.IsCompleted).IsFalse()
+      .Because("draining means waiting for in-flight work, not reporting success while it runs");
+
     // Complete the handler
     handlerCompleted.SetResult(true);
     await executionTask;

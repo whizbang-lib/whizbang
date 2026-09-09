@@ -98,6 +98,7 @@ public class SignalBusHostedServiceCoverageTests {
     services.AddSingleton<ISignalTransport>(transport);
     await using var provider = services.BuildServiceProvider();
     var hosted = provider.GetServices<IHostedService>().Single();
+    var state = provider.GetRequiredService<SignalBusLivenessState>();
 
     await hosted.StartAsync(CancellationToken.None);
     await transport.Publishing.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken); // probe loop is now stuck forever
@@ -107,6 +108,12 @@ public class SignalBusHostedServiceCoverageTests {
     await hosted.StopAsync(new CancellationToken(canceled: true));
     // No exception reaching here IS the assertion: StopAsync must swallow this rather than
     // propagate it into the host's shutdown sequence.
+
+    // The other half of "swallow": giving up on the unwinding probe must not also stamp a verdict
+    // on the route. Abandoning the wait says nothing about whether the wire actually works.
+    await Assert.That(state.WireRouteVerified).IsNull()
+      .Because("a stop that abandoned an in-flight probe has observed no probe result at all, so "
+             + "the wire verdict must stay exactly where it was");
 
     // Clean up: let the still-running probe loop unwind (it observes _stopCts, canceled above,
     // once the transport itself stops hanging) instead of leaving a background task running.

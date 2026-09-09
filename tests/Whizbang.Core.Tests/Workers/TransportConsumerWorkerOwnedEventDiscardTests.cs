@@ -11,6 +11,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Resilience;
 using Whizbang.Core.Routing;
 using Whizbang.Core.Security;
+using Whizbang.Core.Tests.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -129,7 +130,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task OwnedCommand_FromOtherService_IsProcessedAsync() {
-    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE, metrics: metrics);
     await worker.StartAsync();
 
     var envelope = _createCommandEnvelope(sourceServiceName: OTHER_SERVICE);
@@ -141,10 +145,11 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     }
 
     await worker.StopAsync();
-    // Message was NOT discarded — it attempted processing (serialization threw, but the
-    // echo check passed it through). The key assertion: the message was NOT short-circuited
-    // by the echo discard. We verify the inverse: if it WAS discarded, the test above
-    // (OwnedCommand_FromThisService_IsDiscardedAsync) proves that path works.
+
+    // The echo discard is what this test is about, and every discard is counted: the message
+    // arrived (received=1) and the echo check let it through (no deduplicated count). A regression
+    // that treated cross-service commands as self-echo would swallow real work silently.
+    await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
   // ========================================
@@ -157,7 +162,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task NonOwnedEvent_IsNotDiscardedAsync() {
-    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var worker = _createWorker(ownedDomains: [_ownedNamespace], serviceName: THIS_SERVICE, metrics: metrics);
     await worker.StartAsync();
 
     var envelope = _createEventEnvelope(sourceServiceName: OTHER_SERVICE);
@@ -169,7 +177,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     }
 
     await worker.StopAsync();
-    // Non-owned events are never discarded by the echo check
+
+    // Non-owned events are never discarded by the echo check — an over-broad namespace match
+    // here would drop every other service's events on the floor, counted as deduplicated.
+    await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
   // ========================================
@@ -181,7 +192,10 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
   /// </summary>
   [Test]
   public async Task NoOwnedDomains_AllMessagesPassThroughAsync() {
-    var worker = _createWorker(ownedDomains: [], serviceName: THIS_SERVICE);
+    using var meterFactory = new TestMeterFactory();
+    var metrics = new TransportMetrics(new WhizbangMetrics(meterFactory));
+    using var metricHelper = new MetricAssertionHelper(meterFactory.CreatedMeters[0]);
+    var worker = _createWorker(ownedDomains: [], serviceName: THIS_SERVICE, metrics: metrics);
     await worker.StartAsync();
 
     var envelope = _createEventEnvelope(sourceServiceName: THIS_SERVICE);
@@ -193,14 +207,39 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
     }
 
     await worker.StopAsync();
-    // With no owned domains, the echo check is skipped entirely
+
+    // With no owned domains the echo check is skipped entirely — the very same message the
+    // owned-domain tests above discard passes through untouched here.
+    await _assertReceivedButNotDiscardedAsync(metricHelper);
   }
 
   // ========================================
   // Test Infrastructure
   // ========================================
 
-  private static TestWorkerWrapper _createWorker(string[] ownedDomains, string serviceName) {
+  /// <summary>
+  /// The pass-through verdict, stated in the only place it is observable: the transport counted
+  /// the message as received, and the echo discard — which increments the deduplicated counter on
+  /// every drop — counted nothing. Asserting the received leg too keeps the "no discard" leg from
+  /// passing vacuously when a message never reached the handler at all.
+  /// </summary>
+  private static async Task _assertReceivedButNotDiscardedAsync(MetricAssertionHelper metricHelper) {
+    var received = metricHelper.GetByName("whizbang.transport.inbox.messages_received")
+      .Where(m => m.Value > 0)
+      .Sum(m => m.Value);
+    await Assert.That(received).IsEqualTo(1d)
+      .Because("the message must reach the receive path — otherwise 'not discarded' proves nothing");
+
+    var discarded = metricHelper.GetByName("whizbang.transport.inbox.messages_deduplicated")
+      .Where(m => m.Value > 0)
+      .ToList();
+    await Assert.That(discarded).IsEmpty()
+      .Because("the echo check must NOT discard this message — every discard increments the "
+             + "deduplicated counter, so a non-zero series here is a swallowed message");
+  }
+
+  private static TestWorkerWrapper _createWorker(
+      string[] ownedDomains, string serviceName, TransportMetrics? metrics = null) {
     var transport = new StubTransport();
     var workStrategy = new StubWorkStrategy();
     var noOpCoordinator = new NoOpWorkCoordinator();
@@ -224,7 +263,7 @@ public class TransportConsumerWorkerOwnedEventDiscardTests {
       jsonOptions: new JsonSerializerOptions(),
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
-      metrics: null,
+      metrics: metrics,
       logger: NullLogger<TransportConsumerWorker>.Instance,
       routingOptions: sp.GetRequiredService<IOptions<RoutingOptions>>(),
       serviceInstanceProvider: instanceProvider,

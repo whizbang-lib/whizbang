@@ -431,7 +431,7 @@ public class TransportConsumerWorkerCoverageTests {
   // ========================================
 
   [Test]
-  public async Task HandleMessage_WithNullEnvelopeType_ThrowsInvalidOperationExceptionAsync() {
+  public async Task HandleMessage_WithNullEnvelopeType_SkipsMessageWithoutStoringAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new CoverageTransport();
@@ -448,6 +448,7 @@ public class TransportConsumerWorkerCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new CoverageCapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -457,7 +458,7 @@ public class TransportConsumerWorkerCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -470,10 +471,22 @@ public class TransportConsumerWorkerCoverageTests {
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType: null);
 
     cts.Cancel();
+
+    // Assert - the message is dropped at the build step, so nothing reaches the inbox...
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("an envelope type that yields no message type cannot produce a processable inbox row; "
+             + "writing one anyway would put a permanently unclaimable message in the table.");
+
+    // ...and the fault is REPORTED rather than silently swallowed. This also proves the handler
+    // actually ran: a message that never reached it would have stored nothing either.
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1)
+      .Because("per-message isolation contains the failure, but an operator still has to see it.");
+    await Assert.That(contained[0].Message).Contains("EnvelopeType is required");
   }
 
   [Test]
-  public async Task HandleMessage_WithEmptyEnvelopeType_ThrowsInvalidOperationExceptionAsync() {
+  public async Task HandleMessage_WithEmptyEnvelopeType_SkipsMessageWithoutStoringAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new CoverageTransport();
@@ -490,6 +503,7 @@ public class TransportConsumerWorkerCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new CoverageCapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -499,7 +513,7 @@ public class TransportConsumerWorkerCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -512,6 +526,21 @@ public class TransportConsumerWorkerCoverageTests {
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType: "");
 
     cts.Cancel();
+
+    // Assert - the message is dropped at the build step, so nothing reaches the inbox...
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("an envelope type that yields no message type cannot produce a processable inbox row; "
+             + "writing one anyway would put a permanently unclaimable message in the table.");
+
+    // ...and the fault is REPORTED rather than silently swallowed. This also proves the handler
+    // actually ran: a message that never reached it would have stored nothing either.
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1)
+      .Because("per-message isolation contains the failure, but an operator still has to see it.");
+    // An EMPTY type is rejected by the parser, not by the null/empty guard in
+    // _serializeToNewInboxMessage: _populateDeliveredAtTimestamp runs first and only skips a NULL
+    // type, so "" reaches the inner-type parse and fails there. Same outcome, earlier line.
+    await Assert.That(contained[0].Message).Contains("Invalid envelope type name format");
   }
 
   // ========================================
@@ -519,7 +548,7 @@ public class TransportConsumerWorkerCoverageTests {
   // ========================================
 
   [Test]
-  public async Task HandleMessage_WithInvalidEnvelopeTypeFormat_ThrowsInvalidOperationExceptionAsync() {
+  public async Task HandleMessage_WithInvalidEnvelopeTypeFormat_SkipsMessageWithoutStoringAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new CoverageTransport();
@@ -536,6 +565,7 @@ public class TransportConsumerWorkerCoverageTests {
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new CoverageCapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -545,7 +575,7 @@ public class TransportConsumerWorkerCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -560,6 +590,18 @@ public class TransportConsumerWorkerCoverageTests {
     await transport.SimulateMessageReceivedAsync(envelope, invalidEnvelopeType);
 
     cts.Cancel();
+
+    // Assert - the message is dropped at the build step, so nothing reaches the inbox...
+    await Assert.That(noOpCoordinator.StoredInboxCount).IsEqualTo(0)
+      .Because("an envelope type that yields no message type cannot produce a processable inbox row; "
+             + "writing one anyway would put a permanently unclaimable message in the table.");
+
+    // ...and the fault is REPORTED rather than silently swallowed. This also proves the handler
+    // actually ran: a message that never reached it would have stored nothing either.
+    var contained = logger.Exceptions.OfType<InvalidOperationException>().ToList();
+    await Assert.That(contained.Count).IsEqualTo(1)
+      .Because("per-message isolation contains the failure, but an operator still has to see it.");
+    await Assert.That(contained[0].Message).Contains("Invalid envelope type name format");
   }
 
   // ========================================
@@ -803,25 +845,33 @@ public class TransportConsumerWorkerCoverageTests {
   // HandleMessage - Exception path
   // ========================================
 
+  /// <summary>
+  /// A failing inbox store must cost ONE batch, never the process. The worker runs its batch handler
+  /// through <see cref="TransportBatchGuard"/>, so the fault is logged and the broker redelivers;
+  /// letting it escape propagates out of <c>ExecuteAsync</c> and, under the default
+  /// <c>BackgroundServiceExceptionBehavior.StopHost</c>, stops the host — observed in production as
+  /// an orderly shutdown with exit code 0 and no Error-level line anywhere.
+  /// </summary>
   [Test]
-  public async Task HandleMessage_WhenExceptionOccurs_RethrowsAsync() {
+  public async Task HandleMessage_WhenInboxStoreThrows_ContainsTheBatchFailureAsync() {
     // Arrange
     var messageId = MessageId.New();
     var transport = new CoverageTransport();
     var options = new TransportConsumerOptions();
     options.Destinations.Add(new TransportDestination("test-topic"));
 
-    // Strategy that throws on FlushAsync
-    var workStrategy = new ThrowingWorkCoordinatorStrategy();
+    // The failure is injected at the STORE. TransportConsumerWorker never resolves
+    // IWorkCoordinatorStrategy — that interface belongs to the dispatcher — so a throwing strategy
+    // is never called and produces no exception to contain.
+    var throwingCoordinator = new CoverageThrowingStoreCoordinator();
 
     var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinatorStrategy>(_ => workStrategy);
-    var noOpCoordinator = new NoOpWorkCoordinator();
-    services.AddScoped<IWorkCoordinator>(_ => noOpCoordinator);
+    services.AddScoped<IWorkCoordinator>(_ => throwingCoordinator);
     services.AddWhizbangMessageSecurity(opts => { opts.AllowAnonymous = true; });
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+    var logger = new CoverageCapturingLogger();
     var worker = new TransportConsumerWorker(
       transport: transport,
       options: options,
@@ -831,7 +881,7 @@ public class TransportConsumerWorkerCoverageTests {
       orderedProcessor: new OrderedStreamProcessor(parallelizeStreams: false, logger: null),
       lifecycleMessageDeserializer: null,
       metrics: null,
-      logger: NullLogger<TransportConsumerWorker>.Instance,
+      logger: logger,
       serviceInstanceProvider: new Whizbang.Core.Observability.ServiceInstanceProvider(),
       schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
 
@@ -841,10 +891,17 @@ public class TransportConsumerWorkerCoverageTests {
     var envelope = _createJsonEnvelope(messageId);
     const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestApp.TestMessage, TestApp]], Whizbang.Core";
 
-    // Act - per-message error isolation catches the exception (logged, not propagated)
+    // Act - returning normally IS the containment: an escape here is what stops the host.
     await transport.SimulateMessageReceivedAsync(envelope, envelopeType);
 
     cts.Cancel();
+
+    // Assert - the store really was attempted, so the containment below is not vacuous.
+    await Assert.That(throwingCoordinator.StoreAttempts).IsEqualTo(1)
+      .Because("without a real failure this test would prove nothing about the guard.");
+    await Assert.That(logger.Exceptions.OfType<InvalidOperationException>().Count()).IsEqualTo(1)
+      .Because("a contained batch failure that logs nothing reproduces the silent shutdown this "
+             + "guard exists to remove — the broker redelivers, and the operator must be told why.");
   }
 
   // ========================================
@@ -1784,21 +1841,17 @@ public class TransportConsumerWorkerCoverageTests {
     }
   }
 
-  private sealed class ThrowingWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
-    public void QueueInboxMessage(InboxMessage message) =>
-      throw new InvalidOperationException("Simulated flush failure");
-    public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueInboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
-    public void QueueOutboxMessage(OutboxMessage message) { }
-    public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
-    public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus status, string errorDetails) { }
+  /// <summary>Work coordinator whose inbox store always fails — the shape of a database timeout,
+  /// which is the fault that used to stop the host silently.</summary>
+  private sealed class CoverageThrowingStoreCoordinator : NoOpWorkCoordinator, IWorkCoordinator {
+    public int StoreAttempts { get; private set; }
 
-    public Task FlushAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return FlushAndGetBatchAsync(flags, ct);
-    }
-
-    public Task<WorkBatch> FlushAndGetBatchAsync(WorkBatchOptions flags, CancellationToken ct = default) {
-      return Task.FromResult(new WorkBatch { InboxWork = [], OutboxWork = [], PerspectiveWork = [] });
+    // Explicit re-implementation remaps the interface slot on this derived type, so the worker's
+    // IWorkCoordinator call lands here rather than on the base no-op.
+    Task IWorkCoordinator.StoreInboxMessagesAsync(
+        InboxMessage[] messages, int partitionCount, CancellationToken cancellationToken) {
+      StoreAttempts++;
+      throw new InvalidOperationException("Simulated inbox store failure");
     }
   }
 
@@ -1924,11 +1977,22 @@ public class TransportConsumerWorkerCoverageTests {
   private sealed class CoverageCapturingLogger : ILogger<TransportConsumerWorker> {
     private readonly Lock _lock = new();
     private readonly List<string> _messages = [];
+    private readonly List<Exception> _exceptions = [];
 
     public IReadOnlyList<string> Messages {
       get {
         lock (_lock) {
           return [.. _messages];
+        }
+      }
+    }
+
+    /// <summary>Exceptions attached to captured entries. The formatted message never contains the
+    /// exception, so this is the only way to see a fault the worker contained per message.</summary>
+    public IReadOnlyList<Exception> Exceptions {
+      get {
+        lock (_lock) {
+          return [.. _exceptions];
         }
       }
     }
@@ -1941,6 +2005,9 @@ public class TransportConsumerWorkerCoverageTests {
       var message = formatter(state, exception);
       lock (_lock) {
         _messages.Add(message);
+        if (exception is not null) {
+          _exceptions.Add(exception);
+        }
       }
     }
   }

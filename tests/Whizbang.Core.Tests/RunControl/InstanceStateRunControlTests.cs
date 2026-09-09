@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Testing;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -68,7 +69,7 @@ public class InstanceStateRunControlTests {
 
   private static (InstanceStateRunControl Control, _recordingCoordinator Coordinator, _stubInstanceProvider Provider) _build(
       bool withVersion = true, bool coordinatorThrows = false, bool withCoordinator = true,
-      Exception? coordinatorThrowsSpecific = null) {
+      Exception? coordinatorThrowsSpecific = null, FakeLogger<InstanceStateRunControl>? logger = null) {
     var coordinator = new _recordingCoordinator {
       Throw = coordinatorThrows,
       ThrowSpecific = coordinatorThrowsSpecific,
@@ -82,7 +83,8 @@ public class InstanceStateRunControlTests {
     var control = new InstanceStateRunControl(
       sp.GetRequiredService<IServiceScopeFactory>(),
       provider,
-      withVersion ? new LibraryVersionProvider("0.9.4-alpha.3") : null);
+      withVersion ? new LibraryVersionProvider("0.9.4-alpha.3") : null,
+      logger);
     return (control, coordinator, provider);
   }
 
@@ -112,11 +114,20 @@ public class InstanceStateRunControlTests {
 
   [Test]
   public async Task OnPhase_WhenRecordingFails_NeverBreaksTheTransitionAsync() {
-    var (control, _, _) = _build(coordinatorThrows: true);
+    var logger = new FakeLogger<InstanceStateRunControl>();
+    var (control, coordinator, _) = _build(coordinatorThrows: true, logger: logger);
 
-    await control.OnPhaseAsync(LifecyclePhase.Connecting, CancellationToken.None);
-    // Reaching here IS the assertion: early phases fire before the schema exists, and a
+    // Returning normally is half the contract: early phases fire before the schema exists, and a
     // recording failure must never fail the lifecycle broadcast that carries it.
+    await control.OnPhaseAsync(LifecyclePhase.Connecting, CancellationToken.None);
+
+    await Assert.That(coordinator.Recorded).IsEmpty()
+      .Because("the write threw — nothing was recorded, and nothing was invented in its place");
+    var logged = logger.Collector.GetSnapshot();
+    await Assert.That(logged.Count).IsEqualTo(1);
+    await Assert.That(logged[0].Exception).IsTypeOf<InvalidOperationException>()
+      .Because("the other half is that the swallow is visible: a failure nobody logs is how an "
+             + "instance silently stops appearing in the status surface");
   }
 
   [Test]
@@ -151,9 +162,15 @@ public class InstanceStateRunControlTests {
     // to blow the write timeout raises the same exception type, with no shutdown behind it. That
     // has to be a logged failure rather than a propagated cancellation: a lifecycle transition
     // must not fail because an observability row was slow to write.
-    var (control, _, _) = _build(coordinatorThrowsSpecific: new OperationCanceledException());
+    var logger = new FakeLogger<InstanceStateRunControl>();
+    var (control, _, _) = _build(coordinatorThrowsSpecific: new OperationCanceledException(), logger: logger);
 
     await control.OnPhaseAsync(LifecyclePhase.Connecting, CancellationToken.None);
-    // Reaching here IS the assertion — the transition completed despite the cancellation type.
+
+    var logged = logger.Collector.GetSnapshot();
+    await Assert.That(logged.Count).IsEqualTo(1);
+    await Assert.That(logged[0].Exception).IsTypeOf<OperationCanceledException>()
+      .Because("an OperationCanceledException with no shutdown behind it takes the recording-failure "
+             + "path — logged, transition proceeds — rather than the propagating one");
   }
 }

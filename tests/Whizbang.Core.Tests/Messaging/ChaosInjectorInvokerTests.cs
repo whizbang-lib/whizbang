@@ -72,11 +72,18 @@ public class ChaosInjectorInvokerTests {
   }
 
   [Test]
-  public async Task BeforeCheckpointAsync_NullInjector_NoOpAsync() {
+  public async Task BeforeCheckpointAsync_NoInjector_NoOpAsync() {
     var sut = new ChaosInjectorInvoker(_options(enabled: true), injector: NoChaosInjector.Instance);
 
-    // No throw, no measurable side effect — call returns ValueTask.CompletedTask.
-    await sut.BeforeCheckpointAsync("Worker.Checkpoint", payload: null, CancellationToken.None);
+    var call = sut.BeforeCheckpointAsync("Worker.Checkpoint", payload: null, CancellationToken.None);
+
+    // Zero cost on the hot path is the whole point of this indirection: with the flag on but no
+    // real injector behind it, the checkpoint must hand back an already-completed ValueTask rather
+    // than suspending the worker at every named checkpoint.
+    await Assert.That(call.IsCompleted).IsTrue();
+    await call;
+    await Assert.That(sut.IsActive).IsFalse()
+      .Because("the null-object injector never activates, so nothing was invoked");
   }
 
   [Test]

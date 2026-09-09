@@ -19,7 +19,13 @@ public class SignalBusTests {
   private sealed class CapturingTransport : ISignalTransport {
     public List<(Type SignalType, SignalTargetKind TargetKind)> Published { get; } = [];
 
-    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    /// <summary>The sink handed to this transport by <c>SignalBus.StartAsync</c>, if it was started.</summary>
+    public ISignalSink? StartedWithSink { get; private set; }
+
+    public Task StartAsync(ISignalSink sink, CancellationToken cancellationToken = default) {
+      StartedWithSink = sink;
+      return Task.CompletedTask;
+    }
 
     public ValueTask PublishAsync<TSignal>(TSignal signal, SignalTarget target, CancellationToken cancellationToken = default)
       where TSignal : ISignal {
@@ -225,11 +231,15 @@ public class SignalBusTests {
   }
 
   [Test]
-  public async Task StartAsync_NoPullSources_DoesNotThrowAsync() {
+  public async Task StartAsync_NoPullSources_StillStartsTheTransportsAsync() {
     // The pullSources argument is optional; callers with no polling registered pass null (or omit).
-    var bus = new SignalBus([new CapturingTransport()]);
+    // Optional must mean "nothing extra to start", not "nothing gets started" — a transport that is
+    // never handed the sink delivers no inbound signal, silently.
+    var transport = new CapturingTransport();
+    var bus = new SignalBus([transport]);
 
     await bus.StartAsync();
-    // No throw = pass.
+
+    await Assert.That(transport.StartedWithSink).IsSameReferenceAs(bus);
   }
 }

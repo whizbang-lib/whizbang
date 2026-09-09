@@ -225,11 +225,16 @@ public class PostgresSignalTransportUnitTests {
   [Test]
   public async Task InstanceChannel_UnknownWireName_IsSilentlyIgnoredAsync() {
     var (transport, shared, instanceId) = _createTransport();
-    await transport.StartAsync(new CountingSink());
+    var sink = new CountingSink();
+    await transport.StartAsync(sink);
 
     var instanceSub = shared.All.Single(s => s.ChannelName == $"wh_work_i_{instanceId:D}");
     // Unknown wire-name on the instance channel must NOT throw and must NOT deliver.
     instanceSub.OnNotification("utest-targeted-unknown-11223");
+
+    await Assert.That(sink.Received).IsEqualTo(0)
+      .Because("a wire-name this host cannot map is not a signal — dispatching it would hand the "
+             + "sink a payload no receptor asked for");
   }
 
   [Test]
@@ -244,10 +249,19 @@ public class PostgresSignalTransportUnitTests {
     ]));
 
     // No connection string configured -> transport must return silently, same as broadcast path.
-    var (transport, _, _) = _createTransport();
+    var logger = new CapturingSignalLogger();
+    var (transport, _, _) = _createTransport(logger: logger);
     await transport.StartAsync(new CountingSink());
 
     await transport.PublishAsync(new UnitTargetedSignal(1), SignalTarget.Instance(Guid.NewGuid()));
+
+    // Which branch swallowed the publish is the whole point of the registration above: an
+    // unregistered-signal exit would exercise nothing about Instance-target routing, and nothing
+    // in the call itself distinguishes the two.
+    await Assert.That(logger.Messages.Any(m =>
+      m.Contains("no connection string resolved", StringComparison.Ordinal))).IsTrue()
+      .Because("the publish must stop at connection resolution, not at the registry gate that "
+             + "fires before any target-kind branching");
   }
 
   [Test]
@@ -259,10 +273,16 @@ public class PostgresSignalTransportUnitTests {
         static (sink, ct) => sink.ReceiveAsync<UnitTargetedSignal>(default, ct)),
     ]));
 
-    var (transport, _, _) = _createTransport();
+    var logger = new CapturingSignalLogger();
+    var (transport, _, _) = _createTransport(logger: logger);
     await transport.StartAsync(new CountingSink());
 
     await transport.PublishAsync(new UnitTargetedSignal(1), SignalTarget.Streams([Guid.NewGuid()]));
+
+    await Assert.That(logger.Messages.Any(m =>
+      m.Contains("no connection string resolved", StringComparison.Ordinal))).IsTrue()
+      .Because("the publish must stop at connection resolution, not at the registry gate that "
+             + "fires before any target-kind branching");
   }
 
   // Note: the unregistered-type gate is covered by PublishAsync_UnregisteredSignal_ReturnsWithoutThrowAsync

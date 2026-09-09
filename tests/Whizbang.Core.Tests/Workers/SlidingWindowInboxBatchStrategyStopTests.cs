@@ -15,11 +15,15 @@ namespace Whizbang.Core.Tests.Workers;
 /// <code-under-test>src/Whizbang.Core/Workers/SlidingWindowInboxBatchStrategy.cs</code-under-test>
 public class SlidingWindowInboxBatchStrategyStopTests {
   [Test]
-  public async Task FlushAndStopAsync_WithCanceledToken_StopsWithoutHangingAsync() {
+  [Timeout(30_000)]
+  public async Task FlushAndStopAsync_WithCanceledToken_StopsWithoutHangingAsync(CancellationToken testToken) {
     var releaseFlush = new TaskCompletionSource();
     var flushEntered = new TaskCompletionSource();
+    // The token the in-flight flush was handed — the strategy's own stop token.
+    var flushToken = CancellationToken.None;
     var sut = new SlidingWindowInboxBatchStrategy(
-      flush: async (_, _) => {
+      flush: async (_, ct) => {
+        flushToken = ct;
         flushEntered.TrySetResult();
         await releaseFlush.Task;
       },
@@ -29,13 +33,20 @@ public class SlidingWindowInboxBatchStrategyStopTests {
         MaxSize = 100,
       });
 
-    await sut.AppendAsync(_makeMessage());
-    await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await sut.AppendAsync(_makeMessage(), testToken);
+    await flushEntered.Task.WaitAsync(TimeSpan.FromSeconds(5), testToken);
 
     using var cts = new CancellationTokenSource();
     await cts.CancelAsync();
 
+    // Returning at all is half the contract — the [Timeout] above is what makes "without hanging"
+    // a failure rather than a stuck suite, since the flush is still parked on releaseFlush.
     await sut.FlushAndStopAsync(cts.Token);
+
+    await Assert.That(flushToken.IsCancellationRequested).IsTrue()
+      .Because("the drain is ABANDONED, not awaited: the strategy cancels its own stop token so the "
+             + "flush still in flight is told to give up. Leaving it un-canceled would strand that "
+             + "flush — and any store call inside it — with nothing left to observe or stop it.");
 
     releaseFlush.TrySetResult();
   }

@@ -12,6 +12,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Security;
 using Whizbang.Core.Validation;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -419,6 +420,12 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     await sut.DisposeAsync();
   }
 
+  // Each of these drives the "logger is null, skip the log line" branch of a Queue* method. The
+  // branch is one `if` around a log call, and the thing that must survive it is the enqueue: a
+  // regression that moved the enqueue inside the logger guard would lose every message in a host
+  // that never configured logging, silently. So each test flushes and looks for the queued item at
+  // the far end rather than stopping at "the call returned".
+
   [Test]
   public async Task QueueOutboxMessage_WithoutLogger_DoesNotThrowAsync() {
     // Arrange
@@ -426,10 +433,16 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var message = _createOutboxMessage();
 
     try {
       // Act - no logger, should skip logging
-      sut.QueueOutboxMessage(_createOutboxMessage());
+      sut.QueueOutboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      // Assert - the enqueue happened, not just the logging skip
+      await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1);
+      await Assert.That(coordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(message.MessageId);
     } finally {
       await sut.DisposeAsync();
     }
@@ -442,9 +455,14 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
     var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var message = _createInboxMessage();
 
     try {
-      sut.QueueInboxMessage(_createInboxMessage());
+      sut.QueueInboxMessage(message);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(coordinator.LastNewInboxMessages.Length).IsEqualTo(1);
+      await Assert.That(coordinator.LastNewInboxMessages[0].MessageId).IsEqualTo(message.MessageId);
     } finally {
       await sut.DisposeAsync();
     }
@@ -452,14 +470,25 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   [Test]
   public async Task QueueOutboxCompletion_WithoutLogger_DoesNotThrowAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
+    // Completions reach IOutboxCompletionChannel only down the scoped-provider path, so the scope
+    // constructor is what makes the queued completion observable at all.
+    var host = new ChannelScopeHost();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider: instanceProvider,
+      options: options,
+      scopeFactory: host.ScopeFactory);
+    var messageId = Guid.CreateVersion7();
 
     try {
-      sut.QueueOutboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Published);
+      sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(host.CompletionChannel.EnqueuedIds).Contains(messageId)
+        .Because("the completion is what marks the outbox row done — losing it in the null-logger "
+               + "branch would leave the message to be republished on the next claim");
     } finally {
       await sut.DisposeAsync();
     }
@@ -467,14 +496,26 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   [Test]
   public async Task QueueInboxCompletion_WithoutLogger_DoesNotThrowAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
+    // Unlike the outbox side, WorkCoordinatorFlushHelper has no sink for inbox completions — it
+    // consumes them only in the empty-queue check. So the observable here is one step earlier:
+    // whether the queued completion made the flush non-empty. An empty flush short-circuits before
+    // a scope is ever created, so a coordinator resolution is proof the item was really queued.
+    var host = new ChannelScopeHost();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider: instanceProvider,
+      options: options,
+      scopeFactory: host.ScopeFactory);
 
     try {
       sut.QueueInboxCompletion(Guid.CreateVersion7(), MessageProcessingStatus.Stored);
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(host.CoordinatorResolutions).IsEqualTo(1)
+        .Because("a flush whose queues were all empty returns before creating a scope; resolving "
+               + "the coordinator proves the completion survived the null-logger branch");
     } finally {
       await sut.DisposeAsync();
     }
@@ -482,14 +523,23 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   [Test]
   public async Task QueueOutboxFailure_WithoutLogger_DoesNotThrowAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
+    var host = new ChannelScopeHost();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider: instanceProvider,
+      options: options,
+      scopeFactory: host.ScopeFactory);
+    var messageId = Guid.CreateVersion7();
 
     try {
-      sut.QueueOutboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "error");
+      sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "error");
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(host.FailureChannel.Enqueued).Contains((WorkCategory.Outbox, messageId))
+        .Because("a failure that never reaches the failure channel is a message that retries "
+               + "forever without its attempt count ever moving");
     } finally {
       await sut.DisposeAsync();
     }
@@ -497,14 +547,23 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
 
   [Test]
   public async Task QueueInboxFailure_WithoutLogger_DoesNotThrowAsync() {
-    // Arrange
-    var coordinator = new TrackingWorkCoordinator();
+    var host = new ChannelScopeHost();
     var instanceProvider = new TestInstanceProvider();
     var options = _createOptions();
-    var sut = new IntervalWorkCoordinatorStrategy(coordinator, instanceProvider, options);
+    var sut = new IntervalWorkCoordinatorStrategy(
+      coordinator: null,
+      instanceProvider: instanceProvider,
+      options: options,
+      scopeFactory: host.ScopeFactory);
+    var messageId = Guid.CreateVersion7();
 
     try {
-      sut.QueueInboxFailure(Guid.CreateVersion7(), MessageProcessingStatus.Failed, "error");
+      sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "error");
+      _ = await sut.FlushAndGetBatchAsync(WorkBatchOptions.None);
+
+      await Assert.That(host.FailureChannel.Enqueued).Contains((WorkCategory.Inbox, messageId))
+        .Because("the inbox category is what routes the failure to the inbox row; a miscategorized "
+               + "or dropped failure leaves the handler's message stuck in-flight");
     } finally {
       await sut.DisposeAsync();
     }
@@ -1027,6 +1086,63 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       HostName = HostName,
       ProcessId = ProcessId
     };
+  }
+
+  /// <summary>
+  /// A scoped host for the strategy's <c>scopeFactory</c> constructor. Completions and failures
+  /// only route to their channels when the flush resolves them from a scope, so a direct
+  /// coordinator leaves them unobservable.
+  /// </summary>
+  private sealed class ChannelScopeHost {
+    private readonly ServiceProvider _provider;
+    private int _coordinatorResolutions;
+
+    public ChannelScopeHost() {
+      Coordinator = new TrackingWorkCoordinator();
+      CompletionChannel = new CountingOutboxCompletionChannel();
+      FailureChannel = new CountingFailureChannel();
+
+      var services = new ServiceCollection();
+      services.AddScoped<IWorkCoordinator>(_ => {
+        Interlocked.Increment(ref _coordinatorResolutions);
+        return Coordinator;
+      });
+      services.AddSingleton<IOutboxCompletionChannel>(CompletionChannel);
+      services.AddSingleton<IFailureChannel>(FailureChannel);
+      _provider = services.BuildServiceProvider();
+      ScopeFactory = _provider.GetRequiredService<IServiceScopeFactory>();
+    }
+
+    public TrackingWorkCoordinator Coordinator { get; }
+    public CountingOutboxCompletionChannel CompletionChannel { get; }
+    public CountingFailureChannel FailureChannel { get; }
+    public IServiceScopeFactory ScopeFactory { get; }
+
+    /// <summary>Non-zero only when the flush got far enough to open a scope — an all-empty flush
+    /// short-circuits before that.</summary>
+    public int CoordinatorResolutions => Volatile.Read(ref _coordinatorResolutions);
+  }
+
+  private sealed class CountingOutboxCompletionChannel : IOutboxCompletionChannel {
+    private readonly ConcurrentQueue<Guid> _ids = new();
+
+    public IReadOnlyCollection<Guid> EnqueuedIds => _ids;
+
+    public ValueTask EnqueueAsync(Guid outboxMessageId, CancellationToken cancellationToken = default) {
+      _ids.Enqueue(outboxMessageId);
+      return ValueTask.CompletedTask;
+    }
+  }
+
+  private sealed class CountingFailureChannel : IFailureChannel {
+    private readonly ConcurrentQueue<(WorkCategory Category, Guid MessageId)> _enqueued = new();
+
+    public IReadOnlyCollection<(WorkCategory Category, Guid MessageId)> Enqueued => _enqueued;
+
+    public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
+      _enqueued.Enqueue((category, failure.MessageId));
+      return ValueTask.CompletedTask;
+    }
   }
 
   private sealed class TrackingWorkCoordinator : IWorkCoordinator {
