@@ -53,13 +53,13 @@ public partial class DapperWorkCoordinator(
     // SELECT is what matters here — renaming the columns would not break it, but reordering them
     // silently would, and the result (counts landing in the wrong fields) would still look like a
     // plausible number rather than an error.
-    var row = await connection.QuerySingleAsync<(long inbox_rows, long outbox_rows, long perspective_rows)>(
+    var (inbox_rows, outbox_rows, perspective_rows) = await connection.QuerySingleAsync<(long inbox_rows, long outbox_rows, long perspective_rows)>(
       "SELECT inbox_rows, outbox_rows, perspective_rows FROM count_outstanding_work(@instanceId)",
       new { instanceId });
     return new OutstandingWork {
-      InboxRows = row.inbox_rows,
-      OutboxRows = row.outbox_rows,
-      PerspectiveRows = row.perspective_rows
+      InboxRows = inbox_rows,
+      OutboxRows = outbox_rows,
+      PerspectiveRows = perspective_rows
     };
   }
 
@@ -119,7 +119,7 @@ public partial class DapperWorkCoordinator(
           partitionCount
         });
       // #720: ring the doorbells the store queued, after its commit.
-      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
@@ -156,7 +156,7 @@ public partial class DapperWorkCoordinator(
         Whizbang.Data.Postgres.InboxRedeliveryObservationSql.ObservationQuery(string.Empty),
         new { observedIds });
       // #720: ring the doorbells the store queued, after its commit.
-      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
 
     return Whizbang.Core.Messaging.InboxRedeliveryObservation.ParseProjection(projection);
@@ -184,7 +184,7 @@ public partial class DapperWorkCoordinator(
           partitionCount
         });
       // #720: ring the doorbells the store queued, after its commit.
-      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }, logger: _logger, cancellationToken: cancellationToken);
   }
 
@@ -766,7 +766,7 @@ public partial class DapperWorkCoordinator(
       "SELECT COALESCE(SUM(stream_count), 0)::int FROM notify_scheduled_retry_due()");
     if (due > 0) {
       // #720: the probe queued a doorbell per due stream; ring them after its commit.
-      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }
     return due;
   }
@@ -805,7 +805,7 @@ public partial class DapperWorkCoordinator(
       "SELECT complete_perspective(@Cursors::jsonb, @Ids, @DebugMode)",
       new { Cursors = cursorsJson, Ids = idArray, DebugMode = debugMode });
     // #720: ring the doorbells the completion queued, after its commit.
-    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -855,7 +855,7 @@ public partial class DapperWorkCoordinator(
     await connection.ExecuteAsync(
       "SELECT commit_handler_result(@Payload::jsonb)", new { Payload = payload });
     // #720: ring the doorbells the commit queued, after the commit.
-    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -881,7 +881,7 @@ public partial class DapperWorkCoordinator(
       "SELECT handler_id AS HandlerId, success AS Success, error_message AS ErrorMessage FROM commit_handler_batch(@Results::jsonb)",
       new { Results = batchJson });
     // #720: ring the doorbells the commits queued, after the commits.
-    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     return [.. rows.Select(r => new HandlerBatchResult(r.HandlerId, r.Success, r.ErrorMessage))];
   }
 
@@ -902,7 +902,7 @@ public partial class DapperWorkCoordinator(
       "SELECT flush_completions(@Outbox, @Cursors::jsonb, @Persp, @Failures::jsonb)",
       new { Outbox = outboxIds, Cursors = cursorsJson, Persp = perspIds, Failures = failuresJson });
     // #720: ring the doorbells the flush queued, after its commit.
-    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+    await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
   }
 
   /// <inheritdoc />
@@ -968,7 +968,7 @@ public partial class DapperWorkCoordinator(
     }
     if (perspectiveStreamIds.Count > 0) {
       // #720: a claim that leased work may have queued ownership doorbells; ring them after its commit.
-      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, "ring_doorbells", _logger, cancellationToken);
+      await Whizbang.Data.Postgres.DoorbellRinger.RingAsync(connection, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken);
     }
     return new WorkBatch {
       OutboxWork = [],

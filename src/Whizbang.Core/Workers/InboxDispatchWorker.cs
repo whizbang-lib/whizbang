@@ -567,12 +567,12 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var result = (pre.Directive?.Kind, composite.FanoutMode) switch {
       (FanoutDirectiveKind.Skip, _) =>
         new CompositeInboxFanout.FanoutResult(
-          CompositeInboxFanout.FanoutOutcome.Expanded, Array.Empty<InboxMessage>(), null, compositeTypeName),
+          CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName),
       (FanoutDirectiveKind.ReplaceWith, _) =>
         CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, pre.Directive!.Replacement),
       (_, FanoutMode.Manual) =>
         new CompositeInboxFanout.FanoutResult(
-          CompositeInboxFanout.FanoutOutcome.Expanded, Array.Empty<InboxMessage>(), null, compositeTypeName),
+          CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName),
       _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider),
     };
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {

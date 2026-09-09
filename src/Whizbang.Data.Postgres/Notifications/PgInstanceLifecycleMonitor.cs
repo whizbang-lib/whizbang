@@ -42,6 +42,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <tests>tests/Whizbang.Core.Tests/Notifications/PgNotificationStackStartupGateTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgInstanceLifecycleMonitorIntegrationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PgInstanceLifecycleMonitorUnitTests.cs</tests>
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public sealed partial class PgInstanceLifecycleMonitor(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
@@ -55,6 +56,7 @@ public sealed partial class PgInstanceLifecycleMonitor(
   InstanceLivenessMetrics? metrics = null,
   ProbeCadenceMetrics? probeMetrics = null
 ) : BackgroundService {
+#pragma warning restore S107
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly ISignalBus _signalBus = signalBus ?? throw new ArgumentNullException(nameof(signalBus));
@@ -150,72 +152,83 @@ public sealed partial class PgInstanceLifecycleMonitor(
       return ComputeTickInterval(null, threshold);
     }
 
-    var dead = new List<Guid>();
-    var alive = new List<Guid>();
-    TimeSpan? oldestAge = null;
-    await using (var conn = await plan.OpenAsync(ct)) {
-      // Two-signal liveness (migration 055): the alive-lock in pg_locks OR a heartbeat row within
-      // the derived threshold. The bare timestamp comparison this replaced could not see the lock
-      // and used a threshold equal to the fast cadence.
-      await using var cmd = new NpgsqlCommand(@"
-        SELECT instance_id,
-               EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::double precision AS age_seconds,
-               is_instance_alive(instance_id, @threshold_seconds) AS alive
-        FROM wh_service_instances", conn);
-      cmd.Parameters.AddWithValue("threshold_seconds", (int)Math.Ceiling(threshold.TotalSeconds));
-      await using var reader = await cmd.ExecuteReaderAsync(ct);
-      while (await reader.ReadAsync(ct)) {
-        var id = reader.GetGuid(0);
-        var age = TimeSpan.FromSeconds(Math.Max(0, reader.GetDouble(1)));
-        if (oldestAge is null || age > oldestAge) {
-          oldestAge = age;
-        }
-        if (reader.GetBoolean(2)) {
-          alive.Add(id);
-        } else {
-          dead.Add(id);
-        }
-      }
-    }
-
-    foreach (var deadId in dead) {
-      if (_announcedDeaths.Add(deadId)) {
-        // First time we've seen this pod dead: announce it. The durable path INSERTs into
-        // wh_signals and NOTIFY-broadcasts; subscribers on other pods use the signal to
-        // trigger orphan takeover for the dead pod's owned streams.
-        try {
-          await _signalBus.PublishAsync(new InstanceDiedSignal(), SignalTarget.Broadcast, ct);
-          _metrics?.DeathsAnnounced.Add(1);
-          LogInstanceDied(_logger, deadId, (int)threshold.TotalSeconds);
-        } catch (OperationCanceledException) {
-          throw;
-        } catch (Exception ex) {
-          _announcedDeaths.Remove(deadId);   // retry on next tick
-          LogPublishFailed(_logger, deadId, ex);
-        }
-      }
-    }
-
-    foreach (var aliveId in alive) {
-      if (_announcedDeaths.Remove(aliveId)) {
-        // A death we announced did not hold: the instance heartbeats (or holds its lock) again.
-        // Retract so peers re-read topology; their orphan takeover already re-checks liveness in
-        // SQL, so a fresh row protects the instance's leases from this point on.
-        try {
-          await _signalBus.PublishAsync(new InstanceJoinedSignal(), SignalTarget.Broadcast, ct);
-          _metrics?.DeathsRetracted.Add(1);
-          LogInstanceRevived(_logger, aliveId);
-        } catch (OperationCanceledException) {
-          throw;
-        } catch (Exception ex) {
-          _announcedDeaths.Add(aliveId);   // retract on next tick
-          LogRetractFailed(_logger, aliveId, ex);
-        }
-      }
-    }
+    var (dead, alive, oldestAge) = await _readLivenessAsync(plan, threshold, ct);
+    await _announceDeathsAsync(dead, threshold, ct);
+    await _retractRevivalsAsync(alive, ct);
 
     _probeMetrics?.RecordTick(ProbeCadenceMetrics.PROBE_INSTANCE_LIFECYCLE, foundWork: dead.Count > 0);
     return ComputeTickInterval(oldestAge, threshold);
+  }
+
+  /// <summary>One registry scan: the instances found dead, the ones found alive, and the oldest heartbeat age seen.</summary>
+  private static async Task<(List<Guid> Dead, List<Guid> Alive, TimeSpan? OldestAge)> _readLivenessAsync(
+      NotificationConnectionPlan plan, TimeSpan threshold, CancellationToken ct) {
+    var dead = new List<Guid>();
+    var alive = new List<Guid>();
+    TimeSpan? oldestAge = null;
+    await using var conn = await plan.OpenAsync(ct);
+    // Two-signal liveness (migration 055): the alive-lock in pg_locks OR a heartbeat row within
+    // the derived threshold. The bare timestamp comparison this replaced could not see the lock
+    // and used a threshold equal to the fast cadence.
+    await using var cmd = new NpgsqlCommand(@"
+      SELECT instance_id,
+             EXTRACT(EPOCH FROM (NOW() - last_heartbeat_at))::double precision AS age_seconds,
+             is_instance_alive(instance_id, @threshold_seconds) AS alive
+      FROM wh_service_instances", conn);
+    cmd.Parameters.AddWithValue("threshold_seconds", (int)Math.Ceiling(threshold.TotalSeconds));
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    while (await reader.ReadAsync(ct)) {
+      var id = reader.GetGuid(0);
+      var age = TimeSpan.FromSeconds(Math.Max(0, reader.GetDouble(1)));
+      if (oldestAge is null || age > oldestAge) {
+        oldestAge = age;
+      }
+      (reader.GetBoolean(2) ? alive : dead).Add(id);
+    }
+    return (dead, alive, oldestAge);
+  }
+
+  /// <summary>
+  /// Announces each instance seen dead for the first time. The durable path INSERTs into wh_signals
+  /// and NOTIFY-broadcasts; subscribers on other pods use the signal to trigger orphan takeover for
+  /// the dead pod's owned streams. A failed publish is retried on the next tick.
+  /// </summary>
+  private async Task _announceDeathsAsync(List<Guid> dead, TimeSpan threshold, CancellationToken ct) {
+    foreach (var deadId in dead.Where(id => !_announcedDeaths.Contains(id))) {
+      _announcedDeaths.Add(deadId);
+      try {
+        await _signalBus.PublishAsync(new InstanceDiedSignal(), SignalTarget.Broadcast, ct);
+        _metrics?.DeathsAnnounced.Add(1);
+        LogInstanceDied(_logger, deadId, (int)threshold.TotalSeconds);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        _announcedDeaths.Remove(deadId);   // retry on next tick
+        LogPublishFailed(_logger, deadId, ex);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Retracts the announcement for each announced instance found alive again: it heartbeats (or
+  /// holds its lock) again, so peers re-read topology; their orphan takeover already re-checks
+  /// liveness in SQL, so a fresh row protects the instance's leases from this point on. A failed
+  /// publish is retried on the next tick.
+  /// </summary>
+  private async Task _retractRevivalsAsync(List<Guid> alive, CancellationToken ct) {
+    foreach (var aliveId in alive.Where(_announcedDeaths.Contains)) {
+      _announcedDeaths.Remove(aliveId);
+      try {
+        await _signalBus.PublishAsync(new InstanceJoinedSignal(), SignalTarget.Broadcast, ct);
+        _metrics?.DeathsRetracted.Add(1);
+        LogInstanceRevived(_logger, aliveId);
+      } catch (OperationCanceledException) {
+        throw;
+      } catch (Exception ex) {
+        _announcedDeaths.Add(aliveId);   // retract on next tick
+        LogRetractFailed(_logger, aliveId, ex);
+      }
+    }
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,

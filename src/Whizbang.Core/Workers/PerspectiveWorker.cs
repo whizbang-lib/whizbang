@@ -1050,7 +1050,7 @@ public partial class PerspectiveWorker(
         scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, batchIsNewByEventId,
         lifecycleCoordinator, drainAppliedGroups, cancellationToken).ConfigureAwait(false);
       if (!drainAppliedGroups.IsEmpty) {
-        groupedWork = groupedWork.Where(g => !drainAppliedGroups.ContainsKey(g.Key)).ToList();
+        groupedWork = [.. groupedWork.Where(g => !drainAppliedGroups.ContainsKey(g.Key))];
       }
     }
 
@@ -1853,11 +1853,10 @@ public partial class PerspectiveWorker(
           // reloads them from the event store, but the list must be non-empty to clear the empty-skip gate.
           var filteredEvents = perspectiveName == CollectiveRouting.SINK_PERSPECTIVE_NAME
               ? currentEvents.Where(e => e.Payload is ICollectiveEvent).OrderByMessageId().ToList()
-              : currentEvents
+              : [.. currentEvents
                   .Where(e => currentContext.TypeNameCache.TryGetValue(e.Payload.GetType(), out var key)
                     && _perspectivesPerEventType!.TryGetValue(key, out var ps) && ps.Contains(perspectiveName))
-                  .OrderByMessageId()
-                  .ToList();
+                  .OrderByMessageId()];
 
           if (filteredEvents.Count == 0) {
             continue;
@@ -2801,7 +2800,7 @@ public partial class PerspectiveWorker(
     // Each work item represents a single event, but the runner processes ALL events for a stream
     // So we only call RunAsync() ONCE per (stream, perspective) pair
     var groupedWork = dedupedWork
-      .GroupBy(w => (StreamId: w.StreamId, PerspectiveName: w.PerspectiveName))
+      .GroupBy(w => (w.StreamId, w.PerspectiveName))
       .ToList();
 
     return groupedWork;
@@ -3081,7 +3080,7 @@ public partial class PerspectiveWorker(
       LastEventId = lastEventId,
       Status = PerspectiveProcessingStatus.Completed,
       EventsProcessed = collectiveEnvelopes.Count,
-      ProcessedEventIds = collectiveEnvelopes.Select(e => e.MessageId.Value).ToArray(),
+      ProcessedEventIds = [.. collectiveEnvelopes.Select(e => e.MessageId.Value)],
     };
     await _reportCompletionAndSignalSyncAsync(
       completion, collectiveEnvelopes, workCoordinator, streamId,
@@ -3589,9 +3588,7 @@ public partial class PerspectiveWorker(
     // invoker / no event store / non-Completed status), leaving waiters on tracked
     // events stuck until their 30s timeout. The stream-level sweep here ensures
     // every completion that reaches this seam wakes those waiters.
-    if (_syncEventTracker is not null) {
-      _syncEventTracker.MarkPerspectiveStreamProcessed(perspectiveName, streamId);
-    }
+    _syncEventTracker?.MarkPerspectiveStreamProcessed(perspectiveName, streamId);
 
     // Phase 3c.1: Signal checkpoint updated for perspective sync
     // This notifies any waiting sync awaiters that the perspective has processed up to this event
@@ -4126,9 +4123,7 @@ public partial class PerspectiveWorker(
 
       if (securityContext is not null) {
         var accessor = scopedProvider.GetService<IScopeContextAccessor>();
-        if (accessor is not null) {
-          accessor.Current = securityContext;
-        }
+        accessor?.Current = securityContext;
       }
     }
 
@@ -4150,9 +4145,7 @@ public partial class PerspectiveWorker(
 
       // Set IScopeContextAccessor.Current with ImmutableScopeContext (required for GetSecurityFromAmbient)
       var accessor = scopedProvider.GetService<IScopeContextAccessor>();
-      if (accessor is not null) {
-        accessor.Current = immutableScope;
-      }
+      accessor?.Current = immutableScope;
 
       // Invoke callbacks with the immutable scope
       var callbacks = scopedProvider.GetServices<ISecurityContextCallback>();

@@ -1044,7 +1044,7 @@ public static class WorkerPipelineExtensions {
       var enableLifecycleTracing = tracingOptions?.CurrentValue.IsEnabled(Whizbang.Core.Tracing.TraceComponents.Lifecycle) ?? false;
       var distributeContext = new DistributeLifecycleContext(
         OutboxMessages: messages,
-        InboxMessages: Array.Empty<InboxMessage>(),
+        InboxMessages: [],
         ScopeFactory: scopeFactory,
         LifecycleMessageDeserializer: lifecycleDeserializer,
         Logger: lifecycleLogger,

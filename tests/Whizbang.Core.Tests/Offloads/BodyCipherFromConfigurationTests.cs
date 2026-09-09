@@ -35,7 +35,7 @@ public class BodyCipherFromConfigurationTests {
 
   [Test]
   public async Task WithoutACipherName_RegistersNoCipher_AndLeavesTheOptionsAloneAsync() {
-    using var sp = _build(new() {
+    await using var sp = _build(new() {
       ["Whizbang:BodyOffload:ProviderName"] = "blob-prod",
     });
 
@@ -46,7 +46,7 @@ public class BodyCipherFromConfigurationTests {
 
   [Test]
   public async Task WithANameAndAKey_RegistersTheAesGcmCipherByName_AndNamesItOnTheOptionsAsync() {
-    using var sp = _build(new() {
+    await using var sp = _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(_keyA),
@@ -66,24 +66,20 @@ public class BodyCipherFromConfigurationTests {
 
   [Test]
   public async Task WithANameButNoKey_ThrowsAtStartup_NamingTheSettingAsync() {
-    var act = () => _build(new() {
+    var ex = await Assert.That(() => _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
-    });
-
-    var ex = await Assert.That(act).Throws<InvalidOperationException>();
+    })).Throws<InvalidOperationException>();
     await Assert.That(ex!.Message).Contains("Whizbang:BodyOffload:Cipher:KeyEncryptionKey")
       .Because("a cipher that was named but never keyed must not start; storing plaintext under a sealed label is the failure this exists to prevent");
   }
 
   [Test]
   public async Task WithANameAndAKeyButNoKeyId_ThrowsAtStartup_NamingTheSettingAsync() {
-    var act = () => _build(new() {
+    var ex = await Assert.That(() => _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(_keyA),
-    });
-
-    var ex = await Assert.That(act).Throws<InvalidOperationException>();
+    })).Throws<InvalidOperationException>();
     await Assert.That(ex!.Message).Contains("Whizbang:BodyOffload:Cipher:KeyId");
   }
 
@@ -91,13 +87,11 @@ public class BodyCipherFromConfigurationTests {
   [Arguments("not base64!!")]
   [Arguments("c2hvcnQ=")]
   public async Task WithAKeyThatIsNotBase64OrNot32Bytes_ThrowsAtStartup_NamingTheSettingAsync(string badKey) {
-    var act = () => _build(new() {
+    var ex = await Assert.That(() => _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = badKey,
-    });
-
-    var ex = await Assert.That(act).Throws<InvalidOperationException>();
+    })).Throws<InvalidOperationException>();
     await Assert.That(ex!.Message).Contains("Whizbang:BodyOffload:Cipher:KeyEncryptionKey");
     await Assert.That(ex.Message).Contains("32 bytes");
   }
@@ -109,7 +103,7 @@ public class BodyCipherFromConfigurationTests {
     var sealedBefore = await before.SealAsync(new byte[] { 9, 8, 7 });
 
     // After the rotation: the new key is current, the old one stays available for bodies already sealed.
-    using var sp = _build(new() {
+    await using var sp = _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(_keyB),
@@ -129,28 +123,24 @@ public class BodyCipherFromConfigurationTests {
 
   [Test]
   public async Task WithAPreviousKeyId_ButNoPreviousKey_ThrowsAtStartupAsync() {
-    var act = () => _build(new() {
+    var ex = await Assert.That(() => _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(_keyB),
       ["Whizbang:BodyOffload:Cipher:PreviousKeyId"] = "kek-2026-08",
-    });
-
-    var ex = await Assert.That(act).Throws<InvalidOperationException>();
+    })).Throws<InvalidOperationException>();
     await Assert.That(ex!.Message).Contains("Whizbang:BodyOffload:Cipher:PreviousKeyEncryptionKey")
       .Because("half a rotation window is a misconfiguration, not a smaller window");
   }
 
   [Test]
   public async Task WithAPreviousKey_ButNoPreviousKeyId_ThrowsAtStartupAsync() {
-    var act = () => _build(new() {
+    var ex = await Assert.That(() => _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(_keyB),
       ["Whizbang:BodyOffload:Cipher:PreviousKeyEncryptionKey"] = Convert.ToBase64String(_keyA),
-    });
-
-    var ex = await Assert.That(act).Throws<InvalidOperationException>();
+    })).Throws<InvalidOperationException>();
     await Assert.That(ex!.Message).Contains("Whizbang:BodyOffload:Cipher:PreviousKeyId")
       .Because("a previous key without its label could never be selected by a claim's key id");
   }
@@ -160,7 +150,7 @@ public class BodyCipherFromConfigurationTests {
     var before = new AesGcmEnvelopeCipher("body-aes-v1", new LocalAesKeyWrapper("kek-2026-08", _keyA));
     var sealedBefore = await before.SealAsync(new byte[] { 9, 8, 7 });
 
-    using var sp = _build(new() {
+    await using var sp = _build(new() {
       ["Whizbang:BodyOffload:CipherName"] = "body-aes-v1",
       ["Whizbang:BodyOffload:Cipher:KeyId"] = "kek-2026-09",
       ["Whizbang:BodyOffload:Cipher:KeyEncryptionKey"] = Convert.ToBase64String(_keyB),

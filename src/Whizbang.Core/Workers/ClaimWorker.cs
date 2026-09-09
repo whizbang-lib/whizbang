@@ -578,7 +578,7 @@ public sealed partial class ClaimWorker : BackgroundService {
         // off on an earlier poll and is being processed — refunding it would credit an attempt for
         // work that is genuinely in progress.
         if (handedOff < ordered.Count) {
-          await _releaseUndispatchedAsync(ordered.Skip(handedOff).Select(w => w.MessageId).ToList());
+          await _releaseUndispatchedAsync([.. ordered.Skip(handedOff).Select(w => w.MessageId)]);
         }
       }
     }
@@ -725,15 +725,8 @@ public sealed partial class ClaimWorker : BackgroundService {
     }
   }
 
-  private static List<Guid> _notInFlight(List<Guid> streamIds, Func<Guid, bool>? isInFlight) {
-    var result = new List<Guid>(streamIds.Count);
-    foreach (var id in streamIds) {
-      if (isInFlight is null || !isInFlight(id)) {
-        result.Add(id);
-      }
-    }
-    return result;
-  }
+  private static List<Guid> _notInFlight(List<Guid> streamIds, Func<Guid, bool>? isInFlight) =>
+    isInFlight is null ? [.. streamIds] : [.. streamIds.Where(id => !isInFlight(id))];
 
   private void _observeDrain(int outstanding) {
     var now = Stopwatch.GetTimestamp();
@@ -756,42 +749,7 @@ public sealed partial class ClaimWorker : BackgroundService {
     using var __ctx = PinnedConnectionContext.Push(pin.Connection);
     using var scope = _scopeFactory.CreateScope();
     var coordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-    // Opting out of the adaptive window means claiming at the operator's configured ceiling, not
-    // at whatever value the window happens to hold. Previously this always read the window and
-    // relied on it having been constructed AT the ceiling — so "disabled" meant "frozen wherever it
-    // started" rather than "bypassed". That was invisible while the window started wide; once it
-    // starts at the floor, the distinction is the difference between honouring the opt-out and
-    // silently pinning every claim to the minimum.
-    var maxStreams = _options.AdaptiveClaimWindow ? _claimWindow.Current : _options.MaxStreamsPerBatch;
-
-    // Bound the TOTAL outstanding, not just this batch — a loop that claims and immediately claims
-    // again accumulates held work across cycles regardless of batch size.
-    //
-    // The outstanding figure comes from the STORE, never from an in-memory flag. That is not a
-    // stylistic preference: an earlier in-memory IsInFlight filter on this path proved unrecoverable
-    // in production (see the emit loop below) — a flag stranded by a hung or canceled task made
-    // this worker silently discard every later emit for that stream, and only a restart cleared it.
-    // Any counter we maintain ourselves can be stranded the same way. claim_work's eligible_* CTEs
-    // re-emit every row still leased to us and unprocessed on EVERY poll, so the previous claim's
-    // counts are the outstanding total according to SQL, and it re-derives itself each cycle. A
-    // wrong value cannot persist.
-    //
-    // No meter means no measured drain. Rather than let the rate read zero forever and pin every
-    // deployment at the floor, the bound simply does not engage — an unmeasured budget is worse
-    // than none, because it throttles silently and looks like a performance problem.
-    if (_budgetEngaged) {
-      var headroomRows = _outstandingBudget.Headroom(_lastOutstanding);
-
-      // Convert the row budget into streams: the store claims by stream, and rows-per-stream varies
-      // by orders of magnitude, so a fixed assumption would be wrong in one direction or the other.
-      var streamsAffordable = (int)Math.Ceiling(headroomRows / Math.Max(1.0, _rowsPerStream));
-
-      // NEVER drop to zero. Skipping the claim entirely is how the previous design deadlocked: the
-      // poll is the only thing that observes outstanding work, so a worker that stops polling stops
-      // being able to discover that it has recovered. Re-emitting rows we already hold costs no new
-      // attempt — they are already leased to us — so polling at the floor is cheap and self-healing.
-      maxStreams = Math.Max(1, Math.Min(maxStreams, streamsAffordable));
-    }
+    var maxStreams = _boundedMaxStreams();
 
     // Acquisition is bounded in ROWS, not streams (#714). The stream count doubled as the row cap in
     // the store, which made a fat stream one row per cycle and a backlog of singleton streams a full
@@ -829,20 +787,76 @@ public sealed partial class ClaimWorker : BackgroundService {
       MaxPerspectiveStreams: maxPerspectiveStreams), ct);
     var claimElapsed = _time.GetElapsedTime(claimStarted);
 
-    if (batch.InboxWork.Count == 0 && batch.InboxStreamIds.Count == 0) {
-      Interlocked.Increment(ref _consecutiveInboxEmptyClaims);
-    } else {
-      Volatile.Write(ref _consecutiveInboxEmptyClaims, 0);
+    _recordClaimShape(batch, allowSteal);
+    if (_budgetEngaged) {
+      await _observeOutstandingAsync(batch, coordinator, ct);
     }
-    if (allowSteal && (batch.InboxWork.Count > 0 || batch.InboxStreamIds.Count > 0)) {
+    if (_options.AdaptiveClaimWindow) {
+      _observeClaimLatency(claimElapsed);
+      _observeChurn(batch);
+    }
+    return batch;
+  }
+
+  /// <summary>
+  /// The stream window for this claim: the adaptive window (or the configured ceiling when adaptation
+  /// is off), narrowed to what the outstanding budget can afford and never below one stream.
+  /// </summary>
+  private int _boundedMaxStreams() {
+    // Opting out of the adaptive window means claiming at the operator's configured ceiling, not
+    // at whatever value the window happens to hold. Previously this always read the window and
+    // relied on it having been constructed AT the ceiling — so "disabled" meant "frozen wherever it
+    // started" rather than "bypassed". That was invisible while the window started wide; once it
+    // starts at the floor, the distinction is the difference between honouring the opt-out and
+    // silently pinning every claim to the minimum.
+    var maxStreams = _options.AdaptiveClaimWindow ? _claimWindow.Current : _options.MaxStreamsPerBatch;
+
+    // Bound the TOTAL outstanding, not just this batch — a loop that claims and immediately claims
+    // again accumulates held work across cycles regardless of batch size.
+    //
+    // The outstanding figure comes from the STORE, never from an in-memory flag. That is not a
+    // stylistic preference: an earlier in-memory IsInFlight filter on this path proved unrecoverable
+    // in production (see the emit loop below) — a flag stranded by a hung or canceled task made
+    // this worker silently discard every later emit for that stream, and only a restart cleared it.
+    // Any counter we maintain ourselves can be stranded the same way. claim_work's eligible_* CTEs
+    // re-emit every row still leased to us and unprocessed on EVERY poll, so the previous claim's
+    // counts are the outstanding total according to SQL, and it re-derives itself each cycle. A
+    // wrong value cannot persist.
+    //
+    // No meter means no measured drain. Rather than let the rate read zero forever and pin every
+    // deployment at the floor, the bound simply does not engage — an unmeasured budget is worse
+    // than none, because it throttles silently and looks like a performance problem.
+    if (!_budgetEngaged) {
+      return maxStreams;
+    }
+    var headroomRows = _outstandingBudget.Headroom(_lastOutstanding);
+
+    // Convert the row budget into streams: the store claims by stream, and rows-per-stream varies
+    // by orders of magnitude, so a fixed assumption would be wrong in one direction or the other.
+    var streamsAffordable = (int)Math.Ceiling(headroomRows / Math.Max(1.0, _rowsPerStream));
+
+    // NEVER drop to zero. Skipping the claim entirely is how the previous design deadlocked: the
+    // poll is the only thing that observes outstanding work, so a worker that stops polling stops
+    // being able to discover that it has recovered. Re-emitting rows we already hold costs no new
+    // attempt — they are already leased to us — so polling at the floor is cheap and self-healing.
+    return Math.Max(1, Math.Min(maxStreams, streamsAffordable));
+  }
+
+  /// <summary>
+  /// Bookkeeping on the claim's shape: the empty-claim streak that licenses stealing, the steal log,
+  /// and the running rows-per-stream estimate the budget converts rows into streams with.
+  /// </summary>
+  private void _recordClaimShape(WorkBatch batch, bool allowSteal) {
+    var foundInbox = batch.InboxWork.Count > 0 || batch.InboxStreamIds.Count > 0;
+    if (foundInbox) {
+      Volatile.Write(ref _consecutiveInboxEmptyClaims, 0);
+    } else {
+      Interlocked.Increment(ref _consecutiveInboxEmptyClaims);
+    }
+    if (allowSteal && foundInbox) {
       LogStoleWork(_logger, batch.InboxWork.Count, batch.InboxStreamIds.Count);
     }
 
-    // Feed the claim back into the window. A row arriving with attempts > 1 is work already claimed
-    // and not finished, so a high share means the batch outruns what this instance can dispatch
-    // inside its lease — and every one of those rows has silently spent a retry attempt it never
-    // used. Narrowing here is what stops a backlog consuming its own budget and dead-lettering
-    // healthy messages as MaxAttemptsExceeded.
     // Keep the rows-per-stream estimate current. The store claims by stream while the budget is in
     // rows, and the ratio is workload-specific — mostly-singleton streams and a few thousand-row
     // streams both occur, so a fixed assumption would be wrong in one direction or the other.
@@ -850,7 +864,13 @@ public sealed partial class ClaimWorker : BackgroundService {
       var observed = (double)batch.InboxWork.Count / batch.InboxStreamIds.Count;
       _rowsPerStream = (0.2 * observed) + (0.8 * _rowsPerStream);
     }
+  }
 
+  /// <summary>
+  /// Feeds the store's outstanding inbox count to the drain observer. An unmeasurable count stands
+  /// the budget down rather than reading as zero.
+  /// </summary>
+  private async Task _observeOutstandingAsync(WorkBatch batch, IWorkCoordinator coordinator, CancellationToken ct) {
     // Outstanding, straight from the store. claim_work re-emits everything still leased to this
     // instance and unprocessed, so these counts ARE the current outstanding total — re-derived every
     // poll rather than accumulated, which is what makes it impossible to strand.
@@ -858,89 +878,101 @@ public sealed partial class ClaimWorker : BackgroundService {
     // All three work kinds count. Every one of them is leased and charges an attempt, so bounding
     // only the inbox would leave the identical over-claim arithmetic free to recur in another
     // column — the failure would simply move rather than stop.
-    if (_budgetEngaged) {
-      // Ask the store what this instance is actually holding. The batch counts CANNOT answer that:
-      // claim_work truncates its eligible_* CTEs to the limit computed above, so a figure taken
-      // from them can never exceed that limit no matter how much work is held. Sizing the budget
-      // from it means reading our own output instead of the system state — the budget stays wide
-      // open, more work is claimed each poll, and held work grows without the number ever moving.
-      // Prefer the counts the claim itself carried (#635) — same round trip, same snapshot. Null
-      // means the store did not measure them there, so probe separately; it never means zero.
-      var outstanding = batch.Outstanding
-        ?? await coordinator.CountOutstandingWorkAsync(_instanceProvider.InstanceId, ct);
-      if (outstanding is null) {
-        // Unmeasurable is not zero. Zero would license a full-size claim on the strength of a
-        // reading that was never taken, so the bound stands down instead — loudly, once.
-        _outstandingUnmeasurable = true;
-        LogOutstandingUnmeasurable(_logger);
-      } else {
-        // INBOX rows only (#719). The budget bounds inbox acquisition and is sized in inbox rows,
-        // so its headroom must be read against inbox rows. Folding outbox and perspective rows into
-        // the same figure let a perspective backlog close the inbox headroom (the inbox then starved
-        // behind work it could not affect) and, in the other direction, let a large inbox holding
-        // hide behind a drained perspective set. Perspective has its own cap above.
-        _observeDrain((int)Math.Min(int.MaxValue, outstanding.InboxRows));
-      }
+    //
+    // Ask the store what this instance is actually holding. The batch counts CANNOT answer that:
+    // claim_work truncates its eligible_* CTEs to the limit computed above, so a figure taken
+    // from them can never exceed that limit no matter how much work is held. Sizing the budget
+    // from it means reading our own output instead of the system state — the budget stays wide
+    // open, more work is claimed each poll, and held work grows without the number ever moving.
+    // Prefer the counts the claim itself carried (#635) — same round trip, same snapshot. Null
+    // means the store did not measure them there, so probe separately; it never means zero.
+    var outstanding = batch.Outstanding
+      ?? await coordinator.CountOutstandingWorkAsync(_instanceProvider.InstanceId, ct);
+    if (outstanding is null) {
+      // Unmeasurable is not zero. Zero would license a full-size claim on the strength of a
+      // reading that was never taken, so the bound stands down instead — loudly, once.
+      _outstandingUnmeasurable = true;
+      LogOutstandingUnmeasurable(_logger);
+      return;
     }
+    // INBOX rows only (#719). The budget bounds inbox acquisition and is sized in inbox rows,
+    // so its headroom must be read against inbox rows. Folding outbox and perspective rows into
+    // the same figure let a perspective backlog close the inbox headroom (the inbox then starved
+    // behind work it could not affect) and, in the other direction, let a large inbox holding
+    // hide behind a drained perspective set. Perspective has its own cap above.
+    _observeDrain((int)Math.Min(int.MaxValue, outstanding.InboxRows));
+  }
 
-    if (_options.AdaptiveClaimWindow) {
-      // The claim's own duration is the acquisition-cost signal (#714). Churn below says whether the
-      // batch drained; this says whether it was affordable to ACQUIRE, and a slow claim halves the
-      // window regardless of how clean the batch was.
-      var beforeLatency = _claimWindow.Current;
-      _claimWindow.ObserveLatency(claimElapsed);
-      if (_claimWindow.Current != beforeLatency) {
-        LogClaimWindowNarrowedOnLatency(_logger, beforeLatency, _claimWindow.Current, claimElapsed.TotalMilliseconds);
-      }
+  /// <summary>
+  /// The claim's own duration is the acquisition-cost signal (#714). Churn says whether the batch
+  /// drained; this says whether it was affordable to ACQUIRE, and a slow claim halves the window
+  /// regardless of how clean the batch was.
+  /// </summary>
+  private void _observeClaimLatency(TimeSpan claimElapsed) {
+    var beforeLatency = _claimWindow.Current;
+    _claimWindow.ObserveLatency(claimElapsed);
+    if (_claimWindow.Current != beforeLatency) {
+      LogClaimWindowNarrowedOnLatency(_logger, beforeLatency, _claimWindow.Current, claimElapsed.TotalMilliseconds);
     }
+  }
 
-    if (_options.AdaptiveClaimWindow) {
-      // Churn is measured across BOTH claim representations. Iterating InboxWork alone reads zero
-      // on the stream-id path — where rows arrive as stream ids and are fetched separately — so the
-      // window saw "no work, no churn" and Observe() short-circuited on claimedRows <= 0, never
-      // adapting for the life of the process. See ClaimChurnSignal.
-      var attempts = new int[batch.InboxWork.Count];
-      for (var i = 0; i < batch.InboxWork.Count; i++) {
-        attempts[i] = batch.InboxWork[i].Attempts;
-      }
-      // Attempts are not available at claim time on the stream-id path — the claim returns stream
-      // ids and never sees a row. The drain worker fetches them and reports what it saw, which is
-      // the ONLY place the churn signal exists. Without this the window observes zero churn forever.
-      var fed = _churnFeedback?.Take() ?? (0, 0);
-      int[]? fetchedAttempts = null;
-      if (fed.Item1 > 0) {
-        // Reconstructed as attempt counts because that is the shape the signal measures; only the
-        // re-claim COUNT is meaningful, not which specific rows churned.
-        fetchedAttempts = new int[fed.Item1];
-        for (var i = 0; i < fed.Item2 && i < fetchedAttempts.Length; i++) {
-          fetchedAttempts[i] = 2;
-        }
-        for (var i = fed.Item2; i < fetchedAttempts.Length; i++) {
-          fetchedAttempts[i] = 1;
-        }
-      }
-      var churn = ClaimChurnSignal.Measure(
-        materializedAttempts: attempts,
-        streamIdCount: batch.InboxStreamIds.Count,
-        fetchedAttempts: fetchedAttempts);
-      var reclaimed = churn.Reclaimed;
-      var previous = _claimWindow.Current;
-      // Gate growth on measured drain ONLY while the budget is the governing control. When the
-      // budget is not engaged at all (disabled, or no meter to measure with) it will never produce
-      // a sample, and gating on one would freeze the window at its floor forever — turning a
-      // cold-start guard into a permanent throughput ceiling for every deployment without a meter.
-      // Unmeasured must not silently disable an unrelated control. See AdaptiveClaimWindow.Observe.
-      // Unmeasured churn must not read as a clean cycle. Growing on evidence nobody gathered is
-      // how a window widens on top of an unobserved thrash, so an unmeasurable cycle blocks growth
-      // exactly as an unmeasured drain does. Shrinking stays ungated — backing off is always safe.
-      var drainMeasured = (!_budgetEngaged || _outstandingBudget.HasDrainSample) && churn.IsMeasurable;
-      _claimWindow.Observe(churn.ClaimedItems, reclaimed, drainMeasured);
-      if (_claimWindow.Current != previous) {
-        LogClaimWindowResized(_logger, previous, _claimWindow.Current, reclaimed, churn.ClaimedItems);
-      }
+  /// <summary>
+  /// Feeds the claim back into the window. A row arriving with attempts > 1 is work already claimed
+  /// and not finished, so a high share means the batch outruns what this instance can dispatch
+  /// inside its lease — and every one of those rows has silently spent a retry attempt it never
+  /// used. Narrowing here is what stops a backlog consuming its own budget and dead-lettering
+  /// healthy messages as MaxAttemptsExceeded.
+  /// </summary>
+  private void _observeChurn(WorkBatch batch) {
+    // Churn is measured across BOTH claim representations. Iterating InboxWork alone reads zero
+    // on the stream-id path — where rows arrive as stream ids and are fetched separately — so the
+    // window saw "no work, no churn" and Observe() short-circuited on claimedRows <= 0, never
+    // adapting for the life of the process. See ClaimChurnSignal.
+    var attempts = new int[batch.InboxWork.Count];
+    for (var i = 0; i < batch.InboxWork.Count; i++) {
+      attempts[i] = batch.InboxWork[i].Attempts;
     }
+    // Attempts are not available at claim time on the stream-id path — the claim returns stream
+    // ids and never sees a row. The drain worker fetches them and reports what it saw, which is
+    // the ONLY place the churn signal exists. Without this the window observes zero churn forever.
+    var churn = ClaimChurnSignal.Measure(
+      materializedAttempts: attempts,
+      streamIdCount: batch.InboxStreamIds.Count,
+      fetchedAttempts: _fetchedAttempts(_churnFeedback?.Take() ?? (0, 0)));
+    var reclaimed = churn.Reclaimed;
+    var previous = _claimWindow.Current;
+    // Gate growth on measured drain ONLY while the budget is the governing control. When the
+    // budget is not engaged at all (disabled, or no meter to measure with) it will never produce
+    // a sample, and gating on one would freeze the window at its floor forever — turning a
+    // cold-start guard into a permanent throughput ceiling for every deployment without a meter.
+    // Unmeasured must not silently disable an unrelated control. See AdaptiveClaimWindow.Observe.
+    // Unmeasured churn must not read as a clean cycle. Growing on evidence nobody gathered is
+    // how a window widens on top of an unobserved thrash, so an unmeasurable cycle blocks growth
+    // exactly as an unmeasured drain does. Shrinking stays ungated — backing off is always safe.
+    var drainMeasured = (!_budgetEngaged || _outstandingBudget.HasDrainSample) && churn.IsMeasurable;
+    _claimWindow.Observe(churn.ClaimedItems, reclaimed, drainMeasured);
+    if (_claimWindow.Current != previous) {
+      LogClaimWindowResized(_logger, previous, _claimWindow.Current, reclaimed, churn.ClaimedItems);
+    }
+  }
 
-    return batch;
+  /// <summary>
+  /// The drain worker's churn report reconstructed as attempt counts, the shape the signal measures;
+  /// only the re-claim COUNT is meaningful, not which specific rows churned. Null when nothing was
+  /// fetched, so the signal treats the stream-id path as unmeasured rather than as clean.
+  /// </summary>
+  private static int[]? _fetchedAttempts((int Observed, int Reclaimed) fed) {
+    if (fed.Observed <= 0) {
+      return null;
+    }
+    var fetchedAttempts = new int[fed.Observed];
+    for (var i = 0; i < fed.Reclaimed && i < fetchedAttempts.Length; i++) {
+      fetchedAttempts[i] = 2;
+    }
+    for (var i = fed.Reclaimed; i < fetchedAttempts.Length; i++) {
+      fetchedAttempts[i] = 1;
+    }
+    return fetchedAttempts;
   }
 
   private async Task _initialHeartbeatAsync(CancellationToken ct) {

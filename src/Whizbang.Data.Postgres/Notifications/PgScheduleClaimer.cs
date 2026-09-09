@@ -19,35 +19,25 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// are due (p_now omitted), so multi-instance clock skew can't fire early or double-fire.
 /// </summary>
 /// <docs>fundamentals/temporal/temporal-engine</docs>
-public sealed partial class PgScheduleClaimer : IScheduleClaimer {
-  private readonly WhizbangNotificationOptions _options;
-  private readonly IConfiguration _configuration;
-  private readonly IServiceInstanceProvider _instanceProvider;
-  private readonly INotificationConnectionStringFallback? _connectionStringFallback;
-  private readonly INotificationDataSource? _notificationDataSource;
-  private readonly int _partitionCount;
-  private readonly int _leaseSeconds;
-  private readonly ILogger<PgScheduleClaimer> _logger;
-
-  /// <summary>Constructor.</summary>
-  public PgScheduleClaimer(
-    IOptions<WhizbangNotificationOptions> options,
-    IConfiguration configuration,
-    IServiceInstanceProvider instanceProvider,
-    IOptions<ClaimWorkerOptions> claimWorkerOptions,
-    IOptions<TemporalOptions> temporalOptions,
-    ILogger<PgScheduleClaimer> logger,
-    INotificationConnectionStringFallback? connectionStringFallback = null,
-    INotificationDataSource? notificationDataSource = null) {
-    _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-    _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-    _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
-    _partitionCount = (claimWorkerOptions?.Value ?? new ClaimWorkerOptions()).PartitionCount;
-    _leaseSeconds = (temporalOptions?.Value ?? new TemporalOptions()).LeaseDurationSeconds;
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _connectionStringFallback = connectionStringFallback;
-    _notificationDataSource = notificationDataSource;
-  }
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
+public sealed partial class PgScheduleClaimer(
+  IOptions<WhizbangNotificationOptions> options,
+  IConfiguration configuration,
+  IServiceInstanceProvider instanceProvider,
+  IOptions<ClaimWorkerOptions> claimWorkerOptions,
+  IOptions<TemporalOptions> temporalOptions,
+  ILogger<PgScheduleClaimer> logger,
+  INotificationConnectionStringFallback? connectionStringFallback = null,
+  INotificationDataSource? notificationDataSource = null) : IScheduleClaimer {
+#pragma warning restore S107
+  private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+  private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+  private readonly INotificationConnectionStringFallback? _connectionStringFallback = connectionStringFallback;
+  private readonly INotificationDataSource? _notificationDataSource = notificationDataSource;
+  private readonly int _partitionCount = (claimWorkerOptions?.Value ?? new ClaimWorkerOptions()).PartitionCount;
+  private readonly int _leaseSeconds = (temporalOptions?.Value ?? new TemporalOptions()).LeaseDurationSeconds;
+  private readonly ILogger<PgScheduleClaimer> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <inheritdoc />
   public async Task<int> ClaimDueSchedulesAsync(int limit, CancellationToken cancellationToken = default) {
@@ -77,7 +67,7 @@ public sealed partial class PgScheduleClaimer : IScheduleClaimer {
     var claimed = result is null or DBNull ? 0 : Convert.ToInt32(result, CultureInfo.InvariantCulture);
     if (claimed > 0) {
       // #720: each spawned occurrence queued its doorbell inside the claim's transaction; ring them after the commit.
-      await DoorbellRinger.RingAsync(conn, "ring_doorbells", _logger, cancellationToken).ConfigureAwait(false);
+      await DoorbellRinger.RingAsync(conn, DoorbellRinger.FUNCTION_NAME, _logger, cancellationToken).ConfigureAwait(false);
     }
     return claimed;
   }

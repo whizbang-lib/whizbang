@@ -134,7 +134,7 @@ public class DispatcherEmissionIdentityTests {
     await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), retry, DispatchModes.Outbox);
     await dispatcher.CascadeMessageAsync(new ProbeEvent(streamId), retry, DispatchModes.Outbox);
 
-    var ids = dispatcher.OutboxCascades.Select(c => c.EventId!.Value).ToList();
+    var ids = dispatcher.OutboxCascades.ConvertAll(c => c.EventId!.Value);
     await Assert.That(ids).Count().IsEqualTo(4);
     await Assert.That(ids[2]).IsEqualTo(ids[0])
       .Because("the retry's first emission must carry the id the first run's first emission had, so the outbox primary key absorbs it");
@@ -321,7 +321,7 @@ public class DispatcherEmissionIdentityTests {
     lock (logs) { lines = [.. logs]; }
     var derived = lines.FirstOrDefault(l => l.Contains("Emission id derived", StringComparison.Ordinal));
     await Assert.That(derived).IsNotNull();
-    await Assert.That(derived!).Contains(sourceMessageId.ToString());
-    await Assert.That(derived!).Contains(dispatcher.OutboxCascades[0].EventId!.Value.ToString());
+    await Assert.That(derived).Contains(sourceMessageId.ToString());
+    await Assert.That(derived).Contains(dispatcher.OutboxCascades[0].EventId!.Value.ToString());
   }
 }

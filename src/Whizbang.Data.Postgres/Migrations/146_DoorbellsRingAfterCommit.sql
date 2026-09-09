@@ -97,6 +97,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._notify_debounced(
   p_window INTEGER
 ) RETURNS VOID AS $$
 DECLARE
+  v_channel TEXT := 'wh_work_i_' || p_instance_id::text;
   v_now TIMESTAMPTZ := NOW();
   v_live BOOLEAN;
   v_last_attempt TIMESTAMPTZ;
@@ -141,7 +142,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM __SCHEMA__.wh_notify_state
                WHERE instance_id = p_instance_id AND payload_kind = p_kind)
        OR NOT pg_try_advisory_xact_lock(hashtext(p_instance_id::text), hashtext(p_kind)) THEN
-      PERFORM __SCHEMA__._queue_doorbell('wh_work_i_' || p_instance_id::text, p_payload);
+      PERFORM __SCHEMA__._queue_doorbell(v_channel, p_payload);
       RETURN;
     END IF;
 
@@ -154,7 +155,7 @@ BEGIN
 
     IF NOT FOUND THEN
       -- Committed by someone else between the probe and the insert: theirs, not ours.
-      PERFORM __SCHEMA__._queue_doorbell('wh_work_i_' || p_instance_id::text, p_payload);
+      PERFORM __SCHEMA__._queue_doorbell(v_channel, p_payload);
       RETURN;
     END IF;
     -- The row is ours (uncommitted insert): state is empty, the same as a first doorbell after idle.
@@ -199,7 +200,7 @@ BEGIN
         suppressed_count = suppressed_count + 1
     WHERE instance_id = p_instance_id AND payload_kind = p_kind;
   ELSE
-    PERFORM __SCHEMA__._queue_doorbell('wh_work_i_' || p_instance_id::text, p_payload);
+    PERFORM __SCHEMA__._queue_doorbell(v_channel, p_payload);
     -- Record the attempt + rate state + fired count WITHOUT arming suppression: last_work_at is
     -- left untouched (only claim_work arms it). The row is ours.
     UPDATE __SCHEMA__.wh_notify_state
@@ -231,7 +232,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
 DECLARE
   v_stored_event_ids UUID[];
   v_count INTEGER;
-  c_field_message_id CONSTANT TEXT := 'MessageId';
+  c_field_message_id CONSTANT TEXT := 'MessageId';  -- NOSONAR S1192: the field name recurs per function; PL/pgSQL has no file-level constants
   c_field_hops CONSTANT TEXT := 'Hops';
   c_source_perspective CONSTANT TEXT := 'perspective';
   -- Migration 061: collective routing sink + flag bit (EventFlags.Collective = 1 << 0).
@@ -363,7 +364,7 @@ BEGIN
     INSERT INTO __SCHEMA__.wh_stream_digests AS d
       (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at)
     SELECT
-      '00000000-0000-0000-0000-000000000000'::uuid,
+      '00000000-0000-0000-0000-000000000000'::uuid,  -- NOSONAR S1192: the no-source-service sentinel recurs per function; PL/pgSQL has no file-level constants
       COALESCE(c.scope::jsonb ->> 't', ''),
       c.event_type,
       c.stream_id,
@@ -841,6 +842,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.store_inbox_messages(
 ) AS $$
 #variable_conflict use_column
 DECLARE
+  c_field_flags CONSTANT TEXT := 'Flags';
   v_msg RECORD;
   v_partition INTEGER;
   v_observations INTEGER;  -- 1 on first sight; N on the Nth redelivery
@@ -864,9 +866,9 @@ BEGIN
       -- EventFlags (062): same robust read as store_outbox_messages so collective events delivered
       -- cross-service via the inbox also route to the __collective__ sink.
       CASE
-        WHEN elem->>'Flags' IS NULL OR elem->>'Flags' = '' THEN 0
-        WHEN elem->>'Flags' ~ '^[0-9]+$' THEN (elem->>'Flags')::INTEGER
-        WHEN elem->>'Flags' ILIKE '%Collective%' THEN 1
+        WHEN elem->>c_field_flags IS NULL OR elem->>c_field_flags = '' THEN 0
+        WHEN elem->>c_field_flags ~ '^[0-9]+$' THEN (elem->>c_field_flags)::INTEGER
+        WHEN elem->>c_field_flags ILIKE '%Collective%' THEN 1
         ELSE 0
       END as flags,
       -- 146 (#727): a zero GUID is "unknown", not a producer; COALESCE below then falls back to this service.
@@ -962,7 +964,7 @@ BEGIN
         ON CONFLICT (stream_id) DO NOTHING;
       END IF;
       RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, TRUE AS was_newly_created;
-    END IF;  -- Close IF v_observations = 1 THEN
+    END IF;  -- end of the single-observation branch
   END LOOP;
 
   IF cardinality(v_notify_inbox_streams) > 0 THEN

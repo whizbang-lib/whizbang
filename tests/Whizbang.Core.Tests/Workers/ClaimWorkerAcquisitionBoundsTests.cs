@@ -218,7 +218,7 @@ public class ClaimWorkerAcquisitionBoundsTests {
     // A stuck run, one fresh claim, then a second stuck run on a different work set.
     var first = _batchOfInboxStreams(2);
     var second = _batchOfInboxStreams(2);
-    var boundary = ClaimWorker.RELEASE_UNSTARTED_AFTER_REPEATS + 2;
+    const int boundary = ClaimWorker.RELEASE_UNSTARTED_AFTER_REPEATS + 2;
     var coord = new ScriptedCoordinator(call => call <= boundary ? first : second);
     using var harness = _startWorker(coord, new ClaimWorkerOptions {
       PollingIntervalMilliseconds = 20,
@@ -466,8 +466,5 @@ public class ClaimWorkerAcquisitionBoundsTests {
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) =>
       Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken cancellationToken = default) =>
-      Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken cancellationToken = default) => Task.CompletedTask;
   }
 }

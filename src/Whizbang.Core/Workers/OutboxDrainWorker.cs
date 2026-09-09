@@ -48,7 +48,7 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   // so this is shared and guarded: a stream's rows are appended contiguously under the lock,
   // which keeps each stream's order intact within and across batch boundaries (batches publish
   // in the order they are taken).
-  private readonly object _publishBatchLock = new();
+  private readonly Lock _publishBatchLock = new();
   private readonly List<OutboxBatchRow> _publishAccumulator = [];
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly ILogger<OutboxDrainWorker> _logger;

@@ -29,9 +29,9 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
     await conn.OpenAsync(ct);
     await using var cmd = new NpgsqlCommand(
       "SELECT record_heartbeat(@id, 'backfill-svc', 'backfill-host', 1, '{}'::jsonb, @phase, @version, @stale)", conn);
-    cmd.Parameters.AddWithValue("id", id);
-    cmd.Parameters.Add(new NpgsqlParameter("phase", NpgsqlDbType.Text) { Value = (object?)phase ?? DBNull.Value });
-    cmd.Parameters.Add(new NpgsqlParameter("version", NpgsqlDbType.Text) { Value = (object?)version ?? DBNull.Value });
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(phase), NpgsqlDbType.Text) { Value = (object?)phase ?? DBNull.Value });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(version), NpgsqlDbType.Text) { Value = (object?)version ?? DBNull.Value });
     cmd.Parameters.Add(new NpgsqlParameter("stale", NpgsqlDbType.Integer) { Value = (object?)staleSeconds ?? DBNull.Value });
     return (bool)(await cmd.ExecuteScalarAsync(ct))!;
   }
@@ -41,7 +41,7 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
     await conn.OpenAsync(ct);
     await using var cmd = new NpgsqlCommand(
       "SELECT lifecycle_phase, library_version FROM wh_service_instances WHERE instance_id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync(ct);
     if (!await reader.ReadAsync(ct)) {
       return null;
@@ -54,8 +54,8 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
     await conn.OpenAsync(ct);
     await using var cmd = new NpgsqlCommand(
       "UPDATE wh_service_instances SET last_heartbeat_at = NOW() - @age WHERE instance_id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
-    cmd.Parameters.AddWithValue("age", age);
+    cmd.Parameters.AddWithValue(nameof(id), id);
+    cmd.Parameters.AddWithValue(nameof(age), age);
     await cmd.ExecuteNonQueryAsync(ct);
   }
 
@@ -138,7 +138,7 @@ public class RecordHeartbeatBackfillTests : EFCoreTestBase {
     await conn.OpenAsync(cancellationToken);
     await using var cmd = new NpgsqlCommand(
       "SELECT record_heartbeat(@id, 'legacy-svc', 'legacy-host', 1, '{}'::jsonb)", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
 
     var accepted = (bool)(await cmd.ExecuteScalarAsync(cancellationToken))!;
 

@@ -1742,7 +1742,7 @@ public class OutboxDrainWorkerTests {
     var resolved = lines.FirstOrDefault(l => l.Contains("resolved to", StringComparison.Ordinal));
     await Assert.That(resolved).IsNotNull()
       .Because("the startup warning said attribution is wrong; the log must also say when it became right");
-    await Assert.That(resolved!).Contains(serviceId.ToString());
+    await Assert.That(resolved).Contains(serviceId.ToString());
   }
 
   /// <summary>

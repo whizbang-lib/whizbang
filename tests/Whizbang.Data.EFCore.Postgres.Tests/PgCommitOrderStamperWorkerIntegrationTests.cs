@@ -38,7 +38,8 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       string connectionString,
       TimeSpan? pollingInterval = null,
       TimeSpan? leaderElectionRetry = null,
-      bool disable = false) {
+      bool disable = false,
+      INotifySignalingGate? gate = null) {
     var notificationOptions = new WhizbangNotificationOptions {
       DirectConnectionString = connectionString,
       SignalingMode = WorkSignalingMode.ListenNotify,
@@ -66,7 +67,30 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
       Options.Create(stamperOptions),
       config,
       shared,
-      NullLogger<PgCommitOrderStamperWorker>.Instance);
+      NullLogger<PgCommitOrderStamperWorker>.Instance,
+      notifySignalingGate: gate);
+  }
+
+  /// <summary>
+  /// A gate whose availability a test flips by hand, counting the worker's subscription so the
+  /// test can prove the stamper listens while it runs and lets go when it stops.
+  /// </summary>
+  private sealed class _fakeSignalingGate : INotifySignalingGate {
+    private Action<bool>? _handlers;
+    public bool IsAvailable { get; private set; } = true;
+    public int Subscribers { get; private set; }
+    public DateTimeOffset? LastVerifiedAt => null;
+    public DateTimeOffset? LastFailureAt => null;
+    public string? LastFailureReason => null;
+    public event Action<bool>? OnAvailabilityChanged {
+      add { _handlers += value; Subscribers++; }
+      remove { _handlers -= value; Subscribers--; }
+    }
+    public Task<bool> ProbeNowAsync(CancellationToken cancellationToken = default) => Task.FromResult(IsAvailable);
+    public void Set(bool available) {
+      IsAvailable = available;
+      _handlers?.Invoke(available);
+    }
   }
 
   private static Task<TaskCompletionSource> _whenBecomesLeaderAsync(PgCommitOrderStamperWorker worker) {
@@ -302,6 +326,38 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
              + "drains — pending work must not wait for the next external tick");
 
     await worker.StopAsync(CancellationToken.None);
+  }
+
+  /// <summary>
+  /// A NOTIFY-availability flip must wake the leader at once. When the gate turns off, the relaxed
+  /// cadence is no longer safe (a NOTIFY may never arrive), so the next iteration has to recompute
+  /// its interval now rather than at the end of a long sleep; when it turns back on, the same wake
+  /// lets the loop pick up the relaxed cadence right away. A stopped stamper must no longer listen.
+  /// </summary>
+  [Test]
+  public async Task Worker_GateAvailabilityFlip_WakesTheLeaderWithoutWaitingForThePollAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var gate = new _fakeSignalingGate();
+    // A 60 s floor silences the self-poll: after the initial permit, only the gate flip can wake the loop.
+    var worker = _newWorker(ConnectionString, pollingInterval: TimeSpan.FromSeconds(60), gate: gate);
+    var leaderTcs = await _whenBecomesLeaderAsync(worker);
+    var stampPulse = new SemaphoreSlim(0);
+    worker.OnStampCompleted += _ => stampPulse.Release();
+    await worker.StartAsync(cts.Token);
+    await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await Assert.That(await stampPulse.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue()
+      .Because("the initial wake permit produces exactly one stamp attempt");
+    await Assert.That(gate.Subscribers).IsEqualTo(1)
+      .Because("the running stamper listens for availability changes");
+
+    gate.Set(false);
+
+    await Assert.That(await stampPulse.WaitAsync(TimeSpan.FromSeconds(5))).IsTrue()
+      .Because("the flip is the only wake source inside the 60 s floor, so a second stamp attempt proves it woke the leader");
+
+    await worker.StopAsync(CancellationToken.None);
+    await Assert.That(gate.Subscribers).IsEqualTo(0)
+      .Because("a stopped stamper unsubscribes, so a live gate cannot wake a worker that no longer runs");
   }
 
   // ============================================================================

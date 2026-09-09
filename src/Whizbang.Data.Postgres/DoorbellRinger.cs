@@ -20,6 +20,11 @@ public static partial class DoorbellRinger {
   /// <summary>Command timeout for the ring. The statement touches a handful of rows in an unlogged table.</summary>
   private const int RING_TIMEOUT_SECONDS = 5;
 
+  /// <summary>The bare name of the ring function; callers schema-qualify it where <c>search_path</c> does not resolve it.</summary>
+#pragma warning disable CA1707 // Repo style: public const fields are ALL_CAPS_SNAKE per editorconfig.
+  public const string FUNCTION_NAME = "ring_doorbells";
+#pragma warning restore CA1707
+
   /// <summary>
   /// Rings queued doorbells on an OPEN connection. <paramref name="qualifiedFunctionName"/> is the
   /// schema-qualified <c>ring_doorbells</c> (or the bare name where the caller resolves through

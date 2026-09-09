@@ -34,6 +34,7 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// <docs>operations/startup/capabilities-and-duties</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DutyElectionE2ETests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/TableRewriteJourneyE2ETests.cs</tests>
+#pragma warning disable S107 // DI-injection constructor: every parameter is a registered service or an optional seam, and a parameter object would only move the list (same reasoning as Dispatcher)
 public sealed partial class PgDutyElector(
   IOptions<WhizbangNotificationOptions> options,
   IConfiguration configuration,
@@ -44,6 +45,7 @@ public sealed partial class PgDutyElector(
   TimeProvider? timeProvider = null,
   ProbeCadenceMetrics? probeMetrics = null
 ) : IDutyElector {
+#pragma warning restore S107
   private readonly WhizbangNotificationOptions _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
   private readonly IConfiguration _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -201,11 +203,10 @@ public sealed partial class PgDutyElector(
             release.Parameters.AddWithValue("duty", Duty);
             await release.ExecuteNonQueryAsync().ConfigureAwait(false);
           }
-          await using (var unlock = connection.CreateCommand()) {
-            unlock.CommandText = "SELECT pg_advisory_unlock(@key)";
-            unlock.Parameters.AddWithValue("key", key);
-            await unlock.ExecuteNonQueryAsync().ConfigureAwait(false);
-          }
+          await using var unlock = connection.CreateCommand();
+          unlock.CommandText = "SELECT pg_advisory_unlock(@key)";
+          unlock.Parameters.AddWithValue("key", key);
+          await unlock.ExecuteNonQueryAsync().ConfigureAwait(false);
         }
 #pragma warning disable CA1031, RCS1075 // best-effort clean release: a dead session already
         // released the lock server-side, and the recorded holding reaps with the instance row —

@@ -52,20 +52,21 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, int streams, int rowsPerStream, bool isEvent, int partition, int ageSeconds) {
     var streamIds = Enumerable.Range(0, streams).Select(_ => Guid.CreateVersion7()).ToList();
     await using var ins = conn.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
       INSERT INTO wh_inbox
         (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
          stream_id, partition_number, is_event, instance_id, lease_expiry, error, failure_reason)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{""p"": {}}', '{}', 1, 0,
+      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}', 1, 0,
              NOW() - (@age || ' seconds')::INTERVAL + ((r.seq - 1) * @streams + s.ordinality) * INTERVAL '1 millisecond',
              s.stream_id, @partition, @isEvent, NULL, NULL, NULL, 99
       FROM unnest(@ids::uuid[]) WITH ORDINALITY AS s(stream_id, ordinality)
-      CROSS JOIN generate_series(1, @rows) AS r(seq)";
+      CROSS JOIN generate_series(1, @rows) AS r(seq)
+      """;
     ins.Parameters.AddWithValue("ids", streamIds.ToArray());
     ins.Parameters.AddWithValue("rows", rowsPerStream);
-    ins.Parameters.AddWithValue("streams", streams);
-    ins.Parameters.AddWithValue("partition", partition);
-    ins.Parameters.AddWithValue("isEvent", isEvent);
+    ins.Parameters.AddWithValue(nameof(streams), streams);
+    ins.Parameters.AddWithValue(nameof(partition), partition);
+    ins.Parameters.AddWithValue(nameof(isEvent), isEvent);
     ins.Parameters.AddWithValue("age", ageSeconds);
     await ins.ExecuteNonQueryAsync();
     return streamIds;
@@ -78,8 +79,8 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
       SELECT message_id FROM claim_orphaned_inbox(
         @inst, @rank, @count, NOW() + INTERVAL '5 minutes', NOW(), 10000, NOW() - INTERVAL '10 minutes', @lim, @steal)";
     cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.AddWithValue("rank", rank);
-    cmd.Parameters.AddWithValue("count", count);
+    cmd.Parameters.AddWithValue(nameof(rank), rank);
+    cmd.Parameters.AddWithValue(nameof(count), count);
     cmd.Parameters.AddWithValue("lim", limit);
     cmd.Parameters.AddWithValue("steal", allowSteal);
     var claimed = new List<Guid>();

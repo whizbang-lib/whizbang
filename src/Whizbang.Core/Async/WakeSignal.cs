@@ -21,7 +21,7 @@ namespace Whizbang.Core.Async;
 /// </remarks>
 /// <tests>tests/Whizbang.Core.Tests/Async/WakeSignalTests.cs</tests>
 internal sealed class WakeSignal {
-  private readonly object _gate = new();
+  private readonly Lock _gate = new();
   private TaskCompletionSource<bool>? _waiter;
   private CancellationTokenRegistration _waiterCancellation;
   private bool _pendingSignal;
