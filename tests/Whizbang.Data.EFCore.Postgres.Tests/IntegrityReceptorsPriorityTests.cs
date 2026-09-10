@@ -50,7 +50,7 @@ public class IntegrityReceptorsPriorityTests {
     await receptor.HandleAsync(_checkpoint(originId, from: 20, to: 20, count: 0, emptyBuckets: true));
 
     var (envelope, _, envelopeType) = transport.Published.Single();
-    await Assert.That(envelopeType!).Contains(nameof(RequestRedeliveryCommand));
+    await Assert.That(envelopeType).Contains(nameof(RequestRedeliveryCommand));
     await Assert.That(envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("the origin serves the repair from its own inbox; a request at the standard number is served ahead of the origin's live standard work");
   }
@@ -112,8 +112,8 @@ public class IntegrityReceptorsPriorityTests {
       ResumeAfterStreamId = cursor,
     });
 
-    var follow = transport.Published.Single(p => p.EnvelopeType?.Contains(nameof(RequestIntegrityManifest)) == true);
-    await Assert.That(follow.Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+    var (followEnvelope, _, _) = transport.Published.Single(p => p.EnvelopeType?.Contains(nameof(RequestIntegrityManifest)) == true);
+    await Assert.That(followEnvelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("following a cursor is the same reconciliation continued; every page of it is background");
   }
 
@@ -138,14 +138,6 @@ public class IntegrityReceptorsPriorityTests {
     EventCount = count,
   };
 
-  private static StreamDigest _typeDigest(string eventType, long lo, long hi, int count) => new() {
-    TenantScope = "tenant-a",
-    EventType = eventType,
-    StreamId = Guid.Empty,
-    DigestLo = lo,
-    DigestHi = hi,
-    EventCount = count,
-  };
 
   private static IntegrityManifest _manifest(_auditCoordinator coordinator, List<StreamDigest> digests, ManifestLevel level = ManifestLevel.Streams) => new() {
     ManifestStreamId = coordinator.OriginId,
@@ -226,8 +218,6 @@ public class IntegrityReceptorsPriorityTests {
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion c, CancellationToken ct = default) => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure f, CancellationToken ct = default) => Task.CompletedTask;
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken ct = default) => Task.FromResult<PerspectiveCursorInfo?>(null);
-    public Task<List<PerspectiveCursorInfo>> GetPerspectiveCursorsBatchAsync(IEnumerable<(Guid streamId, string perspectiveName)> requests, CancellationToken ct = default) => Task.FromResult(new List<PerspectiveCursorInfo>());
-    public Task RecordLifecycleCompletionAsync(Guid messageId, string stage, CancellationToken ct = default) => Task.CompletedTask;
     public Task<bool> RecordHeartbeatAsync(HeartbeatRequest request, CancellationToken ct = default) => Task.FromResult(true);
   }
 
@@ -270,7 +260,7 @@ public class IntegrityReceptorsPriorityTests {
     public Task<IReadOnlyList<StreamDigest>?> ComputeStreamDigestsForChunkAsync(
       Guid originServiceId, IReadOnlyList<Guid> streamIds,
       long? sinceSequence, long? untilSequence, TimeSpan settleWindow, CancellationToken cancellationToken = default) =>
-      Task.FromResult<IReadOnlyList<StreamDigest>?>(ReceivedDigests.Where(d => streamIds.Contains(d.StreamId)).ToList());
+      Task.FromResult<IReadOnlyList<StreamDigest>?>([.. ReceivedDigests.Where(d => streamIds.Contains(d.StreamId))]);
     public Task AdvanceIntegritySealAsync(Guid originServiceId, long through, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<long> GetIntegrityOriginGenerationAsync(CancellationToken cancellationToken = default) => Task.FromResult(0L);
     public Task<bool> EnsureIntegritySealGenerationAsync(Guid originServiceId, long generation, CancellationToken cancellationToken = default) => Task.FromResult(true);
@@ -324,7 +314,6 @@ public class IntegrityReceptorsPriorityTests {
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotSupportedException();
     public ValueTask<InvokeResult<TResult>> LocalInvokeWithReceiptAsync<TResult>(object message, DispatchOptions options) => throw new NotSupportedException();
     public Task<bool> PublishOnceAsync<TEvent>(string claimKey, TEvent eventData, CancellationToken cancellationToken = default) => throw new NotSupportedException();
-    public Task CascadeMessageAsync(IMessage message, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task CascadeMessageAsync(IMessage message, IMessageEnvelope? sourceEnvelope, DispatchModes mode, CancellationToken cancellationToken = default) => Task.CompletedTask;
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotSupportedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotSupportedException();

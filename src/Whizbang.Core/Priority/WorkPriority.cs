@@ -74,12 +74,16 @@ public static class WorkPriority {
   /// <docs>fundamentals/messaging/message-priority#the-c-api</docs>
   /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_IgnoreUndeclaredMembers_AndAgreeOnTheBandsAsync</tests>
   public static int MostUrgent(IEnumerable<int> priorities) => _fold(priorities, static (held, next) => Math.Min(held, next));
-
+  /// <inheritdoc cref="MostUrgent(IEnumerable{int})"/>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync</tests>
+  public static int MostUrgent(IEnumerable<IPrioritized> items) => MostUrgent(_numbers(items));
   /// <summary>The least urgent (highest) declared number in the collection; <see cref="UNDECLARED"/> when none is declared.</summary>
   /// <docs>fundamentals/messaging/message-priority#the-c-api</docs>
   /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_IgnoreUndeclaredMembers_AndAgreeOnTheBandsAsync</tests>
   public static int LeastUrgent(IEnumerable<int> priorities) => _fold(priorities, static (held, next) => Math.Max(held, next));
-
+  /// <inheritdoc cref="LeastUrgent(IEnumerable{int})"/>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync</tests>
+  public static int LeastUrgent(IEnumerable<IPrioritized> items) => LeastUrgent(_numbers(items));
   /// <summary>The integer average of the declared numbers in the collection; <see cref="UNDECLARED"/> when none is declared.</summary>
   /// <docs>fundamentals/messaging/message-priority#the-c-api</docs>
   /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_IgnoreUndeclaredMembers_AndAgreeOnTheBandsAsync</tests>
@@ -87,23 +91,12 @@ public static class WorkPriority {
     ArgumentNullException.ThrowIfNull(priorities);
     long sum = 0;
     var declared = 0;
-    foreach (var priority in priorities) {
-      if (IsDeclared(priority)) {
-        sum += priority;
-        declared++;
-      }
+    foreach (var priority in priorities.Where(IsDeclared)) {
+      sum += priority;
+      declared++;
     }
     return declared == 0 ? UNDECLARED : (int)(sum / declared);
   }
-
-  /// <inheritdoc cref="MostUrgent(IEnumerable{int})"/>
-  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync</tests>
-  public static int MostUrgent(IEnumerable<IPrioritized> items) => MostUrgent(_numbers(items));
-
-  /// <inheritdoc cref="LeastUrgent(IEnumerable{int})"/>
-  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync</tests>
-  public static int LeastUrgent(IEnumerable<IPrioritized> items) => LeastUrgent(_numbers(items));
-
   /// <inheritdoc cref="Average(IEnumerable{int})"/>
   /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync</tests>
   public static int Average(IEnumerable<IPrioritized> items) => Average(_numbers(items));

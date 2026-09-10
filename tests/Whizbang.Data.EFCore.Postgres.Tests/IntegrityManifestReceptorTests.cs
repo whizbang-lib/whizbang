@@ -264,9 +264,8 @@ public class IntegrityManifestReceptorTests {
   /// </summary>
   [Test]
   public async Task ManifestReceptor_Divergence_TheRepairRequestIsBackgroundAsync() {
-    var coordinator = new _auditCoordinator();
     var mismatched = TrackedGuid.NewMedo().Value;
-    coordinator.ReceivedDigests = [_digest(mismatched, 99, 21, 1)];
+    var coordinator = new _auditCoordinator { ReceivedDigests = [_digest(mismatched, 99, 21, 1)] };
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
@@ -284,8 +283,7 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelMismatch_TheDrillDownRequestIsBackgroundAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)];
+    var coordinator = new _auditCoordinator { ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)] };
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
@@ -302,8 +300,7 @@ public class IntegrityManifestReceptorTests {
 
   [Test]
   public async Task ManifestReceptor_TypeLevelBulkDeficit_TheBackfillRequestIsBackgroundAsync() {
-    var coordinator = new _auditCoordinator();
-    coordinator.WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 5000 };
+    var coordinator = new _auditCoordinator { WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 5000 } };
     var transport = new _captureTransport();
     var tracker = new IntegrityGapTracker();
     var sp = _provider(coordinator, transport,
@@ -317,8 +314,8 @@ public class IntegrityManifestReceptorTests {
       ChunkCount = 1,
     });
 
-    var bulk = transport.Published.Single(p => p.EnvelopeType?.Contains(nameof(RequestRedeliveryCommand), StringComparison.Ordinal) == true);
-    await Assert.That(bulk.Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+    var (bulkEnvelope, _, _) = transport.Published.Single(p => p.EnvelopeType?.Contains(nameof(RequestRedeliveryCommand), StringComparison.Ordinal) == true);
+    await Assert.That(bulkEnvelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
       .Because("a whole-type backfill is the largest replay the framework asks for; it is background by definition");
   }
 
