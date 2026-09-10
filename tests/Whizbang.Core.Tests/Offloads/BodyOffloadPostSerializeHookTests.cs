@@ -256,6 +256,17 @@ public class BodyOffloadPostSerializeHookTests {
     }
   }
 
+  [Test]
+  public async Task RunAsync_AboveThreshold_TheClaimEnvelopeKeepsThePriorityAsync() {
+    var (hook, _) = _build(opts => { opts.ProviderName = "memory"; opts.SizeThresholdBytes = 100; });
+    var ctx = _buildContext(new byte[5_000], priority: 250);
+
+    var result = await hook.RunAsync(ctx, CancellationToken.None);
+
+    await Assert.That(result.NewEnvelope!.Priority).IsEqualTo(250)
+      .Because("the claim replaces the body, not the scheduling decision; the consumer classifies the claim like the original");
+  }
+
   private static (BodyOffloadPostSerializeHook hook, _captureStore store) _build(
       Action<MessageBodyOffloadOptions> configure, TransportMetrics? metrics = null,
       Whizbang.Core.Messaging.IWorkCoordinator? coordinator = null) {
@@ -276,8 +287,9 @@ public class BodyOffloadPostSerializeHookTests {
     return (hook, captureStore);
   }
 
-  private static PostSerializeContext _buildContext(byte[] bytes, long? transportMaxBytes = null) {
+  private static PostSerializeContext _buildContext(byte[] bytes, long? transportMaxBytes = null, int priority = 0) {
     var envelope = new MessageEnvelope<_testPayload> {
+      Priority = priority,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Outbox },
       MessageId = MessageId.New(),
       Payload = new _testPayload("x"),

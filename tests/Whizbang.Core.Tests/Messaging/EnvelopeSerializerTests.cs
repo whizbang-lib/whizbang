@@ -452,4 +452,22 @@ public partial class EnvelopeSerializerTests {
   [JsonSerializable(typeof(object))]
   internal sealed partial class EnvelopeTestJsonContext : JsonSerializerContext {
   }
+
+  /// <summary>Priority step 1 on the wire: the conversion to storage form carries the declared number.</summary>
+  [Test]
+  public async Task SerializeEnvelope_CarriesThePriorityIntoTheStorageFormAsync() {
+    var serializer = new EnvelopeSerializer(_createTestJsonOptions());
+    var envelope = new MessageEnvelope<EnvelopeTestMsg> {
+      MessageId = MessageId.New(),
+      Payload = new EnvelopeTestMsg("TestValue"),
+      Hops = [_createTestHop()],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Priority = 250,
+    };
+
+    var result = serializer.SerializeEnvelope(envelope);
+
+    await Assert.That(result.JsonEnvelope.Priority).IsEqualTo(250)
+      .Because("every path that stores or ships an envelope goes through this conversion; a number dropped here never reaches a row");
+  }
 }

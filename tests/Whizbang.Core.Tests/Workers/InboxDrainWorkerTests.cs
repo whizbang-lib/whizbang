@@ -110,7 +110,7 @@ public class InboxDrainWorkerTests {
 
   private static readonly JsonSerializerOptions _jsonOpts = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
-  private static InboxBatchRow _row(Guid messageId, Guid streamId) {
+  private static InboxBatchRow _row(Guid messageId, Guid streamId, int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -132,10 +132,48 @@ public class InboxDrainWorkerTests {
       Attempts = 0,
       PartitionNumber = 0,
       IsEvent = false,
+      Priority = priority,
     };
   }
 
   // --- tests ---
+
+  /// <summary>
+  /// Priority step 1 on the wire: the row's number is the consumer's classification; the stored envelope may
+  /// predate it (or carry the producer's declaration). The work item AND its envelope carry the row's number,
+  /// because the handler and the inheritance rule read the envelope, not the row.
+  /// </summary>
+  [Test]
+  public async Task InboxDrainWorker_StampsTheRowsPriorityOnTheEnvelopeAsync() {
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    var coord = new FakeWorkCoordinator();
+    coord.RowsByStream[streamId] = [_row(msgId, streamId, priority: 250)];
+    var drain = new FakeInboxDrainChannel();
+    var inbox = new CapturingInboxChannel { TargetCount = 1 };
+    var gate = new SchemaReadyGate();
+    gate.MarkReady();
+    var services = new ServiceCollection();
+    services.AddSingleton<IWorkCoordinator>(coord);
+    var sp = services.BuildServiceProvider();
+    var worker = new InboxDrainWorker(
+      sp.GetRequiredService<IServiceScopeFactory>(),
+      new FakeServiceInstanceProvider(), drain, inbox, gate,
+      Options.Create(new InboxDrainWorkerOptions { Enabled = true, MaxPerStream = 100 }),
+      _jsonOpts,
+      NullLogger<InboxDrainWorker>.Instance);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drain.WriteAsync(streamId);
+    _ = await Task.WhenAny(inbox.ReachedCount.Task, Task.Delay(TimeSpan.FromSeconds(15)));
+    cts.Cancel();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    var work = inbox.Written.Single();
+    await Assert.That(work.Priority).IsEqualTo(250);
+    await Assert.That(work.Envelope.Priority).IsEqualTo(250)
+      .Because("the dispatch worker enters the handling from the envelope's number; a blank there breaks inheritance for everything the handler emits");
+  }
 
   [Test]
   public async Task InboxDrainWorker_OnStreamId_FetchesBatch_FeedsInboxChannelInOrderAsync() {

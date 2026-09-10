@@ -1744,8 +1744,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var message in messages) {
       sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
 
-      // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops, Target, StateOnly)
-      sb.AppendLine("  var properties = new JsonPropertyInfo[5];");
+      // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops, Target, StateOnly, Priority)
+      sb.AppendLine("  var properties = new JsonPropertyInfo[6];");
       sb.AppendLine();
 
       // Property 0: MessageId using snippet - JSON name is "id" per [JsonPropertyName] on MessageEnvelope
@@ -1805,6 +1805,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, $"(obj, value) => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).StateOnly = value");
       sb.AppendLine(stateOnlyProperty);
+      sb.AppendLine();
+
+      // Property 5: Priority ("pri") — priority step 1. The number the producer declared rides the typed
+      // receive like Target and StateOnly; a factory that drops it hands every typed envelope to the consumer
+      // undeclared. Omitted when zero, the same as the attribute-honoring MessageEnvelope<JsonElement> shape.
+      var priorityProperty = propertyCreationSnippet
+          .Replace(PLACEHOLDER_INDEX, "5")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, "int")
+          .Replace(PLACEHOLDER_PROPERTY_NAME, "Priority")
+          .Replace(PLACEHOLDER_JSON_PROPERTY_NAME, "pri")
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace(PLACEHOLDER_SETTER, $"(obj, value) => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).Priority = value");
+      sb.AppendLine(priorityProperty);
+      sb.AppendLine("  properties[5].ShouldSerialize = static (_, value) => value is int priority && priority != 0;");
       sb.AppendLine();
 
       // Constructor parameters using snippet

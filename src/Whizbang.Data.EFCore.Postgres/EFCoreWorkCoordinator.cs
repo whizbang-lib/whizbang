@@ -3840,7 +3840,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // consumer's inbox via identity-preserving composites).
     cmd.CommandText = $@"
       SELECT message_id, stream_id, destination, message_type, envelope_type,
-             event_data::text, metadata::text, is_event, scheduled_for
+             event_data::text, metadata::text, is_event, scheduled_for, priority
       FROM {tableName}
       WHERE coalesce_group = @p_group AND processed_at IS NULL
       ORDER BY created_at
@@ -3883,6 +3883,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         ScheduledFor = await reader.IsDBNullAsync(8, cancellationToken).ConfigureAwait(false)
           ? null
           : reader.GetFieldValue<DateTimeOffset>(8),
+        Priority = reader.GetInt32(9),   // priority step 1: the ship worker folds the singles' numbers into the composite
         CoalesceGroup = group,
       });
     }
@@ -4904,6 +4905,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     } catch (IndexOutOfRangeException) {
       // Older fetch_outbox_batch without Slice 1's error column — leave Error null.
     }
+    // Priority step 1 (151): the row's number; a fetch_outbox_batch that predates 151 leaves it undeclared and the
+    // drain falls back to the number stored inside the envelope.
+    var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new OutboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -4930,6 +4934,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Error = hasErrorCol && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetString(errorOrdinal)
           : null,
+        Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : Whizbang.Core.Priority.WorkPriority.UNDECLARED,
       });
     }
     return results;

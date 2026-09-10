@@ -752,7 +752,7 @@ public static class JsonContextRegistry {
     JsonTypeInfo<TBase> _payloadTypeInfo)
     where TBase : class {
     // Create property metadata - the key is specifying PropertyTypeInfo for Payload
-    var properties = new JsonPropertyInfo[3];
+    var properties = new JsonPropertyInfo[4];
 
     properties[0] = _createProperty<ValueObjects.MessageId, MessageEnvelope<TBase>>(
       _options,
@@ -773,6 +773,15 @@ public static class JsonContextRegistry {
       "Hops",
       obj => obj.Hops?.ToList() ?? [],
       null);
+
+    // Priority step 1: hand-built metadata names every field it carries; a number it does not name is dropped
+    // on every round trip. Omitted when zero, like the attribute-honoring shape.
+    properties[3] = _createProperty<int, MessageEnvelope<TBase>>(
+      _options,
+      "Priority",
+      obj => obj.Priority,
+      (obj, value) => obj.Priority = value);
+    properties[3].ShouldSerialize = static (_, value) => value is int priority && priority != 0;
 
     // Constructor parameters for deserialization
     var ctorParams = new JsonParameterInfoValues[] {

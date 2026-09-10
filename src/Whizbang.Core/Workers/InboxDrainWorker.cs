@@ -544,7 +544,13 @@ public sealed partial class InboxDrainWorker(
       ?? throw new InvalidOperationException("No JsonTypeInfo for MessageEnvelope<JsonElement>.");
     var envelope = JsonSerializer.Deserialize(row.EventData, typeInfo) as IMessageEnvelope<JsonElement>
       ?? throw new InvalidOperationException($"Failed to deserialize envelope for inbox message {row.MessageId}.");
-
+    // Priority step 1 on the wire: the row's number is the consumer's classification, and the envelope the handler
+    // and the inheritance rule read carries the same number (a fan-out hands it to every child). A row fetched
+    // before the column existed keeps what its envelope stored.
+    var priority = Whizbang.Core.Priority.WorkPriority.FirstDeclared(row.Priority, envelope.Priority);
+    if (envelope is MessageEnvelope<JsonElement> concrete) {
+      concrete.Priority = priority;
+    }
     return new InboxWork {
       MessageId = row.MessageId,
       Envelope = envelope,
@@ -556,7 +562,7 @@ public sealed partial class InboxDrainWorker(
       Status = (MessageProcessingStatus)row.Status,
       Flags = WorkBatchOptions.None,
       Error = row.Error,
-      Priority = row.Priority,
+      Priority = priority,
     };
   }
 

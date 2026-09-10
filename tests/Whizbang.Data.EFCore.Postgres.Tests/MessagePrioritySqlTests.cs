@@ -81,6 +81,14 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
     await cmd.ExecuteNonQueryAsync();
   }
 
+  private static async Task _leaseOutboxAsync(NpgsqlConnection conn, Guid messageId, Guid instance) {
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "UPDATE wh_outbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+    cmd.Parameters.AddWithValue("inst", instance);
+    cmd.Parameters.AddWithValue("id", messageId);
+    await cmd.ExecuteNonQueryAsync();
+  }
+
   private static async Task _leaseInboxAsync(NpgsqlConnection conn, Guid messageId, Guid instance) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
@@ -117,6 +125,24 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
 
     await Assert.That(await _priorityAsync(conn, "wh_outbox", "message_id", declared)).IsEqualTo(30);
     await Assert.That(await _priorityAsync(conn, "wh_outbox", "message_id", undeclared)).IsEqualTo(WorkPriority.STANDARD);
+  }
+
+  [Test]
+  public async Task FetchOutboxBatch_ReturnsTheRowsPriorityAsync() {
+    await using var ctx = CreateDbContext();
+    var coordinator = _build(ctx);
+    var conn = await _openAsync(ctx);
+    var messageId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
+    var instance = Guid.CreateVersion7();
+    await coordinator.StoreOutboxMessagesAsync([_outbox(messageId, streamId, 250)], partitionCount: 100);
+    await _leaseOutboxAsync(conn, messageId, instance);
+
+    var rows = await coordinator.FetchOutboxBatchAsync([streamId], instance, maxPerStream: 10);
+
+    await Assert.That(rows.Count).IsEqualTo(1);
+    await Assert.That(rows[0].Priority).IsEqualTo(250)
+      .Because("the drain publishes the row's number on the wire envelope, so the fetch must carry it");
   }
 
   [Test]

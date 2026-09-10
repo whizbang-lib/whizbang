@@ -78,12 +78,13 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   }
 
   private static OutboxMessage _makeOutbox(
-      Guid msgId, Guid streamId, List<MessageHop> hops, bool isEvent = false, string? destination = "orders-topic") {
+      Guid msgId, Guid streamId, List<MessageHop> hops, bool isEvent = false, string? destination = "orders-topic", int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
       JsonDocument.Parse("{\"k\":1}").RootElement,
-      hops);
+      hops) { Priority = priority };
     return new OutboxMessage {
+      Priority = priority,
       MessageId = msgId,
       Destination = destination,
       Envelope = envelope,
@@ -97,12 +98,13 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
   }
 
   private static InboxMessage _makeInbox(
-      Guid msgId, Guid streamId, List<MessageHop> hops, string messageType = "Test.X, Test") {
+      Guid msgId, Guid streamId, List<MessageHop> hops, string messageType = "Test.X, Test", int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement>(
       MessageId.From(msgId),
       JsonDocument.Parse("{\"p\":1}").RootElement,
-      hops);
+      hops) { Priority = priority };
     return new InboxMessage {
+      Priority = priority,
       MessageId = msgId,
       HandlerName = "TestHandler",
       Envelope = envelope,
@@ -311,6 +313,45 @@ public class DapperWorkCoordinatorWithDataTests : PostgresTestBase {
     var rowB = rows.Single(r => r.MessageId == msgB);
     await Assert.That(rowB.IsEvent).IsTrue();
     await Assert.That(rowB.Error).IsNull();
+  }
+
+  /// <summary>Priority step 1 on the wire: the number stored on the row comes back on the fetched row, outbox and inbox.</summary>
+  [Test]
+  public async Task FetchOutboxBatchAsync_ReturnsTheRowsPriorityAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    await c.StoreOutboxMessagesAsync([_makeOutbox(msgId, streamId, _makeHops(streamId), priority: 250)], partitionCount: 100);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_outbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      new { i = instanceId, m = msgId });
+
+    var rows = await c.FetchOutboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+
+    await Assert.That(rows.Single().Priority).IsEqualTo(250)
+      .Because("the drain publishes the row's number; a fetch that drops it ships every message undeclared");
+  }
+
+  [Test]
+  public async Task FetchInboxBatchAsync_ReturnsTheRowsPriorityAsync() {
+    var c = _build();
+    var instanceId = (Guid)TrackedGuid.NewMedo();
+    var streamId = (Guid)TrackedGuid.NewMedo();
+    var msgId = (Guid)TrackedGuid.NewMedo();
+    await c.StoreInboxMessagesAsync([_makeInbox(msgId, streamId, _makeHops(streamId), priority: 250)], partitionCount: 100);
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync();
+    await conn.ExecuteAsync(
+      "UPDATE wh_inbox SET instance_id = @i, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @m",
+      new { i = instanceId, m = msgId });
+
+    var rows = await c.FetchInboxBatchAsync([streamId], instanceId, maxPerStream: 10);
+
+    await Assert.That(rows.Single().Priority).IsEqualTo(250)
+      .Because("the dispatch worker enters the handling with the row's number; inheritance reads it from there");
   }
 
   [Test]

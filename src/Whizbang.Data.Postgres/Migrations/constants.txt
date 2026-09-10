@@ -24,3 +24,6 @@ __ENVELOPE_FIELD_FLAGS__ = 'Flags'
 __CATEGORY_INBOX__ = 'inbox'
 __CATEGORY_OUTBOX__ = 'outbox'
 __CATEGORY_PERSPECTIVE__ = 'perspective'
+
+# The band a row nobody waits on is declared in: recovered, replayed, repaired and audit work (WorkPriority.BACKGROUND).
+__PRIORITY_BACKGROUND__ = 250

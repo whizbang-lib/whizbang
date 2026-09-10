@@ -374,6 +374,7 @@ public partial class DapperWorkCoordinator(
       PartitionNumber = r.partition_number,
       IsEvent = r.is_event,
       Error = r.error,
+      Priority = r.priority,
     })];
   }
 
@@ -418,6 +419,7 @@ public partial class DapperWorkCoordinator(
       PartitionNumber = r.partition_number,
       IsEvent = r.is_event,
       Error = r.error,
+      Priority = r.priority,
     })];
   }
 
@@ -508,6 +510,8 @@ public partial class DapperWorkCoordinator(
     public bool is_event { get; set; }
     // Slice 1 of release/v0.648.0-alpha.1 — see OutboxBatchRow.Error.
     public string? error { get; set; }
+    // Priority step 1 (151): absent from a fetch_outbox_batch that predates 151, which Dapper leaves at zero.
+    public int priority { get; set; }
   }
 
   private sealed class InboxBatchRowDto {
@@ -523,6 +527,7 @@ public partial class DapperWorkCoordinator(
     public int? partition_number { get; set; }
     public bool is_event { get; set; }
     public string? error { get; set; }
+    public int priority { get; set; }
   }
 
   private sealed class PendingPerspectiveEventDto {
