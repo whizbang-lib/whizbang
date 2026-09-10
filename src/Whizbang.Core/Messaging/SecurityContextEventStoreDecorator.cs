@@ -55,6 +55,7 @@ public sealed class SecurityContextEventStoreDecorator(IEventStore inner) : Forw
     var (correlation, causation) = CascadeContext.ResolveHopFirstIdentity(sourceEnvelope: null);
 
     var envelope = new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = MessageId.New(),
       Payload = message,
       Hops = [

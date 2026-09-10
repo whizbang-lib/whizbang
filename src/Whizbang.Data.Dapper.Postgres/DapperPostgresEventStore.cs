@@ -368,6 +368,7 @@ public class DapperPostgresEventStore(
   /// </summary>
   private static MessageEnvelope<TMessage> _createMinimalEnvelope<TMessage>(TMessage message) {
     return new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = MessageId.New(),
       Payload = message,
       Hops = [

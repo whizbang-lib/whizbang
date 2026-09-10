@@ -228,6 +228,7 @@ public class TransportManager(
     var scopeDelta = CascadeContext.ScopeDeltaFromMessageContext(context);
 
     return new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = context.MessageId,
       Payload = message,
       Hops = [
