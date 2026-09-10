@@ -179,6 +179,7 @@ public sealed class SystemEventEmitter(
 
     // Create envelope for the system event
     var envelope = new MessageEnvelope<TSystemEvent> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = MessageId.New(),
       Payload = systemEvent,
       Hops = [

@@ -215,37 +215,36 @@ public class ReceptorDiscoveryMalformedSourceTests {
   }
 
   /// <summary>
-  /// Characterizes a DEFECT, deliberately: unlike every sibling guard in this file, an
-  /// <c>[AwaitPerspectiveSync(typeof(Unresolvable))]</c> is NOT declined.
+  /// An unresolvable perspective type is still an <c>INamedTypeSymbol</c> (Roslyn hands the parser an
+  /// error symbol), so a guard that only checks the symbol kind lets the unresolved name flow into
+  /// <c>ReceptorRegistry.g.cs</c>: the author then sees CS0246 inside a generated file they cannot
+  /// open, on top of the one in their own file. The attribute is skipped instead, the way an
+  /// unresolvable [FireAt] stage and an unresolvable [DefaultRouting] mode already are, so the
+  /// output is byte-identical to the receptor with no attribute and the author has exactly one error.
   /// </summary>
-  /// <remarks>
-  /// Roslyn hands the generator an error-type symbol for <c>typeof(NoSuchPerspective)</c>, and
-  /// <c>_parseSingleSyncAttribute</c> accepts it where <c>_tryExtractFireAtStage</c> and
-  /// <c>_extractDefaultRouting</c> both reject their unresolvable counterparts. The unqualified
-  /// name is then copied verbatim into <c>ReceptorRegistry.g.cs</c>, which is exactly the
-  /// half-built registration this file's remarks say must never be emitted: the author gets
-  /// CS0246 inside a generated file they cannot open, on top of the CS0246 in their own.
-  ///
-  /// <para>
-  /// The test is named for what the generator does rather than for what it should do, and asserts
-  /// it, so the behavior is pinned and visible. When the parse guard is tightened to reject error
-  /// types, this test fails and is replaced by a call to
-  /// <c>_assertAttributeWasSkippedAsync("[AwaitPerspectiveSync(typeof(NoSuchPerspective))]")</c> —
-  /// the same assertion its siblings already use.
-  /// </para>
-  /// </remarks>
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task AwaitPerspectiveSyncWithAnUnresolvableType_LeaksTheNameIntoTheRegistryAsync() {
+  public async Task AwaitPerspectiveSyncWithAnUnresolvableType_IsSkippedWithoutCrashingAsync() {
     // typeof() of a name that has not been written yet, or was just deleted.
-    var result = _runFull(_withAttribute("[AwaitPerspectiveSync(typeof(NoSuchPerspective))]"));
+    var result = await _assertAttributeWasSkippedAsync("[AwaitPerspectiveSync(typeof(NoSuchPerspective))]");
+
+    await Assert.That(_emitted(result, "ReceptorRegistry.g.cs")).DoesNotContain("NoSuchPerspective")
+      .Because("the author's error stays in the author's file; a generated file must never repeat it");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task AwaitPerspectiveSyncWithAnUnresolvableEventType_DropsThatEventTypeWithoutCrashingAsync() {
+    // The same shape one level down: a resolvable perspective, and an EventTypes entry that does not exist.
+    var result = _runFull(
+      _withAttribute("[AwaitPerspectiveSync(typeof(OrderPerspective), EventTypes = new[] { typeof(NoSuchEvent) })]")
+      + "\npublic sealed class OrderPerspective { }\n");
 
     await _assertGeneratorSurvivedAsync(result.Diagnostics);
-
-    await Assert.That(_emitted(result, "ReceptorRegistry.g.cs")).Contains("typeof(NoSuchPerspective)")
-      .Because("DEFECT: the unresolved perspective type is emitted into the generated registry instead of being declined the way an unresolvable [FireAt] stage is");
-    await Assert.That(_emitted(result, "ReceptorRegistry.g.cs")).IsNotEqualTo(_noAttributeBaseline.Value.Registry)
-      .Because("stating the same defect the other way round: the output is NOT the no-attribute output, so the attribute was not skipped");
+    await Assert.That(_emitted(result, "ReceptorRegistry.g.cs")).Contains("OrderPerspective")
+      .Because("the perspective resolves, so the sync registration itself is kept");
+    await Assert.That(_emitted(result, "ReceptorRegistry.g.cs")).DoesNotContain("NoSuchEvent")
+      .Because("an unresolvable event type is dropped from the list, never copied into the registry");
   }
 
   [Test]

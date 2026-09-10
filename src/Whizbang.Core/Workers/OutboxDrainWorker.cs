@@ -1144,7 +1144,12 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
     // COALESCE: when wh_event_store.origin_service_id is non-null this event was 1:1
     // forwarded from another service — preserve the original identity. Otherwise the
     // event was originated locally; populate from the local wh_service_config.service_id.
+    // Priority step 1 on the wire: the row's number is authoritative; a row fetched before the column existed
+    // falls back to the number stored inside its envelope. The rebuilt wire envelope carries it, or every
+    // consumer receives the message undeclared and the producer's declaration never leaves this process.
+    var priority = row.Priority;
     if (envelope is MessageEnvelope<JsonElement> concrete) {
+      priority = Whizbang.Core.Priority.WorkPriority.FirstDeclared(row.Priority, concrete.Priority);
       var effectiveSourceId = row.OriginServiceId ?? _localServiceId;
       var effectiveCommitSeq = row.OriginCommitSequence ?? row.CommitSequence ?? 0L;
       envelope = new MessageEnvelope<JsonElement> {
@@ -1158,11 +1163,13 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
         SourceCommitSequence = effectiveCommitSeq,
         CausedByServiceId = concrete.CausedByServiceId,
         CausedByCommitSequence = concrete.CausedByCommitSequence,
+        Priority = priority,
       };
     }
 
     return new OutboxWork {
       MessageId = row.MessageId,
+      Priority = priority,
       Destination = row.Destination,
       Envelope = envelope,
       EnvelopeType = row.EnvelopeType ?? string.Empty,

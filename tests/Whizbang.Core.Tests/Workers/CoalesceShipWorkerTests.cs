@@ -9,6 +9,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Priority;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.Tests.Tags;
@@ -292,6 +293,66 @@ public class CoalesceShipWorkerTests {
       .Because("startup recovery released before the first tick ran");
   }
 
+
+  #region Composite priority
+
+  private static List<OutboxMessage> _mixedSingles() =>
+    [_single("test-topic", WorkPriority.BACKGROUND), _single("test-topic", WorkPriority.INTERACTIVE), _single("test-topic", WorkPriority.BACKGROUND)];
+
+  private async Task<OutboxMessage> _foldAsync(Action<CoalescePolicyOptions> configureBinding, List<OutboxMessage> singles) {
+    var (worker, coordinator, _) = _build(configureBinding);
+    coordinator.Stats = [_stats("record-digest", count: singles.Count, oldestAge: 40, newestAge: 20)];
+    coordinator.PendingSingles["record-digest"] = [.. singles];
+    await worker.RunOnceAsync(CancellationToken.None);
+    return coordinator.CompletedFolds[0].Composites[0];
+  }
+
+  /// <summary>
+  /// A minted composite carries a number folded from its members, on the row and inside the envelope: by default
+  /// the most urgent, the same rule the claim folds a stream with, so a bundle is never scheduled behind the
+  /// member somebody is waiting on.
+  /// </summary>
+  [Test]
+  public async Task RunOnce_DefaultFold_CompositeCarriesTheMostUrgentMemberAsync() {
+    var composite = await _foldAsync(c => c.SlideSeconds = 15, _mixedSingles());
+
+    await Assert.That(composite.Priority).IsEqualTo(WorkPriority.INTERACTIVE)
+      .Because("the row's number is what the drain and the store read");
+    await Assert.That(composite.Envelope.Priority).IsEqualTo(WorkPriority.INTERACTIVE)
+      .Because("the envelope's number is what crosses the wire and what the consumer's fan-out gives every child");
+  }
+
+  [Test]
+  public async Task RunOnce_LeastUrgentFold_CompositeCarriesTheLeastUrgentMemberAsync() {
+    var composite = await _foldAsync(c => c.PriorityFold = CompositePriorityFold.LeastUrgent, _mixedSingles());
+
+    await Assert.That(composite.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("a binding may decide the bundle waits for its slowest member; an audit digest is one");
+    await Assert.That(composite.Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND);
+  }
+
+  [Test]
+  public async Task RunOnce_ManualFold_CompositeCarriesTheBindingsNumberAsync() {
+    var composite = await _foldAsync(c => {
+      c.PriorityFold = CompositePriorityFold.Manual;
+      c.PriorityFor = batch => batch.Singles.Count * 10;
+    }, _mixedSingles());
+
+    await Assert.That(composite.Priority).IsEqualTo(30)
+      .Because("Manual hands the whole decision to the binding's callback, with the batch in hand");
+    await Assert.That(composite.Envelope.Priority).IsEqualTo(30);
+  }
+
+  [Test]
+  public async Task RunOnce_NoMemberDeclared_CompositeStaysUndeclaredAsync() {
+    var composite = await _foldAsync(c => c.SlideSeconds = 15, _singles(2));
+
+    await Assert.That(composite.Priority).IsEqualTo(WorkPriority.UNDECLARED)
+      .Because("the members were produced before the number existed; the consumer's rules classify the bundle, the worker does not invent a band");
+  }
+
+  #endregion
+
   #endregion
 
   #region Helpers
@@ -416,8 +477,9 @@ public class CoalesceShipWorkerTests {
   private static List<OutboxMessage> _singles(int count) =>
     [.. Enumerable.Range(0, count).Select(_ => _single("test-topic"))];
 
-  private static OutboxMessage _single(string destination) {
+  private static OutboxMessage _single(string destination, int priority = 0) {
     var envelope = new MessageEnvelope<JsonElement> {
+      Priority = priority,
       MessageId = MessageId.New(),
       Payload = JsonSerializer.SerializeToElement(new { record = "data" }),
       Hops = [],
@@ -433,7 +495,8 @@ public class CoalesceShipWorkerTests {
       IsEvent = false,
       MessageType = "TestNamespace.TestFoldedEvent, TestAssembly",
       CoalesceGroup = "record-digest",
-      ScheduledFor = _testNow.AddSeconds(60)
+      ScheduledFor = _testNow.AddSeconds(60),
+      Priority = priority,
     };
   }
 

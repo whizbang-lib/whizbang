@@ -58,4 +58,63 @@ public static class WorkPriority {
 
   /// <summary>Whether a number is a declaration (positive) rather than <see cref="UNDECLARED"/>.</summary>
   public static bool IsDeclared(int priority) => priority > UNDECLARED;
+
+  /// <summary>
+  /// The first of the two numbers somebody declared; <see cref="UNDECLARED"/> when neither was. The rule a
+  /// seam applies when it holds a row's number and the number stored inside the row's envelope: the row is
+  /// authoritative once it exists, and a row fetched before the column did falls back to the envelope.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:FirstDeclared_PrefersTheFirstNumberSomebodySetAsync</tests>
+  public static int FirstDeclared(int first, int second) => IsDeclared(first) ? first : second;
+
+  /// <summary>
+  /// The most urgent (lowest) declared number in the collection; <see cref="UNDECLARED"/> when none is declared.
+  /// The rule the claim folds a stream with and the default a minted composite takes from its members.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#the-c-api</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_IgnoreUndeclaredMembers_AndAgreeOnTheBandsAsync</tests>
+  public static int MostUrgent(IEnumerable<int> priorities) => _fold(priorities, static (held, next) => Math.Min(held, next));
+  /// <inheritdoc cref="MostUrgent(IEnumerable{int})"/>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync</tests>
+  public static int MostUrgent(IEnumerable<IPrioritized> items) => MostUrgent(_numbers(items));
+  /// <summary>The least urgent (highest) declared number in the collection; <see cref="UNDECLARED"/> when none is declared.</summary>
+  /// <docs>fundamentals/messaging/message-priority#the-c-api</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_IgnoreUndeclaredMembers_AndAgreeOnTheBandsAsync</tests>
+  public static int LeastUrgent(IEnumerable<int> priorities) => _fold(priorities, static (held, next) => Math.Max(held, next));
+  /// <inheritdoc cref="LeastUrgent(IEnumerable{int})"/>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync</tests>
+  public static int LeastUrgent(IEnumerable<IPrioritized> items) => LeastUrgent(_numbers(items));
+  /// <summary>The integer average of the declared numbers in the collection; <see cref="UNDECLARED"/> when none is declared.</summary>
+  /// <docs>fundamentals/messaging/message-priority#the-c-api</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_IgnoreUndeclaredMembers_AndAgreeOnTheBandsAsync</tests>
+  public static int Average(IEnumerable<int> priorities) {
+    ArgumentNullException.ThrowIfNull(priorities);
+    long sum = 0;
+    var declared = 0;
+    foreach (var priority in priorities.Where(IsDeclared)) {
+      sum += priority;
+      declared++;
+    }
+    return declared == 0 ? UNDECLARED : (int)(sum / declared);
+  }
+  /// <inheritdoc cref="Average(IEnumerable{int})"/>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/WorkPriorityTests.cs:Folds_AcceptAnythingPrioritized_NotOnlyNumbersAsync</tests>
+  public static int Average(IEnumerable<IPrioritized> items) => Average(_numbers(items));
+
+  private static int _fold(IEnumerable<int> priorities, Func<int, int, int> pick) {
+    ArgumentNullException.ThrowIfNull(priorities);
+    var held = UNDECLARED;
+    foreach (var priority in priorities) {
+      if (!IsDeclared(priority)) {
+        continue;   // nobody said; a fold never lets a blank outvote a declaration
+      }
+      held = IsDeclared(held) ? pick(held, priority) : priority;
+    }
+    return held;
+  }
+
+  private static IEnumerable<int> _numbers(IEnumerable<IPrioritized> items) {
+    ArgumentNullException.ThrowIfNull(items);
+    return items.Select(static item => item.Priority);
+  }
 }

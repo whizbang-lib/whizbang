@@ -469,8 +469,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // An unresolvable type is still an INamedTypeSymbol (Roslyn supplies an error symbol), so the kind
+    // alone does not prove the name exists. Reject error types the way the [FireAt] stage and the
+    // [DefaultRouting] mode parsers do: skipping the attribute keeps the receptor registered at its
+    // defaults and leaves the author with exactly one error, the one in their own file, instead of a
+    // second CS0246 inside a generated file they cannot open (issue 743).
     var perspectiveTypeArg = attribute.ConstructorArguments[0];
-    if (perspectiveTypeArg.Value is not INamedTypeSymbol perspectiveTypeSymbol) {
+    if (perspectiveTypeArg.Value is not INamedTypeSymbol { TypeKind: not TypeKind.Error } perspectiveTypeSymbol) {
       return null;
     }
 
@@ -482,8 +487,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     if (eventTypesArg.Value.Kind == TypedConstantKind.Array && !eventTypesArg.Value.IsNull) {
       var eventTypesList = new System.Collections.Generic.List<string>();
       foreach (var typeConstant in eventTypesArg.Value.Values) {
-        if (typeConstant.Value is INamedTypeSymbol eventTypeSymbol) {
-          eventTypesList.Add(TypeNameUtilities.FullyQualified(eventTypeSymbol));
+        if (typeConstant.Value is INamedTypeSymbol { TypeKind: not TypeKind.Error } eventTypeSymbol) {
+          eventTypesList.Add(TypeNameUtilities.FullyQualified(eventTypeSymbol));   // an unresolvable entry is dropped, never emitted
         }
       }
       if (eventTypesList.Count > 0) {

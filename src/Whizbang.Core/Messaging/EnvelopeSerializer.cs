@@ -76,7 +76,8 @@ public sealed class EnvelopeSerializer(JsonSerializerOptions? jsonOptions = null
       Target = envelope.Target,
       // State-only delivery survives the conversion too — losing it would re-fire triggers on
       // backfilled history (stream-integrity Phase S).
-      StateOnly = envelope.StateOnly
+      StateOnly = envelope.StateOnly,
+      Priority = envelope.Priority   // priority step 1: the storage form carries the declaration
     };
 
     return new SerializedEnvelope(

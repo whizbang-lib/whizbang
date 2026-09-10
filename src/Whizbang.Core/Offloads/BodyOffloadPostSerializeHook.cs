@@ -211,6 +211,7 @@ public sealed partial class BodyOffloadPostSerializeHook : IPostSerializeHook {
       SourceCommitSequence = original.SourceCommitSequence,
       CausedByServiceId = original.CausedByServiceId,
       CausedByCommitSequence = original.CausedByCommitSequence,
+      Priority = original.Priority,   // the claim replaces the body, not the scheduling decision
     };
   }
 

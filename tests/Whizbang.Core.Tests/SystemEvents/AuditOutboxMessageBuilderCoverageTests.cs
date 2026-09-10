@@ -55,6 +55,26 @@ public class AuditOutboxMessageBuilderCoverageTests {
              + "to find which stored row produced it");
   }
 
+  /// <summary>
+  /// The audit stream is background at the producer (priority step 1): audit projections catch up once
+  /// user-facing work settles, and thousands of audit rows queued in an outbox must not ride the number of
+  /// the events they describe. Observed on a deployment: 9,500 audit rows at the standard number in one
+  /// outbox during a bulk import.
+  /// </summary>
+  [Test]
+  public async Task TryBuildAuditMessage_DeclaresTheAuditEventBackgroundAsync() {
+    var options = new SystemEventOptions().EnableEventAudit();
+    var source = _outboxEventWithMessageType(typeof(PerspectiveCoverageGapDetected).AssemblyQualifiedName!);
+
+    var built = AuditOutboxMessageBuilder.TryBuildAuditMessage(source, options, new CapturingLogger());
+
+    await Assert.That(built).IsNotNull();
+    await Assert.That(built!.Priority).IsEqualTo(Whizbang.Core.Priority.WorkPriority.BACKGROUND)
+      .Because("the row's number is what the claim and the drain read");
+    await Assert.That(built.Envelope.Priority).IsEqualTo(Whizbang.Core.Priority.WorkPriority.BACKGROUND)
+      .Because("the wire envelope is what every consumer of the audit stream reads");
+  }
+
   private static (OutboxMessage? Value, Exception? Error) _record(Func<OutboxMessage?> build) {
     try {
       return (build(), null);

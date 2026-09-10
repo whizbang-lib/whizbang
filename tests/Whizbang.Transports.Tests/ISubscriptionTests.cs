@@ -1,128 +1,102 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using TUnit.Core;
 using Whizbang.Core.Transports;
+using Whizbang.Core.Workers;
 
 namespace Whizbang.Transports.Tests;
 
 /// <summary>
-/// Tests for ISubscription interface.
-/// Represents an active subscription to a transport that can be controlled.
-/// Following TDD: These tests are written BEFORE the interface implementation.
+/// The contract every <see cref="ISubscription"/> keeps: active on creation, inactive after a pause, active again
+/// after a resume, inactive for good after a dispose, and idempotent under a repeated pause, resume or dispose.
+/// Abstract so that it runs against real subscriptions only: a test that exercised a fake declared in the same
+/// file verified nothing but the fake. Each transport that ships a subscription inherits this class and creates
+/// its own.
 /// </summary>
-public class ISubscriptionTests {
+/// <tests>src/Whizbang.Core/Transports/ISubscription.cs</tests>
+public abstract class ISubscriptionContractTests {
+  /// <summary>A live subscription from the transport under test.</summary>
+  protected abstract Task<ISubscription> CreateSubscriptionAsync();
+
   [Test]
   public async Task ISubscription_Dispose_UnsubscribesAsync() {
-    // Arrange
-    var subscription = _createTestSubscription();
+    var subscription = await CreateSubscriptionAsync();
     _ = subscription.IsActive;
 
-    // Act
     subscription.Dispose();
 
-    // Assert
     await Assert.That(subscription.IsActive).IsFalse();
   }
 
   [Test]
   public async Task ISubscription_Pause_SetsIsActiveFalseAsync() {
-    // Arrange
-    var subscription = _createTestSubscription();
+    var subscription = await CreateSubscriptionAsync();
 
-    // Act
     await subscription.PauseAsync();
 
-    // Assert
     await Assert.That(subscription.IsActive).IsFalse();
   }
 
   [Test]
   public async Task ISubscription_Resume_SetsIsActiveTrueAsync() {
-    // Arrange
-    var subscription = _createTestSubscription();
+    var subscription = await CreateSubscriptionAsync();
     await subscription.PauseAsync();
 
-    // Act
     await subscription.ResumeAsync();
 
-    // Assert
     await Assert.That(subscription.IsActive).IsTrue();
   }
 
   [Test]
   public async Task ISubscription_InitialState_IsActiveAsync() {
-    // Arrange & Act
-    var subscription = _createTestSubscription();
+    var subscription = await CreateSubscriptionAsync();
 
-    // Assert
     await Assert.That(subscription.IsActive).IsTrue();
   }
 
   [Test]
   public async Task ISubscription_DisposeMultipleTimes_DoesNotThrowAsync() {
-    // Arrange
-    var subscription = _createTestSubscription();
+    var subscription = await CreateSubscriptionAsync();
 
-    // Act - repeat disposal must neither throw nor undo the first one
+    // A repeated dispose must neither throw nor undo the first one.
     subscription.Dispose();
     subscription.Dispose();
     subscription.Dispose();
 
-    // Assert - still unsubscribed; a Dispose that toggled would resurrect a dead subscription
-    await Assert.That(subscription.IsActive).IsFalse();
+    await Assert.That(subscription.IsActive).IsFalse()
+      .Because("a Dispose that toggled would resurrect a dead subscription");
   }
 
   [Test]
   public async Task ISubscription_PauseWhenPaused_DoesNotThrowAsync() {
-    // Arrange
-    var subscription = _createTestSubscription();
+    var subscription = await CreateSubscriptionAsync();
     await subscription.PauseAsync();
 
-    // Act - pausing an already-paused subscription must not throw...
     await subscription.PauseAsync();
 
-    // Assert - ...and must not toggle it back to active
-    await Assert.That(subscription.IsActive).IsFalse();
+    await Assert.That(subscription.IsActive).IsFalse()
+      .Because("pausing an already-paused subscription must not toggle it back to active");
   }
 
   [Test]
   public async Task ISubscription_ResumeWhenActive_DoesNotThrowAsync() {
-    // Arrange
-    var subscription = _createTestSubscription();
+    var subscription = await CreateSubscriptionAsync();
 
-    // Act - resuming an already-active subscription must not throw...
     await subscription.ResumeAsync();
 
-    // Assert - ...and must leave it active
-    await Assert.That(subscription.IsActive).IsTrue();
+    await Assert.That(subscription.IsActive).IsTrue()
+      .Because("resuming an already-active subscription must leave it active");
   }
+}
 
-  // Helper methods
-  private static TestSubscription _createTestSubscription() {
-    // This will use a test implementation once ISubscription is defined
-    // For now, this will fail compilation - that's expected in RED phase
-    return new TestSubscription();
-  }
-
-  // Test implementation
-  private sealed class TestSubscription : ISubscription {
-    public bool IsActive { get; private set; } = true;
-
-#pragma warning disable CS0067 // Event never used - required by ISubscription interface
-    public event EventHandler<SubscriptionDisconnectedEventArgs>? OnDisconnected;
-#pragma warning restore CS0067
-
-    public Task PauseAsync() {
-      IsActive = false;
-      return Task.CompletedTask;
-    }
-
-    public Task ResumeAsync() {
-      IsActive = true;
-      return Task.CompletedTask;
-    }
-
-    public void Dispose() {
-      IsActive = false;
-    }
+/// <summary>The contract, run against the in-process transport's subscription.</summary>
+[InheritsTests]
+public sealed class InProcessSubscriptionContractTests : ISubscriptionContractTests {
+  protected override async Task<ISubscription> CreateSubscriptionAsync() {
+    var transport = new InProcessTransport();
+    return await transport.SubscribeBatchAsync(
+      static (_, _) => Task.CompletedTask,
+      new TransportDestination("contract-topic"),
+      new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 });
   }
 }

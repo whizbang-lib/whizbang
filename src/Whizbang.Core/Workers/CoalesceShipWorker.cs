@@ -6,6 +6,7 @@ using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Minting;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Priority;
 using Whizbang.Core.Security;
 using Whizbang.Core.Tags;
 using Whizbang.Core.ValueObjects;
@@ -230,8 +231,14 @@ public sealed partial class CoalesceShipWorker(
         // Scope-uniform and destination-uniform by construction (see GroupKey), so any constituent
         // answers for the bundle.
         var first = plan.Constituents[0];
+        // Priority step 1: the composite carries a number folded from its members, per the binding's rule.
+        var priority = FoldPriority(binding, new CoalesceFoldBatch {
+          Group = group,
+          Singles = plan.Constituents,
+          Atomicity = binding.Atomicity
+        });
         var compositeMessage = _buildCompositeOutboxMessage(
-          serializer, plan.Composite, first.Destination, _scopeOf(first));
+          serializer, plan.Composite, first.Destination, _scopeOf(first), priority);
 
         await coordinator.CompleteCoalesceFoldAsync(
           [.. plan.Constituents.Select(m => m.MessageId)],
@@ -270,12 +277,36 @@ public sealed partial class CoalesceShipWorker(
     };
   }
 
+  /// <summary>
+  /// The number a minted composite carries, folded from its members by the binding's
+  /// <see cref="CoalescePolicyOptions.PriorityFold"/>: the most urgent member by default (the rule the claim
+  /// folds a stream with), the least urgent, or the binding's own <see cref="CoalescePolicyOptions.PriorityFor"/>
+  /// callback. A Manual binding without a callback leaves the composite undeclared, so the consumer's rules
+  /// classify it; the worker never invents a band. The members were declared through the producer hooks when
+  /// they were produced, so the fold is a function of their numbers and consults no hook of its own.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#composites</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_DefaultFold_CompositeCarriesTheMostUrgentMemberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_LeastUrgentFold_CompositeCarriesTheLeastUrgentMemberAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/CoalesceShipWorkerTests.cs:RunOnce_ManualFold_CompositeCarriesTheBindingsNumberAsync</tests>
+  internal static int FoldPriority(CoalescePolicyOptions binding, CoalesceFoldBatch batch) {
+    ArgumentNullException.ThrowIfNull(binding);
+    ArgumentNullException.ThrowIfNull(batch);
+    return binding.PriorityFold switch {
+      CompositePriorityFold.LeastUrgent => WorkPriority.LeastUrgent(batch.Singles),
+      CompositePriorityFold.Manual => binding.PriorityFor?.Invoke(batch) ?? WorkPriority.UNDECLARED,
+      _ => WorkPriority.MostUrgent(batch.Singles),
+    };
+  }
+
   private OutboxMessage _buildCompositeOutboxMessage(
       IEnvelopeSerializer serializer,
       CompositeEventBase composite,
       string? destination,
-      ScopeDelta? scope) {
+      ScopeDelta? scope,
+      int priority) {
     var envelope = new MessageEnvelope<CompositeEventBase> {
+      Priority = priority,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = composite,
       Hops = [
@@ -311,7 +342,8 @@ public sealed partial class CoalesceShipWorker(
       // composite must not re-enter the event store. CoalesceGroup stays null BY DESIGN —
       // the composite ships immediately, never back into the pool it just drained.
       IsEvent = false,
-      MessageType = serialized.MessageType
+      MessageType = serialized.MessageType,
+      Priority = priority
     };
   }
 

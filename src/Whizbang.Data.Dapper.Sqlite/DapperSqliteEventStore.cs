@@ -90,6 +90,7 @@ public class DapperSqliteEventStore(
 
     // Create a minimal envelope - registry-based lookup would require constructor injection
     var envelope = new MessageEnvelope<TMessage> {
+      Priority = Whizbang.Core.Priority.PriorityContext.CurrentParent,   // priority step 1: declared from the handling in progress, undeclared outside one
       MessageId = MessageId.New(),
       Payload = message,
       Hops = [

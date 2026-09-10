@@ -56,6 +56,10 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       ["causation_id"] = JsonDocument.Parse(causationIdJson).RootElement.Clone(),
       ["hops"] = JsonDocument.Parse(hopsJson).RootElement.Clone()
     };
+    // Priority step 1: the number lives in the metadata column, omitted when undeclared (the wire's convention).
+    if (Whizbang.Core.Priority.WorkPriority.IsDeclared(source.Priority)) {
+      metadataDict["pri"] = JsonDocument.Parse(source.Priority.ToString(System.Globalization.CultureInfo.InvariantCulture)).RootElement.Clone();
+    }
 
     var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in WhizbangJsonContext.");
     var metadataJson = JsonSerializer.Serialize(metadataDict, metadataDictTypeInfo);
@@ -127,7 +131,10 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       MessageId = Core.ValueObjects.MessageId.From(messageId),
       Payload = (TMessage)payload,
       Hops = hops,
-      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local }
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Outbox, Source = MessageSource.Local },
+      Priority = metadataDict.TryGetValue("pri", out var pri) && pri.ValueKind == JsonValueKind.Number
+        ? pri.GetInt32()
+        : Whizbang.Core.Priority.WorkPriority.UNDECLARED,
     };
   }
 

@@ -5955,6 +5955,10 @@ public record BulkImported(IReadOnlyList<IMessage> Items) : ICompositeEvent {
       .Because("Phase S: state-only must survive the typed receive");
     await Assert.That(contextCode).Contains("((MessageEnvelope<global::MyApp.Events.BulkImported>)obj).Target = value")
       .Because("directed delivery must survive the typed receive");
+    await Assert.That(contextCode).Contains("((MessageEnvelope<global::MyApp.Events.BulkImported>)obj).Priority = value")
+      .Because("priority step 1: the number must survive the typed receive, or every typed envelope arrives undeclared");
+    await Assert.That(contextCode).Contains("\"pri\"")
+      .Because("the wire name is pri, the same the attribute-honoring MessageEnvelope<JsonElement> shape writes");
   }
 
   [Test]

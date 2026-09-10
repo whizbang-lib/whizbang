@@ -67,6 +67,7 @@ public sealed partial class IntegrityCheckpointWorker(
   /// <summary>One checkpoint cycle: advance the watermark, publish the window (empty included).</summary>
   public async Task RunCheckpointOnceAsync(CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
+    using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
     var coordinator = scope.ServiceProvider.GetService<IWorkCoordinator>();
     var dispatcher = scope.ServiceProvider.GetService<IDispatcher>();
     if (coordinator is null || dispatcher is null) {
@@ -210,6 +211,7 @@ public sealed partial class IntegrityCheckpointWorker(
 
     var instanceProvider = services.GetService<IServiceInstanceProvider>();
     var envelope = new MessageEnvelope<IntegrityCheckpoint> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = checkpoint,
       Hops = [

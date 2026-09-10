@@ -15,6 +15,7 @@ using Whizbang.Core.Lifecycle;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives.Sync;
+using Whizbang.Core.Priority;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -254,6 +255,68 @@ public class IntegrityManifestReceptorTests {
     await Assert.That(transport.Published[0].Envelope.Target).IsEqualTo("origin-svc");
     await Assert.That(command.StateOnly).IsFalse()
       .Because("audit repair is REPAIR semantics — the delivery a live subscriber missed, receptors and all.");
+  }
+
+  /// <summary>
+  /// Priority step 1: every request the manifest receptor sends to an origin is background by construction, on the
+  /// envelope it publishes. A repair replays history to this service, a drill-down asks for more detail, a bulk
+  /// backfill is the largest replay the framework asks for; none of them may be served ahead of the origin's live work.
+  /// </summary>
+  [Test]
+  public async Task ManifestReceptor_Divergence_TheRepairRequestIsBackgroundAsync() {
+    var mismatched = TrackedGuid.NewMedo().Value;
+    var coordinator = new _auditCoordinator { ReceivedDigests = [_digest(mismatched, 99, 21, 1)] };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairDrainEnabled = false, RepairMode = IntegrityRepairMode.AutoRepairCapped, MaxAutoRepairRequestsPerAudit = 1, PublishReportEvents = true },
+      new _captureDispatcher(), tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_digest(mismatched, 11, 21, 2)]));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    await Assert.That(transport.Published[0].Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("the repair replays history to this service; the origin must not serve it ahead of its live work, and the replay must arrive here declared background");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TypeLevelMismatch_TheDrillDownRequestIsBackgroundAsync() {
+    var coordinator = new _auditCoordinator { ReceivedTypeDigests = [_typeDigest("Contracts.TypeX", 99, 42, 4)] };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { MaxDrillDownTypesPerAudit = 1, PublishReportEvents = true }, new _captureDispatcher(), tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.TypeX", 41, 42, 5), _typeDigest("Contracts.TypeY", 51, 52, 2)], ManifestLevel.Types));
+
+    await Assert.That(transport.Published.Count).IsEqualTo(1);
+    await Assert.That(transport.Published[0].Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("a drill-down asks the origin for more detail on a mismatch; it is served from the origin's inbox behind live work");
+  }
+
+  [Test]
+  public async Task ManifestReceptor_TypeLevelBulkDeficit_TheBackfillRequestIsBackgroundAsync() {
+    var coordinator = new _auditCoordinator { WindowedTypeResult = new WindowedDigestResult { Digests = [], ComputedThrough = 5000 } };
+    var transport = new _captureTransport();
+    var tracker = new IntegrityGapTracker();
+    var sp = _provider(coordinator, transport,
+      new StreamIntegrityOptions { RepairMode = IntegrityRepairMode.AutoRepairCapped, PublishReportEvents = false, BulkBackfillThresholdEvents = 1000 }, tracker: tracker);
+    tracker.RecordCheckpoint(coordinator.OriginId, "origin-svc", DateTimeOffset.UtcNow, "origin.requests");
+    var receptor = new IntegrityManifestReceptor(sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<IntegrityManifestReceptor>.Instance);
+
+    await receptor.HandleAsync(_manifest(coordinator, [_typeDigest("Contracts.BigType", 41, 42, 2500)], ManifestLevel.Types) with {
+      SinceSequence = 0,
+      ComputedThrough = 5000,
+      ChunkCount = 1,
+    });
+
+    var (bulkEnvelope, _, _) = transport.Published.Single(p => p.EnvelopeType?.Contains(nameof(RequestRedeliveryCommand), StringComparison.Ordinal) == true);
+    await Assert.That(bulkEnvelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("a whole-type backfill is the largest replay the framework asks for; it is background by definition");
   }
 
   [Test]

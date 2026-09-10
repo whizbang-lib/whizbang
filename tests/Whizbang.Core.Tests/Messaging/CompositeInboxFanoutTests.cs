@@ -555,6 +555,22 @@ public class CompositeInboxFanoutTests {
       .Because("an empty composite is still a composite; misrouting it leaves the row uncommitted");
   }
 
+  /// <summary>A fan-out never re-decides the number: every child carries the composite's, on the envelope and the row.</summary>
+  [Test]
+  public async Task TryExpand_ChildrenCarryTheCompositesPriorityAsync() {
+    var composite = new _testComposite(new _innerEvent("J-001"), new _innerEvent("J-002"));
+    var source = _sourceEnvelope(Guid.NewGuid());
+    source.Priority = 250;
+
+    var result = CompositeInboxFanout.TryExpand(composite, source, _provider());
+
+    await Assert.That(result.Children.Count).IsEqualTo(2);
+    foreach (var child in result.Children) {
+      await Assert.That(child.Priority).IsEqualTo(250).Because("the row is what the claim reads");
+      await Assert.That(child.Envelope.Priority).IsEqualTo(250).Because("the envelope is what the handler and inheritance read");
+    }
+  }
+
   private static ServiceProvider _provider() =>
     new ServiceCollection()
       .AddSingleton<IEnvelopeSerializer>(new _fakeSerializer())

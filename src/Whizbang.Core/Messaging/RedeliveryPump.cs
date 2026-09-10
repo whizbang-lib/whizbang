@@ -192,6 +192,7 @@ public sealed class RedeliveryPump {
       ScopeDelta? scope,
       CancellationToken cancellationToken) {
     var wireEnvelope = new MessageEnvelope<RedeliveryComposite> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = composite,
       Hops = [

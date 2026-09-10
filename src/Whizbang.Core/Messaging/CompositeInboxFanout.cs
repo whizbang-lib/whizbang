@@ -352,6 +352,7 @@ public static partial class CompositeInboxFanout {
         CausedByServiceId = source.CausedByServiceId,
         CausedByCommitSequence = source.CausedByCommitSequence,
         StateOnly = source.StateOnly,
+        Priority = source.Priority,   // a fan-out never re-decides the number: every child carries the composite's
         Flags = EventFlags.NoRebroadcast,
       };
 
@@ -369,6 +370,7 @@ public static partial class CompositeInboxFanout {
       children.Add(new InboxMessage {
         MessageId = childEnvelope.MessageId.Value,
         HandlerName = TypeNameFormatter.GetSimpleName(wireTypeName) + "Handler",
+        Priority = source.Priority,
         Envelope = childEnvelope,
         EnvelopeType = EnvelopeTypeNameHelper.Format(wireTypeName),
         StreamId = childStreamId,
@@ -440,12 +442,14 @@ public static partial class CompositeInboxFanout {
       // Phase S: a state-only bundle's children are state-only too — event-stored and projected,
       // never fired at trigger receptors.
       StateOnly = source.StateOnly,
+      Priority = source.Priority,   // a fan-out never re-decides the number: every child carries the composite's
       // No-rebroadcast guard (Phase D): the child is confined to the inbox → event-store → local path.
       // The outbox-enqueue boundary drops any message whose source envelope carries this flag.
       Flags = EventFlags.NoRebroadcast,
     };
 
     var serialized = serializer.SerializeEnvelope(childEnvelope);
+    serialized.JsonEnvelope.Priority = source.Priority;   // the storage form carries it whatever the serializer copied
     var messageTypeName = serialized.MessageType;
 
     // Positive classification (#736): the IEvent marker is authoritative and the catalog can only add to
@@ -464,6 +468,7 @@ public static partial class CompositeInboxFanout {
     return new InboxMessage {
       MessageId = childEnvelope.MessageId.Value,
       HandlerName = handlerName,
+      Priority = source.Priority,
       Envelope = serialized.JsonEnvelope,
       EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,

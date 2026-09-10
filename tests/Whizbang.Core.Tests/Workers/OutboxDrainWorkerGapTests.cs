@@ -334,12 +334,14 @@ public class OutboxDrainWorkerGapTests {
 
   private static OutboxBatchRow _row(
       Guid messageId, Guid streamId, int attempts = 0,
-      Guid? originServiceId = null, long? originCommitSequence = null, long? commitSequence = null) {
+      Guid? originServiceId = null, long? originCommitSequence = null, long? commitSequence = null,
+      int priority = 0, int storedEnvelopePriority = 0) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
       Hops = [],
+      Priority = storedEnvelopePriority,
     };
     var typeInfo = _jsonOpts.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
       ?? throw new InvalidOperationException("Test setup: no JsonTypeInfo for MessageEnvelope<JsonElement>");
@@ -360,7 +362,48 @@ public class OutboxDrainWorkerGapTests {
       CommitSequence = commitSequence,
       OriginServiceId = originServiceId,
       OriginCommitSequence = originCommitSequence,
+      Priority = priority,
     };
+  }
+
+  private static async Task<MessageEnvelope<JsonElement>> _publishOneAsync(OutboxBatchRow row) {
+    var streamId = row.StreamId!.Value;
+    var coord = new GapWorkCoordinator { LocalServiceId = (Guid)TrackedGuid.NewMedo() };
+    coord.RowsByStream[streamId] = [row];
+    var drainChannel = new GapDrainChannel();
+    var publish = new GapPublishStrategy { TargetCount = 1 };
+    var worker = _worker(_sp(coord), drainChannel, new GapCompletionChannel(), new GapFailureChannel(),
+      new OutboxDrainWorkerOptions { Enabled = true }, publish);
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await drainChannel.WriteAsync(streamId);
+    await publish.ReachedCount.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await cts.CancelAsync();
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+    _ = publish.Published.TryDequeue(out var work);
+    return (MessageEnvelope<JsonElement>)work!.Envelope;
+  }
+
+  /// <summary>
+  /// Priority step 1 on the wire: the number the producer classified is stored on the outbox row, and the
+  /// envelope this worker publishes must carry it, or every consumer sees the message undeclared and bulk
+  /// work arrives standard. Observed on a deployment: a bulk import's fan-out stamped 250 on the producer's
+  /// outbox arrived at every other service at 150.
+  /// </summary>
+  [Test]
+  public async Task OutboxDrainWorker_PublishesTheRowsPriorityOnTheWireAsync() {
+    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo(), priority: 250));
+
+    await Assert.That(envelope.Priority).IsEqualTo(250)
+      .Because("the row's number is the producer's classification; the wire envelope is how the consumer learns it");
+  }
+
+  [Test]
+  public async Task OutboxDrainWorker_WithoutARowNumber_KeepsTheStoredEnvelopesPriorityAsync() {
+    var envelope = await _publishOneAsync(_row((Guid)TrackedGuid.NewMedo(), (Guid)TrackedGuid.NewMedo(), storedEnvelopePriority: 50));
+
+    await Assert.That(envelope.Priority).IsEqualTo(50)
+      .Because("a fetch that predates the column leaves the row at 0; the number serialized into the stored envelope still counts");
   }
 
   private static OutboxBatchRow _badRow(Guid messageId, Guid streamId, string eventData) =>

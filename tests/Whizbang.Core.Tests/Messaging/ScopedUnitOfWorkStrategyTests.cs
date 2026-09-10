@@ -2,118 +2,23 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using TUnit.Core;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
 /// Tests for ScopedUnitOfWorkStrategy.
-/// Includes all contract tests (manually copied) plus scoped strategy-specific behavior tests.
+/// Inherits the contract tests (IUnitOfWorkStrategyContractTests) and adds the scoped strategy's own behavior tests.
 /// Key behavior: Accumulates messages in single unit, flushes on DisposeAsync.
-/// NOTE: Contract tests manually copied instead of using [InheritsTests] due to TUnit issue with background tasks.
 /// </summary>
-public class ScopedUnitOfWorkStrategyTests {
-  private ScopedUnitOfWorkStrategy _createStrategy() {
+[InheritsTests]
+public class ScopedUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests {
+  /// <inheritdoc />
+  protected override IUnitOfWorkStrategy CreateStrategy() => _createStrategy();
+
+  private static ScopedUnitOfWorkStrategy _createStrategy() {
     return new ScopedUnitOfWorkStrategy();
-  }
-
-  // ========================================
-  // CONTRACT TESTS (manually copied from IUnitOfWorkStrategyContractTests)
-  // ========================================
-
-  [Test]
-  public async Task QueueMessageAsync_ReturnsNonEmptyGuidAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
-
-    var message = new TestMessage { Value = "test" };
-
-    // Act
-    var unitId = await strategy.QueueMessageAsync(message);
-
-    // Assert
-    await Assert.That(unitId).IsNotEqualTo(Guid.Empty);
-  }
-
-  [Test]
-  public async Task QueueMessageAsync_StoresMessageAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
-
-    var message = new TestMessage { Value = "test" };
-
-    // Act
-    var unitId = await strategy.QueueMessageAsync(message);
-    var messages = strategy.GetMessagesForUnit(unitId);
-
-    // Assert
-    await Assert.That(messages.Count).IsGreaterThanOrEqualTo(1);
-    await Assert.That(messages).Contains(message);
-  }
-
-  [Test]
-  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMappingAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
-
-    var message = new TestMessage { Value = "test" };
-
-    // Act
-    var unitId = await strategy.QueueMessageAsync(
-      message,
-      LifecycleStage.PreDistributeDetached
-    );
-    var lifecycleStages = strategy.GetLifecycleStagesForUnit(unitId);
-
-    // Assert
-    await Assert.That(lifecycleStages).ContainsKey(message);
-    await Assert.That(lifecycleStages[message]).IsEqualTo(LifecycleStage.PreDistributeDetached);
-  }
-
-  [Test]
-  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    var nonExistentUnitId = Guid.NewGuid();
-
-    // Act
-    var messages = strategy.GetMessagesForUnit(nonExistentUnitId);
-
-    // Assert
-    await Assert.That(messages.Count).IsEqualTo(0);
-  }
-
-  [Test]
-  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    var nonExistentUnitId = Guid.NewGuid();
-
-    // Act
-    var lifecycleStages = strategy.GetLifecycleStagesForUnit(nonExistentUnitId);
-
-    // Assert
-    await Assert.That(lifecycleStages.Count).IsEqualTo(0);
-  }
-
-  [Test]
-  public async Task CancelUnitAsync_ExistingUnit_RemovesUnitAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
-
-    var message = new TestMessage { Value = "test" };
-    var unitId = await strategy.QueueMessageAsync(message);
-
-    // Act
-    await strategy.CancelUnitAsync(unitId);
-    var messages = strategy.GetMessagesForUnit(unitId);
-
-    // Assert
-    await Assert.That(messages.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -137,30 +42,6 @@ public class ScopedUnitOfWorkStrategyTests {
     await Assert.That(messages.Count).IsEqualTo(1)
       .Because("canceling an id this scope never issued must not discard the work it did issue");
     await Assert.That(messages).Contains(message);
-  }
-
-  [Test]
-  public async Task OnFlushRequested_CanBeWiredAsync() {
-    // Arrange
-    await using var strategy = _createStrategy();
-    Guid? callbackUnitId = null;
-
-    strategy.OnFlushRequested += async (unitId, ct) => {
-      callbackUnitId = unitId;
-      await Task.CompletedTask;
-    };
-
-    var message = new TestMessage { Value = "test" };
-
-    // Act
-    var unitId = await strategy.QueueMessageAsync(message);
-
-    // Allow async operations to complete (some strategies flush immediately, others don't)
-    await Task.Delay(100);
-
-    // Assert - Callback was successfully wired (no exception thrown)
-    // Actual invocation timing varies by strategy (Immediate invokes immediately, others don't)
-    await Assert.That(unitId).IsNotEqualTo(Guid.Empty);
   }
 
   // ========================================

@@ -284,6 +284,7 @@ public sealed partial class IntegrityCheckpointReceptor(
     }
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = pending.TenantScope,

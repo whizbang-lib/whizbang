@@ -628,6 +628,21 @@ public partial class JsonContextRegistryTests {
   }
 
   [Test]
+  public async Task PolymorphicEnvelope_RoundTripsThePriorityAsync() {
+    JsonContextRegistry.RegisterDerivedType<IMessage, TestOrderPlacedEvent>("TestOrderPlacedEvent");
+    JsonContextRegistry.RegisterContext(PolymorphicCollectionTestJsonContext.Default);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<IMessage>(MessageId.New(), new TestOrderPlacedEvent(Guid.NewGuid(), "C"), []) { Priority = 250 };
+    var ti = JsonContextRegistry.GetPolymorphicEnvelopeTypeInfo<IMessage>(options);
+
+    var json = JsonSerializer.Serialize(envelope, ti!);
+    var back = JsonSerializer.Deserialize<MessageEnvelope<IMessage>>(json, ti!);
+
+    await Assert.That(back!.Priority).IsEqualTo(250)
+      .Because("the polymorphic metadata is hand-built; a number it does not name is dropped on every round trip");
+  }
+
+  [Test]
   public async Task NestedEventList_ExercisesIEventResolverBranch_RoundTripsAsync() {
     JsonContextRegistry.RegisterDerivedType<IMessage, TestEventWithEventList>("TestEventWithEventList");
     JsonContextRegistry.RegisterDerivedType<IEvent, TestOrderPlacedEvent>("TestOrderPlacedEvent");

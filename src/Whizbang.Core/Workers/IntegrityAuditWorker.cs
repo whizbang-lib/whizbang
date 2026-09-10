@@ -125,6 +125,7 @@ public sealed partial class IntegrityAuditWorker(
   /// </summary>
   private async Task<bool> _runAuditCoreAsync(bool forceSweep, CancellationToken cancellationToken) {
     await using var scope = _scopeFactory.CreateAsyncScope();
+    using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.BACKGROUND);   // system work nobody waits on: everything dispatched here inherits background
     var services = scope.ServiceProvider;
     var coordinator = services.GetService<IWorkCoordinator>();
     var dispatcher = services.GetService<IDispatcher>();
@@ -254,6 +255,7 @@ public sealed partial class IntegrityAuditWorker(
       // the comparator then compares legacy and the seal simply stays put.
       var since = sweep ? 0L : await coordinator.GetIntegritySealAsync(originId, cancellationToken).ConfigureAwait(false);
       var envelope = new MessageEnvelope<RequestIntegrityManifest> {
+        Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new RequestIntegrityManifest {
           RequesterService = requester,
