@@ -1122,7 +1122,8 @@ public static class WorkerPipelineExtensions {
         maxConcurrent: gateOptions.MaxConcurrent ?? WorkCoordinatorGateOptions.DefaultMaxConcurrent,
         acquireTimeoutMilliseconds: gateOptions.AcquireTimeoutMilliseconds,
         logger: sp.GetService<ILogger<WorkCoordinatorGate>>(),
-        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>());
+        metrics: sp.GetService<Whizbang.Core.Observability.WorkCoordinatorMetrics>(),
+        interactiveReserve: gateOptions.InteractiveReserve);
     });
   }
 }

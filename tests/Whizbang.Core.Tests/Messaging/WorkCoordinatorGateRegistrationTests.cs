@@ -41,6 +41,53 @@ public class WorkCoordinatorGateRegistrationTests {
   }
 
   [Test]
+  public async Task AddWhizbangWorkers_BindsTheInteractiveReserveFromConfigurationAsync() {
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:WorkCoordinatorGate:MaxConcurrent"] = "10",
+      ["Whizbang:WorkCoordinatorGate:InteractiveReserve"] = "3",
+    }).Build();
+    var services = _services(configuration);
+    services.AddWhizbangWorkers();
+
+    await using var provider = services.BuildServiceProvider();
+    var gate = provider.GetRequiredService<WorkCoordinatorGate>();
+
+    await Assert.That(gate.InteractiveReserve).IsEqualTo(3)
+      .Because("the documented option reaches the gate; the default of one tenth (here 1) would be a silent no-op");
+  }
+
+  [Test]
+  public async Task AddWhizbangWorkers_WithoutAnInteractiveReserve_HoldsOneTenthBackAsync() {
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:WorkCoordinatorGate:MaxConcurrent"] = "25",
+    }).Build();
+    var services = _services(configuration);
+    services.AddWhizbangWorkers();
+
+    await using var provider = services.BuildServiceProvider();
+    var gate = provider.GetRequiredService<WorkCoordinatorGate>();
+
+    await Assert.That(gate.InteractiveReserve).IsEqualTo(2)
+      .Because("one tenth of 25 rounded down; the reserve is adaptive to the cap, not a second knob to tune");
+  }
+
+  [Test]
+  public async Task AddWhizbangWorkers_WithInteractiveReserveZero_DisablesTheReserveAsync() {
+    var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+      ["Whizbang:WorkCoordinatorGate:MaxConcurrent"] = "10",
+      ["Whizbang:WorkCoordinatorGate:InteractiveReserve"] = "0",
+    }).Build();
+    var services = _services(configuration);
+    services.AddWhizbangWorkers();
+
+    await using var provider = services.BuildServiceProvider();
+    var gate = provider.GetRequiredService<WorkCoordinatorGate>();
+
+    await Assert.That(gate.InteractiveReserve).IsEqualTo(0)
+      .Because("zero is the operator's explicit word, not 'unset'");
+  }
+
+  [Test]
   public async Task AddWhizbangWorkers_WithoutConfiguration_KeepsTheDefaultsAsync() {
     var services = _services();
     services.AddWhizbangWorkers();
