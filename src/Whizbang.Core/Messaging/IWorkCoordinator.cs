@@ -2575,6 +2575,14 @@ public record WorkCoordinatorStatistics {
 }
 
 /// <summary>
+/// One inbox stream of a claim as the batch hook sees it (priority step 1): the stream's most urgent row, its
+/// oldest arrival and how many of its rows the batch holds, folded by the coordinator over the rows the claim
+/// returned for the stream.
+/// </summary>
+/// <docs>fundamentals/messaging/message-priority#hooks</docs>
+public sealed record InboxStreamFold(Guid StreamId, int FoldedPriority, DateTimeOffset? OldestReceivedAt, int PendingRows);
+
+/// <summary>
 /// Contains the results of a work batch poll including work items for this instance to process.
 /// </summary>
 public record WorkBatch {
@@ -2594,6 +2602,10 @@ public record WorkBatch {
   /// Each item represents a stream that needs perspective updates.
   /// </summary>
   public required List<PerspectiveWork> PerspectiveWork { get; init; }
+
+  /// <summary>The inbox streams of this claim folded for the batch hooks (priority step 1); empty when the coordinator does not fold.</summary>
+  /// <docs>fundamentals/messaging/message-priority#hooks</docs>
+  public IReadOnlyList<InboxStreamFold> InboxStreams { get; init; } = [];
 
   /// <summary>
   /// Stream IDs that have leased perspective events for this instance.

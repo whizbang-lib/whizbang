@@ -33,6 +33,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel;
   private readonly IOutboxDrainChannel? _outboxDrainChannel;
   private readonly IInboxDrainChannel? _inboxDrainChannel;
+  private readonly Whizbang.Core.Priority.PriorityHookChain? _priorityHooks;
   private readonly ClaimWorkerOptions _options;
   private readonly AdaptiveClaimWindow _claimWindow;
   private readonly ClaimCycleReport _cycleReport = new(repeatStreakThreshold: 8);
@@ -120,7 +121,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     SignalBusLivenessState? busLiveness = null,
     WorkCompletionMeter? completionMeter = null,
     ClaimChurnFeedback? churnFeedback = null,
-    TimeProvider? timeProvider = null) {
+    TimeProvider? timeProvider = null,
+    // Priority step 1: the batch hooks run over each claim's inbox streams before they reach the drain.
+    Whizbang.Core.Priority.PriorityHookChain? priorityHooks = null) {
+    _priorityHooks = priorityHooks;
 #pragma warning restore S107
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -611,10 +615,37 @@ public sealed partial class ClaimWorker : BackgroundService {
       }
     }
     if (_inboxDrainChannel is not null) {
-      foreach (var sid in batch.InboxStreamIds) {
+      foreach (var sid in _orderForDispatch(batch)) {
         await _inboxDrainChannel.WriteAsync(sid, ct);
       }
     }
+  }
+
+  /// <summary>
+  /// The order the claim's inbox streams reach the drain (priority step 1): the claim's own bucket order, unless
+  /// batch hooks are registered, in which case each stream's folded number (most urgent row, oldest arrival, rows
+  /// in the batch) is offered to the hooks and the streams are handed over by the adjusted number, stable within
+  /// equal numbers. A hook sets a stream's number, never a row's position, so per-stream order holds.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/ClaimWorkerPriorityBatchHookTests.cs</tests>
+  private List<Guid> _orderForDispatch(WorkBatch batch) {
+    if (_priorityHooks is null || _priorityHooks.IsEmpty || batch.InboxStreams.Count == 0) {
+      return batch.InboxStreamIds;
+    }
+    var now = _time.GetUtcNow();
+    var entries = batch.InboxStreams
+      .Select(s => new Whizbang.Core.Priority.PriorityBatchEntry(
+        s.StreamId, s.FoldedPriority, s.OldestReceivedAt is { } oldest ? now - oldest : TimeSpan.Zero, s.PendingRows))
+      .ToList();
+    var adjusted = new Dictionary<Guid, int>(entries.Count);
+    foreach (var entry in entries) {
+      adjusted[entry.StreamId] = _priorityHooks.Adjust(entry, entries);
+    }
+    return batch.InboxStreamIds
+      .Select((id, index) => (Id: id, Number: adjusted.TryGetValue(id, out var n) ? n : Whizbang.Core.Priority.WorkPriority.STANDARD, Index: index))
+      .OrderBy(x => x.Number).ThenBy(x => x.Index)
+      .Select(x => x.Id)
+      .ToList();
   }
 
   /// <summary>

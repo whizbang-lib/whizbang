@@ -2046,7 +2046,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       $"SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       $"envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp)";
+      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2084,7 +2084,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
           Attempts = reader.IsDBNull(10) ? null : reader.GetInt32(10),
           IsNewlyStored = reader.IsDBNull(11) ? null : reader.GetBoolean(11),
           IsOrphaned = reader.IsDBNull(12) ? null : reader.GetBoolean(12),
-          PerspectiveName = reader.IsDBNull(13) ? null : reader.GetString(13)
+          PerspectiveName = reader.IsDBNull(13) ? null : reader.GetString(13),
+          // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
+          Priority = reader.IsDBNull(14) ? null : reader.GetInt32(14),
+          ReceivedAt = reader.IsDBNull(15) ? null : reader.GetFieldValue<DateTimeOffset>(15)
         });
       }
       if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
@@ -2121,6 +2124,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       PerspectiveStreamIds = perspectiveStreamIds,
       OutboxStreamIds = outboxStreamIds,
       InboxStreamIds = inboxStreamIds,
+      InboxStreams = ClaimedInboxStreamFolder.Fold(rows),
       Outstanding = outstanding
     };
   }
@@ -5237,6 +5241,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
 /// Matches the function's return type structure.
 /// </summary>
 internal class WorkBatchRow {
+  /// <summary>150: the inbox row's effective priority; null for other sources.</summary>
+  [Column("priority")]
+  public int? Priority { get; set; }
+
+  /// <summary>150: the inbox row's arrival; null for other sources.</summary>
+  [Column("received_at")]
+  public DateTimeOffset? ReceivedAt { get; set; }
+
   [Column("instance_rank")]
   public int? InstanceRank { get; set; }
 
