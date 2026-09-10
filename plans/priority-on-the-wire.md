@@ -107,9 +107,14 @@ consumer rules a backstop rather than the mechanism.
       order lets it, otherwise it is recorded as not separately observed.
 - [x] Group E was green on first run: it composes seams that were already green (A and F); it is the guard that
       they compose, not a seam of its own.
-- [ ] Group D green (cycle M7)
+- [x] Group D green (cycle M7); the jsonb adapter and the Postgres store edits were reverted, their red observed
+      (cycle M7b), and restored (M7c). Full suite: 22,678 passed, 0 failed; Release build clean.
+- [x] Open issues folded in: #743 (red: the flipped characterization test and an event-type sibling, cycle N1;
+      green N2) and #742 (the unit-of-work suites inherit the contract, the subscription contract runs against the
+      in-process transport; the docs repository's tests map assesses link health and flagged both files on develop
+      and neither on the branch).
 - [x] docs: message-priority page gained "On the wire", "Composites", "The C# API", "Background work",
       "Producer boundaries outside the dispatcher", "End to end", four decisions, references
 - [x] host pattern doc: "How the number travels", "Composites", the API note, the audit tag row
 - [ ] PR, pr-health clean, merge, publish, host bump, live retest: import events at 250 at every consumer,
-      composites at 250, audit at 250
+      composites at 250, audit at 250 (the plan file is archived with the PR once the retest confirms)
