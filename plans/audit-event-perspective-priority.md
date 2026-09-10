@@ -1,5 +1,14 @@
 # Audit Event Perspective Priority
 
+> **Status.** Still open, on a different axis from what shipped. The message-priority work
+> (`plans/priority-and-composite-integrity.md`; docs `fundamentals/messaging/message-priority`) gives every
+> message a number, stores it on `wh_perspective_events` (migration 149), and makes the perspective claim take
+> the most urgent streams first with a floor for the background band (migration 150). That answers "the bulk
+> import's perspective work waits behind the interactive command's" for every perspective alike. The tier this
+> plan describes is per perspective (which projection, not which message): an audit projection of an
+> interactive event still runs at the event's number. If it is built, it rides on the same column and the
+> same claim ordering; it is not a second scheduling mechanism.
+
 ## Context
 
 The PerspectiveWorker drains `wh_perspective_events` via `process_work_batch`'s Phase 7 using a two-tier budget (`v_tier1_max = 70%` for small streams, remainder for large streams). Today, **all perspectives compete for the same event budget** — the tier split is based on per-stream volume, not on the semantic importance of the perspective.

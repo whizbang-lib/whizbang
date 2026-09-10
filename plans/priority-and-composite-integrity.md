@@ -76,6 +76,34 @@ Order: 1, 2, 3 (the composite pipeline is where the measured damage is), 4, 5, 6
   (`MessagePrioritySqlTests`). `Priority` properties exist on `OutboxMessage`, `InboxMessage`,
   `InboxBatchRow` and `InboxWork` as skeletons.
 
-- [ ] 1 #737  - [ ] 2 #736  - [ ] 3 #738  - [ ] 4 #740  - [ ] 5 #739  - [~] 6 #731  - [ ] 7 #741  - [ ] 8 #734
-- [ ] 9 step 1  - [ ] 10 step 2  - [ ] 11 step 3  - [ ] 12 step 4  - [ ] 13 step 6  - [ ] 14 steps 5 and 7 assessed
+- Steps 2, 3 and 4 prepared while step 1b's green run was in progress: red tests written (tag and classification
+  sugar; bucket-aware claim SQL, seven cases; gate interactive reserve), compile-only skeletons in place, and the
+  migration 150 generator drafted (claim_orphaned_inbox lanes rewritten from 148's text; claim_work re-emission
+  folded over held rows; the perspective claim selects the most urgent streams first). Decision recorded in the
+  docs: the interactive fold is a partial-index probe, not per-bucket counters; standard against background folds
+  by the head under load and by any pending row otherwise; the outbox claim stays FIFO (not in the proposal's claim
+  section). Steps 5, 6 and 7 assessed and deferred with reasons on the docs page (transport lanes ride on the
+  unreleased traffic-classes routing; notification coalescing needs a hook-level mechanism, not a policy binding
+  over the outbox fold; tenant fairness is the design's own second phase).
+
+- [x] 1 #737  - [x] 2 #736  - [x] 3 #738  - [x] 4 #740  - [x] 5 #739  - [x] 6 #731  - [x] 7 #741  - [x] 8 #734
+- Priority step 1 landed in two commits (types, hooks, chain, ambient parent, registration; then the dispatcher
+  declaring, both consumers classifying, the row storage in migration 149, the fetch and the drain carrying the
+  number, the dispatch worker entering it). Perspective work inherits the number where claim_work copies a
+  leased event into the event store, not at the commit (the first test drove the wrong path).
+- Step 3: red observed (five of seven fail on the FIFO claim); migration 150 generated from 148's and 145's
+  last words and linted; green run in progress with the existing claim suites.
+- Steps 2 and 4: red observed; green written (tag and classification hooks; the gate's shared plus reserve
+  semaphores). Step 3 green: seven of seven claim tests after two fixes (Postgres has no min(uuid); a test
+  seeded background streams past the wait target, which the promotion rule correctly took first).
+- Batch hook wiring (the hook existed but nothing invoked it): claim_work returns each inbox row's priority
+  and arrival (a result-set change, so the definition is dropped first), the coordinator folds them per stream
+  into WorkBatch.InboxStreams, and the claim worker runs the batch hooks over the folds and hands the streams
+  to the drain in the adjusted order. SQL red observed; the Core red is in the current cycle.
+- Gate option: the docs named `WorkCoordinatorGateOptions.InteractiveReserve` before the pipeline read it; three
+  registration tests (bound value, the one-tenth default, zero disables) drive the option through to the gate.
+  The default rounds down: the holder-diagnostics suite showed a two-permit gate losing half its permits to a
+  rounded-up reserve, so a gate under ten permits reserves nothing unless configured.
+
+- [x] 9 step 1  - [~] 10 step 2  - [~] 11 step 3  - [~] 12 step 4  - [x] 13 step 6 assessed (deferred)  - [x] 14 steps 5 and 7 assessed (deferred)
 - [ ] docs branch and PR  - [ ] PR open, `Invoke-PrHealth` clean
