@@ -12,6 +12,7 @@
 --   create. Signatures are unchanged except fetch_inbox_batch's result set, which gains a trailing column.
 -- Dependencies: 146_DoorbellsRingAfterCommit, 140_LockFreeDoorbellProbes, 091_DrainFetchByteBudget, 022_StorePerspectiveEvents
 -- Objects: wh_inbox.priority, wh_outbox.priority, wh_perspective_events.priority, store_inbox_messages, store_outbox_messages, fetch_inbox_batch, _emit_event_store_chain, _emit_event_store_chain_for_inbox
+-- Constants: the __TOKEN__ names in this file (for example __EMPTY_UUID__) are substituted from Migrations/constants.txt at apply time (README rule 12).
 
 ALTER TABLE __SCHEMA__.wh_inbox ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 150;
 ALTER TABLE __SCHEMA__.wh_outbox ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 150;

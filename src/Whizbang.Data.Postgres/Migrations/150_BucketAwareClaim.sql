@@ -10,6 +10,7 @@
 --   claim_orphaned_perspective_events selects the most urgent streams first. Signatures are unchanged.
 -- Dependencies: 149_MessagePriority, 148_ActiveStreamLeases, 145_BoundedAcquisitionRewrite
 -- Objects: idx_inbox_pending_interactive, idx_inbox_pending_arrival_standard, idx_inbox_pending_arrival_background, claim_orphaned_inbox, claim_work (result set: + priority, received_at), claim_orphaned_perspective_events
+-- Constants: the __TOKEN__ names in this file (for example __EMPTY_UUID__) are substituted from Migrations/constants.txt at apply time (README rule 12).
 
 CREATE INDEX IF NOT EXISTS idx_inbox_pending_interactive
   ON __SCHEMA__.wh_inbox (stream_id, received_at, message_id)
