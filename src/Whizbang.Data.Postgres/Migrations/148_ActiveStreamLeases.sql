@@ -14,7 +14,7 @@
 --   handler keeps the whole stream and not only the row it is on. Signatures are unchanged.
 -- Dependencies: 145_BoundedAcquisitionRewrite, 115_TagBoundCoalescing, 140_LockFreeDoorbellProbes, 029_ProcessWorkBatch, 007_CreateActiveStreamsTable
 -- Objects: claim_orphaned_inbox, claim_orphaned_outbox, claim_orphaned_perspective_events, renew_leases
--- Constants: the __TOKEN__ names in this file (for example __EMPTY_UUID__) are substituted from Migrations/constants.txt at apply time (README rule 12).
+-- Constants: the double-underscore tokens in this file (for example __EMPTY_UUID__) are substituted from Migrations/constants.txt at apply time (README rule 12).
 
 -- ---------------------------------------------------------------------------------------------
 -- claim_orphaned_inbox: last word 145_BoundedAcquisitionRewrite.sql, plus the stream lease.
