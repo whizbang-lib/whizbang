@@ -50,6 +50,20 @@ public class IntegrityManifestReceptorRegistrarTests {
     }
   }
 
+  /// <summary>
+  /// An <see cref="IServiceProvider"/> that records what was asked of it. Resolving an absent
+  /// optional dependency leaves no other trace, so this is how a test tells "looked and found
+  /// nothing" apart from "never looked".
+  /// </summary>
+  private sealed class ProbingServiceProvider(IServiceProvider inner) : IServiceProvider {
+    public List<Type> Requested { get; } = [];
+
+    public object? GetService(Type serviceType) {
+      Requested.Add(serviceType);
+      return inner.GetService(serviceType);
+    }
+  }
+
   private static IntegrityManifestReceptorRegistrar _registrar(IServiceProvider services)
     => new(
       services,
@@ -61,9 +75,15 @@ public class IntegrityManifestReceptorRegistrarTests {
   public async Task StartAsync_WithoutAReceptorRegistry_StartsCleanlyAsync() {
     // A host that references the data package but runs no dispatch has no registry. It
     // must start rather than fail — the receptors simply have nowhere to attach.
-    var services = new ServiceCollection().BuildServiceProvider();
+    var services = new ProbingServiceProvider(new ServiceCollection().BuildServiceProvider());
 
     await _registrar(services).StartAsync(CancellationToken.None);
+
+    // The probe is what keeps "started cleanly" from being vacuous: a StartAsync that returned
+    // before ever looking for the registry would also not throw, and would silently stop
+    // registering the receptors on hosts that DO have one.
+    await Assert.That(services.Requested).Contains(typeof(IReceptorRegistry))
+      .Because("the registry must be resolved optionally, and the absence handled, not skipped");
   }
 
   [Test]

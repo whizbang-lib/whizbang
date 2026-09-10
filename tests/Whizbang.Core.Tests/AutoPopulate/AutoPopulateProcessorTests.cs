@@ -488,8 +488,13 @@ public class AutoPopulateProcessorTests {
     // Act - should not throw
     processor.ProcessAutoPopulate(envelope, typeof(TestAutoPopulateMessage));
 
-    // Assert - no hop was added
-    await Task.CompletedTask;
+    // Assert - the null-Hops guard exists so the processor returns BEFORE reaching AddHop. There
+    // is a live registration here, so without the guard the SentAt value would be extracted and
+    // the processor would try to append a hop to a list that does not exist. Hops staying null is
+    // the evidence that it returned early rather than materializing a list on the way past.
+    await Assert.That(envelope.Hops).IsNull()
+      .Because("an envelope with no hop list has no current hop to read context from — the pass "
+             + "must be skipped, not repaired by inventing a hop list");
   }
 
   [Test]

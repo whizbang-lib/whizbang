@@ -393,10 +393,43 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
     latest.Value.SnapshotData.Dispose();
   }
 
+  /// <summary>
+  /// Pruning a stream that has no snapshots must be scoped to that stream. The DELETE keeps rows via
+  /// <c>sequence_number NOT IN (…)</c>, and an empty target is exactly the shape where a broken outer
+  /// WHERE would silently take the whole table with it — so an unrelated populated stream is the
+  /// control that makes "nothing happened" observable.
+  /// </summary>
   [Test]
-  public async Task PruneOldSnapshotsAsync_NoSnapshots_DoesNotThrowAsync() {
-    // Should not throw when there are no snapshots
-    await _store.PruneOldSnapshotsAsync(TrackedGuid.NewMedo().Value, "TestPerspective", keepCount: 5);
+  public async Task PruneOldSnapshotsAsync_NoSnapshots_LeavesOtherStreamsIntactAsync() {
+    var populatedStream = TrackedGuid.NewMedo().Value;
+    var emptyStream = TrackedGuid.NewMedo().Value;
+    const string perspectiveName = "OrderPerspective";
+
+    var eventIds = new List<Guid>();
+    for (var i = 0; i < 3; i++) {
+      var eventId = TrackedGuid.NewMedo().Value;
+      eventIds.Add(eventId);
+      await _store.CreateSnapshotAsync(populatedStream, perspectiveName, eventId,
+        JsonDocument.Parse($$$"""{"v": {{{i + 1}}}}"""));
+    }
+
+    // Act - prune a stream that has no snapshots at all
+    await _store.PruneOldSnapshotsAsync(emptyStream, perspectiveName, keepCount: 5);
+
+    // Assert - the empty stream is still empty...
+    await Assert.That(await _store.HasAnySnapshotAsync(emptyStream, perspectiveName)).IsFalse();
+
+    // ...and the unrelated stream kept every snapshot, oldest included.
+    await Assert.That(await _store.HasAnySnapshotAsync(populatedStream, perspectiveName)).IsTrue();
+
+    var latest = await _store.GetLatestSnapshotAsync(populatedStream, perspectiveName);
+    await Assert.That(latest!.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(3);
+    latest.Value.SnapshotData.Dispose();
+
+    var oldest = await _store.GetLatestSnapshotBeforeAsync(populatedStream, perspectiveName, eventIds[1]);
+    await Assert.That(oldest).IsNotNull();
+    await Assert.That(oldest!.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(1);
+    oldest.Value.SnapshotData.Dispose();
   }
 
   [Test]
@@ -442,9 +475,31 @@ public class DapperPerspectiveSnapshotStoreTests : IDisposable {
     await Assert.That(hasAny).IsFalse();
   }
 
+  /// <summary>
+  /// Deleting the snapshots of a stream that has none must be scoped to that stream. The unrelated
+  /// populated stream is the control: without it, "did not throw" is equally true of a DELETE that
+  /// emptied the whole table.
+  /// </summary>
   [Test]
-  public async Task DeleteAllSnapshotsAsync_NoSnapshots_DoesNotThrowAsync() {
-    await _store.DeleteAllSnapshotsAsync(TrackedGuid.NewMedo().Value, "TestPerspective");
+  public async Task DeleteAllSnapshotsAsync_NoSnapshots_LeavesOtherStreamsIntactAsync() {
+    var populatedStream = TrackedGuid.NewMedo().Value;
+    var emptyStream = TrackedGuid.NewMedo().Value;
+    const string perspectiveName = "OrderPerspective";
+
+    await _store.CreateSnapshotAsync(populatedStream, perspectiveName, TrackedGuid.NewMedo().Value,
+      JsonDocument.Parse("""{"v": 1}"""));
+
+    // Act - delete snapshots for a stream that has none
+    await _store.DeleteAllSnapshotsAsync(emptyStream, perspectiveName);
+
+    // Assert
+    await Assert.That(await _store.HasAnySnapshotAsync(emptyStream, perspectiveName)).IsFalse();
+    await Assert.That(await _store.HasAnySnapshotAsync(populatedStream, perspectiveName)).IsTrue()
+      .Because("the delete is scoped by stream_id; an empty target must not take other streams with it");
+
+    var latest = await _store.GetLatestSnapshotAsync(populatedStream, perspectiveName);
+    await Assert.That(latest!.Value.SnapshotData.RootElement.GetProperty("v").GetInt32()).IsEqualTo(1);
+    latest.Value.SnapshotData.Dispose();
   }
 
   [Test]

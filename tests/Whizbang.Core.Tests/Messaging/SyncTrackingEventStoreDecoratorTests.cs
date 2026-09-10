@@ -381,8 +381,13 @@ public class SyncTrackingEventStoreDecoratorTests {
     await Assert.That(eventsC[0].EventId).IsEqualTo(messageId.Value);
   }
 
+  /// <summary>
+  /// Sync tracking is optional; persistence is not. With no sync tracker wired the decorator must
+  /// still forward the append to the inner store — dropping the event instead would silently lose
+  /// writes in every host that does not use perspective sync.
+  /// </summary>
   [Test]
-  public async Task AppendAsync_NoSyncEventTracker_DoesNotThrowAsync() {
+  public async Task AppendAsync_NoSyncEventTracker_StillForwardsToInnerStoreAsync() {
     var inner = new InMemoryEventStore();
     var typeRegistry = new TrackedEventTypeRegistry(new Dictionary<Type, string> {
       { typeof(TestEvent), "TestPerspective" }
@@ -397,15 +402,26 @@ public class SyncTrackingEventStoreDecoratorTests {
         typeRegistry);
 
     var streamId = Guid.NewGuid();
+    var messageId = MessageId.New();
     var envelope = new MessageEnvelope<TestEvent> {
-      MessageId = MessageId.New(),
+      MessageId = messageId,
       Payload = new TestEvent("test"),
       Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown, Timestamp = DateTimeOffset.UtcNow }],
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local }
     };
 
-    // Should not throw
+    // Act - must not throw with no sync tracker wired
     await decorator.AppendAsync(streamId, envelope);
+
+    // Assert - and, more than not throwing, the event reached the inner store
+    var stored = new List<MessageEnvelope<TestEvent>>();
+    await foreach (var read in inner.ReadAsync<TestEvent>(streamId, 0L)) {
+      stored.Add(read);
+    }
+
+    await Assert.That(stored).Count().IsEqualTo(1);
+    await Assert.That(stored[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(stored[0].Payload.Value).IsEqualTo("test");
   }
 
   [Test]

@@ -746,8 +746,13 @@ public class ScopedWorkCoordinatorStrategyTests {
       .ThrowsExactly<ObjectDisposedException>();
   }
 
+  /// <summary>
+  /// Repeated disposal is not merely non-throwing: the disposal drain must persist queued work
+  /// exactly once. A second drain would write the same outbox row again, which is a duplicate
+  /// publish downstream — so the queued message is what makes "idempotent" observable here.
+  /// </summary>
   [Test]
-  public async Task DisposeAsync_CalledMultipleTimes_DoesNotThrowAsync() {
+  public async Task DisposeAsync_CalledMultipleTimes_FlushesQueuedWorkExactlyOnceAsync() {
     // Arrange
     var fakeCoordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
@@ -755,12 +760,18 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
 
+    _queueTestOutboxMessage(sut);
+
     // Act - Dispose multiple times
     await sut.DisposeAsync();
     await sut.DisposeAsync();
     await sut.DisposeAsync();
 
-    // Assert - Should not throw
+    // Assert - the drain reached the coordinator (so the count below is not vacuously zero) and
+    // it reached it exactly once across three disposals.
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
+      .Because("repeated disposal must not re-persist already-drained outbox work");
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
   }
 
   // ========================================
@@ -1347,7 +1358,15 @@ public class ScopedWorkCoordinatorStrategyTests {
     // Act - DisposeAsync should catch the exception, not throw
     await sut.DisposeAsync();
 
-    // Assert - no exception was thrown (test passes if we reach here)
+    // Assert - the drain really reached the throwing coordinator. Without this the test would still
+    // pass if the flush helper stopped calling the store at all: no exception would be raised, the
+    // catch block under test would never run, and "did not throw" would be true for the wrong reason.
+    await Assert.That(throwingCoordinator.StoreAttempts).IsGreaterThan(0)
+      .Because("the catch block under test is only exercised if the disposal drain calls the store");
+
+    // Assert - swallowing the flush failure still leaves the strategy disposed, not half-disposed.
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchOptions.None))
+      .ThrowsExactly<ObjectDisposedException>();
   }
 
   // ========================================
@@ -1542,19 +1561,29 @@ public class ScopedWorkCoordinatorStrategyTests {
   /// Used to test DisposeAsync catch block (lines 238-241).
   /// </summary>
   private sealed class FakeThrowingWorkCoordinator : IWorkCoordinator {
+    /// <summary>
+    /// Store calls this fake received. Lets a test prove the failure seam was actually reached
+    /// rather than assuming a swallowed exception was ever raised.
+    /// </summary>
+    public int StoreAttempts { get; private set; }
+
     public Task StoreOutboxMessagesAsync(
       OutboxMessage[] messages,
       int partitionCount = 2,
-      CancellationToken cancellationToken = default) =>
+      CancellationToken cancellationToken = default) {
+      StoreAttempts++;
       throw new InvalidOperationException("Simulated database failure");
+    }
 
     public Task ReportPerspectiveCompletionAsync(PerspectiveCursorCompletion completion, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
     public Task ReportPerspectiveFailureAsync(PerspectiveCursorFailure failure, CancellationToken cancellationToken = default)
       => Task.CompletedTask;
 
-    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) =>
+    public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      StoreAttempts++;
       throw new InvalidOperationException("Simulated database failure");
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

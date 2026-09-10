@@ -62,10 +62,13 @@ public class ISubscriptionTests {
     // Arrange
     var subscription = _createTestSubscription();
 
-    // Act & Assert - Should not throw
+    // Act - repeat disposal must neither throw nor undo the first one
     subscription.Dispose();
     subscription.Dispose();
     subscription.Dispose();
+
+    // Assert - still unsubscribed; a Dispose that toggled would resurrect a dead subscription
+    await Assert.That(subscription.IsActive).IsFalse();
   }
 
   [Test]
@@ -74,8 +77,11 @@ public class ISubscriptionTests {
     var subscription = _createTestSubscription();
     await subscription.PauseAsync();
 
-    // Act & Assert - Should not throw
+    // Act - pausing an already-paused subscription must not throw...
     await subscription.PauseAsync();
+
+    // Assert - ...and must not toggle it back to active
+    await Assert.That(subscription.IsActive).IsFalse();
   }
 
   [Test]
@@ -83,8 +89,11 @@ public class ISubscriptionTests {
     // Arrange
     var subscription = _createTestSubscription();
 
-    // Act & Assert - Should not throw
+    // Act - resuming an already-active subscription must not throw...
     await subscription.ResumeAsync();
+
+    // Assert - ...and must leave it active
+    await Assert.That(subscription.IsActive).IsTrue();
   }
 
   // Helper methods

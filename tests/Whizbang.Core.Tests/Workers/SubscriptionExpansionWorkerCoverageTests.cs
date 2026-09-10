@@ -99,13 +99,23 @@ public class SubscriptionExpansionWorkerCoverageTests {
   /// on every boot instead of simply having nothing to reconcile with.</summary>
   [Test]
   public async Task RunOnceAsync_NoCoordinatorOrTypeProviderRegistered_ReturnsWithoutThrowingAsync() {
+    var transport = new _captureTransport();
+    var logger = new _capturingLogger();
     var services = new ServiceCollection();
-    // Deliberately nothing registered — schema-only / diagnostic composition.
-    var worker = _build(services);
+    // Deliberately no IWorkCoordinator and no IEventTypeProvider — schema-only / diagnostic
+    // composition. A transport IS present, so "nothing was broadcast" is a fact about the
+    // reconciler rather than about there being nowhere to broadcast to.
+    services.AddSingleton<ITransport>(transport);
+    var worker = _build(services, new StreamIntegrityOptions(), logger);
 
     await worker.RunOnceAsync(CancellationToken.None);
-    // No assertion beyond "did not throw" is needed — the point is the schema-only host's boot
-    // does not fault on a reconciler it has nothing to reconcile with.
+
+    await Assert.That(transport.Published).IsEmpty()
+      .Because("with nothing to reconcile against, a redelivery request would be broadcast on "
+             + "behalf of a catalog the host cannot even enumerate");
+    await Assert.That(logger.Entries).IsEmpty()
+      .Because("the return happens before any reconciliation decision — a baseline or "
+             + "'backfill disabled' entry here would mean the pass actually ran");
   }
 
   /// <summary>What breaks: a service that consumes zero event types (a pure command-only or

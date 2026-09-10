@@ -267,8 +267,24 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Arrange
     var executor = new SerialExecutor();
 
-    // Act & Assert - Should complete immediately without throwing
-    await executor.DrainAsync();
+    // Act - draining before the first StartAsync
+    var drain = executor.DrainAsync();
+    await drain;
+
+    // Assert - it really returned immediately (no worker to await, nothing queued)...
+    await Assert.That(drain.IsCompletedSuccessfully).IsTrue();
+
+    // ...and, crucially, the early return did NOT complete the channel writer: an executor that
+    // was drained before it started must still be startable and still accept work. Completing
+    // the writer here would make every later ExecuteAsync throw ChannelClosedException.
+    await executor.StartAsync();
+    var result = await executor.ExecuteAsync<int>(
+      CreateTestEnvelope("test"),
+      (_, _) => ValueTask.FromResult(42),
+      CreateTestContext());
+    await Assert.That(result).IsEqualTo(42);
+
+    await executor.StopAsync();
   }
 
   [Test]
@@ -377,19 +393,23 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Complete the work BEFORE stopping to avoid deadlock
     tcs.SetResult(42);
 
-    try {
-      await task; // Wait for work to complete
-    } catch {
-      // Work may have been canceled
-    }
+    // The queued work must finish normally: StopAsync cancels the worker token, so anything
+    // still in flight when the shutdown lands is what would surface as a canceled caller.
+    var completed = await task;
 
     // Stop executor (triggers cancellation of worker)
     await executor.StopAsync(cancellationToken);
 
-    // Drain should handle OperationCanceledException from worker (line 158)
-    await executor.DrainAsync(cancellationToken);
+    // Drain AFTER a stop: DrainAsync sees State.Stopped and returns without awaiting the worker,
+    // so a worker canceled by the stop can never fault the drain.
+    var drain = executor.DrainAsync(cancellationToken);
+    await drain;
 
-    // Assert - No exception should be thrown
+    // Assert
+    await Assert.That(completed).IsEqualTo(42)
+      .Because("work that finished before the stop must not be lost to the worker's cancellation");
+    await Assert.That(drain.IsCompletedSuccessfully).IsTrue()
+      .Because("draining a stopped executor is an immediate no-op, not a faulted await on a canceled worker");
   }
 
   [Test]

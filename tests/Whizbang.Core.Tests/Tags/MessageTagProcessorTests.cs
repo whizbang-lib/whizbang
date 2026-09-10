@@ -79,16 +79,27 @@ public class MessageTagProcessorTests {
 
   [Test]
   public async Task ProcessAsync_WithNoHooks_CompletesSuccessfullyAsync() {
-    // Arrange
+    // Arrange - a resolver IS wired, so the no-hooks claim is about the registration list being
+    // empty rather than about the resolver-less early return (which
+    // WithNeitherResolverNorScopeFactory_ItReturnsWithoutWorkAsync already pins).
+    var resolverCalls = 0;
     var options = new TagOptions();
-    var processor = new MessageTagProcessor(options);
+    var processor = new MessageTagProcessor(options, _ => {
+      resolverCalls++;
+      return null;
+    });
     var context = _createProcessContext<SignalTagAttribute>(
       new SignalTagAttribute { Tag = "test" },
       new { OrderId = "123" }
     );
 
-    // Act & Assert - no exception means success
+    // Act
     await processor.ProcessAsync(context, CancellationToken.None);
+
+    // Assert - with no hooks registered for the attribute the processor asks the container for
+    // nothing. Resolving speculatively is the per-message cost this path exists to avoid, and it
+    // is the only externally visible difference between "no hooks ran" and "no hooks were sought".
+    await Assert.That(resolverCalls).IsEqualTo(0);
   }
 
   [Test]

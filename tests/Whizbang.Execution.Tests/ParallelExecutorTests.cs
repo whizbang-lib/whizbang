@@ -339,8 +339,16 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Arrange
     var executor = new ParallelExecutor(maxConcurrency: 5);
 
-    // Act & Assert - Should complete immediately without throwing
-    await executor.DrainAsync();
+    // Act
+    var drainTask = executor.DrainAsync();
+
+    // Assert - "immediately" is the whole claim, and awaiting alone cannot check it: a drain that
+    // waited on the semaphore would also complete eventually here, and on a never-started
+    // executor it would hang forever instead. The sibling test above asserts the opposite —
+    // IsCompleted false while work is in flight — so this is the same observation, inverted.
+    await Assert.That(drainTask.IsCompleted).IsTrue()
+      .Because("draining an executor that was never started must not wait on anything");
+    await drainTask;
   }
 
   [Test]

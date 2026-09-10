@@ -134,15 +134,30 @@ public class SyncEventTrackerPartialCancellationTests {
   // ==========================================================================
 
   [Test]
-  public async Task UnregisterAwaiter_NonExistentId_DoesNothingAsync() {
+  public async Task UnregisterAwaiter_NonExistentId_LeavesRegisteredAwaitersIntactAsync() {
+    // Arrange - one genuinely registered awaiter, so "nothing happened" has something to be true of.
     var tracker = new SyncEventTracker();
-    var nonExistentId = Guid.NewGuid();
+    var eventId = Guid.NewGuid();
+    var streamId = Guid.NewGuid();
+    const string perspectiveName = "TestPerspective";
 
-    // Should not throw
-    tracker.UnregisterAwaiter(nonExistentId);
+    tracker.TrackEvent(typeof(TestEventA), eventId, streamId, perspectiveName);
 
-    // No exception thrown — test passes by reaching this point
-    await Task.CompletedTask;
+    var registeredAwaiterId = Guid.NewGuid();
+    var waiting = tracker.WaitForPerspectiveEventsAsync(
+        [eventId], perspectiveName, TimeSpan.FromSeconds(5), registeredAwaiterId);
+
+    // Act - unregister an ID that was never registered
+    tracker.UnregisterAwaiter(Guid.NewGuid());
+
+    // Assert - the real awaiter was not collaterally canceled. UnregisterAwaiter cancels the TCS it
+    // removes, so a cleanup that ignored the awaiter ID and swept the whole dictionary would show up
+    // here as a task that has already completed (with false).
+    await Assert.That(waiting.IsCompleted).IsFalse();
+
+    // ...and it still resolves normally once the event is marked processed.
+    tracker.MarkProcessedByPerspective([eventId], perspectiveName);
+    await Assert.That(await waiting).IsTrue();
   }
 
   // ==========================================================================

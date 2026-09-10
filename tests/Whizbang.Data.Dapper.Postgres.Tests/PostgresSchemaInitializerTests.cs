@@ -801,23 +801,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithDoubleQuoteInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a double quote tries to break out of the quoted identifier.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test\"_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    // Double quote injection: tries to break out of quoted identifier
-    var unsafeTableName = $"wh_per_test\"_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert - table with quotes should be skipped
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -825,22 +817,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithCommentInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a block comment tries to smuggle a second statement past the parser.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test/**/DROP TABLE wh_event_store/**/_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test/**/DROP TABLE wh_event_store/**/_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -849,22 +834,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithParenthesesInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — parentheses try to inject a function call.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test(SELECT 1)_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test(SELECT 1)_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -904,6 +882,25 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
     // Assert - should return false because the table name is unsafe
     await Assert.That(result).IsFalse();
 
+    // A false return alone does not say WHERE the rollback stopped — it is also what "no backup
+    // table found at all" returns. The falsifiable part is that the backup is untouched: without
+    // the _isSafeIdentifier guard the swap would run (ALTER TABLE IF EXISTS on the derived original
+    // is a no-op, then the backup gets renamed onto it) and this rollback would report true.
+    var backupStillExists = await conn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = @name)",
+      new { name = unsafeTableName });
+    await Assert.That(backupStillExists).IsTrue();
+
+    var promotedName = unsafeTableName[..unsafeTableName.LastIndexOf("_bak_", StringComparison.Ordinal)];
+    var promotedExists = await conn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = @name)",
+      new { name = promotedName });
+    await Assert.That(promotedExists).IsFalse();
+
+    var discardedCount = await conn.ExecuteScalarAsync<long>(
+      "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE '%\\_discarded\\_%'");
+    await Assert.That(discardedCount).IsEqualTo(0L);
+
     // Verify the event store was NOT dropped (injection didn't execute)
     var eventStoreExists = await conn.ExecuteScalarAsync<bool>(
       "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_event_store')");
@@ -942,22 +939,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithSingleQuoteInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a single quote is the classic SQL injection vector.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test' OR '1'='1_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test' OR '1'='1_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -965,22 +955,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithBackslashInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a backslash tries to escape the surrounding quote character.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test\\_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test\\_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -988,27 +971,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithNewlineInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a newline tries to break the statement boundary.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test\nDROP TABLE wh_event_store\n_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test\nDROP TABLE wh_event_store\n_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
-
-    // Verify event store was NOT dropped
-    var eventStoreExists = await conn.ExecuteScalarAsync<bool>(
-      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_event_store')");
-    await Assert.That(eventStoreExists).IsTrue();
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -1016,22 +987,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithDollarQuoteInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — dollar quoting tries to open a PostgreSQL string literal.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test$$DROP TABLE wh_event_store$$_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test$$DROP TABLE wh_event_store$$_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -1039,22 +1003,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithPipeConcatInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — the || concatenation operator tries to splice in an expression.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test||pg_sleep(5)||_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test||pg_sleep(5)||_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -1062,22 +1019,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithSpaceInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — whitespace tries to turn one identifier into several tokens.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test DROP TABLE wh_event_store_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test DROP TABLE wh_event_store_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -1085,22 +1035,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithBacktickInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a backtick is an identifier quote in other engines and must not be honored here.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test`_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test`_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -1108,45 +1051,37 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithPgSleepInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a pg_sleep call is the classic blind time-based probe.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test);SELECT pg_sleep(10);--_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test);SELECT pg_sleep(10);--_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
   /// Test 39: UNION SELECT injection — attempts to exfiltrate data.
   /// </summary>
+  /// <remarks>
+  /// The payload column list was shortened from <c>usename</c> to <c>u</c>: the original name was 66
+  /// bytes, so PostgreSQL truncated it to 63 and cut the <c>_bak_&lt;date&gt;</c> suffix down to
+  /// "20250711120". CleanupBackupsAsync then skipped the table at DateTime.TryParseExact and never
+  /// reached _isSafeIdentifier — this test passed for years without exercising the guard it names.
+  /// </remarks>
   [Test]
   public async Task CleanupBackupsAsync_WithUnionSelectInjection_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a UNION SELECT tries to exfiltrate rows from pg_user.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test UNION SELECT u FROM pg_user--_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test UNION SELECT usename FROM pg_user--_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -1154,22 +1089,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithDoubleDashComment_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — a double dash tries to comment out the rest of the statement.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test--_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test--_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert
-    await Assert.That(dropped).Count().IsEqualTo(0);
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -1177,31 +1105,15 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
   /// </summary>
   [Test]
   public async Task CleanupBackupsAsync_WithMixedInjectionAttack_SkipsItAsync() {
-    // Arrange
-    var initializer = new PostgresSchemaInitializer(_testConnectionString);
-    await initializer.InitializeSchemaAsync();
+    // Arrange & Act — quote break-out, statement terminator and line comment combined.
+    var probe = await _runInjectionCleanupProbeAsync($"wh_per_test\"; DROP TABLE wh_event_store; --_bak_{_oldBackupTimestamp()}");
 
-    await using var conn = new NpgsqlConnection(_testConnectionString);
-    await conn.OpenAsync();
-
-    var oldDate = DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
-    var unsafeTableName = $"wh_per_test\"; DROP TABLE wh_event_store; --_bak_{oldDate}";
-    await conn.ExecuteAsync($"CREATE TABLE \"{unsafeTableName.Replace("\"", "\"\"")}\" (id INT)");
-
-    // Also create a safe table to verify normal operation continues
-    await conn.ExecuteAsync($"CREATE TABLE wh_per_safe_bak_{oldDate} (id INT)");
-
-    // Act
-    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
-
-    // Assert - only safe table dropped, attack table skipped
-    await Assert.That(dropped).Count().IsEqualTo(1);
-    await Assert.That(dropped[0]).Contains("wh_per_safe_bak_");
-
-    // Verify event store survived the attack
-    var eventStoreExists = await conn.ExecuteScalarAsync<bool>(
-      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'wh_event_store')");
-    await Assert.That(eventStoreExists).IsTrue();
+    // Assert — the safe control backup was dropped, so the sweep really ran and reached the
+    // DROP; the crafted table survived, so _isSafeIdentifier is what turned it away.
+    await Assert.That(probe.Dropped).Count().IsEqualTo(1);
+    await Assert.That(probe.Dropped[0]).IsEqualTo(probe.SafeTableName);
+    await Assert.That(probe.CraftedTableStillExists).IsTrue();
+    await Assert.That(probe.EventStoreStillExists).IsTrue();
   }
 
   /// <summary>
@@ -1305,5 +1217,69 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
 
     Task<int> action() => cmd.ExecuteNonQueryAsync();
     await Assert.That(action).ThrowsNothing();
+  }
+  // --- Injection-probe helpers ---
+
+  /// <summary>
+  /// Timestamp suffix for a backup table old enough to be eligible for cleanup at olderThanDays: 30.
+  /// </summary>
+  private static string _oldBackupTimestamp() =>
+    DateTime.UtcNow.AddDays(-60).ToString("yyyyMMddHHmmss", System.Globalization.CultureInfo.InvariantCulture);
+
+  /// <summary>
+  /// What one <c>CleanupBackupsAsync</c> sweep did to a crafted backup table and to the safe control
+  /// backup created alongside it.
+  /// </summary>
+  /// <param name="Dropped">Table names the sweep reported dropping.</param>
+  /// <param name="SafeTableName">Name of the safe control backup, which the sweep must drop.</param>
+  /// <param name="CraftedTableStillExists">Whether the injection-named table survived the sweep.</param>
+  /// <param name="EventStoreStillExists">Whether <c>wh_event_store</c> — the target of most payloads — survived.</param>
+  private sealed record CleanupProbeResult(
+    IReadOnlyList<string> Dropped,
+    string SafeTableName,
+    bool CraftedTableStillExists,
+    bool EventStoreStillExists);
+
+  /// <summary>
+  /// Creates an old backup table whose name carries an injection payload, plus an equally old backup
+  /// with a safe name, then runs one <c>CleanupBackupsAsync</c> sweep and reports what survived.
+  /// </summary>
+  /// <remarks>
+  /// The safe backup is the control that makes the result falsifiable. On its own, "the sweep dropped
+  /// nothing" is satisfied just as well by a sweep that never ran, never matched the <c>_bak_</c> LIKE
+  /// pattern, or bailed at the date parse — so an empty result pins no behavior. With the control, a
+  /// result holding only the control means the sweep reached the DROP and <c>_isSafeIdentifier</c> is
+  /// what turned the crafted table away.
+  /// </remarks>
+  /// <param name="craftedTableName">Backup table name carrying the injection payload.</param>
+  private async Task<CleanupProbeResult> _runInjectionCleanupProbeAsync(string craftedTableName) {
+    var initializer = new PostgresSchemaInitializer(_testConnectionString);
+    await initializer.InitializeSchemaAsync();
+
+    await using var conn = new NpgsqlConnection(_testConnectionString);
+    await conn.OpenAsync();
+
+    // PostgreSQL silently truncates identifiers at 63 bytes. A truncated name loses the tail of its
+    // _bak_<date> suffix, so CleanupBackupsAsync skips it at DateTime.TryParseExact and never reaches
+    // the identifier-safety check — the test would pass while exercising nothing.
+    await Assert.That(System.Text.Encoding.UTF8.GetByteCount(craftedTableName)).IsLessThanOrEqualTo(63)
+      .Because("PostgreSQL truncates longer identifiers, which would mangle the _bak_<date> suffix and "
+             + "make the sweep skip the table at the date parse instead of at the safety check");
+
+    await conn.ExecuteAsync($"CREATE TABLE \"{craftedTableName.Replace("\"", "\"\"")}\" (id INT)");
+
+    var safeTableName = $"wh_per_safe_bak_{_oldBackupTimestamp()}";
+    await conn.ExecuteAsync($"CREATE TABLE {safeTableName} (id INT)");
+
+    // Act
+    var dropped = await initializer.CleanupBackupsAsync(olderThanDays: 30);
+
+    var craftedTableStillExists = await conn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = @name)",
+      new { name = craftedTableName });
+    var eventStoreStillExists = await conn.ExecuteScalarAsync<bool>(
+      "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'wh_event_store')");
+
+    return new CleanupProbeResult(dropped, safeTableName, craftedTableStillExists, eventStoreStillExists);
   }
 }

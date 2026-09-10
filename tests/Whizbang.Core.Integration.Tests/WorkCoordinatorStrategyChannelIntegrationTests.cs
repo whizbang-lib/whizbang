@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -29,6 +30,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
     };
     var services = new ServiceCollection();
     services.AddSingleton(options);
+    services.AddSingleton<StoredOutboxLog>();
     services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
     services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
     services.AddSingleton<IInboxChannelWriter, InboxChannelWriter>();
@@ -38,21 +40,34 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
 
     await using var sp = services.BuildServiceProvider();
 
+    var storedOutbox = sp.GetRequiredService<StoredOutboxLog>();
     var writer = sp.GetRequiredService<IWorkChannelWriter>();
     var signalFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    writer.OnNewWorkAvailable += () => signalFired.TrySetResult();
+    var storedWhenSignaled = -1;
+    writer.OnNewWorkAvailable += () => {
+      storedWhenSignaled = storedOutbox.Count;
+      signalFired.TrySetResult();
+    };
 
     // Act - Queue outbox message and flush.
     // FlushAsync is a no-op on IntervalStrategy (defers to timer); use FlushAndGetBatchAsync
     // for the immediate-flush path the test needs.
+    var message = _createTestOutboxMessage();
     var intervalStrategy = sp.GetRequiredService<IntervalWorkCoordinatorStrategy>();
-    intervalStrategy.QueueOutboxMessage(_createTestOutboxMessage());
+    intervalStrategy.QueueOutboxMessage(message);
     _ = await intervalStrategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Signal was raised (publisher worker would wake and claim from DB)
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     cts.Token.Register(() => signalFired.TrySetCanceled());
     await signalFired.Task;
+
+    // The wake-up is only useful if the row it advertises is already there. A publisher woken
+    // before the insert lands finds nothing, goes back to sleep, and the message waits for the
+    // next poll — the signal is spent and the latency it exists to remove comes back.
+    await Assert.That(storedOutbox.MessageIds).Contains(message.MessageId);
+    await Assert.That(storedWhenSignaled).IsEqualTo(1)
+      .Because("the outbox row must be stored before the publisher is told there is work");
 
     // Cleanup
     await intervalStrategy.DisposeAsync();
@@ -73,6 +88,7 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
     };
     var services = new ServiceCollection();
     services.AddSingleton(options);
+    services.AddSingleton<StoredOutboxLog>();
     services.AddSingleton<IServiceInstanceProvider, ChannelTestInstanceProvider>();
     services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
     services.AddScoped<IWorkCoordinator, ChannelTestWorkCoordinator>();
@@ -81,20 +97,32 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
 
     await using var sp = services.BuildServiceProvider();
 
+    var storedOutbox = sp.GetRequiredService<StoredOutboxLog>();
     var writer = sp.GetRequiredService<IWorkChannelWriter>();
     var signalFired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    writer.OnNewWorkAvailable += () => signalFired.TrySetResult();
+    var storedWhenSignaled = -1;
+    writer.OnNewWorkAvailable += () => {
+      storedWhenSignaled = storedOutbox.Count;
+      signalFired.TrySetResult();
+    };
 
     // Act — FlushAsync is a no-op on BatchStrategy (waits for debounce/batch-size trigger).
     // Use FlushAndGetBatchAsync for the immediate-flush path the test needs.
+    var message = _createTestOutboxMessage();
     var batchStrategy = sp.GetRequiredService<BatchWorkCoordinatorStrategy>();
-    batchStrategy.QueueOutboxMessage(_createTestOutboxMessage());
+    batchStrategy.QueueOutboxMessage(message);
     _ = await batchStrategy.FlushAndGetBatchAsync(WorkBatchOptions.None);
 
     // Assert - Signal was raised
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     cts.Token.Register(() => signalFired.TrySetCanceled());
     await signalFired.Task;
+
+    // Same ordering guarantee as the interval strategy: both singletons flush through the shared
+    // helper, so a regression that signaled before storing would land on both at once.
+    await Assert.That(storedOutbox.MessageIds).Contains(message.MessageId);
+    await Assert.That(storedWhenSignaled).IsEqualTo(1)
+      .Because("the outbox row must be stored before the publisher is told there is work");
 
     // Cleanup
     await batchStrategy.DisposeAsync();
@@ -173,8 +201,25 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
   // Test Fakes
   // ========================================
 
+  /// <summary>
+  /// Records what reached the store, and when. A flush resolves a fresh scoped coordinator, so the
+  /// record has to live in the container rather than on the coordinator instance.
+  /// </summary>
+  private sealed class StoredOutboxLog {
+    private readonly ConcurrentQueue<Guid> _messageIds = new();
+
+    public void Record(OutboxMessage[] messages) {
+      foreach (var message in messages) {
+        _messageIds.Enqueue(message.MessageId);
+      }
+    }
+
+    public IReadOnlyCollection<Guid> MessageIds => [.. _messageIds];
+    public int Count => _messageIds.Count;
+  }
+
   /// <summary>Coordinator used to exercise the singleton flush signalling path.</summary>
-  private sealed class ChannelTestWorkCoordinator : IWorkCoordinator {
+  private sealed class ChannelTestWorkCoordinator(StoredOutboxLog storedOutbox) : IWorkCoordinator {
     public Task ReportPerspectiveCompletionAsync(
       PerspectiveCursorCompletion completion,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -185,7 +230,10 @@ public class WorkCoordinatorStrategyChannelIntegrationTests {
 
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task StoreOutboxMessagesAsync(OutboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
+      storedOutbox.Record(messages);
+      return Task.CompletedTask;
+    }
 
     public Task<WorkCoordinatorStatistics> GatherStatisticsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new WorkCoordinatorStatistics());
 

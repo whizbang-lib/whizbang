@@ -42,15 +42,22 @@ public class ModelRegistrationRegistryTests {
 
   [Test]
   public async Task InvokeRegistration_WithNoRegistrar_DoesNotThrowAsync() {
-    // Arrange
-    // Reset registry by registering null (simulate no registrar set)
+    // Arrange - the registrar list is static, append-only and process-wide, so the genuinely
+    // empty-list branch cannot be reached once any test (or module initializer) has registered.
+    // The closest reachable arrangement is a registrar that contributes nothing, which is what
+    // this test actually pins.
     ModelRegistrationRegistry.RegisterModels((services, dbContextType, strategy) => { });
 
     var services = new ServiceCollection();
     var upsertStrategy = new InMemoryUpsertStrategy();
 
-    // Act & Assert - Should not throw
+    // Act - Should not throw
     ModelRegistrationRegistry.InvokeRegistration(services, typeof(RegistryTestDbContext), upsertStrategy);
+
+    // Assert - everything in the collection comes from the registrar; the registry adds nothing of
+    // its own. A descriptor smuggled in here would be registered for every driver on every call,
+    // including hosts that discovered no models at all.
+    await Assert.That(services.Count).IsEqualTo(0);
   }
 
   [Test]

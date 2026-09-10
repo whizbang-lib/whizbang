@@ -282,13 +282,19 @@ public class DebuggerAwareClockTests {
 
   [Test]
   public async Task DebuggerAwareClock_Dispose_CanBeCalledMultipleTimesAsync() {
-    // Arrange
-    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
+    // Arrange - sampling mode so there is a real sampler timer and channel to tear down,
+    // making the second disposal a repeat of actual teardown rather than of nothing.
+    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.CpuTimeSampling };
     var clock = new DebuggerAwareClock(options);
 
-    // Act & Assert - should not throw
+    // Act - should not throw
     clock.Dispose();
     clock.Dispose();
+
+    // Assert - the repeat disposal is a no-op: the clock is still disposed, not resurrected.
+    // A guard that returned early on the FIRST call instead would leave the clock usable here.
+    await Assert.That(() => clock.StartNew()).ThrowsExactly<ObjectDisposedException>();
+    await Assert.That(() => clock.GetCurrentTimestamp()).ThrowsExactly<ObjectDisposedException>();
   }
 
   [Test]
@@ -603,11 +609,15 @@ public class DebuggerAwareClockTests {
   }
 
   [Test]
-  public async Task DebuggerAwareClock_Dispose_CompletesChannelAsync() {
-    // Arrange
+  public async Task DebuggerAwareClock_DisposedWhileSubscribed_SubscriptionStillReleasesCleanlyAsync() {
+    // Teardown order is not guaranteed: a host can dispose the clock before the component holding
+    // the subscription. Completing the pause channel must therefore leave the outstanding
+    // subscription releasable rather than faulted, and must not look like a pause notification.
+    // (Channel completion itself is private state — what is observable is stated below.)
     var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.Disabled };
     var clock = new DebuggerAwareClock(options);
-    var subscription = clock.OnPauseStateChanged(_ => { });
+    var notifications = 0;
+    var subscription = clock.OnPauseStateChanged(_ => Interlocked.Increment(ref notifications));
 
     // Act
     clock.Dispose();
@@ -615,8 +625,17 @@ public class DebuggerAwareClockTests {
     // Small delay to allow background task to notice completion
     await Task.Delay(50);
 
-    // Assert - dispose subscription without error (channel was completed)
+    // Assert - closing the channel is not a pause notification
+    await Assert.That(Volatile.Read(ref notifications)).IsEqualTo(0)
+      .Because("completing the pause channel must not deliver a spurious final state");
+
+    // ...the outstanding subscription still releases cleanly, in either order...
     subscription.Dispose();
+    subscription.Dispose();
+
+    // ...and the disposed clock hands out no further subscriptions.
+    await Assert.That(() => clock.OnPauseStateChanged(_ => { }))
+      .ThrowsExactly<ObjectDisposedException>();
   }
 
   [Test]
@@ -786,15 +805,62 @@ public class DebuggerAwareClockTests {
   }
 
   [Test]
-  public async Task PauseStateSubscription_DisposesCleanlyAsync() {
-    // Arrange
-    var options = new DebuggerAwareClockOptions { Mode = DebuggerDetectionMode.CpuTimeSampling };
-    using var clock = new DebuggerAwareClock(options);
-    var subscription = clock.OnPauseStateChanged(_ => { });
+  [Timeout(30000)]
+  public async Task PauseStateSubscription_Dispose_StopsDeliveringNotificationsAsync(CancellationToken ct) {
+    // "Disposes cleanly" only meant "did not throw". What a released subscription has to guarantee
+    // is that the handler stops being called — a handler still firing after its owner released it
+    // reaches into disposed state. The clock keeps sampling throughout, so the silence is a fact
+    // about the subscription and not about the clock having nothing to say.
+    //
+    // CpuTimeSource makes the pause transitions deterministic: alternating "no CPU consumed" (a
+    // wall/CPU ratio far past the frozen threshold) with "plenty consumed" flips IsPaused on every
+    // sample, so a write hits the pause channel every SamplingInterval.
+    var cpu = TimeSpan.Zero;
+    var busySample = false;
+    var options = new DebuggerAwareClockOptions {
+      Mode = DebuggerDetectionMode.CpuTimeSampling,
+      SamplingInterval = TimeSpan.FromMilliseconds(250), // > the 200ms floor for freeze detection
+      CpuTimeSource = () => {
+        busySample = !busySample;
+        if (busySample) {
+          cpu += TimeSpan.FromMilliseconds(500);
+        }
 
-    // Act & Assert - single disposal should work without throwing
+        return cpu;
+      }
+    };
+    using var clock = new DebuggerAwareClock(options);
+
+    var delivered = 0;
+    var firstDelivery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var subscription = clock.OnPauseStateChanged(_ => {
+      Interlocked.Increment(ref delivered);
+      firstDelivery.TrySetResult();
+    });
+
+    // Control: the subscription really is live, so a later count of zero means "stopped",
+    // not "never started".
+    await firstDelivery.Task.WaitAsync(ct);
+
+    // Act
     subscription.Dispose();
-    await Task.CompletedTask;
+    var deliveredAtDisposal = Volatile.Read(ref delivered);
+
+    // Wait on the CLOCK's own state rather than a sleep: two further transitions of IsPaused prove
+    // two further writes reached the pause channel after the subscription was released.
+    var pausedAtDisposal = clock.IsPaused;
+    while (clock.IsPaused == pausedAtDisposal) {
+      await Task.Delay(10, ct);
+    }
+
+    var midpoint = clock.IsPaused;
+    while (clock.IsPaused == midpoint) {
+      await Task.Delay(10, ct);
+    }
+
+    // Assert - not one of those reached the released handler
+    await Assert.That(Volatile.Read(ref delivered)).IsEqualTo(deliveredAtDisposal)
+      .Because("a disposed subscription must stop consuming the pause channel");
   }
 
   [Test]

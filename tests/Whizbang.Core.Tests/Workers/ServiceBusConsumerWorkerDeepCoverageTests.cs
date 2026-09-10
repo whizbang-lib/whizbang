@@ -1,5 +1,6 @@
 #pragma warning disable CA1707, CS0067
 
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -129,8 +130,9 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   [Test]
   public async Task Constructor_NullOptions_DefaultsToEmptyOptionsAsync() {
     // options parameter is nullable with default null - should not throw
+    var transport = new DeepCoverageTransport();
     var worker = new ServiceBusConsumerWorker(
-      transport: new DeepCoverageTransport(),
+      transport: transport,
       scopeFactory: _buildScopeFactory(),
       jsonOptions: new JsonSerializerOptions(),
       logger: new TestLogger<ServiceBusConsumerWorker>(),
@@ -142,7 +144,12 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.StopAsync(CancellationToken.None);
-    // No assertion needed — test verifies no exception is thrown
+
+    // "Defaults to empty options" is a claim about what the worker subscribes to: nothing. A
+    // default that invented a topic would have this host quietly consuming a destination no one
+    // configured, which is worse than the startup failure the null was allowed to avoid.
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(0);
+    await Assert.That(transport.CreatedSubscriptions.Count).IsEqualTo(0);
   }
 
   // ========================================
@@ -203,14 +210,19 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   [Test]
   public async Task PauseAllSubscriptionsAsync_NoSubscriptions_DoesNotThrowAsync() {
     // Arrange - no subscriptions configured
-    var worker = _createWorker(new DeepCoverageTransport(), new ServiceBusConsumerOptions());
+    var transport = new DeepCoverageTransport();
+    var worker = _createWorker(transport, new ServiceBusConsumerOptions());
     await worker.StartAsync(CancellationToken.None);
     await worker.SubscriptionsReady.WaitAsync(TimeSpan.FromSeconds(5));
 
-    // Act & Assert - should not throw
+    // Act - should not throw
     await worker.PauseAllSubscriptionsAsync();
     await worker.StopAsync(CancellationToken.None);
-    // No assertion needed — test verifies no exception is thrown
+
+    // Nothing to pause, and nothing conjured to pause: an options set with no subscriptions must
+    // leave the transport untouched rather than subscribing to a default destination.
+    await Assert.That(transport.CreatedSubscriptions.Count).IsEqualTo(0);
+    await Assert.That(transport.SubscribeCallCount).IsEqualTo(0);
   }
 
   [Test]
@@ -1160,8 +1172,23 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   // ========================================
 
   [Test]
+  [NotInParallel]
   public async Task HandleMessage_WithValidTraceParent_CreatesActivityAsync() {
-    // Arrange - envelope with a valid TraceParent in hop
+    // Arrange - envelope with a valid TraceParent in hop.
+    // Without a registered listener StartActivity returns null and the whole path this test is
+    // named for never runs, so the listener is part of the arrangement, not just the observation.
+    var stopped = new List<Activity>();
+    using var listener = new ActivityListener {
+      ShouldListenTo = source => source.Name == "Whizbang.Transport",
+      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+      ActivityStopped = activity => {
+        lock (stopped) {
+          stopped.Add(activity);
+        }
+      }
+    };
+    ActivitySource.AddActivityListener(listener);
+
     var handlerCapturingTransport = new HandlerCapturingTransport();
     var messageId = MessageId.New();
     var streamId = Guid.NewGuid();
@@ -1189,11 +1216,28 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
     var envelope = _createJsonEnvelopeWithTraceParent(messageId, streamId);
     var envelopeType = "MessageEnvelope`1[[Whizbang.Core.Tests.Workers.DeepCoverageTestEvent, Whizbang.Core.Tests]], Whizbang.Core";
 
-    // Act - should not throw; activity creation is best-effort
+    // Act
     await handlerCapturingTransport.CapturedBatchHandler!([new TransportMessage(envelope, envelopeType)], CancellationToken.None);
 
-    // Assert - completed without error
-    // No assertion needed — test verifies no exception is thrown
+    // Assert - the inbox span continues the PRODUCER's trace rather than starting a fresh root.
+    // Creating an activity is not the point; adopting the traceparent is. A span that roots itself
+    // here severs the request from everything the consumer does with it, which is exactly the gap
+    // an operator is looking at when a trace ends at the queue.
+    List<Activity> inboxActivities;
+    lock (stopped) {
+      inboxActivities = [
+        .. stopped.Where(a => (a.GetTagItem("messaging.message_id") as string) == messageId.ToString())
+      ];
+    }
+    await Assert.That(inboxActivities.Count).IsEqualTo(1);
+    var inboxActivity = inboxActivities[0];
+    await Assert.That(inboxActivity.OperationName).StartsWith("Inbox ");
+    await Assert.That(inboxActivity.Kind).IsEqualTo(ActivityKind.Consumer);
+    await Assert.That(inboxActivity.TraceId.ToHexString()).IsEqualTo("0af7651916cd43dd8448eb211c80319c")
+      .Because("the hop's traceparent carries the producer's trace id and the inbox span must join it");
+    await Assert.That(inboxActivity.ParentSpanId.ToHexString()).IsEqualTo("b7ad6b7169203331")
+      .Because("the producer's span is this span's parent — losing it orphans the consumer half of the trace");
+    await Assert.That(inboxActivity.GetTagItem("messaging.operation")).IsEqualTo("receive");
 
     await worker.StopAsync(CancellationToken.None);
   }
