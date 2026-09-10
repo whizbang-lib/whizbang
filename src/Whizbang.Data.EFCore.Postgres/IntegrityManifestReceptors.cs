@@ -138,6 +138,7 @@ public sealed partial class IntegrityManifestRequestReceptor(
     do {
       var chunk = digests.Skip(offset).Take(options.MaxDigestsPerManifest).ToList();
       var envelope = new MessageEnvelope<IntegrityManifest> {
+        Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
         MessageId = new MessageId(TrackedGuid.NewMedo()),
         Payload = new IntegrityManifest {
           ManifestStreamId = originServiceId,
@@ -589,6 +590,7 @@ public sealed partial class IntegrityManifestReceptor(
       _pagesFollowed.Clear();   // windows advance; stale keys are waste, not state.
     }
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestIntegrityManifest {
         RequesterService = requester,
@@ -759,6 +761,7 @@ public sealed partial class IntegrityManifestReceptor(
       _lastDrilled[(message.OriginServiceId, t)] = drilledAt;
     }
     var envelope = new MessageEnvelope<RequestIntegrityManifest> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestIntegrityManifest {
         RequesterService = requester,
@@ -841,6 +844,7 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = tenantScope,
@@ -893,6 +897,7 @@ public sealed partial class IntegrityManifestReceptor(
     }
 
     var envelope = new MessageEnvelope<RequestRedeliveryCommand> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = new MessageId(TrackedGuid.NewMedo()),
       Payload = new RequestRedeliveryCommand {
         TenantScope = tenantScope,

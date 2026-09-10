@@ -191,6 +191,7 @@ public sealed class AuditingEventStoreDecorator(
   private OutboxMessage _buildOutboxMessage(EventAudited auditEvent) {
     // Create envelope for the audit event
     var envelope = new MessageEnvelope<EventAudited> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = MessageId.New(),
       Payload = auditEvent,
       Hops = [
@@ -211,6 +212,7 @@ public sealed class AuditingEventStoreDecorator(
     // Serialize the envelope to JsonElement form for the outbox
     var serializedPayload = AuditJsonSerializer.SerializeToJsonElement(auditEvent, _jsonOptions, _logger);
     var jsonEnvelope = new MessageEnvelope<JsonElement> {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = envelope.MessageId,
       Payload = serializedPayload,
       Hops = envelope.Hops,
@@ -219,6 +221,7 @@ public sealed class AuditingEventStoreDecorator(
 
     var eventType = typeof(EventAudited);
     return new OutboxMessage {
+      Priority = Whizbang.Core.Priority.WorkPriority.BACKGROUND,
       MessageId = envelope.MessageId.Value,
       Destination = AUDIT_TOPIC_DESTINATION,
       Envelope = jsonEnvelope,
