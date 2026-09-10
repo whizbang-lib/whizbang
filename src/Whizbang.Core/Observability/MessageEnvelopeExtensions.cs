@@ -82,7 +82,8 @@ public static class MessageEnvelopeExtensions {
       MessageId = jsonEnvelope.MessageId,
       Payload = deserializedPayload,
       Hops = jsonEnvelope.Hops,
-      DispatchContext = context
+      DispatchContext = context,
+      Priority = jsonEnvelope.Priority   // the handler and the inheritance rule read the typed envelope's number
     };
   }
 
@@ -121,7 +122,20 @@ public static class MessageEnvelopeExtensions {
       MessageId = jsonEnvelope.MessageId,
       Payload = deserializedPayload,
       Hops = jsonEnvelope.Hops,
-      DispatchContext = jsonEnvelope.DispatchContext
+      DispatchContext = jsonEnvelope.DispatchContext,
+      Priority = jsonEnvelope.Priority
     };
+  }
+
+  /// <summary>
+  /// Sets the envelope's priority and returns the same envelope, so a builder can declare and keep constructing.
+  /// The dispatcher's producer hooks keep an explicit number; see <see cref="Whizbang.Core.Priority.WorkPriority"/>.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#the-c-api</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/MessageEnvelopeExtensionsTests.cs:WithPriority_SetsTheNumber_AndReturnsTheSameEnvelopeAsync</tests>
+  public static MessageEnvelope<TPayload> WithPriority<TPayload>(this MessageEnvelope<TPayload> envelope, int priority) {
+    ArgumentNullException.ThrowIfNull(envelope);
+    envelope.Priority = priority;
+    return envelope;
   }
 }

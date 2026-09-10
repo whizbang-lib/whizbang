@@ -213,4 +213,51 @@ public class MessageEnvelopeExtensionsTests {
   }
 
   #endregion
+
+  [Test]
+  public async Task ReconstructWithPayload_NonGeneric_KeepsThePriorityAsync() {
+    var jsonEnvelope = new MessageEnvelope<System.Text.Json.JsonElement> {
+      MessageId = MessageId.New(),
+      Payload = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Priority = 50,
+    };
+
+    var typed = jsonEnvelope.ReconstructWithPayload(new object(), handlerName: "H");
+
+    await Assert.That(typed.Priority).IsEqualTo(50)
+      .Because("the handler sees the reconstructed envelope; its number is what inheritance reads");
+  }
+
+  [Test]
+  public async Task ReconstructWithPayload_Generic_KeepsThePriorityAsync() {
+    var jsonEnvelope = new MessageEnvelope<System.Text.Json.JsonElement> {
+      MessageId = MessageId.New(),
+      Payload = System.Text.Json.JsonSerializer.SerializeToElement(new { }),
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+      Priority = 250,
+    };
+
+    var typed = jsonEnvelope.ReconstructWithPayload("payload");
+
+    await Assert.That(typed.Priority).IsEqualTo(250);
+  }
+
+  [Test]
+  public async Task WithPriority_SetsTheNumber_AndReturnsTheSameEnvelopeAsync() {
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "p",
+      Hops = [],
+      DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Local },
+    };
+
+    var returned = envelope.WithPriority(Whizbang.Core.Priority.WorkPriority.BACKGROUND);
+
+    await Assert.That(envelope.Priority).IsEqualTo(Whizbang.Core.Priority.WorkPriority.BACKGROUND);
+    await Assert.That(ReferenceEquals(returned, envelope)).IsTrue()
+      .Because("a fluent set on the envelope in hand, so a builder can declare and keep constructing");
+  }
 }

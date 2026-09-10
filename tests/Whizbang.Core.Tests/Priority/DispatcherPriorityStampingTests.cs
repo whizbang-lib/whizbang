@@ -136,4 +136,16 @@ public class DispatcherPriorityStampingTests {
     await Assert.That(strategy.QueuedOutbox.Single().Envelope.Priority).IsEqualTo(WorkPriority.UNDECLARED)
       .Because("a host that never registered the chain sends exactly what it sent before; the receive side reads undeclared as standard");
   }
+
+  [Test]
+  public async Task Send_WithAPriorityOnTheOptions_KeepsItOverTheContextRulesAsync() {
+    var (dispatcher, strategy) = _dispatcher();
+
+    await dispatcher.SendAsync(new StampCommand("bulk"), new DispatchOptions().WithPriority(WorkPriority.BACKGROUND));
+
+    var row = strategy.QueuedOutbox.Single();
+    await Assert.That(row.Envelope.Priority).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("an explicit number on the options is the caller's declaration; the context rules only fill a blank");
+    await Assert.That(row.Priority).IsEqualTo(WorkPriority.BACKGROUND);
+  }
 }

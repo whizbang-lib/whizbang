@@ -2653,7 +2653,7 @@ public record WorkBatch {
 /// Used for immediate processing pattern (store + immediately return for publishing).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record OutboxMessage {
+public record OutboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Unique message ID (should be UUIDv7 for time-ordered, database-friendly IDs).
   /// </summary>
@@ -2808,7 +2808,7 @@ public sealed record CoalesceGroupStats {
 /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record InboxMessage {
+public record InboxMessage : Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Unique message ID (should be UUIDv7 for time-ordered, database-friendly IDs).
   /// </summary>
@@ -2978,7 +2978,7 @@ public interface IHasMessageIdAndStatus {
 /// Includes both new pending messages and messages with expired leases (orphaned).
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record OutboxWork : IHasMessageIdAndStatus {
+public record OutboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Unique message ID.
   /// </summary>
@@ -2997,6 +2997,13 @@ public record OutboxWork : IHasMessageIdAndStatus {
   /// JsonElement provides AOT-compatible serialization without runtime type resolution.
   /// </summary>
   public required IMessageEnvelope<JsonElement> Envelope { get; init; }
+
+  /// <summary>
+  /// Priority step 1 on the wire: the row's number, the same one stamped inside <see cref="Envelope"/> before publish
+  /// (<see cref="Whizbang.Core.Priority.WorkPriority.FirstDeclared"/> of the row and the stored envelope).
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/OutboxDrainWorkerGapTests.cs:OutboxDrainWorker_PublishesTheRowsPriorityOnTheWireAsync</tests>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the envelope type (e.g., "Whizbang.Core.MessageEnvelope`1[[MyApp.CreateProductCommand, MyApp]], Whizbang.Core").
@@ -3062,7 +3069,7 @@ public record OutboxWork : IHasMessageIdAndStatus {
 /// From the application's perspective, these are the next messages to handle.
 /// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
-public record InboxWork : IHasMessageIdAndStatus {
+public record InboxWork : IHasMessageIdAndStatus, Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Unique message ID.
   /// </summary>
@@ -3450,7 +3457,11 @@ public sealed record PendingPerspectiveEvent(Guid EventWorkId, Guid EventId, lon
 /// The drainer worker deserializes <see cref="EventData"/> into a typed envelope before publishing.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
-public sealed record OutboxBatchRow {
+public sealed record OutboxBatchRow : Whizbang.Core.Priority.IPrioritized {
+  /// <summary>Priority step 1: the number the producer declared, stored on the row (0 when the fetch predates the column).</summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MessagePrioritySqlTests.cs:FetchOutboxBatch_ReturnsTheRowsPriorityAsync</tests>
+  public int Priority { get; init; }
+
   /// <summary>Outbox message id (wh_outbox.message_id).</summary>
   public required Guid MessageId { get; init; }
   /// <summary>Stream id this message belongs to (may be null for unbound messages).</summary>
@@ -3519,7 +3530,7 @@ public sealed record OutboxBatchRow {
 /// The drainer worker deserializes <see cref="EventData"/> into a typed envelope before dispatching to its handler.
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
-public sealed record InboxBatchRow {
+public sealed record InboxBatchRow : Whizbang.Core.Priority.IPrioritized {
   /// <summary>Inbox message id (wh_inbox.message_id).</summary>
   public required Guid MessageId { get; init; }
   /// <summary>Stream id this message belongs to (may be null).</summary>

@@ -14,7 +14,7 @@ namespace Whizbang.Core.Observability;
 /// <docs>fundamentals/persistence/observability</docs>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
 /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
-public interface IMessageEnvelope {
+public interface IMessageEnvelope : Whizbang.Core.Priority.IPrioritized {
   /// <summary>
   /// Envelope schema version. Enables backward-compatible evolution of the envelope format.
   /// Version 1: original (MessageId, Payload, Hops).
@@ -207,7 +207,7 @@ public interface IMessageEnvelope {
 
   /// <summary>The priority the producer declared (lower is more urgent; 0 = not declared).</summary>
   /// <docs>fundamentals/messaging/message-priority#the-number-and-the-bucket</docs>
-  int Priority => 0;
+  int Whizbang.Core.Priority.IPrioritized.Priority => 0;
 
 }
 

@@ -188,4 +188,18 @@ public sealed class DispatchOptions {
     ScheduledFor = scheduledFor;
     return this;
   }
+
+  /// <summary>
+  /// The priority to declare on the message, <see cref="Whizbang.Core.Priority.WorkPriority.UNDECLARED"/> (the default)
+  /// to let the producer hooks decide. An explicit number is kept by the framework's default hook.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#the-c-api</docs>
+  public int Priority { get; set; }
+
+  /// <summary>Declares the message's priority (see <see cref="Priority"/>). Returns this instance for chaining.</summary>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/DispatcherPriorityStampingTests.cs:Send_WithAPriorityOnTheOptions_KeepsItOverTheContextRulesAsync</tests>
+  public DispatchOptions WithPriority(int priority) {
+    Priority = priority;
+    return this;
+  }
 }
