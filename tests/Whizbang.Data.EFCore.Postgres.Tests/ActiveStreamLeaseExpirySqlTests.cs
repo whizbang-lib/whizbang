@@ -257,7 +257,7 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT renew_leases(@cat, @ids, @secs)";
     cmd.Parameters.AddWithValue("cat", category);
-    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("ids", ids.ToArray()));
+    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>(nameof(ids), [.. ids]));
     cmd.Parameters.AddWithValue("secs", leaseSeconds);
     return (int)(await cmd.ExecuteScalarAsync())!;
   }
@@ -266,7 +266,7 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = ANY(@ids)";
     cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("ids", ids.ToArray()));
+    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>(nameof(ids), [.. ids]));
     await cmd.ExecuteNonQueryAsync();
   }
 

@@ -89,9 +89,9 @@ public class WorkCoordinatorGateInteractiveReserveTests {
   }
 
   /// <summary>Starts an interactive acquire without awaiting it, so the test can free a permit afterwards.</summary>
-  private static Task<WorkCoordinatorGate.Releaser> _startInteractive(WorkCoordinatorGate gate) {
+  private static async Task<WorkCoordinatorGate.Releaser> _startInteractive(WorkCoordinatorGate gate) {
     using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
-      return gate.AcquireAsync(CancellationToken.None, caller: "interactive").AsTask();
+      return await gate.AcquireAsync(CancellationToken.None, caller: "interactive");
     }
   }
 
