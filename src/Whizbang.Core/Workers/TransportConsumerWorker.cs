@@ -1099,7 +1099,7 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     // The row itself (handler name, stream guard, name-first flags and TTL, and the producer's identity
     // from the envelope) is built by the helper both consumer workers share (#739).
     return ReceivedInboxMessageBuilder.Build(
-      envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent,
+      new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent),
       ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
       "TransportConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
   }

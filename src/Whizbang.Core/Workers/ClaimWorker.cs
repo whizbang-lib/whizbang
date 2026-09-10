@@ -629,7 +629,7 @@ public sealed partial class ClaimWorker : BackgroundService {
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Priority/ClaimWorkerPriorityBatchHookTests.cs</tests>
   private List<Guid> _orderForDispatch(WorkBatch batch) {
-    if (_priorityHooks is null || _priorityHooks.IsEmpty || batch.InboxStreams.Count == 0) {
+    if ((_priorityHooks?.IsEmpty ?? true) || batch.InboxStreams.Count == 0) {
       return batch.InboxStreamIds;
     }
     var now = _time.GetUtcNow();
@@ -641,11 +641,10 @@ public sealed partial class ClaimWorker : BackgroundService {
     foreach (var entry in entries) {
       adjusted[entry.StreamId] = _priorityHooks.Adjust(entry, entries);
     }
-    return batch.InboxStreamIds
+    return [.. batch.InboxStreamIds
       .Select((id, index) => (Id: id, Number: adjusted.TryGetValue(id, out var n) ? n : Whizbang.Core.Priority.WorkPriority.STANDARD, Index: index))
       .OrderBy(x => x.Number).ThenBy(x => x.Index)
-      .Select(x => x.Id)
-      .ToList();
+      .Select(x => x.Id)];
   }
 
   /// <summary>

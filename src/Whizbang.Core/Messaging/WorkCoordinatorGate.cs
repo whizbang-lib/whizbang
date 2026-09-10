@@ -105,10 +105,10 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// first so the reserve is whole whenever it is needed.
   /// </summary>
   private async ValueTask<Releaser> _acquireInteractiveAsync(string caller, CancellationToken cancellationToken) {
-    if (_semaphore!.Wait(0, cancellationToken)) {
+    if (await _semaphore!.WaitAsync(0, cancellationToken).ConfigureAwait(false)) {
       return _grant(_semaphore, caller);
     }
-    if (_reserve!.Wait(0, cancellationToken)) {
+    if (await _reserve!.WaitAsync(0, cancellationToken).ConfigureAwait(false)) {
       return _grant(_reserve, caller);
     }
     var sharedWait = AcquireTimeoutMilliseconds <= 0

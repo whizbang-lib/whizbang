@@ -663,7 +663,7 @@ public partial class ServiceBusConsumerWorker(
     // The row itself (handler name, stream guard, name-first flags and TTL, and the producer's identity
     // from the envelope) is built by the helper both consumer workers share (#739).
     var inboxMessage = ReceivedInboxMessageBuilder.Build(
-      envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent,
+      new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent),
       ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
       "ServiceBusConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
 

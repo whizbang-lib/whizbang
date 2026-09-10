@@ -11,6 +11,8 @@ using Whizbang.Core.Priority;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
+#pragma warning disable IDE0060, RCS1163 // Unused parameters: the fake coordinator implements interface members the test never exercises
+
 namespace Whizbang.Core.Tests.Priority;
 
 /// <summary>
@@ -154,7 +156,7 @@ public class ClaimWorkerPriorityBatchHookTests {
   public async Task Distribute_WithoutABatchHook_KeepsTheClaimsOrderAsync() {
     var first = (Guid)TrackedGuid.NewMedo();
     var second = (Guid)TrackedGuid.NewMedo();
-    var (worker, drain, coordinator) = _worker(_batch(first, second), hook: null);
+    var (worker, drain, _) = _worker(_batch(first, second), hook: null);
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);

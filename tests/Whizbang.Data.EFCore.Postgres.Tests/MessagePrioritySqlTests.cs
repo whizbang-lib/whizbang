@@ -67,7 +67,7 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
   private static async Task<int> _priorityAsync(NpgsqlConnection conn, string table, string idColumn, Guid id) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"SELECT priority FROM {table} WHERE {idColumn} = @id";
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     return (int)(await cmd.ExecuteScalarAsync())!;
   }
 

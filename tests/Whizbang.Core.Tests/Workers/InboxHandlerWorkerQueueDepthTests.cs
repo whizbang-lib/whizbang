@@ -52,7 +52,7 @@ public sealed class InboxHandlerWorkerQueueDepthTests {
     using var factory = new TestMeterFactory();
     var metrics = new WorkCoordinatorMetrics(new WhizbangMetrics(factory));
     var services = new ServiceCollection().AddSingleton<IWorkCoordinator>(new _neverCommits());
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     // The gate is never marked ready, so a flush blocks holding its batch: the requests are either still
     // in the channel or taken up by the flusher, and the gauge must count them either way.
     var worker = new InboxHandlerWorker(

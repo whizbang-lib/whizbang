@@ -151,7 +151,7 @@ public class PriorityTagSurfaceTests {
     services.AddSingleton(new TagOptions().DeclarePriority("bulk-import", WorkPriority.BACKGROUND));
     services.AddSingleton(new PriorityOptions().ClassifyNamespace("Contracts.Job", WorkPriority.BACKGROUND));
     services.AddWhizbangPriority();
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var chain = sp.GetRequiredService<PriorityHookChain>();
 
     await Assert.That(chain.DeclarePriority(_declaration(new _importRow("r")))).IsEqualTo(WorkPriority.BACKGROUND)

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -85,5 +86,122 @@ public class WorkCoordinatorGateInteractiveReserveTests {
       .Because("a reserve that is half of a two-permit gate is a haircut, not a share (the holder diagnostics suite runs on such a gate)");
     await Assert.That(one.InteractiveReserve).IsEqualTo(0)
       .Because("a one-permit gate cannot reserve without starving every other caller; the reserve never takes the last shared permit");
+  }
+
+  /// <summary>Starts an interactive acquire without awaiting it, so the test can free a permit afterwards.</summary>
+  private static Task<WorkCoordinatorGate.Releaser> _startInteractive(WorkCoordinatorGate gate) {
+    using (PriorityContext.Enter(WorkPriority.INTERACTIVE)) {
+      return gate.AcquireAsync(CancellationToken.None, caller: "interactive").AsTask();
+    }
+  }
+
+  private static async Task<(WorkCoordinatorGate.Releaser BulkA, WorkCoordinatorGate.Releaser BulkB, WorkCoordinatorGate.Releaser Reserved)> _exhaustAsync(WorkCoordinatorGate gate) {
+    var bulkA = await gate.AcquireAsync(CancellationToken.None, caller: "bulk");
+    var bulkB = await gate.AcquireAsync(CancellationToken.None, caller: "bulk");
+    var reserved = await _startInteractive(gate);
+    return (bulkA, bulkB, reserved);
+  }
+
+  [Test]
+  public async Task Acquire_AnInteractiveCallerWaits_AndTakesTheSharedPermitThatFreesFirstAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 5000, interactiveReserve: 1);
+    var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3);
+
+    var waiting = _startInteractive(gate);
+    await Assert.That(waiting.IsCompleted).IsFalse()
+      .Because("every permit is held, so the interactive caller waits on the shared permits and the reserve at once");
+
+    bulkA.Dispose();
+    using var taken = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3)
+      .Because("the waiter took the shared permit the moment it freed");
+
+    reserved.Dispose();
+    using var reservedAgain = await _startInteractive(gate).WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3)
+      .Because("the losing reserve wait handed its permit straight back, so the reserve is whole for the next interactive caller");
+    bulkB.Dispose();
+  }
+
+  [Test]
+  public async Task Acquire_AnInteractiveCallerWaits_AndTakesTheReserveWhenItFreesFirstAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 5000, interactiveReserve: 1);
+    var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
+    var waiting = _startInteractive(gate);
+    await Assert.That(waiting.IsCompleted).IsFalse();
+
+    reserved.Dispose();
+    using var taken = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3)
+      .Because("the reserve freed first and the waiter took it");
+
+    bulkA.Dispose();
+    using var bulkC = await gate.AcquireAsync(CancellationToken.None, caller: "bulk");
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3)
+      .Because("the losing shared wait handed its permit back to the shared pool, where a bulk caller can take it");
+    bulkB.Dispose();
+  }
+
+  [Test]
+  public async Task Acquire_WithoutADeadline_AnInteractiveCallerWaitsUntilAPermitFreesAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 0, interactiveReserve: 1);
+    var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
+    var waiting = _startInteractive(gate);
+    await Assert.That(waiting.IsCompleted).IsFalse();
+
+    bulkA.Dispose();
+    using var taken = await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3)
+      .Because("with no deadline the waits are open-ended and the first permit to free is taken");
+
+    reserved.Dispose();
+    using var reservedAgain = await _startInteractive(gate).WaitAsync(TimeSpan.FromSeconds(5));
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3);
+    bulkB.Dispose();
+  }
+
+  [Test]
+  public async Task Acquire_AnInteractiveCallerPastTheDeadline_ProceedsWithoutASlot_AndTheWarningNamesTheHoldersAsync() {
+    var logger = new _capturingLogger();
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 100, logger: logger, interactiveReserve: 1);
+    var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
+
+    using var deadlined = await _startInteractive(gate);
+
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3)
+      .Because("the deadlined caller proceeds without holding a slot rather than hanging");
+    await Assert.That(logger.Warnings.Count).IsEqualTo(1);
+    await Assert.That(logger.Warnings[0]).Contains("bulk x2")
+      .Because("the warning groups the holders by caller so the stuck method is visible");
+    bulkA.Dispose();
+    bulkB.Dispose();
+    reserved.Dispose();
+  }
+
+  [Test]
+  public async Task Acquire_AnInteractiveCallerPastTheDeadline_WithoutALogger_StillProceedsAsync() {
+    using var gate = new WorkCoordinatorGate(maxConcurrent: 3, acquireTimeoutMilliseconds: 100, interactiveReserve: 1);
+    var (bulkA, bulkB, reserved) = await _exhaustAsync(gate);
+
+    using var deadlined = await _startInteractive(gate);
+
+    await Assert.That(gate.SnapshotHolders().Count).IsEqualTo(3);
+    bulkA.Dispose();
+    bulkB.Dispose();
+    reserved.Dispose();
+  }
+
+  private sealed class _capturingLogger : ILogger<WorkCoordinatorGate> {
+    public List<string> Warnings { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (logLevel == LogLevel.Warning) {
+        lock (Warnings) {
+          Warnings.Add(formatter(state, exception));
+        }
+      }
+    }
   }
 }

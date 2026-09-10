@@ -543,6 +543,47 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   /// <summary>
+  /// A child nobody here subscribes to is dropped at expansion rather than stored, leased, fetched and discarded at
+  /// dispatch; the same gate ShouldSkipInbox applies to ordinary rows (#736). Null when no discard policy is registered.
+  /// </summary>
+  private Func<string, bool>? _hasConsumerFilter() =>
+    _discardPolicy is null ? null : messageType => !_discardPolicy.EvaluateInbox(messageType).ShouldDiscard;
+
+  /// <summary>
+  /// Fan-out control (Phase C): an imperative FanoutDirective set by the pre-fanout receptor takes precedence over
+  /// the composite's declarative FanoutMode. Skip commits the receptor's emissions and deletes the composite with no
+  /// children; ReplaceWith fans out the receptor-supplied set instead of InnerEvents; Proceed or no directive fans
+  /// out InnerEvents under Auto and nothing under Manual. Skip and Manual produce an empty Expanded result without
+  /// expanding anything, so <c>FannedOut</c> is false for them: only a real expansion counts.
+  /// </summary>
+  private static (CompositeInboxFanout.FanoutResult Result, bool FannedOut) _expandComposite(
+      ICompositeEvent composite, InboxWork work, IServiceProvider scopeProvider, FanoutDirective? directive,
+      string? compositeTypeName, Func<string, bool>? hasConsumer) {
+    CompositeInboxFanout.FanoutResult Empty() =>
+      new(CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName);
+    var result = directive switch {
+      { Kind: FanoutDirectiveKind.Skip } => Empty(),
+      { Kind: FanoutDirectiveKind.ReplaceWith } replace =>
+        CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, replace.Replacement, hasConsumer),
+      _ when composite.FanoutMode == FanoutMode.Manual => Empty(),
+      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, hasConsumer: hasConsumer),
+    };
+    var fannedOut = directive?.Kind != FanoutDirectiveKind.Skip
+      && (directive?.Kind == FanoutDirectiveKind.ReplaceWith || composite.FanoutMode != FanoutMode.Manual);
+    return (result, fannedOut);
+  }
+
+  /// <summary>The expansion meters (#738); an empty result from Skip or Manual is not an expansion.</summary>
+  private void _recordExpansion(CompositeInboxFanout.FanoutResult result, bool fannedOut) {
+    if (!fannedOut) {
+      return;
+    }
+    _compositeMetrics?.Expansions.Add(1);
+    _compositeMetrics?.ChildrenCreated.Add(result.Children.Count);
+    _compositeMetrics?.ChildrenUnsubscribed.Add(result.UnsubscribedChildren);
+  }
+
+  /// <summary>
   /// Fans a composite inbox row out into N child inbox rows at the dispatch seam. On success, a single
   /// <see cref="HandlerCommitRequest"/> carries the children and marks the composite row
   /// <see cref="MessageProcessingStatus.EventStored"/> so <c>process_inbox_completions</c> stores the
@@ -559,11 +600,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       InboxWork work, ICompositeEvent composite, IMessageEnvelope typedEnvelope,
       IServiceProvider scopeProvider, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
     _compositeMetrics?.Received.Add(1);
-    // A child nobody here subscribes to is dropped at expansion rather than stored, leased, fetched and
-    // discarded at dispatch; the same gate ShouldSkipInbox applies to ordinary rows (#736).
-    Func<string, bool>? hasConsumer = _discardPolicy is null
-      ? null
-      : messageType => !_discardPolicy.EvaluateInbox(messageType).ShouldDiscard;
+    var hasConsumer = _hasConsumerFilter();
     // Pre-fanout hook (plans/composite-events-turnkey.md, Phase B): fire the composite's INLINE
     // receptors (IReceptor<TComposite>) before any child exists — so a receptor can validate the
     // batch, stamp metadata, or emit a durable BatchReceivedEvent. Their emissions are captured by
@@ -574,33 +611,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var pre = await _invokePreFanoutHookAsync(work, typedEnvelope, receptorInvoker, ct);
     var preFanoutOutbox = pre.Outbox;
 
-    // Fan-out control (Phase C): an imperative FanoutDirective set by the pre-fanout receptor takes
-    // precedence over the composite's declarative FanoutMode.
-    //   Skip                      → commit the receptor's emissions + delete the composite, no children.
-    //   ReplaceWith(children)     → fan out the receptor-supplied set instead of InnerEvents.
-    //   Proceed / none + Auto     → fan out InnerEvents (default).
-    //   Proceed / none + Manual   → nothing auto-fans-out (the receptor chose not to drive it).
     var compositeTypeName = TypeNameFormatter.DisplayName(composite.GetType());
-    var result = (pre.Directive?.Kind, composite.FanoutMode) switch {
-      (FanoutDirectiveKind.Skip, _) =>
-        new CompositeInboxFanout.FanoutResult(
-          CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName),
-      (FanoutDirectiveKind.ReplaceWith, _) =>
-        CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, pre.Directive!.Replacement, hasConsumer),
-      (_, FanoutMode.Manual) =>
-        new CompositeInboxFanout.FanoutResult(
-          CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName),
-      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, hasConsumer: hasConsumer),
-    };
-    // Skip and Manual produce an empty Expanded result without expanding anything; only a real expansion counts.
-    var fannedOut = pre.Directive?.Kind != FanoutDirectiveKind.Skip
-      && (pre.Directive?.Kind == FanoutDirectiveKind.ReplaceWith || composite.FanoutMode != FanoutMode.Manual);
+    var (result, fannedOut) = _expandComposite(composite, work, scopeProvider, pre.Directive, compositeTypeName, hasConsumer);
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
-      if (fannedOut) {
-        _compositeMetrics?.Expansions.Add(1);
-        _compositeMetrics?.ChildrenCreated.Add(result.Children.Count);
-        _compositeMetrics?.ChildrenUnsubscribed.Add(result.UnsubscribedChildren);
-      }
+      _recordExpansion(result, fannedOut);
       // MaxInnerEventsAllowed is declared by the COMPOSITE, so a composite carrying a hundred
       // thousand inner events simply declares a cap that large and passes. The consumer had no say,
       // and expansion happens after admission control has already accepted the message — so one

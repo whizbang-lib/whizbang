@@ -33,8 +33,8 @@ public class CompositeInboxFanoutIdentityAndSubscriptionTests {
   /// <summary>A raw bundle that carries no child ids: the shape a producer's transport packaging has.</summary>
   private sealed class _rawBundle(Guid streamId, params (string Type, string Json)[] inner) : IRawInnerComposite {
     public IEnumerable<IMessage> InnerEvents => [];
-    public IReadOnlyList<JsonElement> InnerPayloads { get; } = inner.Select(i => JsonSerializer.Deserialize<JsonElement>(i.Json)).ToList();
-    public IReadOnlyList<string> InnerTypeNames { get; } = inner.Select(i => i.Type).ToList();
+    public IReadOnlyList<JsonElement> InnerPayloads { get; } = [.. inner.Select(i => JsonSerializer.Deserialize<JsonElement>(i.Json))];
+    public IReadOnlyList<string> InnerTypeNames { get; } = [.. inner.Select(i => i.Type)];
     public Guid StreamId => streamId;
   }
 

@@ -4943,6 +4943,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default)
     => FetchInboxBatchAsync(streamIds, instanceId, maxPerStream, null, cancellationToken);
 
+  /// <summary>
+  /// The ordinal of <paramref name="name"/>, or -1 when the function this build talks to predates the column, so a
+  /// mid-rollout package mix reads the row without the column instead of failing.
+  /// </summary>
+  private static int _ordinalOrAbsent(System.Data.Common.DbDataReader reader, string name) {
+    try {
+      return reader.GetOrdinal(name);
+    } catch (IndexOutOfRangeException) {
+      return -1;
+    }
+  }
+
   /// <inheritdoc />
   public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
@@ -4981,22 +4993,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // error column. Mirrors the outbox-side pattern: older fetch_inbox_batch revisions
     // (pre-v0.651) don't return it; leave Error null in that case so a mid-rollout
     // package mix doesn't blow up.
-    var hasErrorCol = false;
-    var errorOrdinal = -1;
-    try {
-      errorOrdinal = reader.GetOrdinal("error");
-      hasErrorCol = true;
-    } catch (IndexOutOfRangeException) {
-      // Pre-v0.651 fetch_inbox_batch without the error column — leave Error null.
-    }
+    var errorOrdinal = _ordinalOrAbsent(reader, "error");
     // 149: the row's priority; a fetch_inbox_batch that predates the column leaves it undeclared, which the
     // dispatch worker reads as the standard band.
-    var priorityOrdinal = -1;
-    try {
-      priorityOrdinal = reader.GetOrdinal("priority");
-    } catch (IndexOutOfRangeException) {
-      // Pre-149 fetch_inbox_batch without the priority column.
-    }
+    var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -5010,7 +5010,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Attempts = reader.GetInt32(8),
         PartitionNumber = await reader.IsDBNullAsync(9, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt32(9),
         IsEvent = reader.GetBoolean(10),
-        Error = hasErrorCol && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
+        Error = errorOrdinal >= 0 && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetString(errorOrdinal)
           : null,
         Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : 0,

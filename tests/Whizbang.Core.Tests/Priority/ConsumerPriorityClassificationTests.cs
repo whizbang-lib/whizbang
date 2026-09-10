@@ -13,6 +13,8 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
+#pragma warning disable IDE0060, RCS1163 // Unused parameters: the fake transport implements interface members the test never exercises
+
 namespace Whizbang.Core.Tests.Priority;
 
 /// <summary>Test event for the classification suite; top-level so the JSON source generator can fill in the context.</summary>
@@ -21,7 +23,7 @@ internal sealed record PriorityTestEvent(string Value);
 [JsonSerializable(typeof(PriorityTestEvent))]
 [JsonSerializable(typeof(MessageEnvelope<PriorityTestEvent>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
-internal sealed partial class PriorityTestJsonContext : JsonSerializerContext { }
+internal sealed partial class PriorityTestJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// The consumer classifies at its receive boundary (priority step 1): the effective number stored on the
@@ -117,10 +119,10 @@ public class ConsumerPriorityClassificationTests {
       jsonOptions: new JsonSerializerOptions { TypeInfoResolver = PriorityTestJsonContext.Default },
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(),
+      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("test-topic", "test-sub")] },
       envelopeSerializer: new StubEnvelopeSerializer(),
-      receptorRegistry: new SubscribedRegistry(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+      receptorRegistry: new SubscribedRegistry());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -133,7 +135,7 @@ public class ConsumerPriorityClassificationTests {
       DispatchContext = new MessageDispatchContext { Mode = DispatchModes.Local, Source = MessageSource.Inbox },
       Priority = declared,
     };
-    await transport.BatchHandler!.Invoke([new TransportMessage(envelope, typeof(MessageEnvelope<PriorityTestEvent>).AssemblyQualifiedName!)], cts.Token);
+    await transport.BatchHandler!.Invoke([new TransportMessage(envelope, typeof(MessageEnvelope<PriorityTestEvent>).AssemblyQualifiedName)], cts.Token);
     var stored = await strategy.Stored.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await worker.StopAsync(CancellationToken.None);
     return stored;

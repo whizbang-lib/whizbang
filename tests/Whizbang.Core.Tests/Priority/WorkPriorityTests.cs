@@ -31,8 +31,8 @@ public class WorkPriorityTests {
       await Assert.That(WorkPriority.Bucket(value + 40)).IsEqualTo(bucket)
         .Because("a declaration forty less urgent than the constant stays in the same bucket");
     }
-    var undeclared = WorkPriority.UNDECLARED;
-    await Assert.That(undeclared).IsEqualTo(0).Because("zero is omitted on the wire, so an undeclared priority costs nothing");
+    await Assert.That(WorkPriority.IsDeclared(WorkPriority.UNDECLARED)).IsFalse()
+      .Because("zero means nobody said; it is omitted on the wire, so an undeclared priority costs nothing");
   }
 
   [Test]

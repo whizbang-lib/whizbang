@@ -24,6 +24,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
   private readonly BatchFlusher<HandlerCommitRequest> _flusher;
 
   /// <summary>Creates the worker and its inner <see cref="BatchFlusher{T}"/> so the channel is writable before <see cref="ExecuteAsync"/> is invoked.</summary>
+#pragma warning disable WHIZ501 // pinnedPool and metrics: the pinned pool exists only on a Postgres host and the meters only where observability is registered; each has an explicit fallback
   public InboxHandlerWorker(
     IServiceScopeFactory scopeFactory,
     IFailureChannel failureChannel,
@@ -32,6 +33,7 @@ public sealed partial class InboxHandlerWorker : BackgroundService, IInboxHandle
     ILogger<InboxHandlerWorker> logger,
     IPinnedConnectionPool? pinnedPool = null,
     Whizbang.Core.Observability.WorkCoordinatorMetrics? metrics = null) {
+#pragma warning restore WHIZ501
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));

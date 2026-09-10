@@ -46,11 +46,13 @@ public class PriorityColumnTests {
   [Test]
   public async Task AllThreeTables_PriorityColumn_SharesTheSameNameAsync() {
     // The number is read by the same claim code on every table; one name keeps the SQL uniform.
-    var inbox = InboxSchema.Columns.PRIORITY;
-    var outbox = OutboxSchema.Columns.PRIORITY;
-    var perspectiveEvents = PerspectiveEventsSchema.Columns.PRIORITY;
-    await Assert.That(inbox).IsEqualTo("priority");
-    await Assert.That(outbox).IsEqualTo("priority");
-    await Assert.That(perspectiveEvents).IsEqualTo("priority");
+    var columns = new Dictionary<string, string> {
+      ["inbox"] = InboxSchema.Columns.PRIORITY,
+      ["outbox"] = OutboxSchema.Columns.PRIORITY,
+      ["perspective events"] = PerspectiveEventsSchema.Columns.PRIORITY,
+    };
+    foreach (var (table, column) in columns) {
+      await Assert.That(column).IsEqualTo("priority").Because($"the {table} table's column is read by the same claim code as the others");
+    }
   }
 }

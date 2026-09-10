@@ -60,6 +60,31 @@ public static class ServiceCollectionExtensions {
       => AddWhizbang(services, configure: null);
 
   /// <summary>
+  /// Folds a later <c>AddWhizbang</c> call's tag options into the registered instance: hooks not yet registered are
+  /// added; coalesce bindings, transport-namespace route bindings and priority declarations are last-wins per tag,
+  /// the same rule each has inside a single call.
+  /// </summary>
+  private static void _mergeTagOptions(TagOptions existing, TagOptions incoming) {
+    // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var hook in incoming.HookRegistrations) {
+      if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
+        existing.UseHookRegistration(hook);
+      }
+    }
+#pragma warning restore S3267
+    foreach (var binding in incoming.CoalesceBindings) {
+      existing.UseCoalesceBinding(binding.Key, binding.Value);
+    }
+    foreach (var binding in incoming.RouteNamespaceBindings) {
+      existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
+    }
+    foreach (var declaration in incoming.PriorityDeclarations) {
+      existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
+    }
+  }
+
+  /// <summary>
   /// Registers Whizbang core infrastructure services with configuration options.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -111,32 +136,7 @@ public static class ServiceCollectionExtensions {
     // This allows hooks registered in separate AddWhizbang() calls to be combined
     var existingTagOptions = services.FirstOrDefault(s => s.ServiceType == typeof(TagOptions));
     if (existingTagOptions?.ImplementationInstance is TagOptions existing) {
-      // Merge hooks from new options into existing
-      // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
-#pragma warning disable S3267
-      foreach (var hook in coreOptions.Tags.HookRegistrations) {
-        if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
-          existing.UseHookRegistration(hook);
-        }
-      }
-#pragma warning restore S3267
-
-      // Merge coalesce bindings too — last-wins per tag applies across AddWhizbang calls,
-      // consistent with the single-call Coalesce() semantics.
-      foreach (var binding in coreOptions.Tags.CoalesceBindings) {
-        existing.UseCoalesceBinding(binding.Key, binding.Value);
-      }
-
-      // Same merge rule for the TransportNamespace routing bindings (topology arc phase 8):
-      // last-wins per tag across AddWhizbang calls.
-      foreach (var binding in coreOptions.Tags.RouteNamespaceBindings) {
-        existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
-      }
-
-      // Priority declarations by tag (priority step 2): last-wins per tag across AddWhizbang calls too.
-      foreach (var declaration in coreOptions.Tags.PriorityDeclarations) {
-        existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
-      }
+      _mergeTagOptions(existing, coreOptions.Tags);
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);

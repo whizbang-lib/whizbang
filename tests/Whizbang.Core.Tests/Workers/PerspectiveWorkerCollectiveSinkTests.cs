@@ -795,6 +795,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: strategy,
       eventTypeProvider: registry,
@@ -807,7 +808,6 @@ public class PerspectiveWorkerCollectiveSinkTests {
       deadLetterStore: deadLetterStore,
       generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider(),
       leaseRegistry: leaseRegistry,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       compositeMetrics: compositeMetrics);
     return (worker, harness, coordinator);
   }

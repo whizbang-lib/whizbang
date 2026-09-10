@@ -142,7 +142,7 @@ public class PriorityHooksTests {
   public async Task Defaults_AreRegisteredByTheCoreRegistration_SoAHostGetsThemWithoutWiringAsync() {
     var services = new ServiceCollection();
     services.AddWhizbangPriority();
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
 
     var chain = sp.GetRequiredService<PriorityHookChain>();
     var declared = chain.DeclarePriority(_declaration(_envelope(MessageSource.Local)));
@@ -151,7 +151,7 @@ public class PriorityHooksTests {
     await Assert.That(declared).IsEqualTo(WorkPriority.INTERACTIVE).Because("the context-derived producer default is registered");
     await Assert.That(effective).IsEqualTo(WorkPriority.STANDARD).Because("the accept-declared receive default is registered");
     services.AddWhizbangPriority();   // a second registration is a no-op
-    using var again = services.BuildServiceProvider();
+    await using var again = services.BuildServiceProvider();
     await Assert.That(again.GetServices<IPriorityProducerHook>().Count()).IsEqualTo(2)
       .Because("the framework registers two producer hooks (the tag declarations, then the context default) with TryAddEnumerable, so a second registration is a no-op and a host's own hook adds to the chain");
   }

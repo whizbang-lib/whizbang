@@ -70,7 +70,7 @@ public class WorkCoordinatorFlushHelperInboxCompletionTests {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(new RecordingCoordinator());
     services.AddSingleton<IInboxHandlerCommitChannel>(channel);
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var completions = new[] { _completion(), _completion(MessageProcessingStatus.EventStored), _completion() };
 
     await WorkCoordinatorFlushHelper.ExecuteFlushAsync(

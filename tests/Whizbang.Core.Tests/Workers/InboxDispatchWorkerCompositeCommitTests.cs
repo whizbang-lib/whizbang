@@ -258,7 +258,7 @@ public class InboxDispatchWorkerCompositeCommitTests {
     var first = await h.Coordinator.Commit(1).WaitAsync(TimeSpan.FromSeconds(5));
     var second = await h.Coordinator.Commit(2).WaitAsync(TimeSpan.FromSeconds(5));
 
-    var ids = new[] { first, second }.Select(c => c.NewInboxMessages!.Select(m => m.MessageId).OrderBy(g => g).ToList()).ToList();
+    var ids = new[] { first, second }.Select(c => c.NewInboxMessages!.Select(m => m.MessageId).Order().ToList()).ToList();
     await Assert.That(ids[1].Count).IsEqualTo(2).Because("this fake coordinator never deletes the row, so the second dispatch expands too; the ids are what protect the store");
     await Assert.That(ids[0]).IsEquivalentTo(ids[1])
       .Because("a repeated expansion yields the rows the first one yielded, so the inbox primary key absorbs it");

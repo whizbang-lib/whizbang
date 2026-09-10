@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
-using NpgsqlTypes;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -52,7 +51,7 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
       FROM generate_series(1, @rows) AS r(seq)
       """;
     ins.Parameters.AddWithValue("sid", streamId);
-    ins.Parameters.AddWithValue("rows", rows);
+    ins.Parameters.AddWithValue(nameof(rows), rows);
     await ins.ExecuteNonQueryAsync();
     return streamId;
   }
@@ -91,8 +90,8 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
       SELECT message_id FROM claim_orphaned_inbox(
         @inst, @rank, @count, NOW() + (@lease || ' minutes')::INTERVAL, NOW(), 10000, NOW() - INTERVAL '10 minutes', @lim, @steal)";
     cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.AddWithValue("rank", rank);
-    cmd.Parameters.AddWithValue("count", count);
+    cmd.Parameters.AddWithValue(nameof(rank), rank);
+    cmd.Parameters.AddWithValue(nameof(count), count);
     cmd.Parameters.AddWithValue("lease", leaseMinutes);
     cmd.Parameters.AddWithValue("lim", limit);
     cmd.Parameters.AddWithValue("steal", allowSteal);
@@ -258,7 +257,7 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT renew_leases(@cat, @ids, @secs)";
     cmd.Parameters.AddWithValue("cat", category);
-    cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = ids.ToArray() });
+    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("ids", ids.ToArray()));
     cmd.Parameters.AddWithValue("secs", leaseSeconds);
     return (int)(await cmd.ExecuteScalarAsync())!;
   }
@@ -267,7 +266,7 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = ANY(@ids)";
     cmd.Parameters.AddWithValue("inst", instance);
-    cmd.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = ids.ToArray() });
+    cmd.Parameters.Add(new NpgsqlParameter<Guid[]>("ids", ids.ToArray()));
     await cmd.ExecuteNonQueryAsync();
   }
 

@@ -12,6 +12,8 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
+#pragma warning disable IDE0060, RCS1163 // Unused parameters: the fake transport implements interface members the test never exercises
+
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>Test event for the source-identity suite; top-level so the JSON source generator can fill in the context.</summary>
@@ -20,7 +22,7 @@ internal sealed record SourceIdentityTestEvent(string Value);
 [JsonSerializable(typeof(SourceIdentityTestEvent))]
 [JsonSerializable(typeof(MessageEnvelope<SourceIdentityTestEvent>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
-internal sealed partial class SourceIdentityTestJsonContext : JsonSerializerContext { }
+internal sealed partial class SourceIdentityTestJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// The inbox row a Service Bus consumer stores names the PRODUCING service (#739). The consumer worker
@@ -113,10 +115,10 @@ public class ServiceBusConsumerSourceIdentityTests {
       jsonOptions: new JsonSerializerOptions { TypeInfoResolver = SourceIdentityTestJsonContext.Default },
       logger: NullLogger<ServiceBusConsumerWorker>.Instance,
       orderedProcessor: new OrderedStreamProcessor(),
+      schemaReadyGate: SchemaReadyGate.AlreadyReady(),
       options: new ServiceBusConsumerOptions { Subscriptions = [new TopicSubscription("test-topic", "test-sub")] },
       envelopeSerializer: new StubEnvelopeSerializer(),
-      receptorRegistry: new SubscribedRegistry(),
-      schemaReadyGate: SchemaReadyGate.AlreadyReady());
+      receptorRegistry: new SubscribedRegistry());
 
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
@@ -130,7 +132,7 @@ public class ServiceBusConsumerSourceIdentityTests {
       SourceServiceId = producer,
       SourceCommitSequence = 42,
     };
-    await transport.BatchHandler!.Invoke([new TransportMessage(envelope, typeof(MessageEnvelope<SourceIdentityTestEvent>).AssemblyQualifiedName!)], cts.Token);
+    await transport.BatchHandler!.Invoke([new TransportMessage(envelope, typeof(MessageEnvelope<SourceIdentityTestEvent>).AssemblyQualifiedName)], cts.Token);
 
     var stored = await strategy.Stored.Task.WaitAsync(TimeSpan.FromSeconds(5));
     await Assert.That(stored.SourceServiceId).IsEqualTo(producer)

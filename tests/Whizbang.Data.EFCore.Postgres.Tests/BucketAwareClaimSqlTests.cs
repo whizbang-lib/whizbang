@@ -55,10 +55,10 @@ public class BucketAwareClaimSqlTests : EFCoreTestBase {
                 @sid, 0, @isEvent, NULL, NULL, NULL, 99, @priority)
         """;
       ins.Parameters.AddWithValue("id", id);
-      ins.Parameters.AddWithValue("age", age);
+      ins.Parameters.AddWithValue(nameof(age), age);
       ins.Parameters.AddWithValue("seq", i);
       ins.Parameters.AddWithValue("sid", streamId);
-      ins.Parameters.AddWithValue("isEvent", isEvent);
+      ins.Parameters.AddWithValue(nameof(isEvent), isEvent);
       ins.Parameters.AddWithValue("priority", priorities[i]);
       await ins.ExecuteNonQueryAsync();
     }
@@ -79,13 +79,6 @@ public class BucketAwareClaimSqlTests : EFCoreTestBase {
       ids.Add(reader.GetGuid(0));
     }
     return ids;
-  }
-
-  private static async Task<int> _priorityOfAsync(NpgsqlConnection conn, Guid messageId) {
-    await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT priority FROM wh_inbox WHERE message_id = @id";
-    cmd.Parameters.AddWithValue("id", messageId);
-    return (int)(await cmd.ExecuteScalarAsync())!;
   }
 
   [Test]
@@ -277,8 +270,8 @@ public class BucketAwareClaimSqlTests : EFCoreTestBase {
       VALUES (gen_random_uuid(), @sid, 'BucketTestPerspective', gen_random_uuid(), 0, 1, 0, NOW() - @age, NULL, NULL, @priority)
       """;
     cmd.Parameters.AddWithValue("sid", streamId);
-    cmd.Parameters.AddWithValue("age", age);
-    cmd.Parameters.AddWithValue("priority", priority);
+    cmd.Parameters.AddWithValue(nameof(age), age);
+    cmd.Parameters.AddWithValue(nameof(priority), priority);
     await cmd.ExecuteNonQueryAsync();
     return streamId;
   }

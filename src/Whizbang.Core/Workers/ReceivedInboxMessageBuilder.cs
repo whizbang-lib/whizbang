@@ -51,26 +51,31 @@ internal static class ReceivedInboxMessageBuilder {
       : chain.Classify(new Whizbang.Core.Priority.PriorityReceiveContext(envelope.Priority, envelope, messageTypeName));
   }
 
+  /// <summary>
+  /// What a consumer worker hands the builder: the envelope typed and in storage form, the envelope type name the
+  /// transport carried (authoritative), the message type name the shared helper extracted from it, and whether the
+  /// message is an event (catalog first, marker as the fallback).
+  /// </summary>
+  internal readonly record struct ReceivedEnvelope(
+      IMessageEnvelope Envelope,
+      IMessageEnvelope<JsonElement> JsonEnvelope,
+      string EnvelopeTypeFromTransport,
+      string MessageTypeName,
+      bool IsEvent);
+
   /// <summary>Builds the row. The caller has already resolved the storage-form envelope and the message's classification.</summary>
-  /// <param name="envelope">The received envelope, typed or already in storage form.</param>
-  /// <param name="jsonEnvelope">The envelope in storage form.</param>
-  /// <param name="envelopeTypeFromTransport">The envelope type name the transport carried; authoritative.</param>
-  /// <param name="messageTypeName">The message type name extracted from it by the shared helper.</param>
-  /// <param name="isEvent">Whether the message is an event (catalog first, marker as the fallback).</param>
+  /// <param name="received">The envelope as received, in both forms, with the names and the event flag the consumer resolved.</param>
   /// <param name="priority">The effective priority this consumer classified (<see cref="Classify"/>).</param>
   /// <param name="guardSite">Names the caller in the empty-stream guard's message.</param>
   /// <param name="eventMarkerResolver">Catalog-backed flag stamp, when registered.</param>
   /// <param name="ephemeralModeResolver">Catalog-backed ephemeral stamp, when registered.</param>
   internal static InboxMessage Build(
-      IMessageEnvelope envelope,
-      IMessageEnvelope<JsonElement> jsonEnvelope,
-      string envelopeTypeFromTransport,
-      string messageTypeName,
-      bool isEvent,
+      ReceivedEnvelope received,
       int priority,
       string guardSite,
       IEventMarkerResolver? eventMarkerResolver,
       IEphemeralModeResolver? ephemeralModeResolver) {
+    var (envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent) = received;
     var streamId = ExtractStreamId(envelope);
     if (isEvent) {
       StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, guardSite, messageTypeName);
