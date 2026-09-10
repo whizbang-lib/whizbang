@@ -45,14 +45,11 @@ public static partial class MigrationConstants {
   /// </summary>
   public static IReadOnlyList<string> UnknownTokens(string sql) {
     ArgumentNullException.ThrowIfNull(sql);
-    var unknown = new SortedSet<string>(StringComparer.Ordinal);
-    foreach (Match match in _tokenPattern().Matches(sql)) {
-      var token = match.Value;
-      if (!ReservedTokens.Contains(token) && !Tokens.ContainsKey(token)) {
-        unknown.Add(token);
-      }
-    }
-    return [.. unknown];
+    return [.. _tokenPattern().Matches(sql)
+      .Select(match => match.Value)
+      .Where(token => !ReservedTokens.Contains(token) && !Tokens.ContainsKey(token))
+      .Distinct(StringComparer.Ordinal)
+      .Order(StringComparer.Ordinal)];
   }
 
   /// <summary>
@@ -71,34 +68,46 @@ public static partial class MigrationConstants {
       if (line.Length == 0 || line.StartsWith('#')) {
         continue;
       }
-      var separator = line.IndexOf('=', StringComparison.Ordinal);
-      if (separator < 1) {
-        throw new InvalidDataException($"constants.txt line {lineNumber}: expected '__TOKEN__ = value', found '{line}'.");
+      var entry = _parseDefinition(lineNumber, line);
+      if (!seen.Add(entry.Key)) {
+        throw new InvalidDataException($"constants.txt line {lineNumber}: '{entry.Key}' is defined twice.");
       }
-      var token = line[..separator].Trim();
-      var value = line[(separator + 1)..].Trim();
-      if (!_tokenPattern().IsMatch(token) || _tokenPattern().Match(token).Value != token) {
-        throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' is not an UPPER_SNAKE name between double underscores.");
-      }
-      if (ReservedTokens.Contains(token)) {
-        throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' is the schema placeholder, not a constant.");
-      }
-      if (value.Length == 0) {
-        throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' has no value.");
-      }
-      if (!seen.Add(token)) {
-        throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' is defined twice.");
-      }
-      entries.Add(new KeyValuePair<string, string>(token, value));
+      entries.Add(entry);
     }
-    foreach (var a in entries) {
-      foreach (var b in entries) {
-        if (a.Key != b.Key && b.Key.Contains(a.Key, StringComparison.Ordinal)) {
-          throw new InvalidDataException($"constants.txt: '{a.Key}' is a substring of '{b.Key}'; substituting one would eat the other.");
-        }
-      }
-    }
+    _rejectOverlaps(entries);
     return entries;
+  }
+
+  /// <summary>One <c>__TOKEN__ = value</c> line; only the first '=' separates the two.</summary>
+  private static KeyValuePair<string, string> _parseDefinition(int lineNumber, string line) {
+    var separator = line.IndexOf('=', StringComparison.Ordinal);
+    if (separator < 1) {
+      throw new InvalidDataException($"constants.txt line {lineNumber}: expected '__TOKEN__ = value', found '{line}'.");
+    }
+    var token = line[..separator].Trim();
+    var value = line[(separator + 1)..].Trim();
+    if (_tokenPattern().Match(token).Value != token) {
+      throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' is not an UPPER_SNAKE name between double underscores.");
+    }
+    if (ReservedTokens.Contains(token)) {
+      throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' is the schema placeholder, not a constant.");
+    }
+    if (value.Length == 0) {
+      throw new InvalidDataException($"constants.txt line {lineNumber}: '{token}' has no value.");
+    }
+    return new KeyValuePair<string, string>(token, value);
+  }
+
+  /// <summary>A token that is a substring of another would be eaten by the other's substitution.</summary>
+  private static void _rejectOverlaps(IReadOnlyList<KeyValuePair<string, string>> entries) {
+    var overlap = entries
+      .SelectMany(a => entries
+        .Where(b => a.Key != b.Key && b.Key.Contains(a.Key, StringComparison.Ordinal))
+        .Select(b => (Inner: a.Key, Outer: b.Key)))
+      .FirstOrDefault();
+    if (overlap != default) {
+      throw new InvalidDataException($"constants.txt: '{overlap.Inner}' is a substring of '{overlap.Outer}'; substituting one would eat the other.");
+    }
   }
 
   private static IReadOnlyList<KeyValuePair<string, string>> _load() {

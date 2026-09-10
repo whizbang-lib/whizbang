@@ -63,7 +63,7 @@ public partial class MigrationConstantsTests {
 
   [Test]
   public async Task Apply_ReplacesTokens_AndLeavesTheSchemaPlaceholderAndPlainTextAloneAsync() {
-    var sql = "SELECT __EMPTY_UUID__::uuid, __CATEGORY_INBOX__ FROM __SCHEMA__.wh_inbox WHERE x = 'literal'";
+    const string sql = "SELECT __EMPTY_UUID__::uuid, __CATEGORY_INBOX__ FROM __SCHEMA__.wh_inbox WHERE x = 'literal'";
 
     var applied = MigrationConstants.Apply(sql);
 
