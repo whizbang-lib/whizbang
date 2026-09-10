@@ -30,11 +30,33 @@ namespace Whizbang.Core.Messaging;
 /// <docs>fundamentals/work-coordinator/configuration-reference</docs>
 public sealed partial class WorkCoordinatorGate : IDisposable {
   private readonly SemaphoreSlim? _semaphore;
+  // Priority step 4: the permits held back for interactive callers. Null when nothing is reserved.
+  private readonly SemaphoreSlim? _reserve;
   private readonly ILogger<WorkCoordinatorGate> _logger;
   private readonly Histogram<double>? _holdDurationHistogram;
 
   /// <summary>Maximum concurrent calls. 0 disables the cap.</summary>
   public int MaxConcurrent { get; }
+
+  /// <summary>
+  /// Permits held back for interactive callers (priority step 4): a caller whose ambient parent
+  /// (<see cref="Whizbang.Core.Priority.PriorityContext"/>) is in the interactive bucket may take one when the shared
+  /// permits are gone; every other caller can never take the last reserved permits. One tenth of the permits,
+  /// rounded down, unless configured (a gate under ten permits reserves nothing unless told to: a reserve that is
+  /// half of a two-permit gate is a haircut, not a share); never the whole gate.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#bulkheads</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateInteractiveReserveTests.cs</tests>
+  public int InteractiveReserve { get; }
+
+  /// <summary>The reserve for <paramref name="maxConcurrent"/> permits: the configured value, else one tenth rounded down, capped so at least one shared permit remains.</summary>
+  internal static int ComputeInteractiveReserve(int maxConcurrent, int? configured) {
+    if (maxConcurrent <= 1) {
+      return 0;
+    }
+    var reserve = configured ?? maxConcurrent / 10;
+    return Math.Clamp(reserve, 0, maxConcurrent - 1);
+  }
 
   /// <summary>One held slot: the coordinator method that took it and how long it has held it.</summary>
   public readonly record struct GateHolder(string Caller, long HeldMs);
@@ -65,10 +87,53 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     return text.Length == 0 ? "(none)" : text;
   }
 
-  private Releaser _grant(string caller) {
+  private Releaser _grant(string caller) => _grant(_semaphore!, caller);
+
+  private Releaser _grant(SemaphoreSlim taken, string caller) {
     var id = Interlocked.Increment(ref _nextHolderId);
     _holders[id] = (caller, Environment.TickCount64);
-    return new Releaser(_semaphore!, _holdDurationHistogram, caller, _holders, id);
+    return new Releaser(taken, _holdDurationHistogram, caller, _holders, id);
+  }
+
+  /// <summary>Whether the current caller runs inside an interactive handling and may use the reserve.</summary>
+  private static bool _isInteractiveCaller() =>
+    Whizbang.Core.Priority.WorkPriority.Bucket(Whizbang.Core.Priority.PriorityContext.CurrentParent) == Whizbang.Core.Priority.WorkBucket.Interactive;
+
+  /// <summary>
+  /// An interactive caller's acquire (priority step 4): a shared permit when one is free, else a reserved permit
+  /// when one is free, else whichever of the two frees first within the deadline. The shared permits go
+  /// first so the reserve is whole whenever it is needed.
+  /// </summary>
+  private async ValueTask<Releaser> _acquireInteractiveAsync(string caller, CancellationToken cancellationToken) {
+    if (await _semaphore!.WaitAsync(0, cancellationToken).ConfigureAwait(false)) {
+      return _grant(_semaphore, caller);
+    }
+    if (await _reserve!.WaitAsync(0, cancellationToken).ConfigureAwait(false)) {
+      return _grant(_reserve, caller);
+    }
+    var sharedWait = AcquireTimeoutMilliseconds <= 0
+      ? _semaphore.WaitAsync(cancellationToken).ContinueWith(t => { t.GetAwaiter().GetResult(); return true; }, TaskScheduler.Default)
+      : _semaphore.WaitAsync(AcquireTimeoutMilliseconds, cancellationToken);
+    var reserveWait = AcquireTimeoutMilliseconds <= 0
+      ? _reserve.WaitAsync(cancellationToken).ContinueWith(t => { t.GetAwaiter().GetResult(); return true; }, TaskScheduler.Default)
+      : _reserve.WaitAsync(AcquireTimeoutMilliseconds, cancellationToken);
+    var first = await Task.WhenAny(sharedWait, reserveWait).ConfigureAwait(false);
+    var taken = first == sharedWait ? _semaphore : _reserve;
+    var other = first == sharedWait ? reserveWait : sharedWait;
+    var acquired = await first.ConfigureAwait(false);
+    // The loser keeps waiting in the background; if it lands later, its permit is handed straight back.
+    _ = other.ContinueWith(t => {
+      if (t.Status == TaskStatus.RanToCompletion && t.Result) {
+        (taken == _semaphore ? _reserve : _semaphore).Release();
+      }
+    }, TaskScheduler.Default);
+    if (acquired) {
+      return _grant(taken, caller);
+    }
+    if (_logger is not null) {
+      LogAcquireTimedOut(_logger, AcquireTimeoutMilliseconds, MaxConcurrent, _holdersSummary());
+    }
+    return default;
   }
 
   /// <summary>
@@ -97,10 +162,17 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
       int maxConcurrent,
       int acquireTimeoutMilliseconds = 30000,
       ILogger<WorkCoordinatorGate>? logger = null,
-      WorkCoordinatorMetrics? metrics = null) {
+      WorkCoordinatorMetrics? metrics = null,
+      int? interactiveReserve = null) {
     MaxConcurrent = maxConcurrent;
+    InteractiveReserve = ComputeInteractiveReserve(maxConcurrent, interactiveReserve);
     AcquireTimeoutMilliseconds = acquireTimeoutMilliseconds;
-    _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(maxConcurrent, maxConcurrent) : null;
+    // The shared permits are what is left after the reserve; the reserve is its own semaphore so a
+    // non-interactive caller can never take one of its permits, and a released reserved permit goes
+    // back to the reserve, never to the shared pool.
+    var shared = maxConcurrent - InteractiveReserve;
+    _semaphore = maxConcurrent > 0 ? new SemaphoreSlim(shared, shared) : null;
+    _reserve = InteractiveReserve > 0 ? new SemaphoreSlim(InteractiveReserve, InteractiveReserve) : null;
     _logger = logger ?? NullLogger<WorkCoordinatorGate>.Instance;
     _holdDurationHistogram = metrics?.GateHoldDuration;
   }
@@ -176,6 +248,9 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
     if (_logger is not null) {
       LogAcquireEntry(_logger, currentCount, MaxConcurrent, AcquireTimeoutMilliseconds);
     }
+    if (_reserve is not null && _isInteractiveCaller()) {
+      return await _acquireInteractiveAsync(caller, cancellationToken).ConfigureAwait(false);
+    }
     if (AcquireTimeoutMilliseconds <= 0) {
       // Caller opted out of the deadline — preserve the pre-v0.654 behavior verbatim.
       await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -247,6 +322,7 @@ public sealed partial class WorkCoordinatorGate : IDisposable {
   /// <inheritdoc />
   public void Dispose() {
     _semaphore?.Dispose();
+    _reserve?.Dispose();
   }
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Warning,

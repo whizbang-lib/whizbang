@@ -66,6 +66,9 @@ public class MessageEnvelopeDefaultsTests {
     await Assert.That(envelope.StateOnly).IsFalse()
       .Because("normal delivery is the safe default — defaulting to state-only would silently stop "
              + "trigger receptors firing for every envelope that did not opt out");
+    await Assert.That(envelope.Priority).IsEqualTo(0)
+      .Because("an envelope type that predates the field is undeclared, not standard: the receive hooks classify it "
+             + "from context, and a stored zero reads as 'nobody said' everywhere the framework folds a number");
   }
 
   [Test]

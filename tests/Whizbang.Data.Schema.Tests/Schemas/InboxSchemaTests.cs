@@ -28,7 +28,7 @@ public class InboxSchemaTests {
 
     // Assert - Verify column count
     // 18 base columns + flags (Slice 2' — EventFlags bitmask for the collective-events feature).
-    await Assert.That(columns).Count().IsEqualTo(19);
+    await Assert.That(columns).Count().IsEqualTo(20);   // 149: + priority
 
     // Verify each column definition
     var messageId = columns[0];

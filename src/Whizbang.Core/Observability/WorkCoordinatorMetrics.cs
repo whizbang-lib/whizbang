@@ -105,10 +105,28 @@ public sealed class WorkCoordinatorMetrics {
   /// </summary>
   public Histogram<double> GateHoldDuration { get; }
 
+  private readonly Meter _meter;
+
+  /// <summary>
+  /// Publishes <c>whizbang.work_coordinator.handler_commits.queued</c>: handler results dispatched but not
+  /// yet committed, read from <paramref name="pending"/> at every export. The commit queue is the one place
+  /// dispatched work waits in memory; under a bulk fan-out it once held whole composite expansions while the
+  /// lease count stayed capped and nothing said where the memory was (#740).
+  /// </summary>
+  /// <param name="pending">Reads the queue depth: what waits in the channel plus what the flusher has taken up.</param>
+  /// <docs>operations/observability/metrics#handler-commit-queue</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxHandlerWorkerQueueDepthTests.cs</tests>
+  public void ObserveHandlerCommitQueue(Func<long> pending) {
+    ArgumentNullException.ThrowIfNull(pending);
+    _meter.CreateObservableGauge("whizbang.work_coordinator.handler_commits.queued", pending,
+      description: "Handler results dispatched but not yet committed: queued in the commit channel plus taken up by the flusher");
+  }
+
   /// <summary>Initializes a new instance of the <see cref="WorkCoordinatorMetrics"/> class.</summary>
   /// <param name="whizbangMetrics">The shared metrics factory providing the meter.</param>
   public WorkCoordinatorMetrics(WhizbangMetrics whizbangMetrics) {
     var meter = whizbangMetrics.MeterFactory?.Create(METER_NAME) ?? new Meter(METER_NAME);
+    _meter = meter;
 
     ProcessBatchDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.process_batch.duration", "ms", "Time executing process_work_batch SQL");
     FlushDuration = meter.CreateHistogram<double>("whizbang.work_coordinator.flush.duration", "ms", "Total FlushAsync time incl. lifecycle");

@@ -3,6 +3,7 @@ using Npgsql;
 using TUnit.Core;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Data.Postgres;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 using Whizbang.Testing.Containers;
@@ -152,8 +153,9 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       var functionFilePath = Path.Combine(migrationPath, functionFile);
       var functionSql = await File.ReadAllTextAsync(functionFilePath);
 
-      // Replace __SCHEMA__ placeholder with "public" (default PostgreSQL schema for tests)
-      functionSql = functionSql.Replace("__SCHEMA__", "public");
+      // The same substitution the runtime provider makes: "public" for __SCHEMA__ (the default schema for
+      // these tests) and the migration constants (rule 12) for their tokens.
+      functionSql = MigrationConstants.Apply(functionSql.Replace("__SCHEMA__", "public"));
 
       using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
       functionCommand.CommandText = functionSql;

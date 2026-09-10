@@ -29,7 +29,7 @@ public class OutboxSchemaTests {
     // Assert - Verify column count
     // 20 base columns + flags (Slice 2' — EventFlags bitmask replaces the W3-slice-9 is_composite + Slice-2 is_collective booleans)
     // + coalesce_group (tag-bound coalescing: the group a pending single belongs to; NULL = normal shippable row).
-    await Assert.That(columns).Count().IsEqualTo(22);
+    await Assert.That(columns).Count().IsEqualTo(23);   // 149: + priority
 
     var coalesceGroup = columns.First(c => c.Name == "coalesce_group");
     await Assert.That(coalesceGroup.DataType).IsEqualTo(WhizbangDataType.STRING);

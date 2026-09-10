@@ -32,4 +32,14 @@ public sealed class WorkCoordinatorGateOptions {
   /// without a slot rather than hanging the caller; 0 or less waits without a deadline. Default 30000.
   /// </summary>
   public int AcquireTimeoutMilliseconds { get; set; } = 30_000;
+
+  /// <summary>
+  /// Slots held back for callers whose ambient parent is in the interactive bucket (priority step 4). Null
+  /// means one tenth of <see cref="MaxConcurrent"/>, rounded down, so a gate under ten permits reserves nothing
+  /// unless told to; 0 disables the reserve; any value is clamped so at least one shared slot remains. A reserved slot is never handed to a standard or background caller,
+  /// and an interactive caller takes a shared slot first, so the reserve is a bulkhead, not a fast lane.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#bulkheads</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorGateRegistrationTests.cs</tests>
+  public int? InteractiveReserve { get; set; }
 }

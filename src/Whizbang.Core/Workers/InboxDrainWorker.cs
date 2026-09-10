@@ -556,6 +556,7 @@ public sealed partial class InboxDrainWorker(
       Status = (MessageProcessingStatus)row.Status,
       Flags = WorkBatchOptions.None,
       Error = row.Error,
+      Priority = row.Priority,
     };
   }
 

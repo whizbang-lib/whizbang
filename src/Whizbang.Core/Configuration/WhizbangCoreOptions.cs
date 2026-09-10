@@ -34,6 +34,13 @@ public sealed class WhizbangCoreOptions {
   public TagOptions Tags { get; } = new();
 
   /// <summary>
+  /// Gets the consumer-side priority classification (priority step 2): rules by namespace, by type, or by a
+  /// predicate that decide the effective priority of received messages. See <see cref="Whizbang.Core.Priority.PriorityOptions"/>.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaring-with-tags</docs>
+  public Whizbang.Core.Priority.PriorityOptions Priority { get; } = new();
+
+  /// <summary>
   /// Gets the tracing system configuration.
   /// </summary>
   /// <remarks>

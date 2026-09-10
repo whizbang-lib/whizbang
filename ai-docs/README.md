@@ -54,6 +54,10 @@ This directory contains focused documentation topics to help Claude Code underst
   - **When to use:** Database operations, entity configuration
   - **Critical:** Use `Guid.CreateVersion7()`, complex types not owned entities
 
+- **[src/Whizbang.Data.Postgres/Migrations/README.md](../src/Whizbang.Data.Postgres/Migrations/README.md)** - SQL migrations: the twelve rules
+  - **When to use:** Adding or changing a migration, a SQL function, or a framework table
+  - **Critical:** Redefine a function whole (rule 5); `__SCHEMA__` everywhere (rule 3); shared literals are tokens from `constants.txt` (rule 12); run `pwsh scripts/Lint-MigrationSql.ps1`
+
 - **[script-standards.md](script-standards.md)** - PowerShell, containers
   - **When to use:** Writing scripts, organizing /scripts/ folder
   - **Critical:** Prefer `.ps1` (PowerShell Core), multi-platform required

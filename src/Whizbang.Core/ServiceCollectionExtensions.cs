@@ -60,6 +60,31 @@ public static class ServiceCollectionExtensions {
       => AddWhizbang(services, configure: null);
 
   /// <summary>
+  /// Folds a later <c>AddWhizbang</c> call's tag options into the registered instance: hooks not yet registered are
+  /// added; coalesce bindings, transport-namespace route bindings and priority declarations are last-wins per tag,
+  /// the same rule each has inside a single call.
+  /// </summary>
+  private static void _mergeTagOptions(TagOptions existing, TagOptions incoming) {
+    // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
+#pragma warning disable S3267
+    foreach (var hook in incoming.HookRegistrations) {
+      if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
+        existing.UseHookRegistration(hook);
+      }
+    }
+#pragma warning restore S3267
+    foreach (var binding in incoming.CoalesceBindings) {
+      existing.UseCoalesceBinding(binding.Key, binding.Value);
+    }
+    foreach (var binding in incoming.RouteNamespaceBindings) {
+      existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
+    }
+    foreach (var declaration in incoming.PriorityDeclarations) {
+      existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
+    }
+  }
+
+  /// <summary>
   /// Registers Whizbang core infrastructure services with configuration options.
   /// </summary>
   /// <param name="services">The service collection.</param>
@@ -111,31 +136,13 @@ public static class ServiceCollectionExtensions {
     // This allows hooks registered in separate AddWhizbang() calls to be combined
     var existingTagOptions = services.FirstOrDefault(s => s.ServiceType == typeof(TagOptions));
     if (existingTagOptions?.ImplementationInstance is TagOptions existing) {
-      // Merge hooks from new options into existing
-      // S3267: Loop has side effects (registering hooks via UseHookRegistration) — LINQ not appropriate
-#pragma warning disable S3267
-      foreach (var hook in coreOptions.Tags.HookRegistrations) {
-        if (!existing.HookRegistrations.Any(h => h.AttributeType == hook.AttributeType && h.HookType == hook.HookType)) {
-          existing.UseHookRegistration(hook);
-        }
-      }
-#pragma warning restore S3267
-
-      // Merge coalesce bindings too — last-wins per tag applies across AddWhizbang calls,
-      // consistent with the single-call Coalesce() semantics.
-      foreach (var binding in coreOptions.Tags.CoalesceBindings) {
-        existing.UseCoalesceBinding(binding.Key, binding.Value);
-      }
-
-      // Same merge rule for the TransportNamespace routing bindings (topology arc phase 8):
-      // last-wins per tag across AddWhizbang calls.
-      foreach (var binding in coreOptions.Tags.RouteNamespaceBindings) {
-        existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
-      }
+      _mergeTagOptions(existing, coreOptions.Tags);
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);
     }
+    // The consumer-side classification rules (priority step 2); the first registration's instance is kept.
+    services.TryAddSingleton(coreOptions.Priority);
 
     // Tag-policy startup validation: the reserved sys- tag prefix and coalesce-binding
     // ambiguity are checked when the host starts (a hosted service so every assembly's
@@ -376,6 +383,8 @@ public static class ServiceCollectionExtensions {
     // Liveness (heartbeat watchdog beats, death announcements and retractions) and probe cadence
     // (idle footprint per periodic worker): both passive, every series present at zero.
     services.TryAddSingleton<InstanceLivenessMetrics>();
+    services.TryAddSingleton<CompositeMetrics>();
+    services.AddWhizbangPriority();
     services.TryAddSingleton<ProbeCadenceMetrics>();
     // Turn-key: registered here so a governor's decisions and the evidence behind them reach
     // OpenTelemetry with no consumer wiring. A component that silently changes concurrency and
@@ -647,5 +656,25 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   private sealed class InnerEventStoreHolder(object instance) {
     public object Instance { get; } = instance;
+  }
+
+  /// <summary>
+  /// Registers the priority hook chain and the framework's default producer and receive hooks
+  /// (<see cref="Whizbang.Core.Priority.ContextPriorityProducerHook"/>, <see cref="Whizbang.Core.Priority.AcceptDeclaredPriorityReceiveHook"/>)
+  /// with TryAddEnumerable, so a host's own hooks add to the chain and a repeated call is a no-op.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#hooks</docs>
+  public static IServiceCollection AddWhizbangPriority(this IServiceCollection services) {
+    ArgumentNullException.ThrowIfNull(services);
+    // The sugar hooks read the tag declarations and the classification rules; an empty instance of each is the
+    // fallback so a host that never called AddWhizbang still resolves the chain.
+    services.TryAddSingleton<TagOptions>();
+    services.TryAddSingleton<Whizbang.Core.Priority.PriorityOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityProducerHook, Whizbang.Core.Priority.TagDeclaredPriorityProducerHook>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityReceiveHook, Whizbang.Core.Priority.PriorityClassificationReceiveHook>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityProducerHook, Whizbang.Core.Priority.ContextPriorityProducerHook>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityReceiveHook, Whizbang.Core.Priority.AcceptDeclaredPriorityReceiveHook>());
+    services.TryAddSingleton<Whizbang.Core.Priority.PriorityHookChain>();
+    return services;
   }
 }

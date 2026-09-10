@@ -88,12 +88,16 @@ public partial class PerspectiveWorker(
   // Optional, defaulted below: with none supplied the width is the configured option exactly,
   // so adopting the seam changes no scheduling behavior.
   Whizbang.Core.Execution.IConcurrencyGovernor? governor = null,
-  Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null
+  Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
+  // Collective meters (#738): received, applied and skipped at the sink, since an applied collective
+  // leaves no row behind to count.
+  Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 
   private readonly ConcurrentBag<Task> _detachedTasks = [];
+  private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics = compositeMetrics;
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly WorkCompletionMeter? _completionMeter = completionMeter;
@@ -3031,9 +3035,12 @@ public partial class PerspectiveWorker(
       // past them (a prior run applied the event and advanced the cursor without completing the row,
       // or a stale re-lease). Complete them anyway so claim_orphaned stops re-leasing them into a
       // no-op loop; leaving them keeps processed_at=NULL and re-spins the whole death-spiral.
+      // Counted as skipped (#738): a rising count is that re-lease loop showing itself.
+      _compositeMetrics?.CollectivesSkipped.Add(sinkWorkIds.Length);
       _completeCollectiveSinkWorkRows(sinkWorkIds);
       return;
     }
+    _compositeMetrics?.CollectivesReceived.Add(collectiveEnvelopes.Count);
 
     var session = sessionAccessor.GetSession(scope.ServiceProvider);
     var lastEventId = lastProcessedEventId ?? Guid.Empty;
@@ -3071,6 +3078,7 @@ public partial class PerspectiveWorker(
         await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken).ConfigureAwait(false);
         return;
       }
+      _compositeMetrics?.CollectivesApplied.Add(1);
       lastEventId = envelope.MessageId.Value;
     }
 

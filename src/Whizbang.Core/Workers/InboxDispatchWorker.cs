@@ -56,6 +56,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   private readonly Whizbang.Core.Messaging.StreamIntegrityOptions _integrityOptions;
   private readonly WorkCompletionMeter? _completionMeter;
   private readonly IInboxHandlerCommitChannel _handlerCommitChannel;
+  private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics;
   private readonly IFailureChannel _failureChannel;
   private readonly ISchemaReadyGate _schemaReadyGate;
   private readonly InboxDispatchWorkerOptions _options;
@@ -112,12 +113,14 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     Whizbang.Core.Observability.DeadLetterMetrics? dlqMetrics = null,
     Whizbang.Core.Observability.InboxMetrics? inboxMetrics = null,
     Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
-    WorkCompletionMeter? completionMeter = null) {
+    WorkCompletionMeter? completionMeter = null,
+    Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null) {
     _integrityOptions = (integrityOptions ?? throw new ArgumentNullException(nameof(integrityOptions))).Value;
     _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _inboxChannelWriter = inboxChannelWriter ?? throw new ArgumentNullException(nameof(inboxChannelWriter));
     _completionMeter = completionMeter;
+    _compositeMetrics = compositeMetrics;
     _handlerCommitChannel = handlerCommitChannel ?? throw new ArgumentNullException(nameof(handlerCommitChannel));
     _failureChannel = failureChannel ?? throw new ArgumentNullException(nameof(failureChannel));
     _schemaReadyGate = schemaReadyGate ?? throw new ArgumentNullException(nameof(schemaReadyGate));
@@ -254,6 +257,9 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     // Timed via the injected TimeProvider (not raw Stopwatch) so tests can cross the
     // slow-dispatch threshold with a FakeTimeProvider instead of wall-clock delays.
     var dispatchStartTicks = _timeProvider.GetTimestamp();
+    // Priority step 1: the row's effective number is the ambient parent for the whole handling, so every
+    // lifecycle stage and everything a receptor dispatches from inside one inherits it.
+    using var priorityScope = Whizbang.Core.Priority.PriorityContext.Enter(Whizbang.Core.Priority.WorkPriority.Effective(work.Priority));
     try {
       await ProcessOneInnerAsync(work, stoppingToken);
     } finally {
@@ -537,16 +543,64 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
   /// <summary>
+  /// A child nobody here subscribes to is dropped at expansion rather than stored, leased, fetched and discarded at
+  /// dispatch; the same gate ShouldSkipInbox applies to ordinary rows (#736). Null when no discard policy is registered.
+  /// </summary>
+  private Func<string, bool>? _hasConsumerFilter() =>
+    _discardPolicy is null ? null : messageType => !_discardPolicy.EvaluateInbox(messageType).ShouldDiscard;
+
+  /// <summary>
+  /// Fan-out control (Phase C): an imperative FanoutDirective set by the pre-fanout receptor takes precedence over
+  /// the composite's declarative FanoutMode. Skip commits the receptor's emissions and deletes the composite with no
+  /// children; ReplaceWith fans out the receptor-supplied set instead of InnerEvents; Proceed or no directive fans
+  /// out InnerEvents under Auto and nothing under Manual. Skip and Manual produce an empty Expanded result without
+  /// expanding anything, so <c>FannedOut</c> is false for them: only a real expansion counts.
+  /// </summary>
+  private static (CompositeInboxFanout.FanoutResult Result, bool FannedOut) _expandComposite(
+      ICompositeEvent composite, InboxWork work, IServiceProvider scopeProvider, FanoutDirective? directive,
+      string? compositeTypeName, Func<string, bool>? hasConsumer) {
+    CompositeInboxFanout.FanoutResult Empty() =>
+      new(CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName);
+    var result = directive switch {
+      { Kind: FanoutDirectiveKind.Skip } => Empty(),
+      { Kind: FanoutDirectiveKind.ReplaceWith } replace =>
+        CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, replace.Replacement, hasConsumer),
+      _ when composite.FanoutMode == FanoutMode.Manual => Empty(),
+      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, hasConsumer: hasConsumer),
+    };
+    var fannedOut = directive?.Kind != FanoutDirectiveKind.Skip
+      && (directive?.Kind == FanoutDirectiveKind.ReplaceWith || composite.FanoutMode != FanoutMode.Manual);
+    return (result, fannedOut);
+  }
+
+  /// <summary>The expansion meters (#738); an empty result from Skip or Manual is not an expansion.</summary>
+  private void _recordExpansion(CompositeInboxFanout.FanoutResult result, bool fannedOut) {
+    if (!fannedOut) {
+      return;
+    }
+    _compositeMetrics?.Expansions.Add(1);
+    _compositeMetrics?.ChildrenCreated.Add(result.Children.Count);
+    _compositeMetrics?.ChildrenUnsubscribed.Add(result.UnsubscribedChildren);
+  }
+
+  /// <summary>
   /// Fans a composite inbox row out into N child inbox rows at the dispatch seam. On success, a single
   /// <see cref="HandlerCommitRequest"/> carries the children and marks the composite row
   /// <see cref="MessageProcessingStatus.EventStored"/> so <c>process_inbox_completions</c> stores the
-  /// children and DELETEs the composite atomically. On cap-exceeded / expansion failure, the composite
-  /// row is dead-lettered via the same path as max-attempts (forensic snapshot + SQL delete), or — when
-  /// no <see cref="IDeadLetterStore"/> is wired — terminated via the legacy mark-Published completion.
+  /// children and DELETEs the composite atomically, and that commit runs through the scope's coordinator
+  /// before this returns (<see cref="_commitCompositeAsync"/>, #737). Children this consumer has no
+  /// subscription for are dropped at expansion (#736), and the composite meter counts every step (#738).
+  /// On cap-exceeded / expansion failure, the composite row is dead-lettered via the same path as
+  /// max-attempts (forensic snapshot + SQL delete), or — when no <see cref="IDeadLetterStore"/> is wired —
+  /// terminated via the legacy mark-Published completion.
   /// </summary>
+  /// <docs>fundamentals/messaging/composite-events#transactional-expansion</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/InboxDispatchWorkerCompositeCommitTests.cs</tests>
   private async Task _fanoutCompositeAsync(
       InboxWork work, ICompositeEvent composite, IMessageEnvelope typedEnvelope,
       IServiceProvider scopeProvider, IReceptorInvoker? receptorInvoker, CancellationToken ct) {
+    _compositeMetrics?.Received.Add(1);
+    var hasConsumer = _hasConsumerFilter();
     // Pre-fanout hook (plans/composite-events-turnkey.md, Phase B): fire the composite's INLINE
     // receptors (IReceptor<TComposite>) before any child exists — so a receptor can validate the
     // batch, stamp metadata, or emit a durable BatchReceivedEvent. Their emissions are captured by
@@ -557,25 +611,10 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     var pre = await _invokePreFanoutHookAsync(work, typedEnvelope, receptorInvoker, ct);
     var preFanoutOutbox = pre.Outbox;
 
-    // Fan-out control (Phase C): an imperative FanoutDirective set by the pre-fanout receptor takes
-    // precedence over the composite's declarative FanoutMode.
-    //   Skip                      → commit the receptor's emissions + delete the composite, no children.
-    //   ReplaceWith(children)     → fan out the receptor-supplied set instead of InnerEvents.
-    //   Proceed / none + Auto     → fan out InnerEvents (default).
-    //   Proceed / none + Manual   → nothing auto-fans-out (the receptor chose not to drive it).
     var compositeTypeName = TypeNameFormatter.DisplayName(composite.GetType());
-    var result = (pre.Directive?.Kind, composite.FanoutMode) switch {
-      (FanoutDirectiveKind.Skip, _) =>
-        new CompositeInboxFanout.FanoutResult(
-          CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName),
-      (FanoutDirectiveKind.ReplaceWith, _) =>
-        CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider, pre.Directive!.Replacement),
-      (_, FanoutMode.Manual) =>
-        new CompositeInboxFanout.FanoutResult(
-          CompositeInboxFanout.FanoutOutcome.Expanded, [], null, compositeTypeName),
-      _ => CompositeInboxFanout.TryExpand(composite, work.Envelope, scopeProvider),
-    };
+    var (result, fannedOut) = _expandComposite(composite, work, scopeProvider, pre.Directive, compositeTypeName, hasConsumer);
     if (result.Outcome == CompositeInboxFanout.FanoutOutcome.Expanded) {
+      _recordExpansion(result, fannedOut);
       // MaxInnerEventsAllowed is declared by the COMPOSITE, so a composite carrying a hundred
       // thousand inner events simply declares a cap that large and passes. The consumer had no say,
       // and expansion happens after admission control has already accepted the message — so one
@@ -596,6 +635,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
         if (verdict.Refuse) {
           // Dead-lettered rather than expanded. The DLQ is recoverable, so this defers the work for
           // an operator instead of discarding it — and it keeps one message from burying a consumer.
+          _compositeMetrics?.ChildrenRefused.Add(result.Children.Count);
           var overReason = Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded;
           LogCompositeFanoutFailed(_logger, work.MessageId, overReason.ToString(),
             $"consumer budget {_options.MaxCompositeChildrenPerExpansion} exceeded by {result.Children.Count} children");
@@ -609,7 +649,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       var commitRequest = _buildCommitRequest(
         work, status: (int)MessageProcessingStatus.EventStored,
         newInboxMessages: result.Children, newOutboxMessages: preFanoutOutbox);
-      await _handlerCommitChannel.EnqueueAsync(commitRequest, ct);
+      await _commitCompositeAsync(commitRequest, scopeProvider, ct).ConfigureAwait(false);
       return;
     }
 
@@ -618,6 +658,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       ? Whizbang.Core.Messaging.MessageFailureReason.CompositeInnerEventLimitExceeded
       : Whizbang.Core.Messaging.MessageFailureReason.CompositeExpansionFailure;
     LogCompositeFanoutFailed(_logger, work.MessageId, reason.ToString(), result.Detail ?? "(none)");
+    _compositeMetrics?.DeadLettered.Add(1);
 
     if (_deadLetterStore is not null && _generationProvider is not null) {
       try {
@@ -651,6 +692,33 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   }
 
 
+  /// <summary>
+  /// Commits an expansion as one step (#737): the composite row's completion and its children go through
+  /// <see cref="IWorkCoordinator.CommitHandlerResultAsync"/> before this returns, so the row is never in the
+  /// "expanded but not yet committed" state the claim loop can see and re-offer, and the children never wait
+  /// in the batched commit channel (#740). A failed commit leaves the row leased and unprocessed for the
+  /// claim loop to re-offer (the deterministic child ids make that re-expansion a repeat at the key), counts
+  /// the failure, and releases the in-flight entry so the re-offer is not filtered. Without a coordinator in
+  /// the dispatch scope the batched channel is used as before, with a warning naming the cost.
+  /// </summary>
+  private async Task _commitCompositeAsync(HandlerCommitRequest request, IServiceProvider scopeProvider, CancellationToken ct) {
+    var coordinator = scopeProvider.GetService<IWorkCoordinator>();
+    if (coordinator is null) {
+      LogCompositeCommitWithoutCoordinator(_logger, request.HandlerId, request.NewInboxMessages?.Count ?? 0);
+      await _handlerCommitChannel.EnqueueAsync(request, ct).ConfigureAwait(false);
+      return;
+    }
+    try {
+      await coordinator.CommitHandlerResultAsync(request, ct).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _compositeMetrics?.CommitFailures.Add(1);
+      LogCompositeCommitFailed(_logger, request.HandlerId, request.NewInboxMessages?.Count ?? 0, ex);
+    } finally {
+      // Committed: the row is gone and its in-flight entry with it. Failed: the row must be re-offered.
+      _inboxChannelWriter.RemoveInFlight(request.HandlerId);
+    }
+  }
+
   /// <summary>One expansion's budget verdict.</summary>
   /// <param name="OverBudget">Whether the expansion exceeds this consumer's budget.</param>
   /// <param name="Refuse">Whether to refuse it (report-only unless enforcement is enabled).</param>
@@ -683,6 +751,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
   /// </remarks>
   private async Task _deadLetterCompositeAsync(
       InboxWork work, Whizbang.Core.Messaging.MessageFailureReason reason, string detail, CancellationToken ct) {
+    _compositeMetrics?.DeadLettered.Add(1);
     if (_deadLetterStore is not null && _generationProvider is not null) {
       try {
         var movedId = await _deadLetterStore.MoveAsync(
@@ -1017,6 +1086,17 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 26, Level = LogLevel.Warning, Message = "InboxDispatchWorker composite fan-out failed for message {MessageId}: {Reason} — {Detail}; dead-lettering composite row")]
   static partial void LogCompositeFanoutFailed(ILogger logger, Guid messageId, string reason, string detail);
+
+  [LoggerMessage(EventId = 72, Level = LogLevel.Warning,
+    Message = "Composite {MessageId} expanded to {ChildCount} child row(s) but no IWorkCoordinator is registered in the dispatch scope; "
+            + "the expansion is queued on the batched commit channel instead of committed here. Until that commit lands the composite row "
+            + "stays leased and pending, so a re-offer can expand it again (the derived child ids make that a repeat at the key, not a copy).")]
+  static partial void LogCompositeCommitWithoutCoordinator(ILogger logger, Guid messageId, int childCount);
+
+  [LoggerMessage(EventId = 73, Level = LogLevel.Error,
+    Message = "Composite {MessageId} expanded to {ChildCount} child row(s) but the commit failed; the row stays leased and unprocessed "
+            + "and the claim loop re-offers it, where the same child ids are derived again and the store absorbs the repeat.")]
+  static partial void LogCompositeCommitFailed(ILogger logger, Guid messageId, int childCount, Exception ex);
 
   [LoggerMessage(EventId = 30, Level = LogLevel.Information,
     Message = "InboxDispatchWorker discarded re-delivery bundle {MessageId} ({CompositeType}) without fan-out: RepairMode is ReportOnly, so this consumer folds in no repair")]

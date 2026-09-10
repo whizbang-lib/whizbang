@@ -29,10 +29,17 @@ namespace Whizbang.Core.Workers;
 /// completions rather than assumed. Exponential smoothing supplies the ramp — a single good sample
 /// is not evidence of sustained capacity.
 /// </para>
+/// <para>
+/// <b>A slowdown takes effect at once.</b> The smoothing is asymmetric: a positive sample below the
+/// estimate replaces it, a sample above it is blended in, and a zero sample is blended in too. Capacity
+/// that has been lost is lost now; capacity gained is earned over several samples; one quiet interval
+/// is not a stall.
+/// </para>
 /// <para>AOT-safe: plain arithmetic over value types, no reflection.</para>
 /// </remarks>
-/// <docs>operations/workers/claim-backpressure</docs>
+/// <docs>operations/workers/claim-backpressure#lease-aware-budget</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveOutstandingBudgetTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/AdaptiveOutstandingBudgetLeaseAwarenessTests.cs</tests>
 public sealed class AdaptiveOutstandingBudget {
   private readonly int _leaseSeconds;
   private readonly int _ceiling;
@@ -104,10 +111,19 @@ public sealed class AdaptiveOutstandingBudget {
     }
 
     var sample = completed / elapsed.TotalSeconds;
-    // Smoothing is the ramp: from a standing start the estimate approaches the true rate over
-    // several samples, so one good reading cannot jump the budget to full capacity and overshoot
-    // straight back into the failure this exists to prevent.
-    _drainRatePerSecond = (_smoothing * sample) + ((1.0 - _smoothing) * _drainRatePerSecond);
+    if (_hasSample && sample > 0.0 && sample < _drainRatePerSecond) {
+      // A measured slowdown takes effect at once. Smoothing a drop the way a rise is smoothed left
+      // the estimate above the real rate for many samples, so the leased set stayed sized to a
+      // capacity the consumer no longer had and lapsed in bulk; the bound only holds if the rate it
+      // multiplies is the rate the consumer has now. A zero sample is not a measured rate (one quiet
+      // interval is a pause or an empty moment, not a stall) and keeps the smoothed path below.
+      _drainRatePerSecond = sample;
+    } else {
+      // Smoothing is the ramp: from a standing start the estimate approaches the true rate over
+      // several samples, so one good reading cannot jump the budget to full capacity and overshoot
+      // straight back into the failure this exists to prevent.
+      _drainRatePerSecond = (_smoothing * sample) + ((1.0 - _smoothing) * _drainRatePerSecond);
+    }
     _hasSample = true;
 
     var target = _drainRatePerSecond * _leaseSeconds * _safetyFactor;

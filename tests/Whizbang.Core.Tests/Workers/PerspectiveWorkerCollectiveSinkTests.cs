@@ -669,6 +669,69 @@ public class PerspectiveWorkerCollectiveSinkTests {
 
   // ── helpers ────────────────────────────────────────────────────────────
 
+  [Test]
+  public async Task CollectiveSink_Meters_CountAReceivedAndAppliedCollective_Async() {
+    // A collective disappears into the sink once applied; without a meter nothing shows how many a consumer
+    // received or applied (#738).
+    var streamId = TrackedGuid.NewMedo().Value;
+    var eventId = TrackedGuid.NewMedo().Value;
+    var collectiveEvent = new _testCollectiveEvent { Scope = new TenantCollectiveScope("t-1") };
+    var dispatcher = new _recordingDispatcher();
+    using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var metrics = new CompositeMetrics(new WhizbangMetrics(factory));
+
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [_sinkWork(streamId)],
+      eventStore: new _eventStore { Envelopes = { [streamId] = [_envelope(eventId, collectiveEvent)] } },
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      compositeMetrics: metrics);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await dispatcher.FirstDispatch.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+    var meter = factory.CreatedMeters.Single(m => m.Name == CompositeMetrics.METER_NAME);
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.received")).IsEqualTo(1)
+      .Because("one collective event reached the sink");
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.applied")).IsEqualTo(1)
+      .Because("the dispatcher applied it once");
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.skipped")).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task CollectiveSink_Meters_CountALeasedSinkRowWithNoEventAsSkipped_Async() {
+    var streamId = TrackedGuid.NewMedo().Value;
+    var sinkWork = _sinkWork(streamId);
+    var dispatcher = new _recordingDispatcher();
+    using var factory = new Whizbang.Core.Tests.Observability.TestMeterFactory();
+    var metrics = new CompositeMetrics(new WhizbangMetrics(factory));
+    using var cts = new CancellationTokenSource();
+    var (worker, harness, coordinator) = _createWorker(
+      [sinkWork],
+      eventStore: new _eventStore(),
+      registry: new _registry(new _trackingRunner(), [typeof(_testCollectiveEvent)]),
+      dispatcher: dispatcher,
+      compositeMetrics: metrics);
+
+    await worker.StartAsync(cts.Token);
+    _ = WorkCoordinatorPumpAdapter.RunPumpAsync(coordinator, harness, cts.Token);
+    await harness.CompletionCapture.FirstEventWorkId.WaitAsync(TimeSpan.FromSeconds(10));
+    await cts.CancelAsync();
+    await worker.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(30))
+      .ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+    try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
+
+    var meter = factory.CreatedMeters.Single(m => m.Name == CompositeMetrics.METER_NAME);
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.skipped")).IsEqualTo(1)
+      .Because("a leased sink row with no collective event behind it is completed without an apply; that is a skip, and a rising skip count is the re-lease loop showing itself");
+    await Assert.That(Whizbang.Core.Tests.Observability.ProbeMeterReader.ReadTotal(meter, "whizbang.collectives.applied")).IsEqualTo(0);
+  }
+
   private static PerspectiveWork _sinkWork(Guid streamId) => new() {
     WorkId = Guid.CreateVersion7(),
     StreamId = streamId,
@@ -702,7 +765,8 @@ public class PerspectiveWorkerCollectiveSinkTests {
       List<Guid>? drainStreamIds = null, List<StreamEventData>? streamEvents = null,
       int? maxPerspectiveEventAttempts = null, IDeadLetterStore? deadLetterStore = null,
       IReceptorInvoker? receptorInvoker = null, ILeaseRenewalChannel? leaseRenewalChannel = null,
-      LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null) {
+      LeaseRegistry? leaseRegistry = null, IProcessedEventCacheObserver? processedEventCacheObserver = null,
+      CompositeMetrics? compositeMetrics = null) {
     var instanceProvider = new _instanceProvider();
     var strategy = new InstantCompletionStrategy();
     var harness = new Whizbang.Testing.Workers.PerspectiveWorkerTestHarness();
@@ -731,6 +795,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
         PollingIntervalMilliseconds = 50,
         MaxPerspectiveEventAttempts = maxPerspectiveEventAttempts
       }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: strategy,
       eventTypeProvider: registry,
@@ -743,7 +808,7 @@ public class PerspectiveWorkerCollectiveSinkTests {
       deadLetterStore: deadLetterStore,
       generationProvider: deadLetterStore is null ? null : new DefaultGenerationProvider(),
       leaseRegistry: leaseRegistry,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      compositeMetrics: compositeMetrics);
     return (worker, harness, coordinator);
   }
 

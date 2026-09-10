@@ -2046,7 +2046,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     cmd.CommandText =
       $"SELECT source, work_id, work_stream_id, partition_number, destination, message_type, " +
       $"envelope_type, message_data, metadata, status, attempts, is_newly_stored, is_orphaned, " +
-      $"perspective_name FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp)";
+      $"perspective_name, priority, received_at FROM {functionName}(@p_id, @p_svc, @p_host, @p_pid, @p_max, @p_part, @p_lease, @p_fresh, @p_rows, @p_steal, @p_persp)";
     if (request.IncludeOutstanding) {
       // #635: the outstanding-budget counts ride the claim's round trip as a second result set,
       // from the same snapshot, instead of a separate per-cycle call. Untruncated by design: they
@@ -2084,7 +2084,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
           Attempts = reader.IsDBNull(10) ? null : reader.GetInt32(10),
           IsNewlyStored = reader.IsDBNull(11) ? null : reader.GetBoolean(11),
           IsOrphaned = reader.IsDBNull(12) ? null : reader.GetBoolean(12),
-          PerspectiveName = reader.IsDBNull(13) ? null : reader.GetString(13)
+          PerspectiveName = reader.IsDBNull(13) ? null : reader.GetString(13),
+          // 150: the inbox row's priority and arrival, folded per stream below for the batch hooks.
+          Priority = reader.IsDBNull(14) ? null : reader.GetInt32(14),
+          ReceivedAt = reader.IsDBNull(15) ? null : reader.GetFieldValue<DateTimeOffset>(15)
         });
       }
       if (request.IncludeOutstanding && await reader.NextResultAsync(cancellationToken)
@@ -2121,6 +2124,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       PerspectiveStreamIds = perspectiveStreamIds,
       OutboxStreamIds = outboxStreamIds,
       InboxStreamIds = inboxStreamIds,
+      InboxStreams = ClaimedInboxStreamFolder.Fold(rows),
       Outstanding = outstanding
     };
   }
@@ -4939,6 +4943,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default)
     => FetchInboxBatchAsync(streamIds, instanceId, maxPerStream, null, cancellationToken);
 
+  /// <summary>
+  /// The ordinal of <paramref name="name"/>, or -1 when the function this build talks to predates the column, so a
+  /// mid-rollout package mix reads the row without the column instead of failing.
+  /// </summary>
+  private static int _ordinalOrAbsent(System.Data.Common.DbDataReader reader, string name) {
+    try {
+      return reader.GetOrdinal(name);
+    } catch (IndexOutOfRangeException) {
+      return -1;
+    }
+  }
+
   /// <inheritdoc />
   public async Task<IReadOnlyList<InboxBatchRow>> FetchInboxBatchAsync(
     IReadOnlyList<Guid> streamIds,
@@ -4977,14 +4993,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // error column. Mirrors the outbox-side pattern: older fetch_inbox_batch revisions
     // (pre-v0.651) don't return it; leave Error null in that case so a mid-rollout
     // package mix doesn't blow up.
-    var hasErrorCol = false;
-    var errorOrdinal = -1;
-    try {
-      errorOrdinal = reader.GetOrdinal("error");
-      hasErrorCol = true;
-    } catch (IndexOutOfRangeException) {
-      // Pre-v0.651 fetch_inbox_batch without the error column — leave Error null.
-    }
+    var errorOrdinal = _ordinalOrAbsent(reader, "error");
+    // 149: the row's priority; a fetch_inbox_batch that predates the column leaves it undeclared, which the
+    // dispatch worker reads as the standard band.
+    var priorityOrdinal = _ordinalOrAbsent(reader, "priority");
     while (await reader.ReadAsync(cancellationToken)) {
       results.Add(new InboxBatchRow {
         MessageId = reader.GetGuid(0),
@@ -4998,9 +5010,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         Attempts = reader.GetInt32(8),
         PartitionNumber = await reader.IsDBNullAsync(9, cancellationToken).ConfigureAwait(false) ? null : reader.GetInt32(9),
         IsEvent = reader.GetBoolean(10),
-        Error = hasErrorCol && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
+        Error = errorOrdinal >= 0 && !await reader.IsDBNullAsync(errorOrdinal, cancellationToken).ConfigureAwait(false)
           ? reader.GetString(errorOrdinal)
           : null,
+        Priority = priorityOrdinal >= 0 ? reader.GetInt32(priorityOrdinal) : 0,
       });
     }
     return results;
@@ -5228,6 +5241,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
 /// Matches the function's return type structure.
 /// </summary>
 internal class WorkBatchRow {
+  /// <summary>150: the inbox row's effective priority; null for other sources.</summary>
+  [Column("priority")]
+  public int? Priority { get; set; }
+
+  /// <summary>150: the inbox row's arrival; null for other sources.</summary>
+  [Column("received_at")]
+  public DateTimeOffset? ReceivedAt { get; set; }
+
   [Column("instance_rank")]
   public int? InstanceRank { get; set; }
 

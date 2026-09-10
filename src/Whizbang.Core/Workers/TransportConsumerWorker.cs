@@ -1085,24 +1085,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
       isEvent = payload is IEvent;
     }
 
-    // Extract simple type name
-    var simpleTypeName = TypeNameFormatter.GetSimpleName(messageTypeName);
-    var handlerName = simpleTypeName + "Handler";
-
-    var streamId = _extractStreamId(envelope);
-
-    // Guard: fail-fast if StreamId is Guid.Empty for events
-    if (isEvent) {
-      StreamIdGuard.ThrowIfEmpty(streamId, envelope.MessageId.Value, "TransportConsumer.Inbox", messageTypeName);
-    }
-
-    // Name-first flag derivation: transport payloads are typically JsonElement here, where
-    // `payload is ICollectiveEvent`-style checks are blind — the compile-time catalog stamp
-    // (looked up by the wire type name) is what keeps Collective/Composite/Ephemeral/Compacted
-    // flags intact across a service boundary. Typed checks remain the fallback for types the
-    // local catalog does not know.
-    var flags = Whizbang.Core.Messaging.EventFlagsDeriver.Derive(
-      payload, messageTypeName, _eventMarkerResolver, _ephemeralModeResolver);
     // Diagnostic: an EVENT whose wire type name is absent from the catalog union means its flags
     // (and TTL) cannot be derived on this service — warn once per type so the exact name that
     // missed is visible in logs instead of silently storing flags=0.
@@ -1114,30 +1096,12 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
         "Receive-path flag derivation MISS: event type {ClrTypeName} is not in the message-type catalog union — flags/TTL fall back to typed checks (blind for JsonElement payloads).",
         diagClrName);
     }
-    return new InboxMessage {
-      MessageId = envelope.MessageId.Value,
-      HandlerName = handlerName,
-      Envelope = jsonEnvelope,
-      EnvelopeType = envelopeTypeFromTransport,
-      StreamId = streamId,
-      IsEvent = isEvent,
-      Flags = flags,
-      Scope = envelope.GetCurrentScope()?.Scope,
-      Metadata = new EnvelopeMetadata {
-        MessageId = envelope.MessageId,
-        Hops = envelope.Hops?.ToList() ?? [],
-        DispatchContext = envelope.DispatchContext,
-        EphemeralTtlSeconds = Whizbang.Core.Messaging.EphemeralTtlDeriver.Derive(payload, messageTypeName, _ephemeralModeResolver)
-      },
-      MessageType = messageTypeName,
-      // Slice 26.6: propagate source identity from envelope → wh_inbox columns.
-      // Producer side populates these on publish (slice 26.6b); receive-side records
-      // exactly what the source claimed. When envelope hasn't been populated (in-process
-      // dispatch, legacy envelope before slice 26.5), defaults to Guid.Empty + 0; the
-      // SQL trigger then COALESCEs to local wh_service_config.service_id.
-      SourceServiceId = envelope.SourceServiceId,
-      SourceCommitSequence = envelope.SourceCommitSequence,
-    };
+    // The row itself (handler name, stream guard, name-first flags and TTL, and the producer's identity
+    // from the envelope) is built by the helper both consumer workers share (#739).
+    return ReceivedInboxMessageBuilder.Build(
+      new ReceivedInboxMessageBuilder.ReceivedEnvelope(envelope, jsonEnvelope, envelopeTypeFromTransport, messageTypeName, isEvent),
+      ReceivedInboxMessageBuilder.Classify(scopeServiceProvider, envelope, messageTypeName),
+      "TransportConsumer.Inbox", _eventMarkerResolver, _ephemeralModeResolver);
   }
 
   /// <summary>
@@ -1153,25 +1117,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
     }
 
     return messageTypeName;
-  }
-
-  /// <summary>
-  /// Extracts stream_id from envelope for stream-based ordering.
-  /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
-  /// </summary>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) {
-    // Note: Metadata key is "AggregateId" for backward compatibility with existing envelopes
-    // Defensive: Handle null Hops gracefully
-    var firstHop = envelope.Hops?.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var streamIdElem) &&
-        streamIdElem.ValueKind == JsonValueKind.String) {
-      var streamIdStr = streamIdElem.GetString();
-      if (streamIdStr != null && Guid.TryParse(streamIdStr, out var parsedStreamId)) {
-        return parsedStreamId;
-      }
-    }
-
-    return envelope.MessageId.Value;
   }
 
   /// <summary>

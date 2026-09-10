@@ -41,12 +41,16 @@ internal readonly record struct FlushContext(
 /// Shim used by the four <see cref="IWorkCoordinatorStrategy"/> implementations to flush
 /// their queued operations through the new (post-Phase-H) work-pump path.
 /// </summary>
+/// <docs>messaging/work-coordinator#inbox-completions</docs>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/WorkCoordinatorFlushHelperInboxCompletionTests.cs</tests>
 /// <remarks>
 /// The legacy implementation routed every flush through <c>process_work_batch</c>, which
 /// inserted messages, recorded completions/failures, and claimed work in one trip.
 /// The new path decomposes those responsibilities:
 ///  - <c>store_outbox_messages</c> / <c>store_inbox_messages</c> insert new rows
 ///  - <see cref="IOutboxCompletionChannel"/> + <see cref="IFailureChannel"/> handle completions/failures
+///  - <see cref="IInboxHandlerCommitChannel"/> (or <see cref="IWorkCoordinator.CommitHandlerResultAsync"/>
+///    without a scope) lands queued inbox completions as handler commits
 ///  - <c>claim_work</c> is owned by <c>ClaimWorker</c>; nothing is claimed during a flush
 ///
 /// Lifecycle stages, tracing, and audit-message expansion that this helper used to drive
@@ -140,6 +144,30 @@ internal static class WorkCoordinatorFlushHelper {
         }
         foreach (var f in ctx.InboxFailures) {
           await failureChannel.EnqueueAsync(WorkCategory.Inbox, f, ct).ConfigureAwait(false);
+        }
+      }
+
+      // Inbox completions a strategy queued (#734). Each becomes a handler commit with no emitted
+      // messages: on the handler commit channel inside a scope, or committed on the coordinator directly
+      // when the flush runs without one. They used to be counted in the empty-flush check above and then
+      // dropped here, so a consumer's handled rows stayed leased until they lapsed and were re-offered.
+      if (ctx.InboxCompletions.Length > 0) {
+        var commitChannel = scopedProvider?.GetService<IInboxHandlerCommitChannel>();
+        foreach (var c in ctx.InboxCompletions) {
+          var request = new HandlerCommitRequest(
+            HandlerId: c.MessageId,
+            InstanceId: ctx.InstanceProvider.InstanceId,
+            ServiceName: ctx.InstanceProvider.ServiceName,
+            HostName: ctx.InstanceProvider.HostName,
+            ProcessId: ctx.InstanceProvider.ProcessId,
+            PartitionCount: partitionCount,
+            InboxCompletion: new HandlerInboxCompletion(c.MessageId, (int)c.Status),
+            DebugMode: ctx.Options.DebugMode);
+          if (commitChannel is not null) {
+            await commitChannel.EnqueueAsync(request, ct).ConfigureAwait(false);
+          } else {
+            await coordinator.CommitHandlerResultAsync(request, ct).ConfigureAwait(false);
+          }
         }
       }
 

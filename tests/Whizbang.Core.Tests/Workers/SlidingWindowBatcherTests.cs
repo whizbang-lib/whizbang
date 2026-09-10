@@ -76,10 +76,13 @@ public class SlidingWindowBatcherTests {
   /// </summary>
   [Test]
   public async Task ReadBatches_HitsMaxSize_FlushesImmediatelyAsync() {
+    // The window and MaxWait are far beyond the deadline below, so the only way the batch arrives in time is
+    // the MaxSize flush; a loaded CI runner can stretch that flush by seconds without inverting the outcome,
+    // where a 500 ms window against a 400 ms deadline once did.
     var (ch, batcher) = _setup(new SlidingWindowBatcherOptions {
       MaxSize = 5,
-      SlidingWindow = TimeSpan.FromMilliseconds(500),
-      MaxWait = TimeSpan.FromSeconds(10)
+      SlidingWindow = TimeSpan.FromSeconds(30),
+      MaxWait = TimeSpan.FromSeconds(60)
     });
     var firstBatch = new TaskCompletionSource<IReadOnlyList<int>>();
     var cts = new CancellationTokenSource();
@@ -94,8 +97,8 @@ public class SlidingWindowBatcherTests {
       await ch.Writer.WriteAsync(i);
     }
 
-    // Should flush at MaxSize=5, NOT wait for SlidingWindow=500ms.
-    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromMilliseconds(400));
+    // Flushes at MaxSize=5 without waiting for the 30 s window.
+    var batch = await firstBatch.Task.WaitAsync(TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await consumeTask; } catch (OperationCanceledException) { }
 

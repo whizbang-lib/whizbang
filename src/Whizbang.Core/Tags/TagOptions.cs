@@ -34,6 +34,7 @@ public sealed class TagOptions {
   private readonly List<TagHookRegistration> _hookRegistrations = [];
   private readonly Dictionary<string, CoalescePolicyOptions> _coalesceBindings = new(StringComparer.Ordinal);
   private readonly Dictionary<string, string> _routeNamespaceBindings = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, int> _priorityDeclarations = new(StringComparer.Ordinal);
 
   /// <summary>
   /// Gets the registered hook configurations.
@@ -49,6 +50,9 @@ public sealed class TagOptions {
   /// Gets the TransportNamespace keys bound per tag. See <see cref="RouteNamespace(string, string)"/>.
   /// </summary>
   public IReadOnlyDictionary<string, string> RouteNamespaceBindings => _routeNamespaceBindings;
+
+  /// <summary>Gets the priority declared per tag. See <see cref="DeclarePriority(string, int)"/>.</summary>
+  public IReadOnlyDictionary<string, int> PriorityDeclarations => _priorityDeclarations;
 
   /// <summary>
   /// Size in bytes at which the tag processor logs a warning for a built payload.
@@ -248,6 +252,33 @@ public sealed class TagOptions {
     ArgumentNullException.ThrowIfNull(policy);
 
     _coalesceBindings.TryAdd(tag, policy);
+    return this;
+  }
+
+  /// <summary>
+  /// Declares the priority of every message type that carries <paramref name="tag"/> (priority step 2): a
+  /// constant such as <see cref="Whizbang.Core.Priority.WorkPriority.BACKGROUND"/>, or any number in a band.
+  /// Tags classify; this binds a declaration to the class, so a producer's bulk types are declared once, whatever
+  /// context they are dispatched from. Applied by <see cref="Whizbang.Core.Priority.TagDeclaredPriorityProducerHook"/>,
+  /// which runs before the framework's context default; an explicit declaration made earlier in the chain is kept.
+  /// Registration is last-wins per tag, like the other tag bindings.
+  /// </summary>
+  /// <param name="tag">The tag string the declaration binds to.</param>
+  /// <param name="priority">The number to declare; lower is more urgent.</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <docs>fundamentals/messaging/message-priority#declaring-with-tags</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Priority/PriorityTagSurfaceTests.cs</tests>
+  public TagOptions DeclarePriority(string tag, int priority) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(priority);
+    _priorityDeclarations[tag] = priority;  // last-wins per tag
+    return this;
+  }
+
+  /// <summary>Overwrites (or adds) a priority declaration; used when merging options across AddWhizbang calls.</summary>
+  internal TagOptions UsePriorityDeclaration(string tag, int priority) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tag);
+    _priorityDeclarations[tag] = priority;
     return this;
   }
 

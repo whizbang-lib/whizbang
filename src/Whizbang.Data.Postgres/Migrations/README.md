@@ -73,6 +73,16 @@ new file for a fix.
     hash-bumping the last-word file still works but is no longer load-bearing; "Re-run note"
     comments are documentation now, not the mechanism.
 
+12. **Shared literals are constants** — a literal more than one migration or function needs (the empty
+    stream id, the envelope's JSON field names, the work-category names, the instance application-name
+    prefix) is defined once in `Migrations/constants.txt` and written in SQL as its token
+    (`__EMPTY_UUID__`, `elem->>__ENVELOPE_FIELD_MESSAGE_ID__`). The value is substituted at apply time on
+    the same path as `__SCHEMA__` (the runtime provider, the embedded-migration path a generated DbContext
+    executes, and the drift comparison against deployed bodies), so a function copied forward under rule 5
+    cannot carry a mistyped copy. Values are SQL fragments, quotes included; add a cast in the SQL where one
+    is needed. The lint fails a migration numbered 148 or later that writes one of the values raw or writes a
+    token the file does not define; `MigrationConstantsTests` fails the build for any migration.
+
 **Rule 3 is enforced** by `scripts/Lint-MigrationSql.ps1` (CI step in the `format` job) — it fails on
 any bare `wh_` ref inside a function body. The historical debt has been **burned down to zero**
 (baseline empty); the lint now holds it at zero. `-Fix` auto-qualifies flagged refs; `-UpdateBaseline`

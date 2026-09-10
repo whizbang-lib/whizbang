@@ -2575,6 +2575,14 @@ public record WorkCoordinatorStatistics {
 }
 
 /// <summary>
+/// One inbox stream of a claim as the batch hook sees it (priority step 1): the stream's most urgent row, its
+/// oldest arrival and how many of its rows the batch holds, folded by the coordinator over the rows the claim
+/// returned for the stream.
+/// </summary>
+/// <docs>fundamentals/messaging/message-priority#hooks</docs>
+public sealed record InboxStreamFold(Guid StreamId, int FoldedPriority, DateTimeOffset? OldestReceivedAt, int PendingRows);
+
+/// <summary>
 /// Contains the results of a work batch poll including work items for this instance to process.
 /// </summary>
 public record WorkBatch {
@@ -2594,6 +2602,10 @@ public record WorkBatch {
   /// Each item represents a stream that needs perspective updates.
   /// </summary>
   public required List<PerspectiveWork> PerspectiveWork { get; init; }
+
+  /// <summary>The inbox streams of this claim folded for the batch hooks (priority step 1); empty when the coordinator does not fold.</summary>
+  /// <docs>fundamentals/messaging/message-priority#hooks</docs>
+  public IReadOnlyList<InboxStreamFold> InboxStreams { get; init; } = [];
 
   /// <summary>
   /// Stream IDs that have leased perspective events for this instance.
@@ -2683,6 +2695,14 @@ public record OutboxMessage {
   /// If true and stream_id is not null, it will be persisted to the event store.
   /// </summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// The priority the producer declared for this message (<see cref="Whizbang.Core.Priority.WorkPriority"/>),
+  /// stamped by the dispatcher from context and the producer hooks; zero when nothing was declared. Stored
+  /// in the row's <c>priority</c> column as the effective number.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Whether this message is a composite event (implements
@@ -2822,6 +2842,13 @@ public record InboxMessage {
   /// If true and stream_id is not null, it will be persisted to the event store.
   /// </summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>
+  /// The effective priority this consumer stores for the row (<see cref="Whizbang.Core.Priority.WorkPriority"/>):
+  /// the declared number after the receive hooks, never zero once classified.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Categorization bitmask preserved from the originating
@@ -3065,6 +3092,14 @@ public record InboxWork : IHasMessageIdAndStatus {
   /// Used for load distribution and ensuring same stream goes to same instance.
   /// </summary>
   public int? PartitionNumber { get; init; }
+
+  /// <summary>
+  /// The row's effective priority (<see cref="Whizbang.Core.Priority.WorkPriority"/>), entered as the ambient
+  /// parent (<see cref="Whizbang.Core.Priority.PriorityContext"/>) while the row is handled so what the handler
+  /// produces inherits it.
+  /// </summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
 
   /// <summary>
   /// Number of previous processing attempts.
@@ -3507,6 +3542,10 @@ public sealed record InboxBatchRow {
   public int? PartitionNumber { get; init; }
   /// <summary>True if this inbox message is also written to the event store.</summary>
   public bool IsEvent { get; init; }
+
+  /// <summary>The row's effective priority (<see cref="Whizbang.Core.Priority.WorkPriority"/>).</summary>
+  /// <docs>fundamentals/messaging/message-priority#declaration</docs>
+  public int Priority { get; init; }
   /// <summary>
   /// Previous error text persisted on the inbox row (<c>wh_inbox.error</c>), populated
   /// by the most recent <c>process_inbox_failures</c> cycle. NULL when no prior failure
