@@ -1169,6 +1169,8 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     // First, ALWAYS replace __MIGRATION_SCHEMA__ placeholder (even for "public" schema)
     // This ensures the placeholder is substituted before any early returns
     var transformedSql = sql.Replace("__MIGRATION_SCHEMA__", quotedSchema);
+    // The migrations' shared literals (Migrations/constants.txt, rule 12) ride the same substitution.
+    transformedSql = Whizbang.Data.Postgres.MigrationConstants.Apply(transformedSql);
 
     // If schema is "public", no further qualification needed - table names are already valid
     if (effectiveSchema == "public") {

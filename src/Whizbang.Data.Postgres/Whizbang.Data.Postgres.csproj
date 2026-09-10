@@ -24,6 +24,7 @@
   <ItemGroup>
     <!-- Embed PostgreSQL migration scripts as resources -->
     <EmbeddedResource Include="Migrations\*.sql" />
+    <EmbeddedResource Include="Migrations\constants.txt" />
   </ItemGroup>
 
   <!-- Generate BuildInfo.g.cs with version const at compile time (AOT-safe, no reflection) -->

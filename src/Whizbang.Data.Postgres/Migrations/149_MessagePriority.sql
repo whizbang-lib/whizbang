@@ -65,7 +65,7 @@ BEGIN
     -- see the matching comment in the outbox query for the full rationale.
     WHERE (
         i.stream_id = ANY(p_stream_ids)
-        OR ((i.stream_id IS NULL OR i.stream_id = '00000000-0000-0000-0000-000000000000'::uuid)
+        OR ((i.stream_id IS NULL OR i.stream_id = __EMPTY_UUID__::uuid)
             AND i.message_id = ANY(p_stream_ids))
       )
       AND i.instance_id = p_instance_id
@@ -127,7 +127,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.store_inbox_messages(
 ) AS $$
 #variable_conflict use_column
 DECLARE
-  c_field_flags CONSTANT TEXT := 'Flags';
+  c_field_flags CONSTANT TEXT := __ENVELOPE_FIELD_FLAGS__;
   v_msg RECORD;
   v_partition INTEGER;
   v_observations INTEGER;  -- 1 on first sight; N on the Nth redelivery
@@ -139,14 +139,14 @@ BEGIN
 
   FOR v_msg IN
     SELECT
-      (elem->>'MessageId')::UUID as msg_id,
+      (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID as msg_id,
       elem->>'HandlerName' as handler_name,
       elem->>'EnvelopeType' as envelope_type,
       elem->>'MessageType' as message_type,
       elem->'Envelope' as envelope_data,
       elem->'Metadata' as metadata,
       elem->'Scope' as scope,
-      (elem->>'StreamId')::UUID as stream_id,
+      (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID as stream_id,
       (elem->>'IsEvent')::BOOLEAN as is_event,
       -- 149: the effective priority the consumer classified; zero (undeclared) and an absent field read as standard.
       COALESCE(NULLIF((elem->>'Priority')::INTEGER, 0), 150) as priority,
@@ -159,10 +159,10 @@ BEGIN
         ELSE 0
       END as flags,
       -- 146 (#727): a zero GUID is "unknown", not a producer; COALESCE below then falls back to this service.
-      NULLIF((elem->>'SourceServiceId')::UUID, '00000000-0000-0000-0000-000000000000'::UUID) as source_service_id,
+      NULLIF((elem->>'SourceServiceId')::UUID, __EMPTY_UUID__::UUID) as source_service_id,
       (elem->>'SourceCommitSequence')::BIGINT as source_commit_sequence
     FROM jsonb_array_elements(p_messages) as elem
-    ORDER BY (elem->>'StreamId')::UUID NULLS FIRST, (elem->>'MessageId')::UUID
+    ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
   LOOP
     -- 121: DO UPDATE (was DO NOTHING) so a redelivery is COUNTED rather than silently swallowed.
     -- RETURNING gives the post-write count on both arms, so newness is read from the value
@@ -257,7 +257,7 @@ BEGIN
   END LOOP;
 
   IF cardinality(v_notify_inbox_streams) > 0 THEN
-    PERFORM __SCHEMA__.notify_instance_owners('inbox', v_notify_inbox_streams);
+    PERFORM __SCHEMA__.notify_instance_owners(__CATEGORY_INBOX__, v_notify_inbox_streams);
   END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -297,30 +297,30 @@ BEGIN
 
   FOR v_msg IN
     SELECT
-      (elem->>'MessageId')::UUID as msg_id,
+      (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID as msg_id,
       elem->>'Destination' as destination,
       elem->>'MessageType' as message_type,
       elem->>'EnvelopeType' as envelope_type,
       elem->'Envelope' as envelope_data,
       elem->'Metadata' as metadata,
       elem->'Scope' as scope,
-      (elem->>'StreamId')::UUID as stream_id,
+      (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID as stream_id,
       (elem->>'IsEvent')::BOOLEAN as is_event,
       -- 149: the priority the producer declared; zero (undeclared) and an absent field read as standard.
       COALESCE(NULLIF((elem->>'Priority')::INTEGER, 0), 150) as priority,
       -- EventFlags (062): persisted so migration 061's collective routing can see (flags & 1). Robust to
       -- numeric (default System.Text.Json enum) or [Flags] string serialization of EventFlags.
       CASE
-        WHEN elem->>'Flags' IS NULL OR elem->>'Flags' = '' THEN 0
-        WHEN elem->>'Flags' ~ '^[0-9]+$' THEN (elem->>'Flags')::INTEGER
-        WHEN elem->>'Flags' ILIKE '%Collective%' THEN 1
+        WHEN elem->>__ENVELOPE_FIELD_FLAGS__ IS NULL OR elem->>__ENVELOPE_FIELD_FLAGS__ = '' THEN 0
+        WHEN elem->>__ENVELOPE_FIELD_FLAGS__ ~ '^[0-9]+$' THEN (elem->>__ENVELOPE_FIELD_FLAGS__)::INTEGER
+        WHEN elem->>__ENVELOPE_FIELD_FLAGS__ ILIKE '%Collective%' THEN 1
         ELSE 0
       END as flags,
       NULLIF(elem->>'ScheduledFor', '')::TIMESTAMPTZ as scheduled_for,
       -- 115 tag-bound coalescing: the group a pending single belongs to (NULL for normal rows).
       NULLIF(elem->>'CoalesceGroup', '') as coalesce_group
     FROM jsonb_array_elements(p_messages) as elem
-    ORDER BY (elem->>'StreamId')::UUID NULLS FIRST, (elem->>'MessageId')::UUID
+    ORDER BY (elem->>__ENVELOPE_FIELD_STREAM_ID__)::UUID NULLS FIRST, (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID
   LOOP
     IF v_msg.stream_id IS NOT NULL THEN
       v_partition := __SCHEMA__.compute_partition(v_msg.stream_id, p_partition_count);
@@ -451,10 +451,10 @@ BEGIN
   END IF;
 
   IF cardinality(v_notify_outbox_streams) > 0 THEN
-    PERFORM __SCHEMA__.notify_instance_owners('outbox', v_notify_outbox_streams);
+    PERFORM __SCHEMA__.notify_instance_owners(__CATEGORY_OUTBOX__, v_notify_outbox_streams);
   END IF;
   IF cardinality(v_notify_persp_streams) > 0 THEN
-    PERFORM __SCHEMA__.notify_instance_owners('perspective', v_notify_persp_streams);
+    PERFORM __SCHEMA__.notify_instance_owners(__CATEGORY_PERSPECTIVE__, v_notify_persp_streams);
   END IF;
 END;
 $$ LANGUAGE plpgsql;
@@ -475,9 +475,9 @@ CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain(
 DECLARE
   v_stored_event_ids UUID[];
   v_count INTEGER;
-  c_field_message_id CONSTANT TEXT := 'MessageId';  -- NOSONAR S1192: the field name recurs per function; PL/pgSQL has no file-level constants
+  c_field_message_id CONSTANT TEXT := __ENVELOPE_FIELD_MESSAGE_ID__;  -- NOSONAR S1192: the field name recurs per function; PL/pgSQL has no file-level constants
   c_field_hops CONSTANT TEXT := 'Hops';
-  c_source_perspective CONSTANT TEXT := 'perspective';
+  c_source_perspective CONSTANT TEXT := __CATEGORY_PERSPECTIVE__;
   -- Migration 061: collective routing sink + flag bit (EventFlags.Collective = 1 << 0).
   c_collective_sink CONSTANT TEXT := '__collective__';
   c_flag_collective CONSTANT INTEGER := 1;
@@ -607,7 +607,7 @@ BEGIN
     INSERT INTO __SCHEMA__.wh_stream_digests AS d
       (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at)
     SELECT
-      '00000000-0000-0000-0000-000000000000'::uuid,  -- NOSONAR S1192: the no-source-service sentinel recurs per function; PL/pgSQL has no file-level constants
+      __EMPTY_UUID__::uuid,  -- NOSONAR S1192: the no-source-service sentinel recurs per function; PL/pgSQL has no file-level constants
       COALESCE(c.scope::jsonb ->> 't', ''),
       c.event_type,
       c.stream_id,
@@ -762,9 +762,9 @@ DECLARE
   v_stored_event_ids UUID[];
   v_count INTEGER;
   v_local_service_id UUID;
-  c_field_message_id CONSTANT TEXT := 'MessageId';
+  c_field_message_id CONSTANT TEXT := __ENVELOPE_FIELD_MESSAGE_ID__;
   c_field_hops CONSTANT TEXT := 'Hops';
-  c_source_perspective CONSTANT TEXT := 'perspective';
+  c_source_perspective CONSTANT TEXT := __CATEGORY_PERSPECTIVE__;
   -- Migration 061: collective routing sink + flag bit (EventFlags.Collective = 1 << 0).
   c_collective_sink CONSTANT TEXT := '__collective__';
   c_flag_collective CONSTANT INTEGER := 1;
@@ -857,7 +857,7 @@ BEGIN
       -- Migration 087: normalize the received origin — self/zero means locally-originated (NULL).
       CASE
         WHEN ie.source_service_id IS NULL
-             OR ie.source_service_id = '00000000-0000-0000-0000-000000000000'::uuid
+             OR ie.source_service_id = __EMPTY_UUID__::uuid
              OR ie.source_service_id = v_local_service_id
         THEN NULL
         ELSE ie.source_service_id
@@ -918,7 +918,7 @@ BEGIN
     INSERT INTO __SCHEMA__.wh_stream_digests AS d
       (origin_service_id, scope_tenant, event_type, stream_id, digest_lo, digest_hi, event_count, updated_at)
     SELECT
-      COALESCE(c.origin_service_id, '00000000-0000-0000-0000-000000000000'::uuid),
+      COALESCE(c.origin_service_id, __EMPTY_UUID__::uuid),
       COALESCE(c.scope::jsonb ->> 't', ''),
       c.event_type,
       c.stream_id,

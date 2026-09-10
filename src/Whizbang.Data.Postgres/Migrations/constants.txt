@@ -1,0 +1,26 @@
+# Migration constants (rule 12 in README.md): the literals the migrations share, defined once.
+#
+# A migration writes the token exactly as it appears here (__EMPTY_UUID__) and the value is substituted at
+# apply time on the same path as __SCHEMA__: the runtime provider, the embedded-migration path a generated
+# DbContext executes, and the drift comparison against deployed function bodies. Values are SQL fragments,
+# quotes included; add a cast in the SQL where one is needed (__EMPTY_UUID__::uuid).
+#
+# Tokens are UPPER_SNAKE names between double underscores. A token may not be a substring of another, may not
+# repeat, and __SCHEMA__ is the schema placeholder, not a constant. scripts/Lint-MigrationSql.ps1 fails a
+# migration numbered 148 or later that writes one of these values raw, or writes a token nothing defines.
+
+# The empty stream id: a row without a stream.
+__EMPTY_UUID__ = '00000000-0000-0000-0000-000000000000'
+
+# The application_name prefix every instance's connection carries (see wh_service_instances).
+__INSTANCE_APPLICATION_NAME_PREFIX__ = 'whizbang-'
+
+# JSON field names of the envelope as the store functions read them from the batch elements.
+__ENVELOPE_FIELD_MESSAGE_ID__ = 'MessageId'
+__ENVELOPE_FIELD_STREAM_ID__ = 'StreamId'
+__ENVELOPE_FIELD_FLAGS__ = 'Flags'
+
+# Work categories, as the claim and notify functions name them.
+__CATEGORY_INBOX__ = 'inbox'
+__CATEGORY_OUTBOX__ = 'outbox'
+__CATEGORY_PERSPECTIVE__ = 'perspective'

@@ -313,6 +313,48 @@ if ($dropColumn) {
   Write-Host '  -- RECLAIM: not required — <table> is created empty earlier in this migration.'
 }
 
+# Rule 12 — shared literals come from Migrations/constants.txt. A migration numbered 148 or later must not
+# write one of the values raw (a copied body drifting from the one definition), and must not write a token
+# nothing defines (a typo reaches the database as an unknown identifier).
+$constantsPath = Join-Path $MigrationsPath 'constants.txt'
+$constants = [ordered]@{}
+if (Test-Path $constantsPath) {
+  foreach ($line in Get-Content $constantsPath) {
+    $t = $line.Trim()
+    if (-not $t -or $t.StartsWith('#')) { continue }
+    $eq = $t.IndexOf('=')
+    if ($eq -lt 1) { continue }
+    $constants[$t.Substring(0, $eq).Trim()] = $t.Substring($eq + 1).Trim()
+  }
+}
+$ruleTwelve = [System.Collections.Generic.List[string]]::new()
+foreach ($f in Get-ChildItem -Path $MigrationsPath -Filter '*.sql' | Sort-Object Name) {
+  if ($f.Name -notmatch '^(\d{3})_' -or [int]$Matches[1] -lt 148) { continue }
+  $lineNo = 0
+  foreach ($line in Get-Content -Path $f.FullName) {
+    $lineNo++
+    if ($line.TrimStart().StartsWith('--')) { continue }
+    foreach ($entry in $constants.GetEnumerator()) {
+      if ($line.Contains($entry.Value)) {
+        $ruleTwelve.Add(("  {0}:{1}  raw {2}  ->  write {3}" -f $f.Name, $lineNo, $entry.Value, $entry.Key))
+      }
+    }
+    foreach ($m in [regex]::Matches($line, '__[A-Z][A-Z0-9_]*__')) {
+      $tok = $m.Value
+      if ($tok -eq '__SCHEMA__' -or $constants.Contains($tok)) { continue }
+      $ruleTwelve.Add(("  {0}:{1}  unknown token {2}  ->  define it in constants.txt or fix the spelling" -f $f.Name, $lineNo, $tok))
+    }
+  }
+}
+if ($ruleTwelve.Count -gt 0) {
+  $exit = 1
+  Write-Host ''
+  Write-Host 'Shared literals written raw, or tokens nothing defines (rule 12 — these fail CI):' -ForegroundColor Red
+  $ruleTwelve | ForEach-Object { Write-Host $_ }
+  Write-Host ''
+  Write-Host 'The literals the migrations share are defined once in Migrations/constants.txt and substituted'
+  Write-Host 'at apply time on the same path as __SCHEMA__. Write the token, never the value.'
+}
 if ($exit -eq 0) {
   Write-Host "migration SQL lint OK — $($currentKeys.Count) known refs, all baselined; 0 new; DROP COLUMN notes present." -ForegroundColor Green
 }

@@ -48,7 +48,7 @@ public class PostgresMigrationProvider : IMigrationProvider {
   public string? ReleaseNotes { get; init; }
 
   /// <summary>
-  /// Gets all migration scripts in order (sorted by filename) with __SCHEMA__ replaced.
+  /// Gets all migration scripts in order (sorted by filename) with __SCHEMA__ and the migration constants replaced.
   /// </summary>
   public IReadOnlyList<MigrationScript> GetMigrations() {
     var resourceNames = _assembly
@@ -66,7 +66,7 @@ public class PostgresMigrationProvider : IMigrationProvider {
       var sql = _readEmbeddedResource(resourceName);
 
       // Replace __SCHEMA__ placeholder with configured schema name
-      sql = sql.Replace("__SCHEMA__", _schemaName);
+      sql = MigrationConstants.Apply(sql.Replace("__SCHEMA__", _schemaName));
 
       migrations.Add(new MigrationScript(scriptName, sql));
     }
@@ -87,7 +87,7 @@ public class PostgresMigrationProvider : IMigrationProvider {
     }
 
     var sql = _readEmbeddedResource(resourceName);
-    sql = sql.Replace("__SCHEMA__", _schemaName);
+    sql = MigrationConstants.Apply(sql.Replace("__SCHEMA__", _schemaName));
 
     return new MigrationScript(scriptName, sql);
   }

@@ -69,7 +69,7 @@ BEGIN
         si.last_heartbeat_at >= p_stale_cutoff
         OR EXISTS (
           SELECT 1 FROM pg_stat_activity sa
-          WHERE sa.application_name = 'whizbang-' || si.instance_id::text
+          WHERE sa.application_name = __INSTANCE_APPLICATION_NAME_PREFIX__ || si.instance_id::text
         )
       )
   ),
@@ -432,7 +432,7 @@ BEGIN
                     si.last_heartbeat_at >= p_stale_cutoff
                     OR EXISTS (
                       SELECT 1 FROM pg_stat_activity sa
-                      WHERE sa.application_name = 'whizbang-' || si.instance_id::text
+                      WHERE sa.application_name = __INSTANCE_APPLICATION_NAME_PREFIX__ || si.instance_id::text
                     )
                   )
               )
@@ -621,7 +621,7 @@ BEGIN
                 -- protection against premature orphan-claim, never loosens.
                 OR EXISTS (
                   SELECT 1 FROM pg_stat_activity sa
-                  WHERE sa.application_name = 'whizbang-' || ast.assigned_instance_id::text
+                  WHERE sa.application_name = __INSTANCE_APPLICATION_NAME_PREFIX__ || ast.assigned_instance_id::text
                 )
               )
           )
@@ -752,7 +752,7 @@ BEGIN
   END IF;
 
   CASE p_category
-    WHEN 'outbox' THEN
+    WHEN __CATEGORY_OUTBOX__ THEN
       UPDATE __SCHEMA__.wh_outbox
         SET lease_expiry = v_new_expiry
         WHERE message_id = ANY(p_ids)
@@ -765,7 +765,7 @@ BEGIN
           AND o.processed_at IS NULL
           AND o.stream_id = ast.stream_id
           AND o.instance_id = ast.assigned_instance_id;
-    WHEN 'inbox' THEN
+    WHEN __CATEGORY_INBOX__ THEN
       UPDATE __SCHEMA__.wh_inbox
         SET lease_expiry = v_new_expiry
         WHERE message_id = ANY(p_ids)

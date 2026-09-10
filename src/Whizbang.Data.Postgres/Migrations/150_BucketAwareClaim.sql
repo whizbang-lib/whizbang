@@ -101,7 +101,7 @@ BEGIN
         si.last_heartbeat_at >= p_stale_cutoff
         OR EXISTS (
           SELECT 1 FROM pg_stat_activity sa
-          WHERE sa.application_name = 'whizbang-' || si.instance_id::text
+          WHERE sa.application_name = __INSTANCE_APPLICATION_NAME_PREFIX__ || si.instance_id::text
         )
       )
   ),
@@ -638,7 +638,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   p_allow_steal BOOLEAN DEFAULT FALSE,
   p_max_perspective_streams INTEGER DEFAULT NULL
 ) RETURNS TABLE(
-  source VARCHAR(20),           -- 'outbox' | 'inbox' | 'receptor' | 'perspective'
+  source VARCHAR(20),           -- __CATEGORY_OUTBOX__ | __CATEGORY_INBOX__ | 'receptor' | __CATEGORY_PERSPECTIVE__
   work_id UUID,
   work_stream_id UUID,
   partition_number INTEGER,
@@ -656,8 +656,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   received_at TIMESTAMPTZ       -- 150: the inbox row's arrival (NULL for other sources)
 ) AS $$
 DECLARE
-  c_source_outbox CONSTANT VARCHAR(20) := 'outbox';
-  c_source_inbox CONSTANT VARCHAR(20) := 'inbox';
+  c_source_outbox CONSTANT VARCHAR(20) := __CATEGORY_OUTBOX__;
+  c_source_inbox CONSTANT VARCHAR(20) := __CATEGORY_INBOX__;
   v_has_any_work BOOLEAN;
 BEGIN
   -- Empty-call short-circuit: cheap indexed EXISTS lookups on partial indexes.
@@ -1045,7 +1045,7 @@ BEGIN
     -- that exist and are free are stamped in place.
     WITH kinds AS (
       SELECT k.kind
-      FROM (VALUES (c_source_outbox), (c_source_inbox), ('perspective')) AS k(kind)
+      FROM (VALUES (c_source_outbox), (c_source_inbox), (__CATEGORY_PERSPECTIVE__)) AS k(kind)
     WHERE (k.kind = c_source_outbox AND v_outbox_rows > 0)
        OR (k.kind = c_source_inbox AND (v_inbox_rows > 0 OR v_receptor_rows > 0))
        -- 133: the perspective watermark must reflect DRAINABLE progress, not merely a
@@ -1057,7 +1057,7 @@ BEGIN
        -- stamp's make-up ring, stranding visibility on the adaptive poll cap (issue #677).
        -- The EXISTS runs at most once: the k.kind guard short-circuits it away for the
        -- outbox/inbox VALUES rows.
-       OR (k.kind = 'perspective' AND v_perspective_rows > 0 AND EXISTS (
+       OR (k.kind = __CATEGORY_PERSPECTIVE__ AND v_perspective_rows > 0 AND EXISTS (
              SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
              JOIN __SCHEMA__.wh_event_store es ON es.event_id = pe.event_id
              WHERE pe.instance_id = p_instance_id
@@ -1181,7 +1181,7 @@ BEGIN
                 -- protection against premature orphan-claim, never loosens.
                 OR EXISTS (
                   SELECT 1 FROM pg_stat_activity sa
-                  WHERE sa.application_name = 'whizbang-' || ast.assigned_instance_id::text
+                  WHERE sa.application_name = __INSTANCE_APPLICATION_NAME_PREFIX__ || ast.assigned_instance_id::text
                 )
               )
           )
