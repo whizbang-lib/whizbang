@@ -1120,12 +1120,6 @@ public partial class TransportConsumerWorker : BackgroundService, Whizbang.Core.
   }
 
   /// <summary>
-  /// Extracts stream_id from envelope for stream-based ordering.
-  /// Uses [StreamId] attribute value stored in metadata as "AggregateId" for backward compatibility.
-  /// </summary>
-  private static Guid _extractStreamId(IMessageEnvelope envelope) => ReceivedInboxMessageBuilder.ExtractStreamId(envelope);
-
-  /// <summary>
   /// Pauses all active subscriptions.
   /// Messages will not be processed until resumed.
   /// </summary>

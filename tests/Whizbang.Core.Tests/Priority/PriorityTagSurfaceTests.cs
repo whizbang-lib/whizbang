@@ -90,6 +90,21 @@ public class PriorityTagSurfaceTests {
       .Because("the same last-wins rule the other tag bindings use, so a host binding replaces a built-in one");
   }
 
+  [Test]
+  public async Task AddWhizbang_CalledTwice_MergesTheTagDeclarations_LastWinsPerTagAsync() {
+    var services = new ServiceCollection();
+    _ = services.AddWhizbang(o => o.Tags.DeclarePriority("bulk-import", WorkPriority.BACKGROUND).DeclarePriority("shared", WorkPriority.STANDARD));
+    _ = services.AddWhizbang(o => o.Tags.DeclarePriority("shared", WorkPriority.INTERACTIVE));
+    await using var provider = services.BuildServiceProvider();
+
+    var tags = provider.GetRequiredService<TagOptions>();
+
+    await Assert.That(tags.PriorityDeclarations["bulk-import"]).IsEqualTo(WorkPriority.BACKGROUND)
+      .Because("a declaration from the first call survives a second call that does not mention it");
+    await Assert.That(tags.PriorityDeclarations["shared"]).IsEqualTo(WorkPriority.INTERACTIVE)
+      .Because("last wins per tag across AddWhizbang calls, the rule every other tag binding follows");
+  }
+
   // ---- consumer: classify by namespace, type, or rule -----------------------------------------
 
   [Test]
