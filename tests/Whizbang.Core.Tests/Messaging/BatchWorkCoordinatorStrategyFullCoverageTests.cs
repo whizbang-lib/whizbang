@@ -283,6 +283,8 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
 
       // Assert — outbox + inbox each invoke their own store call
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+      await Assert.That(coordinator.HandlerCommits.Count).IsEqualTo(1)
+        .Because("the queued inbox completion reaches the coordinator as a handler commit (#734); it used to be counted and dropped");
       await Assert.That(logger.LogCount).IsGreaterThanOrEqualTo(5);
     } finally {
       await sut.DisposeAsync();
@@ -543,6 +545,16 @@ public class BatchWorkCoordinatorStrategyFullCoverageTests {
     public Task ReportPerspectiveFailureAsync(
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    /// <summary>Handler commits the flush helper makes for queued inbox completions (#734).</summary>
+    public List<HandlerCommitRequest> HandlerCommits { get; } = [];
+
+    public Task CommitHandlerResultAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
+      lock (HandlerCommits) {
+        HandlerCommits.Add(request);
+      }
+      return Task.CompletedTask;
+    }
 
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;

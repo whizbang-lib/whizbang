@@ -1082,6 +1082,8 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
       // Assert — outbox + inbox each trigger their own store call; completions/failures
       // route via channels (covered in WorkCoordinatorFlushHelperTests).
       await Assert.That(coordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
+      await Assert.That(coordinator.HandlerCommits.Count).IsEqualTo(1)
+        .Because("the queued inbox completion reaches the coordinator as a handler commit (#734); it used to be counted and dropped");
       await Assert.That(coordinator.LastNewOutboxMessages.Length).IsEqualTo(1);
       await Assert.That(coordinator.LastNewInboxMessages.Length).IsEqualTo(1);
     } finally {
@@ -1221,6 +1223,16 @@ public class IntervalWorkCoordinatorStrategyEdgeCaseTests {
     public Task ReportPerspectiveFailureAsync(
       PerspectiveCursorFailure failure,
       CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    /// <summary>Handler commits the flush helper makes for queued inbox completions (#734).</summary>
+    public List<HandlerCommitRequest> HandlerCommits { get; } = [];
+
+    public Task CommitHandlerResultAsync(HandlerCommitRequest request, CancellationToken cancellationToken = default) {
+      lock (HandlerCommits) {
+        HandlerCommits.Add(request);
+      }
+      return Task.CompletedTask;
+    }
 
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
