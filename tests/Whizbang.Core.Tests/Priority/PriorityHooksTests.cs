@@ -150,8 +150,10 @@ public class PriorityHooksTests {
 
     await Assert.That(declared).IsEqualTo(WorkPriority.INTERACTIVE).Because("the context-derived producer default is registered");
     await Assert.That(effective).IsEqualTo(WorkPriority.STANDARD).Because("the accept-declared receive default is registered");
-    await Assert.That(sp.GetServices<IPriorityProducerHook>().Count()).IsEqualTo(1)
-      .Because("registered with TryAddEnumerable, so a second registration of the same default is a no-op and a host's own hook adds to the chain");
+    services.AddWhizbangPriority();   // a second registration is a no-op
+    using var again = services.BuildServiceProvider();
+    await Assert.That(again.GetServices<IPriorityProducerHook>().Count()).IsEqualTo(2)
+      .Because("the framework registers two producer hooks (the tag declarations, then the context default) with TryAddEnumerable, so a second registration is a no-op and a host's own hook adds to the chain");
   }
 
   // ---- ambient parent ------------------------------------------------------------------------------

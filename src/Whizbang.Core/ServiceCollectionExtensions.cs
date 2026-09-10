@@ -132,10 +132,17 @@ public static class ServiceCollectionExtensions {
       foreach (var binding in coreOptions.Tags.RouteNamespaceBindings) {
         existing.UseRouteNamespaceBinding(binding.Key, binding.Value);
       }
+
+      // Priority declarations by tag (priority step 2): last-wins per tag across AddWhizbang calls too.
+      foreach (var declaration in coreOptions.Tags.PriorityDeclarations) {
+        existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
+      }
     } else {
       // First registration - add TagOptions
       services.TryAddSingleton(coreOptions.Tags);
     }
+    // The consumer-side classification rules (priority step 2); the first registration's instance is kept.
+    services.TryAddSingleton(coreOptions.Priority);
 
     // Tag-policy startup validation: the reserved sys- tag prefix and coalesce-binding
     // ambiguity are checked when the host starts (a hosted service so every assembly's
@@ -659,6 +666,12 @@ public static class ServiceCollectionExtensions {
   /// <docs>fundamentals/messaging/message-priority#hooks</docs>
   public static IServiceCollection AddWhizbangPriority(this IServiceCollection services) {
     ArgumentNullException.ThrowIfNull(services);
+    // The sugar hooks read the tag declarations and the classification rules; an empty instance of each is the
+    // fallback so a host that never called AddWhizbang still resolves the chain.
+    services.TryAddSingleton<TagOptions>();
+    services.TryAddSingleton<Whizbang.Core.Priority.PriorityOptions>();
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityProducerHook, Whizbang.Core.Priority.TagDeclaredPriorityProducerHook>());
+    services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityReceiveHook, Whizbang.Core.Priority.PriorityClassificationReceiveHook>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityProducerHook, Whizbang.Core.Priority.ContextPriorityProducerHook>());
     services.TryAddEnumerable(ServiceDescriptor.Singleton<Whizbang.Core.Priority.IPriorityReceiveHook, Whizbang.Core.Priority.AcceptDeclaredPriorityReceiveHook>());
     services.TryAddSingleton<Whizbang.Core.Priority.PriorityHookChain>();
