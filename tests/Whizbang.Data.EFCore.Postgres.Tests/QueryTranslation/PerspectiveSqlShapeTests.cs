@@ -63,35 +63,47 @@ public class PerspectiveSqlShapeTests {
     public string? Notes { get; init; }
   }
 
-  private sealed class ShapeDbContext(DbContextOptions<ShapeDbContext> options) : DbContext(options) {
-    protected override void OnModelCreating(ModelBuilder modelBuilder) {
-      base.OnModelCreating(modelBuilder);
+  /// <summary>
+  /// Mirrors Templates/Snippets/EFCoreSnippets.cs, which is what the generator emits.
+  /// </summary>
+  /// <param name="modelBuilder">The model being built.</param>
+  /// <param name="shareDataColumn">
+  /// When true, also map a scalar shadow property to the column the complex property owns, to show
+  /// what EF does about it.
+  /// </param>
+  private static void _mapPerspectiveRow(ModelBuilder modelBuilder, bool shareDataColumn) {
+    modelBuilder.Entity<PerspectiveRow<CatalogModel>>(entity => {
+      entity.ToTable("wh_per_catalog");
+      entity.HasKey(e => e.Id);
 
-      // Mirrors Templates/Snippets/EFCoreSnippets.cs, which is what the generator emits.
-      modelBuilder.Entity<PerspectiveRow<CatalogModel>>(entity => {
-        entity.ToTable("wh_per_catalog");
-        entity.HasKey(e => e.Id);
+      entity.Property(e => e.Id).HasColumnName("id");
 
-        entity.Property(e => e.Id).HasColumnName("id");
-
-        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
-        entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
-        entity.ComplexProperty(e => e.Scope, s => {
-          s.ToJson("scope");
-          s.ComplexCollection(p => p.Extensions, ex => ex.HasJsonPropertyName("ex"));
-        });
-
-        entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
-        entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
-        entity.Property(e => e.Version).HasColumnName("version").IsRequired();
-        entity.Property<DateTime?>("expires_at").HasColumnName("expires_at");
-
-        // Physical fields arrive as shadow columns alongside the JSON document.
-        entity.Property<Guid>("owner_id").HasColumnName("owner_id");
-        entity.Property<decimal>("price").HasColumnName("price");
-        entity.Property<string?>("sku").HasColumnName("sku").HasMaxLength(100);
+      entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
+      entity.ComplexProperty(e => e.Scope, s => {
+        s.ToJson("scope");
+        s.ComplexCollection(p => p.Extensions, ex => ex.HasJsonPropertyName("ex"));
       });
-    }
+
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+      entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+      entity.Property<DateTime?>("expires_at").HasColumnName("expires_at");
+
+      // Physical fields arrive as shadow columns alongside the JSON document.
+      entity.Property<Guid>("owner_id").HasColumnName("owner_id");
+      entity.Property<decimal>("price").HasColumnName("price");
+      entity.Property<string?>("sku").HasColumnName("sku").HasMaxLength(100);
+
+      if (shareDataColumn) {
+        entity.Property<string>("DataRaw").HasColumnName("data").HasColumnType("jsonb");
+      }
+    });
+  }
+
+  private sealed class ShapeDbContext(DbContextOptions<ShapeDbContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+      _mapPerspectiveRow(modelBuilder, shareDataColumn: false);
   }
 
   private static readonly Guid _probeId = new("305a83c8-b1b0-47ca-86ec-c2ce0e4502c3");
@@ -288,27 +300,11 @@ public class PerspectiveSqlShapeTests {
   }
 
   /// <summary>
-  /// Containment cannot be reached by hand either, which is the fact that decides whether the GIN
-  /// indexes are salvageable.
+  /// Npgsql's own containment helpers do not translate here, because they need an operand mapped as
+  /// a scalar jsonb value and the data column is a structural type.
   /// </summary>
-  /// <remarks>
-  /// <para>
-  /// Npgsql does expose the containment and existence operators as <c>EF.Functions.JsonContains</c>
-  /// and <c>EF.Functions.JsonExists</c>, but they need an operand mapped as a scalar jsonb value.
-  /// The data column is mapped with <c>ComplexProperty().ToJson()</c>, so in the model it is a
-  /// structural type rather than a scalar, and neither the complex property nor a shadow-property
-  /// reference to the same column translates.
-  /// </para>
-  /// <para>
-  /// So a rewrite in <c>PhysicalFieldExpressionVisitor</c> cannot turn an equality into a
-  /// containment test: there is nothing to hand the function. Making the GIN indexes reachable
-  /// would mean giving up the complex-property mapping the whole perspective stack is built on.
-  /// If a future provider version makes this translate, this test fails and the decision is worth
-  /// revisiting.
-  /// </para>
-  /// </remarks>
   [Test]
-  public async Task ContainmentOperators_DoNotTranslateOverTheComplexPropertyAsync() {
+  public async Task NpgsqlContainmentHelpers_DoNotTranslateOverTheComplexPropertyAsync() {
     using var db = _newContext();
     var rows = db.Set<PerspectiveRow<CatalogModel>>();
 
@@ -322,6 +318,112 @@ public class PerspectiveSqlShapeTests {
         .Where(r => EF.Functions.JsonContains(EF.Property<string>(r, "data"), "{\"Title\":\"abc\"}"))
         .ToQueryString())
       .Throws<InvalidOperationException>();
+  }
+
+  /// <summary>
+  /// A custom translation can emit any operator we like, including the containment operator the GIN
+  /// indexes answer. What it cannot do is put the bare column on the left of it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the test that decides whether the GIN indexes are salvageable, so it is worth being
+  /// precise about what it shows. EF Core's <c>HasDbFunction(...).HasTranslation(...)</c> is a
+  /// supported extension point, and it happily produces <c>@&gt;</c> over a JSON member. Writing our
+  /// own SQL is therefore not the obstacle.
+  /// </para>
+  /// <para>
+  /// The obstacle is the operand. PostgreSQL matches a GIN index only when the left side of the
+  /// operator is the indexed expression itself, the bare <c>data</c> column. A containment test over
+  /// an extraction, which is all we can build, plans as a sequential scan. Combined with
+  /// <see cref="TheDataColumn_IsNotAddressableAsAScalarAsync"/>, which shows the bare column cannot
+  /// be reached, that closes the question.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task ACustomTranslation_CanEmitAnyOperator_ButOnlyOverAnExtractionAsync() {
+    using var db = new OperatorDbContext(
+      new DbContextOptionsBuilder<OperatorDbContext>().UseNpgsql(UNUSED_CONNECTION).Options);
+
+    var sql = db.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => JsonbContains(r.Data.Title, "\"abc\""))
+      .ToQueryString();
+
+    // The operator is emitted, so custom SQL generation works.
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal);
+
+    // But its left operand is the extraction, not the column, so no GIN index can match it.
+    await Assert.That(sql).Contains("(w.data ->> 'Title') @>", StringComparison.Ordinal);
+    await Assert.That(sql).DoesNotContain("WHERE w.data @>", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// The bare data column cannot be addressed as a scalar by any of the three routes available, so
+  /// there is nothing to put on the left of a containment test.
+  /// </summary>
+  [Test]
+  public async Task TheDataColumn_IsNotAddressableAsAScalarAsync() {
+    // A second model element cannot share the column the complex property already owns.
+    await Assert.That(() => {
+      using var db = new SharedColumnDbContext(
+        new DbContextOptionsBuilder<SharedColumnDbContext>().UseNpgsql(UNUSED_CONNECTION).Options);
+      return db.Set<PerspectiveRow<CatalogModel>>().Where(r => r.Data.Title == "abc").ToQueryString();
+    }).Throws<ArgumentException>();
+
+    using var plain = _newContext();
+    var rows = plain.Set<PerspectiveRow<CatalogModel>>();
+
+    // Addressing it by property name resolves to the complex property, which is not a scalar.
+    await Assert.That(() => rows.Where(r => JsonbContains(EF.Property<string>(r, "Data"), "{}")).ToQueryString())
+      .ThrowsException();
+
+    // Addressing it by column name finds no property at all.
+    await Assert.That(() => rows.Where(r => JsonbContains(EF.Property<string>(r, "data"), "{}")).ToQueryString())
+      .ThrowsException();
+  }
+
+  /// <summary>Marker method the custom containment translation is attached to.</summary>
+  public static bool JsonbContains(string column, string contained) => throw new NotSupportedException();
+
+  private sealed class OperatorDbContext(DbContextOptions<OperatorDbContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      _mapPerspectiveRow(modelBuilder, shareDataColumn: false);
+      modelBuilder
+        .HasDbFunction(typeof(PerspectiveSqlShapeTests).GetMethod(nameof(JsonbContains))!)
+        .HasTranslation(_emitContainment);
+    }
+  }
+
+  private sealed class SharedColumnDbContext(DbContextOptions<SharedColumnDbContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+      _mapPerspectiveRow(modelBuilder, shareDataColumn: true);
+  }
+
+  /// <summary>
+  /// Builds Npgsql's arbitrary-operator expression by reflection, so the test carries no
+  /// compile-time dependency on a type that lives in an Internal namespace.
+  /// </summary>
+  private static Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression _emitContainment(
+      IReadOnlyList<Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression> args) {
+    var type = System.Reflection.Assembly.Load("Npgsql.EntityFrameworkCore.PostgreSQL")
+      .GetType("Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal.PgUnknownBinaryExpression")!;
+    var ctor = type.GetConstructors()[0];
+    var parameters = ctor.GetParameters();
+    var values = new object?[parameters.Length];
+
+    for (var i = 0; i < parameters.Length; i++) {
+      values[i] = parameters[i].Name switch {
+        "left" => args[0],
+        "right" => args[1],
+        "binaryOperator" => "@>",
+        "type" => typeof(bool),
+        // A null type mapping makes the expression untranslatable, which reads as "could not be
+        // translated" and is easy to mistake for the operator being unsupported.
+        "typeMapping" => Microsoft.EntityFrameworkCore.Storage.BoolTypeMapping.Default,
+        _ => null,
+      };
+    }
+
+    return (Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlExpression)ctor.Invoke(values);
   }
 
   /// <summary>
