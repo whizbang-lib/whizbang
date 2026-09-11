@@ -38,6 +38,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   private const string TABLE = "wh_per_eligibility";
 
+  /// <summary>Fixed width, always UTC, so the text sorts in the same order as the instant.</summary>
+  private const string CANONICAL_DATE = "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'";
+
   public enum Mood { Low = 0, High = 1 }
 
   /// <summary>A combinable enumeration, where a stored value is a set rather than one member.</summary>
@@ -103,6 +106,17 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     /// <summary>A time-ordered identifier held as a plain Guid, which is the usual shape.</summary>
     public Guid SortableId { get; init; }
 
+    /// <summary>
+    /// A date stored in a fixed-width canonical rendering rather than the writer's default.
+    /// </summary>
+    /// <remarks>
+    /// The whole indexing plan for dates rests on what this makes possible. Fixed width means the
+    /// text sorts chronologically, and text extraction is immutable, so a btree index can carry it.
+    /// What has to be true for that to be usable is that a comparison and an ordering on the property
+    /// translate to the provider type rather than being refused.
+    /// </remarks>
+    public DateTime CanonicalWhen { get; init; }
+
     // How much of the serialized form is stable? The fraction is what decides whether a SQL-side
     // format string can reproduce it.
     public DateTime WholeSecond { get; init; }
@@ -123,6 +137,10 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
           d.Property(p => p.Tracked)
             .HasConversion(t => t.Value, g => TrackedGuid.FromExternal(g));
           d.Property(p => p.ConvertedNum).HasConversion<string>();
+          d.Property(p => p.CanonicalWhen).HasConversion(
+            v => v.ToUniversalTime().ToString(CANONICAL_DATE, CultureInfo.InvariantCulture),
+            v => DateTime.ParseExact(v, CANONICAL_DATE, CultureInfo.InvariantCulture,
+              DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal));
         });
         entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
         entity.ComplexProperty(e => e.Scope, s => {
@@ -216,6 +234,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
         Unsupported = Tier.First,
         Tracked = _tracked,
         SortableId = _sortable,
+        CanonicalWhen = _when,
       },
       Metadata = new PerspectiveMetadata(),
       Scope = new PerspectiveScope(),
@@ -414,6 +433,183 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     // eligible set is pinned by JsonbContainmentTypeSetTests, and a type only moves into it once the
     // two text forms here are shown to agree.
     await Assert.That(line).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// A canonically stored date supports equality, a range and an ordering, all from one btree index
+  /// on the extraction. This is the shape the indexing plan for every type rests on.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Four things have to hold together and each fails differently, so all four are asserted here
+  /// rather than reasoned from one another. The comparison has to translate at all, rather than being
+  /// refused because the property carries a converter. It has to be applied to the provider type, so
+  /// the parameter is rendered the same way the row was. The ordering has to come out chronological,
+  /// which is what fixed width buys and what the default trimmed rendering loses. And the planner has
+  /// to actually choose the index, which is the only claim that means anything about performance.
+  /// </para>
+  /// <para>
+  /// The collation is pinned because a text index answers a range only in its own collation order. In
+  /// C ordering the comparison is byte-wise, which for a fixed-width ASCII rendering is the same as
+  /// the chronological order; under a locale-aware collation punctuation may be weighted differently
+  /// and the guarantee is lost.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ACanonicalDate_IsIndexableForEqualityRangeAndOrderAsync(CancellationToken cancellationToken) {
+    var origin = new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+    // Precisions that the default rendering would order wrongly, inserted out of order.
+    var inserted = new[] {
+      origin.AddTicks(1_000_000),
+      origin,
+      origin.AddTicks(1_234_560),
+      origin.AddSeconds(1),
+      origin.AddDays(30),
+    };
+
+    foreach (var value in inserted) {
+      _context!.Add(new PerspectiveRow<ProbeModel> {
+        Id = Guid.NewGuid(),
+        // Letter has to be set: a char left at its default is the null character, which
+        // Entity Framework writes as \u0000 and jsonb rejects outright.
+        Data = new ProbeModel { CanonicalWhen = value, Letter = 'q' },
+        Metadata = new PerspectiveMetadata(),
+        Scope = new PerspectiveScope(),
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+        Version = 1,
+      });
+    }
+
+    await _context!.SaveChangesAsync(cancellationToken);
+
+    // 1. Fixed width, so every row is the same length and sorts by instant.
+    var stored = await _scalarAsync(
+      $"SELECT string_agg(DISTINCT length(data ->> 'CanonicalWhen')::text, ',') FROM {TABLE}");
+    await Assert.That(stored).IsEqualTo("27").Because("a canonical rendering is one width for every value");
+
+    // 2. Equality translates and finds its row.
+    var equal = await _context.Set<PerspectiveRow<ProbeModel>>()
+      .CountAsync(r => r.Data.CanonicalWhen == origin, cancellationToken);
+    await Assert.That(equal).IsEqualTo(1);
+
+    // 3. A range translates, and on the provider type: the comparison has to reach SQL as text
+    // against text, or the parameter would not be rendered the way the row was.
+    var rangeSql = _context.Set<PerspectiveRow<ProbeModel>>()
+      .Where(r => r.Data.CanonicalWhen >= origin && r.Data.CanonicalWhen < origin.AddDays(1))
+      .ToQueryString();
+    var inRange = await _context.Set<PerspectiveRow<ProbeModel>>()
+      .CountAsync(r => r.Data.CanonicalWhen >= origin && r.Data.CanonicalWhen < origin.AddDays(1),
+        cancellationToken);
+
+    await Assert.That(inRange).IsEqualTo(4)
+      .Because($"four of the five seeded rows fall in the day; SQL was {rangeSql}");
+
+    // 4. The ordering is chronological, which the trimmed default rendering is not.
+    var ordered = await _context.Set<PerspectiveRow<ProbeModel>>()
+      .Where(r => r.Data.CanonicalWhen >= origin)
+      .OrderBy(r => r.Data.CanonicalWhen)
+      .Select(r => r.Data.CanonicalWhen)
+      .ToListAsync(cancellationToken);
+
+    await Assert.That(string.Join(",", ordered.Select(d => d.Ticks)))
+      .IsEqualTo(string.Join(",", inserted.OrderBy(d => d).Select(d => d.Ticks)));
+
+    // 5. And the planner uses a btree index on the extraction for the range.
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    await using (var index = new NpgsqlCommand(
+      $"CREATE INDEX idx_canonical_when ON {TABLE} (((data ->> 'CanonicalWhen') COLLATE \"C\"))", db)) {
+      await index.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // Enough rows for an index to be the cheaper plan, and the statistics to know it.
+    await using (var bulk = new NpgsqlCommand($"""
+      INSERT INTO {TABLE} (id, created_at, updated_at, version, data, metadata, scope)
+      SELECT gen_random_uuid(), now(), now(), 1,
+             jsonb_build_object('CanonicalWhen',
+               to_char(timezone('UTC', now() + (g || ' days')::interval),
+                       'YYYY-MM-DD"T"HH24:MI:SS.US') || 'Z'),
+             shape.metadata, shape.scope
+      FROM generate_series(1, 40000) g
+      CROSS JOIN (SELECT metadata, scope FROM {TABLE} LIMIT 1) shape
+      """, db)) {
+      await bulk.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await using (var analyze = new NpgsqlCommand($"ANALYZE {TABLE}", db)) {
+      await analyze.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var plan = new List<string>();
+    await using (var explain = new NpgsqlCommand(
+      $"EXPLAIN SELECT id FROM {TABLE} "
+      + "WHERE (data ->> 'CanonicalWhen') COLLATE \"C\" >= '2026-06-01T12:00:00.000000Z' "
+      + "AND (data ->> 'CanonicalWhen') COLLATE \"C\" < '2026-06-02T12:00:00.000000Z'", db)) {
+      await using var reader = await explain.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        plan.Add(reader.GetString(0));
+      }
+    }
+
+    await Assert.That(string.Join(" | ", plan)).Contains("idx_canonical_when", StringComparison.Ordinal)
+      .Because("a range over a canonically stored date has to be answerable from an index");
+  }
+
+  /// <summary>
+  /// Which extractions out of a document can carry a btree index, which is what decides whether a
+  /// range or an ordering on a JSON-only field can be indexed at all.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An expression index requires an immutable expression, because the stored key has to stay correct
+  /// for the life of the row. A cast out of text is immutable for some target types and stable for
+  /// others, and the difference is not guessable: a stable cast may depend on a session setting, so
+  /// PostgreSQL refuses to index it. That refusal is what separates the types a range filter can be
+  /// indexed for from the ones it cannot.
+  /// </para>
+  /// <para>
+  /// Asserted by asking PostgreSQL to build each index rather than by reading the catalog, because
+  /// building it is the thing that has to work. The two that fail are the reason a date held in a
+  /// document cannot be range-scanned or sorted from an index, whatever its format, until the format
+  /// itself changes to something an immutable cast can reach.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  [Arguments("text", "(data ->> 'Str')", true)]
+  [Arguments("integer", "((data ->> 'Num')::int)", true)]
+  [Arguments("bigint", "((data ->> 'Big')::bigint)", true)]
+  [Arguments("numeric", "((data ->> 'Money')::numeric)", true)]
+  [Arguments("double precision", "((data ->> 'Dbl')::float8)", true)]
+  [Arguments("boolean", "((data ->> 'Flag')::bool)", true)]
+  [Arguments("uuid", "((data ->> 'SortableId')::uuid)", true)]
+  [Arguments("timestamptz", "((data ->> 'When')::timestamptz)", false)]
+  [Arguments("date", "((data ->> 'Day')::date)", false)]
+  public async Task AnExtractionCanCarryABtreeIndexOnlyWhenItsCastIsImmutableAsync(
+    string target, string expression, bool indexable, CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    var name = $"idx_probe_{target.Replace(' ', '_').Replace("::", "_", StringComparison.Ordinal)}";
+    await using var create = new NpgsqlCommand(
+      $"CREATE INDEX {name} ON {TABLE} ({expression})", db);
+
+    if (indexable) {
+      await create.ExecuteNonQueryAsync(cancellationToken);
+
+      var built = await _scalarAsync($"SELECT indexdef FROM pg_indexes WHERE indexname = '{name}'");
+      await Assert.That(built).IsNotNull()
+        .Because($"a range or an ordering on a {target} member can be answered from an index");
+      return;
+    }
+
+    // PostgreSQL rejects the index rather than building one that could silently go stale.
+    await Assert.That(async () => await create.ExecuteNonQueryAsync(cancellationToken))
+      .Throws<PostgresException>()
+      .Because($"a cast to {target} is not immutable, so no expression index can carry it");
   }
 
   /// <summary>
