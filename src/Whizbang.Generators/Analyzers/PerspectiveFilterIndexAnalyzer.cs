@@ -66,15 +66,19 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor FilteredFieldHasNoIndex = new(
       id: "WHIZ302",
       title: "Filtered perspective field has no index",
-      messageFormat: "This query filters '{0}.{1}', which is stored only in the model's JSON, so the database reads every row of the perspective. Mark it [PhysicalField(Indexed = true)], or record the decision with [SuppressIndexAdvisory(\"reason\")].",
+      messageFormat: "This query filters '{0}.{1}', which is stored only in the model's JSON, so the database reads every row of the perspective. Mark it [JsonIndexed] for an index over the stored value, [PhysicalField(Indexed = true)] to promote it to a column, or record the decision with [SuppressIndexAdvisory(\"reason\")].",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "A perspective stores its model as JSON, so only properties promoted to a physical column can be indexed. " +
-                   "Filtering, ordering, or counting on a property that has no [PhysicalField(Indexed = true)] forces a full scan " +
-                   "that grows with the table. When a scan is the right answer, say so with [SuppressIndexAdvisory(\"reason\")]: " +
-                   "the reason is required, a blank one does not suppress, and the same attribute also stands down the runtime " +
-                   "index advisory raised by the maintenance cycle."
+      description: "A perspective stores its model as JSON, and the GIN index on that document answers containment and " +
+                   "nothing else, so a range, an ordering or a pattern match on a JSON-only property reads every row. " +
+                   "There are two fixes and they cost differently. [JsonIndexed] builds an index over the stored value: no " +
+                   "column, no schema change, no write-path work, and it answers equality, ranges, ordering and null tests. " +
+                   "[PhysicalField(Indexed = true)] promotes the property to a real column, which additionally allows " +
+                   "constraints and foreign keys and is the only option for a type whose stored form cannot carry an index, " +
+                   "a date being the case that matters. When a scan is the right answer, say so with " +
+                   "[SuppressIndexAdvisory(\"reason\")]: the reason is required, a blank one does not suppress, and the same " +
+                   "attribute also stands down the runtime index advisory raised by the maintenance cycle."
   );
 
   /// <inheritdoc/>
