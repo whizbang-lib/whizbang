@@ -30,7 +30,8 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// which is every date and time type, enumerations, and binary floating point.</item>
 /// </list>
 /// <para>
-/// The rewrite also stands down entirely when the model has not registered the translations, or when
+/// The rewrite also stands down entirely when <see cref="JsonbContainmentSwitch"/> is off, when the
+/// model has not registered the translations, or when
 /// <see cref="ProviderCapabilities.ContainmentRewriteRequired"/> becomes false because a future
 /// provider does this itself.
 /// </para>
@@ -46,6 +47,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
 
   private bool _enabled =>
     _model is not null
+    && JsonbContainmentSwitch.Enabled
     && ProviderCapabilities.ContainmentRewriteRequired
     && _model.FindDbFunction(JsonbContainment.Overloads[0]) is not null;
 

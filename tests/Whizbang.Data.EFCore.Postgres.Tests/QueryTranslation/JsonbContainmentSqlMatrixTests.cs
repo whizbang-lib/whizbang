@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -131,15 +132,22 @@ public class JsonbContainmentSqlMatrixTests {
     }
   }
 
+  // Built once. A fresh DbContextOptions per case would ask Entity Framework for a new internal
+  // service provider each time, and past twenty of those it raises ManyServiceProvidersCreatedWarning
+  // as an error. Nothing here mutates, so one options instance serves the whole matrix.
+  private static readonly DbContextOptions<MatrixDbContext> _matrixOptions =
+    new DbContextOptionsBuilder<MatrixDbContext>()
+      .UseNpgsql(UNUSED_CONNECTION)
+      .UseWhizbangPhysicalFields()
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options;
+
   private static MatrixDbContext _newContext() {
     PhysicalFieldRegistry.Register<MatrixModel>("PhysGuid", "phys_guid");
     PhysicalFieldRegistry.Register<MatrixModel>("PhysInt", "phys_int");
     PhysicalFieldRegistry.Register<MatrixModel>("PhysString", "phys_string");
 
-    return new MatrixDbContext(new DbContextOptionsBuilder<MatrixDbContext>()
-      .UseNpgsql(UNUSED_CONNECTION)
-      .UseWhizbangPhysicalFields()
-      .Options);
+    return new MatrixDbContext(_matrixOptions);
   }
 
   private delegate IQueryable<PerspectiveRow<MatrixModel>> Shape(IQueryable<PerspectiveRow<MatrixModel>> rows);
@@ -153,171 +161,18 @@ public class JsonbContainmentSqlMatrixTests {
   private static Dictionary<string, (Shape, Destination)> _buildMatrix() {
     var cases = new Dictionary<string, (Shape, Destination)>(StringComparer.Ordinal);
 
-    void Add(string key, Shape shape, Destination expected) => cases[key] = (shape, expected);
+    // Base predicates, written out because an expression tree has to be literal to be translated.
+    // Everything else is crossed over them, so adding one type here adds a row to every axis.
+    var bases = new List<(string Key, Shape Shape, Destination Expected, bool Orders)>();
+    void Base(string key, Shape shape, Destination expected) => bases.Add((key, shape, expected, false));
 
-    // --- Equality on a JSON-only scalar whose text forms agree: containment, both operand orders,
-    // --- constant and parameter, and wrapped in each query shape that keeps an IQueryable.
-    var eligible = new (string Name, Func<bool, Shape> Build)[] {
-      ("string",  reversed => reversed ? r => r.Where(x => "v" == x.Data.Str)               : r => r.Where(x => x.Data.Str == "v")),
-      ("guid",    reversed => reversed ? r => r.Where(x => _probeGuid == x.Data.Gid)        : r => r.Where(x => x.Data.Gid == _probeGuid)),
-      ("bool",    reversed => reversed ? r => r.Where(x => true == x.Data.Flag)             : r => r.Where(x => x.Data.Flag == true)),
-      ("short",   reversed => reversed ? r => r.Where(x => (short)1 == x.Data.Small)        : r => r.Where(x => x.Data.Small == (short)1)),
-      ("int",     reversed => reversed ? r => r.Where(x => 1 == x.Data.Num)                 : r => r.Where(x => x.Data.Num == 1)),
-      ("long",    reversed => reversed ? r => r.Where(x => 1L == x.Data.Big)                : r => r.Where(x => x.Data.Big == 1L)),
-      ("decimal", reversed => reversed ? r => r.Where(x => 1.5m == x.Data.Money)            : r => r.Where(x => x.Data.Money == 1.5m)),
-    };
+    // A base case that establishes its own ordering cannot be crossed with a wrapper that reorders
+    // or drops the sort: a second OrderBy replaces the first and Distinct discards it, so the very
+    // expression under test disappears from the SQL.
+    void OrderingBase(string key, Shape shape, Destination expected) => bases.Add((key, shape, expected, true));
 
-    foreach (var (name, build) in eligible) {
-      foreach (var reversed in new[] { false, true }) {
-        var order = reversed ? "value-first" : "member-first";
-        Add($"eligible/{name}/{order}/const", build(reversed), Destination.Containment);
-      }
-    }
-
-    // Parameter-valued equality, which is what a repository method actually produces.
-    foreach (var (name, build) in _eligibleParameterShapes()) {
-      Add($"eligible/{name}/parameter", build, Destination.Containment);
-    }
-
-    // The same predicate under every query shape that still yields an IQueryable.
-    var wrappers = new (string Name, Func<Shape, Shape> Wrap)[] {
-      ("where", inner => rows => inner(rows)),
-      ("ordered", inner => rows => inner(rows).OrderBy(x => x.Id)),
-      ("ordered-then", inner => rows => inner(rows).OrderBy(x => x.Id).ThenByDescending(x => x.Version)),
-      ("paged", inner => rows => inner(rows).Skip(10).Take(5)),
-      ("distinct", inner => rows => inner(rows).Distinct()),
-      ("double-filtered", inner => rows => inner(rows).Where(x => x.Version > 0)),
-    };
-
-    foreach (var (typeName, build) in eligible) {
-      foreach (var (wrapperName, wrap) in wrappers) {
-        Add($"shape/{wrapperName}/{typeName}", wrap(build(false)), Destination.Containment);
-      }
-    }
-
-    // --- Types whose serialized form and PostgreSQL's are not guaranteed to agree: extraction.
-    Add("ineligible/double", rows => rows.Where(x => x.Data.Dbl == 1.5d), Destination.Extraction);
-    Add("ineligible/float", rows => rows.Where(x => x.Data.Flt == 1.5f), Destination.Extraction);
-    Add("ineligible/datetime", rows => rows.Where(x => x.Data.When == _probeDate), Destination.Extraction);
-    Add("ineligible/datetimeoffset", rows => rows.Where(x => x.Data.WhenOffset == _probeOffset), Destination.Extraction);
-    Add("ineligible/enum", rows => rows.Where(x => x.Data.State == Status.Live), Destination.Extraction);
-
-    // --- Nullable members: containment for a non-null comparison, extraction for a null one.
-    Add("nullable/string/value", rows => rows.Where(x => x.Data.MaybeStr == "v"), Destination.Containment);
-    Add("nullable/guid/value", rows => rows.Where(x => x.Data.MaybeGid == _probeGuid), Destination.Containment);
-    Add("nullable/int/value", rows => rows.Where(x => x.Data.MaybeNum == 1), Destination.Containment);
-    Add("nullable/string/null", rows => rows.Where(x => x.Data.MaybeStr == null), Destination.Extraction);
-    Add("nullable/guid/null", rows => rows.Where(x => x.Data.MaybeGid == null), Destination.Extraction);
-    Add("nullable/int/null", rows => rows.Where(x => x.Data.MaybeNum == null), Destination.Extraction);
-
-    // --- Promoted fields keep reading their column, whatever the operator.
-    Add("physical/guid/equal", rows => rows.Where(x => x.Data.PhysGuid == _probeGuid), Destination.PhysicalColumn);
-    Add("physical/int/equal", rows => rows.Where(x => x.Data.PhysInt == 1), Destination.PhysicalColumn);
-    Add("physical/int/range", rows => rows.Where(x => x.Data.PhysInt > 1), Destination.PhysicalColumn);
-    Add("physical/string/equal", rows => rows.Where(x => x.Data.PhysString == "v"), Destination.PhysicalColumn);
-    Add("physical/string/like", rows => rows.Where(x => x.Data.PhysString.Contains("val")), Destination.PhysicalColumn);
-    Add("physical/int/ordered", rows => rows.OrderBy(x => x.Data.PhysInt), Destination.PhysicalColumn);
-
-    // --- Operators containment cannot express, per numeric type.
-    var numerics = new (string Name, Shape[] Shapes)[] {
-      ("short", [
-        rows => rows.Where(x => x.Data.Small != (short)1),
-        rows => rows.Where(x => x.Data.Small > (short)1),
-        rows => rows.Where(x => x.Data.Small >= (short)1),
-        rows => rows.Where(x => x.Data.Small < (short)1),
-        rows => rows.Where(x => x.Data.Small <= (short)1),
-      ]),
-      ("int", [
-        rows => rows.Where(x => x.Data.Num != 1),
-        rows => rows.Where(x => x.Data.Num > 1),
-        rows => rows.Where(x => x.Data.Num >= 1),
-        rows => rows.Where(x => x.Data.Num < 1),
-        rows => rows.Where(x => x.Data.Num <= 1),
-      ]),
-      ("long", [
-        rows => rows.Where(x => x.Data.Big != 1L),
-        rows => rows.Where(x => x.Data.Big > 1L),
-        rows => rows.Where(x => x.Data.Big >= 1L),
-        rows => rows.Where(x => x.Data.Big < 1L),
-        rows => rows.Where(x => x.Data.Big <= 1L),
-      ]),
-      ("decimal", [
-        rows => rows.Where(x => x.Data.Money != 1.5m),
-        rows => rows.Where(x => x.Data.Money > 1.5m),
-        rows => rows.Where(x => x.Data.Money >= 1.5m),
-        rows => rows.Where(x => x.Data.Money < 1.5m),
-        rows => rows.Where(x => x.Data.Money <= 1.5m),
-      ]),
-    };
-
-    var operatorNames = new[] { "not-equal", "greater", "greater-or-equal", "less", "less-or-equal" };
-    foreach (var (name, shapes) in numerics) {
-      for (var i = 0; i < shapes.Length; i++) {
-        Add($"operator/{name}/{operatorNames[i]}", shapes[i], Destination.Extraction);
-      }
-    }
-
-    Add("operator/string/not-equal", rows => rows.Where(x => x.Data.Str != "v"), Destination.Extraction);
-    Add("operator/string/contains", rows => rows.Where(x => x.Data.Str.Contains("val")), Destination.Extraction);
-    Add("operator/string/starts-with", rows => rows.Where(x => x.Data.Str.StartsWith("val")), Destination.Extraction);
-    Add("operator/string/ends-with", rows => rows.Where(x => x.Data.Str.EndsWith("val")), Destination.Extraction);
-    Add("operator/string/length", rows => rows.Where(x => x.Data.Str.Length > 3), Destination.Extraction);
-    Add("operator/guid/not-equal", rows => rows.Where(x => x.Data.Gid != _probeGuid), Destination.Extraction);
-    Add("operator/bool/negated", rows => rows.Where(x => !x.Data.Flag), Destination.Extraction);
-    Add("operator/string/ordered", rows => rows.OrderBy(x => x.Data.Str), Destination.Extraction);
-    Add("operator/int/ordered-descending", rows => rows.OrderByDescending(x => x.Data.Num), Destination.Extraction);
-
-    // --- Nested members: containment nests too.
-    Add("nested/string", rows => rows.Where(x => x.Data.Inner.City == "v"), Destination.Containment);
-    Add("nested/int", rows => rows.Where(x => x.Data.Inner.Floor == 3), Destination.Containment);
-    Add("nested/two-levels", rows => rows.Where(x => x.Data.Inner.Deeper.Marker == _probeGuid), Destination.Containment);
-    Add("nested/range", rows => rows.Where(x => x.Data.Inner.Floor > 3), Destination.Extraction);
-    Add("nested/ordered", rows => rows.OrderBy(x => x.Data.Inner.City), Destination.Extraction);
-
-    // --- Composition.
-    Add("compose/and-two-eligible",
-      rows => rows.Where(x => x.Data.Str == "v" && x.Data.Num == 1), Destination.Containment);
-    Add("compose/or-two-eligible",
-      rows => rows.Where(x => x.Data.Str == "v" || x.Data.Num == 1), Destination.Containment);
-    Add("compose/and-three-eligible",
-      rows => rows.Where(x => x.Data.Str == "v" && x.Data.Num == 1 && x.Data.Gid == _probeGuid), Destination.Containment);
-    Add("compose/eligible-and-physical",
-      rows => rows.Where(x => x.Data.Str == "v" && x.Data.PhysInt == 1), Destination.Containment);
-    Add("compose/eligible-and-row-column",
-      rows => rows.Where(x => x.Data.Str == "v" && x.Version > 1), Destination.Containment);
-    Add("compose/chained-where",
-      rows => rows.Where(x => x.Data.Str == "v").Where(x => x.Data.Num == 1), Destination.Containment);
-    Add("compose/negated-eligible",
-      rows => rows.Where(x => !(x.Data.Str == "v")), Destination.Extraction);
-    Add("compose/negated-nested",
-      rows => rows.Where(x => !(x.Data.Inner.City == "v")), Destination.Extraction);
-    Add("compose/negated-guid",
-      rows => rows.Where(x => !(x.Data.Gid == _probeGuid)), Destination.Extraction);
-    Add("compose/negated-around-and",
-      rows => rows.Where(x => !(x.Data.Str == "v" && x.Data.Num == 1)), Destination.Extraction);
-    Add("compose/negation-beside-positive",
-      rows => rows.Where(x => !(x.Data.Str == "v") || x.Data.Num == 1), Destination.Containment);
-    Add("compose/eligible-and-range",
-      rows => rows.Where(x => x.Data.Str == "v" && x.Data.Num > 1), Destination.Containment);
-
-    // --- The row's own columns are untouched by any of this.
-    Add("row/id", rows => rows.Where(x => x.Id == _probeGuid), Destination.RowColumn);
-    Add("row/version", rows => rows.Where(x => x.Version == 1), Destination.RowColumn);
-    Add("row/updated-at", rows => rows.Where(x => x.UpdatedAt > _probeDate), Destination.RowColumn);
-    Add("row/created-at-ordered", rows => rows.OrderBy(x => x.CreatedAt), Destination.RowColumn);
-
-    // --- Query syntax is the same tree in different clothes.
-    Add("query-syntax/where-eligible",
-      rows => from x in rows where x.Data.Str == "v" select x, Destination.Containment);
-    Add("query-syntax/where-range",
-      rows => from x in rows where x.Data.Num > 1 select x, Destination.Extraction);
-    Add("query-syntax/orderby-eligible",
-      rows => from x in rows where x.Data.Gid == _probeGuid orderby x.Version select x, Destination.Containment);
-
-    return cases;
-  }
-
-  private static IEnumerable<(string Name, Shape Build)> _eligibleParameterShapes() {
+    // --- Equality on a JSON-only scalar whose two text forms agree, member-first and value-first,
+    // --- as a constant and as a captured parameter.
     var s = "v";
     var g = _probeGuid;
     var b = true;
@@ -326,13 +181,184 @@ public class JsonbContainmentSqlMatrixTests {
     var l = 1L;
     var m = 1.5m;
 
-    yield return ("string", rows => rows.Where(x => x.Data.Str == s));
-    yield return ("guid", rows => rows.Where(x => x.Data.Gid == g));
-    yield return ("bool", rows => rows.Where(x => x.Data.Flag == b));
-    yield return ("short", rows => rows.Where(x => x.Data.Small == sh));
-    yield return ("int", rows => rows.Where(x => x.Data.Num == i));
-    yield return ("long", rows => rows.Where(x => x.Data.Big == l));
-    yield return ("decimal", rows => rows.Where(x => x.Data.Money == m));
+    Base("eq/string/member-first/const", rows => rows.Where(x => x.Data.Str == "v"), Destination.Containment);
+    Base("eq/string/value-first/const", rows => rows.Where(x => "v" == x.Data.Str), Destination.Containment);
+    Base("eq/string/member-first/param", rows => rows.Where(x => x.Data.Str == s), Destination.Containment);
+    Base("eq/string/value-first/param", rows => rows.Where(x => s == x.Data.Str), Destination.Containment);
+
+    Base("eq/guid/member-first/const", rows => rows.Where(x => x.Data.Gid == _probeGuid), Destination.Containment);
+    Base("eq/guid/value-first/const", rows => rows.Where(x => _probeGuid == x.Data.Gid), Destination.Containment);
+    Base("eq/guid/member-first/param", rows => rows.Where(x => x.Data.Gid == g), Destination.Containment);
+    Base("eq/guid/value-first/param", rows => rows.Where(x => g == x.Data.Gid), Destination.Containment);
+
+    Base("eq/bool/member-first/const", rows => rows.Where(x => x.Data.Flag == true), Destination.Containment);
+    Base("eq/bool/value-first/const", rows => rows.Where(x => true == x.Data.Flag), Destination.Containment);
+    Base("eq/bool/member-first/param", rows => rows.Where(x => x.Data.Flag == b), Destination.Containment);
+    Base("eq/bool/value-first/param", rows => rows.Where(x => b == x.Data.Flag), Destination.Containment);
+
+    Base("eq/short/member-first/const", rows => rows.Where(x => x.Data.Small == (short)1), Destination.Containment);
+    Base("eq/short/value-first/const", rows => rows.Where(x => (short)1 == x.Data.Small), Destination.Containment);
+    Base("eq/short/member-first/param", rows => rows.Where(x => x.Data.Small == sh), Destination.Containment);
+    Base("eq/short/value-first/param", rows => rows.Where(x => sh == x.Data.Small), Destination.Containment);
+
+    Base("eq/int/member-first/const", rows => rows.Where(x => x.Data.Num == 1), Destination.Containment);
+    Base("eq/int/value-first/const", rows => rows.Where(x => 1 == x.Data.Num), Destination.Containment);
+    Base("eq/int/member-first/param", rows => rows.Where(x => x.Data.Num == i), Destination.Containment);
+    Base("eq/int/value-first/param", rows => rows.Where(x => i == x.Data.Num), Destination.Containment);
+
+    Base("eq/long/member-first/const", rows => rows.Where(x => x.Data.Big == 1L), Destination.Containment);
+    Base("eq/long/value-first/const", rows => rows.Where(x => 1L == x.Data.Big), Destination.Containment);
+    Base("eq/long/member-first/param", rows => rows.Where(x => x.Data.Big == l), Destination.Containment);
+    Base("eq/long/value-first/param", rows => rows.Where(x => l == x.Data.Big), Destination.Containment);
+
+    Base("eq/decimal/member-first/const", rows => rows.Where(x => x.Data.Money == 1.5m), Destination.Containment);
+    Base("eq/decimal/value-first/const", rows => rows.Where(x => 1.5m == x.Data.Money), Destination.Containment);
+    Base("eq/decimal/member-first/param", rows => rows.Where(x => x.Data.Money == m), Destination.Containment);
+    Base("eq/decimal/value-first/param", rows => rows.Where(x => m == x.Data.Money), Destination.Containment);
+
+    // --- Types whose serialized form and PostgreSQL's are not guaranteed to agree.
+    var dbl = 1.5d;
+    var flt = 1.5f;
+    var when = _probeDate;
+    var offset = _probeOffset;
+    var state = Status.Live;
+
+    Base("ineligible/double/const", rows => rows.Where(x => x.Data.Dbl == 1.5d), Destination.Extraction);
+    Base("ineligible/double/param", rows => rows.Where(x => x.Data.Dbl == dbl), Destination.Extraction);
+    Base("ineligible/float/const", rows => rows.Where(x => x.Data.Flt == 1.5f), Destination.Extraction);
+    Base("ineligible/float/param", rows => rows.Where(x => x.Data.Flt == flt), Destination.Extraction);
+    Base("ineligible/datetime/param", rows => rows.Where(x => x.Data.When == when), Destination.Extraction);
+    Base("ineligible/datetimeoffset/param", rows => rows.Where(x => x.Data.WhenOffset == offset), Destination.Extraction);
+    Base("ineligible/enum/const", rows => rows.Where(x => x.Data.State == Status.Live), Destination.Extraction);
+    Base("ineligible/enum/param", rows => rows.Where(x => x.Data.State == state), Destination.Extraction);
+
+    // --- Nullable members: containment for a value, extraction for a null.
+    string? maybeStr = "v";
+    Guid? maybeGid = _probeGuid;
+    int? maybeNum = 1;
+
+    Base("nullable/string/value/const", rows => rows.Where(x => x.Data.MaybeStr == "v"), Destination.Containment);
+    Base("nullable/string/value/param", rows => rows.Where(x => x.Data.MaybeStr == maybeStr), Destination.Containment);
+    Base("nullable/guid/value/const", rows => rows.Where(x => x.Data.MaybeGid == _probeGuid), Destination.Containment);
+    Base("nullable/guid/value/param", rows => rows.Where(x => x.Data.MaybeGid == maybeGid), Destination.Containment);
+    Base("nullable/int/value/const", rows => rows.Where(x => x.Data.MaybeNum == 1), Destination.Containment);
+    Base("nullable/int/value/param", rows => rows.Where(x => x.Data.MaybeNum == maybeNum), Destination.Containment);
+    Base("nullable/string/null", rows => rows.Where(x => x.Data.MaybeStr == null), Destination.Extraction);
+    Base("nullable/guid/null", rows => rows.Where(x => x.Data.MaybeGid == null), Destination.Extraction);
+    Base("nullable/int/null", rows => rows.Where(x => x.Data.MaybeNum == null), Destination.Extraction);
+    Base("nullable/string/not-null", rows => rows.Where(x => x.Data.MaybeStr != null), Destination.Extraction);
+
+    // --- Promoted fields keep reading their column.
+    Base("physical/guid/equal", rows => rows.Where(x => x.Data.PhysGuid == g), Destination.PhysicalColumn);
+    Base("physical/int/equal", rows => rows.Where(x => x.Data.PhysInt == i), Destination.PhysicalColumn);
+    Base("physical/int/range", rows => rows.Where(x => x.Data.PhysInt > 1), Destination.PhysicalColumn);
+    Base("physical/int/not-equal", rows => rows.Where(x => x.Data.PhysInt != 1), Destination.PhysicalColumn);
+    Base("physical/string/equal", rows => rows.Where(x => x.Data.PhysString == s), Destination.PhysicalColumn);
+    Base("physical/string/like", rows => rows.Where(x => x.Data.PhysString.Contains("val")), Destination.PhysicalColumn);
+    OrderingBase("physical/int/ordered", rows => rows.OrderBy(x => x.Data.PhysInt), Destination.PhysicalColumn);
+    Base("physical/negated", rows => rows.Where(x => !(x.Data.PhysInt == 1)), Destination.PhysicalColumn);
+
+    // --- Operators containment cannot express.
+    Base("op/short/not-equal", rows => rows.Where(x => x.Data.Small != (short)1), Destination.Extraction);
+    Base("op/short/greater", rows => rows.Where(x => x.Data.Small > (short)1), Destination.Extraction);
+    Base("op/short/greater-or-equal", rows => rows.Where(x => x.Data.Small >= (short)1), Destination.Extraction);
+    Base("op/short/less", rows => rows.Where(x => x.Data.Small < (short)1), Destination.Extraction);
+    Base("op/short/less-or-equal", rows => rows.Where(x => x.Data.Small <= (short)1), Destination.Extraction);
+    Base("op/int/not-equal", rows => rows.Where(x => x.Data.Num != 1), Destination.Extraction);
+    Base("op/int/greater", rows => rows.Where(x => x.Data.Num > 1), Destination.Extraction);
+    Base("op/int/greater-or-equal", rows => rows.Where(x => x.Data.Num >= 1), Destination.Extraction);
+    Base("op/int/less", rows => rows.Where(x => x.Data.Num < 1), Destination.Extraction);
+    Base("op/int/less-or-equal", rows => rows.Where(x => x.Data.Num <= 1), Destination.Extraction);
+    Base("op/long/not-equal", rows => rows.Where(x => x.Data.Big != 1L), Destination.Extraction);
+    Base("op/long/greater", rows => rows.Where(x => x.Data.Big > 1L), Destination.Extraction);
+    Base("op/long/less", rows => rows.Where(x => x.Data.Big < 1L), Destination.Extraction);
+    Base("op/decimal/not-equal", rows => rows.Where(x => x.Data.Money != 1.5m), Destination.Extraction);
+    Base("op/decimal/greater", rows => rows.Where(x => x.Data.Money > 1.5m), Destination.Extraction);
+    Base("op/decimal/greater-or-equal", rows => rows.Where(x => x.Data.Money >= 1.5m), Destination.Extraction);
+    Base("op/decimal/less", rows => rows.Where(x => x.Data.Money < 1.5m), Destination.Extraction);
+    Base("op/decimal/less-or-equal", rows => rows.Where(x => x.Data.Money <= 1.5m), Destination.Extraction);
+    Base("op/string/not-equal", rows => rows.Where(x => x.Data.Str != "v"), Destination.Extraction);
+    Base("op/string/contains", rows => rows.Where(x => x.Data.Str.Contains("val")), Destination.Extraction);
+    Base("op/string/starts-with", rows => rows.Where(x => x.Data.Str.StartsWith("val")), Destination.Extraction);
+    Base("op/string/ends-with", rows => rows.Where(x => x.Data.Str.EndsWith("val")), Destination.Extraction);
+    Base("op/string/length", rows => rows.Where(x => x.Data.Str.Length > 3), Destination.Extraction);
+    Base("op/guid/not-equal", rows => rows.Where(x => x.Data.Gid != _probeGuid), Destination.Extraction);
+    Base("op/bool/negated-member", rows => rows.Where(x => !x.Data.Flag), Destination.Extraction);
+    OrderingBase("op/string/ordered", rows => rows.OrderBy(x => x.Data.Str), Destination.Extraction);
+    OrderingBase("op/int/ordered-descending", rows => rows.OrderByDescending(x => x.Data.Num), Destination.Extraction);
+
+    // --- Nested members.
+    Base("nested/string/const", rows => rows.Where(x => x.Data.Inner.City == "v"), Destination.Containment);
+    Base("nested/string/param", rows => rows.Where(x => x.Data.Inner.City == s), Destination.Containment);
+    Base("nested/int/const", rows => rows.Where(x => x.Data.Inner.Floor == 3), Destination.Containment);
+    Base("nested/int/param", rows => rows.Where(x => x.Data.Inner.Floor == i), Destination.Containment);
+    Base("nested/two-levels/const", rows => rows.Where(x => x.Data.Inner.Deeper.Marker == _probeGuid), Destination.Containment);
+    Base("nested/two-levels/param", rows => rows.Where(x => x.Data.Inner.Deeper.Marker == g), Destination.Containment);
+    Base("nested/range", rows => rows.Where(x => x.Data.Inner.Floor > 3), Destination.Extraction);
+    Base("nested/not-equal", rows => rows.Where(x => x.Data.Inner.City != "v"), Destination.Extraction);
+    OrderingBase("nested/ordered", rows => rows.OrderBy(x => x.Data.Inner.City), Destination.Extraction);
+
+    // --- Negation, which is where containment and equality stop agreeing.
+    Base("negated/string", rows => rows.Where(x => !(x.Data.Str == "v")), Destination.Extraction);
+    Base("negated/guid", rows => rows.Where(x => !(x.Data.Gid == _probeGuid)), Destination.Extraction);
+    Base("negated/int", rows => rows.Where(x => !(x.Data.Num == 1)), Destination.Extraction);
+    Base("negated/nested", rows => rows.Where(x => !(x.Data.Inner.City == "v")), Destination.Extraction);
+    Base("negated/around-and", rows => rows.Where(x => !(x.Data.Str == "v" && x.Data.Num == 1)), Destination.Extraction);
+    Base("negated/around-or", rows => rows.Where(x => !(x.Data.Str == "v" || x.Data.Num == 1)), Destination.Extraction);
+    Base("negated/double", rows => rows.Where(x => !!(x.Data.Str == "v")), Destination.Extraction);
+    Base("negated/beside-positive", rows => rows.Where(x => !(x.Data.Str == "v") || x.Data.Num == 1), Destination.Containment);
+
+    // --- Composition within a single predicate.
+    Base("compose/and-two", rows => rows.Where(x => x.Data.Str == "v" && x.Data.Num == 1), Destination.Containment);
+    Base("compose/or-two", rows => rows.Where(x => x.Data.Str == "v" || x.Data.Num == 1), Destination.Containment);
+    Base("compose/and-three", rows => rows.Where(x => x.Data.Str == "v" && x.Data.Num == 1 && x.Data.Gid == _probeGuid), Destination.Containment);
+    Base("compose/and-physical", rows => rows.Where(x => x.Data.Str == "v" && x.Data.PhysInt == 1), Destination.Containment);
+    Base("compose/and-row-column", rows => rows.Where(x => x.Data.Str == "v" && x.Version > 1), Destination.Containment);
+    Base("compose/and-range", rows => rows.Where(x => x.Data.Str == "v" && x.Data.Num > 1), Destination.Containment);
+    Base("compose/and-null-check", rows => rows.Where(x => x.Data.Str == "v" && x.Data.MaybeStr == null), Destination.Containment);
+    Base("compose/chained-where", rows => rows.Where(x => x.Data.Str == "v").Where(x => x.Data.Num == 1), Destination.Containment);
+    Base("compose/mixed-nested", rows => rows.Where(x => x.Data.Inner.City == "v" && x.Data.Str == "v"), Destination.Containment);
+
+    // --- The row's own columns.
+    Base("row/id", rows => rows.Where(x => x.Id == g), Destination.RowColumn);
+    Base("row/version", rows => rows.Where(x => x.Version == 1), Destination.RowColumn);
+    Base("row/updated-at", rows => rows.Where(x => x.UpdatedAt > when), Destination.RowColumn);
+    OrderingBase("row/created-at-ordered", rows => rows.OrderBy(x => x.CreatedAt), Destination.RowColumn);
+    Base("row/id-and-version", rows => rows.Where(x => x.Id == g && x.Version > 0), Destination.RowColumn);
+
+    // --- Query syntax is the same tree in different clothes.
+    Base("query-syntax/where-eligible", rows => from x in rows where x.Data.Str == "v" select x, Destination.Containment);
+    Base("query-syntax/where-range", rows => from x in rows where x.Data.Num > 1 select x, Destination.Extraction);
+    Base("query-syntax/where-negated", rows => from x in rows where !(x.Data.Str == "v") select x, Destination.Extraction);
+    Base("query-syntax/orderby-eligible", rows => from x in rows where x.Data.Gid == _probeGuid orderby x.Version select x, Destination.Containment);
+    Base("query-syntax/nested", rows => from x in rows where x.Data.Inner.City == "v" select x, Destination.Containment);
+
+    // Cross every base predicate with the query shapes a repository wraps it in. None of these
+    // wrappers touches a JSON member, so the destination of the predicate cannot change.
+    var wrappers = new (string Name, Func<Shape, Shape> Wrap)[] {
+      ("bare", inner => inner),
+      ("ordered-by-key", inner => rows => inner(rows).OrderBy(x => x.Id)),
+      ("ordered-then-by", inner => rows => inner(rows).OrderBy(x => x.Id).ThenByDescending(x => x.Version)),
+      ("paged", inner => rows => inner(rows).Skip(10).Take(5)),
+      ("distinct", inner => rows => inner(rows).Distinct()),
+      ("refiltered-on-row-column", inner => rows => inner(rows).Where(x => x.Version > 0)),
+      ("ordered-and-paged", inner => rows => inner(rows).OrderBy(x => x.CreatedAt).Skip(1).Take(2)),
+    };
+
+    // Wrappers that leave an existing ORDER BY intact.
+    var orderPreserving = new[] { "bare", "paged", "refiltered-on-row-column" };
+
+    foreach (var (key, shape, expected, orders) in bases) {
+      foreach (var (wrapperName, wrap) in wrappers) {
+        if (orders && !orderPreserving.Contains(wrapperName, StringComparer.Ordinal)) {
+          continue;
+        }
+
+        cases[$"{key}::{wrapperName}"] = (wrap(shape), expected);
+      }
+    }
+
+    return cases;
   }
 
   private static readonly Guid _probeGuid = new("6f9619ff-8b86-d011-b42d-00cf4fc964ff");
@@ -398,7 +424,7 @@ public class JsonbContainmentSqlMatrixTests {
   /// <summary>The matrix is worth having only if it is broad, so its size is asserted too.</summary>
   [Test]
   public async Task Matrix_CoversEveryAxisAsync() {
-    await Assert.That(_matrix.Count).IsGreaterThanOrEqualTo(100);
+    await Assert.That(_matrix.Count).IsGreaterThanOrEqualTo(700);
 
     foreach (var destination in Enum.GetValues<Destination>()) {
       var covered = _matrix.Values.Count(v => v.Expected == destination);
@@ -412,16 +438,20 @@ public class JsonbContainmentSqlMatrixTests {
   /// </summary>
   [Test]
   public async Task WithoutRegistration_TheRewriteStandsDownAsync() {
-    using var db = new UnregisteredDbContext(new DbContextOptionsBuilder<UnregisteredDbContext>()
-      .UseNpgsql(UNUSED_CONNECTION)
-      .UseWhizbangPhysicalFields()
-      .Options);
+    using var db = new UnregisteredDbContext(_unregisteredOptions);
 
     var sql = db.Set<PerspectiveRow<MatrixModel>>().Where(x => x.Data.Str == "v").ToQueryString();
 
     await Assert.That(sql).Contains("data ->>", StringComparison.Ordinal);
     await Assert.That(sql).DoesNotContain("@>", StringComparison.Ordinal);
   }
+
+  private static readonly DbContextOptions<UnregisteredDbContext> _unregisteredOptions =
+    new DbContextOptionsBuilder<UnregisteredDbContext>()
+      .UseNpgsql(UNUSED_CONNECTION)
+      .UseWhizbangPhysicalFields()
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options;
 
   private sealed class UnregisteredDbContext(DbContextOptions<UnregisteredDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) =>

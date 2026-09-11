@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -108,17 +109,32 @@ public class PerspectiveSqlShapeTests {
 
   private static readonly Guid _probeId = new("305a83c8-b1b0-47ca-86ec-c2ce0e4502c3");
 
+  // Built once; see the note in JsonbContainmentSqlMatrixTests about internal service providers.
+  private static readonly DbContextOptions<ShapeDbContext> _shapeOptions =
+    new DbContextOptionsBuilder<ShapeDbContext>()
+      .UseNpgsql(UNUSED_CONNECTION)
+      .UseWhizbangPhysicalFields()
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options;
+
+  private static readonly DbContextOptions<OperatorDbContext> _operatorOptions =
+    new DbContextOptionsBuilder<OperatorDbContext>()
+      .UseNpgsql(UNUSED_CONNECTION)
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options;
+
+  private static readonly DbContextOptions<SharedColumnDbContext> _sharedColumnOptions =
+    new DbContextOptionsBuilder<SharedColumnDbContext>()
+      .UseNpgsql(UNUSED_CONNECTION)
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options;
+
   private static ShapeDbContext _newContext() {
     PhysicalFieldRegistry.Register<CatalogModel>("OwnerId", "owner_id");
     PhysicalFieldRegistry.Register<CatalogModel>("Price", "price");
     PhysicalFieldRegistry.Register<CatalogModel>("Sku", "sku");
 
-    var options = new DbContextOptionsBuilder<ShapeDbContext>()
-      .UseNpgsql(UNUSED_CONNECTION)
-      .UseWhizbangPhysicalFields()
-      .Options;
-
-    return new ShapeDbContext(options);
+    return new ShapeDbContext(_shapeOptions);
   }
 
   private static string _sqlForTenant() {
@@ -341,8 +357,7 @@ public class PerspectiveSqlShapeTests {
   /// </remarks>
   [Test]
   public async Task ACustomTranslation_CanEmitAnyOperator_ButOnlyOverAnExtractionAsync() {
-    using var db = new OperatorDbContext(
-      new DbContextOptionsBuilder<OperatorDbContext>().UseNpgsql(UNUSED_CONNECTION).Options);
+    using var db = new OperatorDbContext(_operatorOptions);
 
     var sql = db.Set<PerspectiveRow<CatalogModel>>()
       .Where(r => JsonbContains(r.Data.Title, "\"abc\""))
@@ -364,8 +379,7 @@ public class PerspectiveSqlShapeTests {
   public async Task TheDataColumn_IsNotAddressableAsAScalarAsync() {
     // A second model element cannot share the column the complex property already owns.
     await Assert.That(() => {
-      using var db = new SharedColumnDbContext(
-        new DbContextOptionsBuilder<SharedColumnDbContext>().UseNpgsql(UNUSED_CONNECTION).Options);
+      using var db = new SharedColumnDbContext(_sharedColumnOptions);
       return db.Set<PerspectiveRow<CatalogModel>>().Where(r => r.Data.Title == "abc").ToQueryString();
     }).Throws<ArgumentException>();
 
