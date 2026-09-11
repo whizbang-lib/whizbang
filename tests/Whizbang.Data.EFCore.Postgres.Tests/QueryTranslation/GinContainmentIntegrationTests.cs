@@ -325,6 +325,89 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     return (long)(await command.ExecuteScalarAsync())!;
   }
 
+  /// <summary>
+  /// Set membership: whether an immutable helper function on the right of the containment operator
+  /// still reaches the index, which decides how the rewrite for <c>Contains</c> should be built.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The shape has to build one containment document per candidate value, and the values arrive as a
+  /// single array parameter. Two ways to produce that array: inline, with a scalar subquery over
+  /// <c>unnest</c>, or by calling a function the framework ships. The second is far easier to emit
+  /// from a translation, and the only question that matters is whether the planner still folds it
+  /// well enough to use the index.
+  /// </para>
+  /// <para>
+  /// The function is declared IMMUTABLE and written in SQL so PostgreSQL can inline it. If that
+  /// stopped being true the plan would fall back to a sequential scan, which is what this asserts
+  /// against.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task SetMembership_ReachesTheIndexThroughAnImmutableHelperAsync(CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    await _execAsync(db, """
+      CREATE OR REPLACE FUNCTION wh_jsonb_objects(key text, vals anyarray)
+      RETURNS jsonb[] AS $$
+        SELECT array_agg(jsonb_build_object(key, v)) FROM unnest(vals) AS v;
+      $$ LANGUAGE sql IMMUTABLE;
+      """);
+
+    var throughFunction = await _explainArrayAsync(db,
+      $"SELECT id FROM {TABLE} WHERE data @> ANY(wh_jsonb_objects('Title', @p))");
+
+    var inlineSubquery = await _explainArrayAsync(db,
+      $"SELECT id FROM {TABLE} WHERE data @> ANY(ARRAY(SELECT jsonb_build_object('Title', v) FROM unnest(@p) AS v))");
+
+    // Both must reach the index; the choice between them is then about how each is built, not about
+    // whether either works.
+    await Assert.That(inlineSubquery).Contains("idx_gin_probe_data", StringComparison.Ordinal);
+    await Assert.That(throughFunction).Contains("idx_gin_probe_data", StringComparison.Ordinal);
+    await Assert.That(throughFunction).Contains("Bitmap Index Scan", StringComparison.Ordinal);
+  }
+
+  /// <summary>Set membership returns the same rows a chain of equality comparisons would.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task SetMembership_ReturnsTheSameRowsAsEqualityAsync(CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    await _execAsync(db, """
+      CREATE OR REPLACE FUNCTION wh_jsonb_objects(key text, vals anyarray)
+      RETURNS jsonb[] AS $$
+        SELECT array_agg(jsonb_build_object(key, v)) FROM unnest(vals) AS v;
+      $$ LANGUAGE sql IMMUTABLE;
+      """);
+
+    var byMembership = await _scalarAsync(db,
+      $"SELECT count(*) FROM {TABLE} WHERE data @> ANY(wh_jsonb_objects('Title', ARRAY['needle','bulk-1']))");
+
+    var byEquality = await _scalarAsync(db,
+      $"SELECT count(*) FROM {TABLE} WHERE data ->> 'Title' = 'needle' OR data ->> 'Title' = 'bulk-1'");
+
+    await Assert.That(byMembership).IsEqualTo(byEquality);
+    await Assert.That(byMembership).IsGreaterThan(0L);
+  }
+
+  private static readonly string[] _membershipProbe = ["needle", "bulk-1"];
+
+  private static async Task<string> _explainArrayAsync(NpgsqlConnection db, string sql) {
+    await using var command = new NpgsqlCommand("EXPLAIN " + sql, db);
+    command.Parameters.AddWithValue("p", _membershipProbe);
+
+    var lines = new List<string>();
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      lines.Add(reader.GetString(0));
+    }
+
+    return string.Join('\n', lines);
+  }
+
   private static async Task _execAsync(NpgsqlConnection db, string sql) {
     await using var command = new NpgsqlCommand(sql, db);
     await command.ExecuteNonQueryAsync();
