@@ -210,17 +210,10 @@ public class JsonbContainmentAuthoringTests {
   /// not see them and the query keeps the extraction form. They are correct, just not indexed.
   /// </summary>
   [Test]
-  [Arguments("list Contains")]
-  [Arguments("array Contains")]
   [Arguments("bare boolean member")]
   [Arguments("StartsWith")]
   public async Task SpellingsThatMissTheIndex_AreRecordedAsync(string spelling) {
-    var codes = new List<string> { "a", "b" };
-    var array = new[] { "a", "b" };
-
     var rewritten = spelling switch {
-      "list Contains" => _rewrites(x => codes.Contains(x.Data.Code)),
-      "array Contains" => _rewrites(x => array.Contains(x.Data.Code)),
       "bare boolean member" => _rewrites(x => x.Data.Active),
       "StartsWith" => _rewrites(x => x.Data.Code.StartsWith("va", StringComparison.Ordinal)),
       _ => throw new InvalidOperationException(spelling),
@@ -354,6 +347,78 @@ public class JsonbContainmentAuthoringTests {
       .ToQueryString();
 
     await Assert.That(sql).DoesNotContain("@>", StringComparison.Ordinal);
+  }
+
+  // ========================================
+  // Set membership
+  // ========================================
+
+  /// <summary>
+  /// "Is any of these values" reaches the index through the helper migration 152 adds, whichever way
+  /// the candidate collection is spelled.
+  /// </summary>
+  [Test]
+  [Arguments("array")]
+  [Arguments("list")]
+  [Arguments("static Enumerable.Contains")]
+  [Arguments("guid values")]
+  public async Task SetMembership_ReachesTheIndexAsync(string spelling) {
+    var array = new[] { "a", "b" };
+    var list = new List<string> { "a", "b" };
+    var ids = new[] { _probe };
+    var rows = _db.Set<PerspectiveRow<OrderModel>>();
+
+    var sql = spelling switch {
+      "array" => rows.Where(x => array.Contains(x.Data.Code)).ToQueryString(),
+      "list" => rows.Where(x => list.Contains(x.Data.Code)).ToQueryString(),
+      "static Enumerable.Contains" => rows.Where(x => Enumerable.Contains(array, x.Data.Code)).ToQueryString(),
+      "guid values" => rows.Where(x => ids.Contains(x.Data.Owner)).ToQueryString(),
+      _ => throw new InvalidOperationException(spelling),
+    };
+
+    await Assert.That(sql).Contains("@> ANY", StringComparison.Ordinal);
+    await Assert.That(sql).Contains("jsonb_containment_set", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// The shapes membership must not claim: a nested member, because the helper builds single-key
+  /// documents; a negated membership, for the same three-valued reason equality has; and a
+  /// collection read out of the row itself.
+  /// </summary>
+  [Test]
+  [Arguments("nested member")]
+  [Arguments("negated membership")]
+  [Arguments("collection from the row")]
+  [Arguments("set-typed collection")]
+  public async Task SetMembership_LeavesTheUnsafeShapesAloneAsync(string spelling) {
+    var array = new[] { "a", "b" };
+    var set = new HashSet<string> { "a", "b" };
+    var rows = _db.Set<PerspectiveRow<OrderModel>>();
+
+    var sql = spelling switch {
+      "nested member" => rows.Where(x => array.Contains(x.Data.Number.Value.ToString())).ToQueryString(),
+      "negated membership" => rows.Where(x => !array.Contains(x.Data.Code)).ToQueryString(),
+      "collection from the row" => rows.Where(x => x.Data.Code.Contains("ab")).ToQueryString(),
+      // Npgsql maps an array and a list to a PostgreSQL array; a set is not one of those shapes, and
+      // the candidates arrive already parameterized so there is nothing left to convert. IN is still
+      // correct, just unindexed.
+      "set-typed collection" => rows.Where(x => set.Contains(x.Data.Code)).ToQueryString(),
+      _ => throw new InvalidOperationException(spelling),
+    };
+
+    await Assert.That(sql).DoesNotContain("jsonb_containment_set", StringComparison.Ordinal);
+  }
+
+  /// <summary>The projected dialect gets membership too, since it reads the same document.</summary>
+  [Test]
+  public async Task SetMembership_WorksAfterAProjectionAsync() {
+    var array = new[] { "a", "b" };
+    var sql = _db.Set<PerspectiveRow<OrderModel>>()
+      .Select(r => r.Data)
+      .Where(m => array.Contains(m.Code))
+      .ToQueryString();
+
+    await Assert.That(sql).Contains("jsonb_containment_set", StringComparison.Ordinal);
   }
 
   private static readonly Guid _probe = new("6f9619ff-8b86-d011-b42d-00cf4fc964ff");

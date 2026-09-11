@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Whizbang.Core.Lenses;
@@ -89,8 +90,14 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     if (!_predicateOperators.Contains(name) || node.Arguments.Count < 2) {
       // Not a filtering operator. Inside one, an Equals call is the same comparison as == and is
       // rewritten the same way; outside one, nothing here applies.
-      if (_enabled && _predicateDepth > 0 && _negationDepth == 0 && _tryRewriteEquals(node, out var asEquality)) {
-        return asEquality;
+      if (_enabled && _predicateDepth > 0 && _negationDepth == 0) {
+        if (_tryRewriteEquals(node, out var asEquality)) {
+          return asEquality;
+        }
+
+        if (_tryRewriteContains(node, out var asMembership)) {
+          return asMembership;
+        }
       }
 
       return base.VisitMethodCall(node);
@@ -214,6 +221,77 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
 
     return _tryRewrite(left, right, out rewritten) || _tryRewrite(right, left, out rewritten);
   }
+
+  /// <summary>
+  /// Turns "this field is any of these values" into a containment test against a set of documents.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Covers both spellings, <c>values.Contains(member)</c> as an instance call on a list and
+  /// <c>Enumerable.Contains(values, member)</c> as a static one. The candidate collection is
+  /// normalized to an array, which Entity Framework evaluates while extracting parameters because
+  /// the subtree reads nothing from the row.
+  /// </para>
+  /// <para>
+  /// Only a top-level member qualifies. The helper builds single-key documents and a nested path
+  /// would need one nested document per candidate, which cannot be produced without a subquery. A
+  /// nested member keeps the extraction form, which is correct and unindexed.
+  /// </para>
+  /// </remarks>
+  private bool _tryRewriteContains(MethodCallExpression node, out Expression rewritten) {
+    rewritten = Expression.Empty();
+
+    if (!string.Equals(node.Method.Name, "Contains", StringComparison.Ordinal) || node.Type != typeof(bool)) {
+      return false;
+    }
+
+    Expression collection;
+    Expression member;
+
+    if (node.Object is not null && node.Arguments.Count == 1) {
+      collection = node.Object;
+      member = node.Arguments[0];
+    } else if (node.Object is null && node.Arguments.Count == 2) {
+      collection = node.Arguments[0];
+      member = node.Arguments[1];
+    } else {
+      return false;
+    }
+
+    member = _stripConverts(member);
+
+    if (member is not MemberExpression m || !_isJsonMember(m) || !_isTopLevel(m)) {
+      return false;
+    }
+
+    // The candidates have to be a value, not something read from the row being filtered.
+    if (_referencesAQueryParameter(collection)) {
+      return false;
+    }
+
+    // The collection arrives already parameterized, so it cannot be wrapped or converted: the
+    // overload has to accept the shape as it stands. Arrays and lists are the two Npgsql maps to a
+    // PostgreSQL array; anything else keeps the IN form, which is correct and unindexed.
+    var overload = JsonbContainment.SetOverloadFor(m.Type, collection.Type);
+    if (overload is null) {
+      return false;
+    }
+
+    var elementType = overload.GetParameters()[0].ParameterType;
+    var memberArgument = m.Type == elementType ? (Expression)m : Expression.Convert(m, elementType);
+    rewritten = Expression.Call(overload, memberArgument, collection);
+    return true;
+  }
+
+  /// <summary>
+  /// Whether the member sits directly on the document rather than inside a nested object, which is
+  /// the only depth the set-membership helper can express.
+  /// </summary>
+  private static bool _isTopLevel(MemberExpression member) => member.Expression switch {
+    MemberExpression inner => string.Equals(inner.Member.Name, nameof(PerspectiveRow<object>.Data), StringComparison.Ordinal),
+    ParameterExpression => true,
+    _ => false,
+  };
 
   private bool _tryRewrite(Expression candidateMember, Expression candidateValue, out Expression rewritten) {
     rewritten = Expression.Empty();

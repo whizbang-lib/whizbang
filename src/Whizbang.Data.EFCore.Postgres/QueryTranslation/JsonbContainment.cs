@@ -89,6 +89,42 @@ public static class JsonbContainment {
   /// <returns>Never returns; the call is translated to SQL.</returns>
   public static bool Matches(decimal member, decimal value) => throw _notCallable();
 
+  /// <summary>Set-membership test for a string member.</summary>
+  /// <param name="member">The JSON member being tested.</param>
+  /// <param name="values">The candidate values.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool MatchesAny(string member, string[] values) => throw _notCallable();
+
+  /// <summary>Set-membership test for a <see cref="Guid"/> member.</summary>
+  /// <param name="member">The JSON member being tested.</param>
+  /// <param name="values">The candidate values.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool MatchesAny(Guid member, Guid[] values) => throw _notCallable();
+
+  /// <summary>Set-membership test for an <see cref="int"/> member.</summary>
+  /// <param name="member">The JSON member being tested.</param>
+  /// <param name="values">The candidate values.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool MatchesAny(int member, int[] values) => throw _notCallable();
+
+  /// <summary>Set-membership test for a <see cref="long"/> member.</summary>
+  /// <param name="member">The JSON member being tested.</param>
+  /// <param name="values">The candidate values.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool MatchesAny(long member, long[] values) => throw _notCallable();
+
+  /// <inheritdoc cref="MatchesAny(string, string[])"/>
+  public static bool MatchesAny(string member, List<string> values) => throw _notCallable();
+
+  /// <inheritdoc cref="MatchesAny(string, string[])"/>
+  public static bool MatchesAny(Guid member, List<Guid> values) => throw _notCallable();
+
+  /// <inheritdoc cref="MatchesAny(string, string[])"/>
+  public static bool MatchesAny(int member, List<int> values) => throw _notCallable();
+
+  /// <inheritdoc cref="MatchesAny(string, string[])"/>
+  public static bool MatchesAny(long member, List<long> values) => throw _notCallable();
+
   private static NotSupportedException _notCallable() =>
     new("JsonbContainment.Matches is a query marker and is only valid inside a LINQ query over a perspective.");
 
@@ -101,6 +137,49 @@ public static class JsonbContainment {
   private static readonly MethodInfo _intOverload = ((Func<int, int, bool>)Matches).Method;
   private static readonly MethodInfo _longOverload = ((Func<long, long, bool>)Matches).Method;
   private static readonly MethodInfo _decimalOverload = ((Func<decimal, decimal, bool>)Matches).Method;
+
+  private static readonly MethodInfo _stringSet = ((Func<string, string[], bool>)MatchesAny).Method;
+  private static readonly MethodInfo _guidSet = ((Func<Guid, Guid[], bool>)MatchesAny).Method;
+  private static readonly MethodInfo _intSet = ((Func<int, int[], bool>)MatchesAny).Method;
+  private static readonly MethodInfo _longSet = ((Func<long, long[], bool>)MatchesAny).Method;
+
+  private static readonly MethodInfo _stringSetList = ((Func<string, List<string>, bool>)MatchesAny).Method;
+  private static readonly MethodInfo _guidSetList = ((Func<Guid, List<Guid>, bool>)MatchesAny).Method;
+  private static readonly MethodInfo _intSetList = ((Func<int, List<int>, bool>)MatchesAny).Method;
+  private static readonly MethodInfo _longSetList = ((Func<long, List<long>, bool>)MatchesAny).Method;
+
+  private static readonly MethodInfo[] _setOverloads = [
+    _stringSet, _guidSet, _intSet, _longSet,
+    _stringSetList, _guidSetList, _intSetList, _longSetList,
+  ];
+
+  /// <summary>Every set-membership overload, for registration.</summary>
+  internal static IReadOnlyList<MethodInfo> SetOverloads => _setOverloads;
+
+  /// <summary>
+  /// The set-membership overload for a member type and the collection shape holding the candidates,
+  /// or null when membership cannot be compiled to containment for that pair.
+  /// </summary>
+  /// <remarks>
+  /// A narrower set than the equality overloads on purpose. The candidates arrive already
+  /// parameterized, so the overload has to accept the collection exactly as written, and only the
+  /// shapes Npgsql maps to a PostgreSQL array qualify.
+  /// </remarks>
+  /// <param name="memberType">The member's CLR type.</param>
+  /// <param name="collectionType">The CLR type of the candidate collection.</param>
+  /// <returns>The matching overload, or null.</returns>
+  internal static MethodInfo? SetOverloadFor(Type memberType, Type collectionType) {
+    var bare = Nullable.GetUnderlyingType(memberType) ?? memberType;
+
+    foreach (var overload in _setOverloads) {
+      var parameters = overload.GetParameters();
+      if (parameters[0].ParameterType == bare && parameters[1].ParameterType == collectionType) {
+        return overload;
+      }
+    }
+
+    return null;
+  }
 
   private static readonly MethodInfo[] _allOverloads = [
     _stringOverload, _guidOverload, _boolOverload,
@@ -179,6 +258,43 @@ public static class JsonbContainment {
   }
 
   /// <summary>
+  /// Builds <c>&lt;column&gt; @&gt; ANY(jsonb_containment_set('Key', &lt;values&gt;))</c>, which is the
+  /// set-membership form a GIN index answers.
+  /// </summary>
+  /// <param name="args">The translated arguments: the JSON member, then the candidate array.</param>
+  /// <returns>The membership expression.</returns>
+  /// <remarks>
+  /// Only a top-level member is expressible this way. The helper builds single-key documents, and a
+  /// nested path would need one nested document per candidate, which cannot be produced without a
+  /// subquery. The rewriter therefore only offers depth-one members; anything else would be a bug
+  /// here rather than a user error, so it fails loudly instead of guessing.
+  /// </remarks>
+  [SuppressMessage("Usage", "EF1001:Internal EF Core API usage",
+    Justification = "Same seam and same reasoning as Emit: the containment operator has no public expression type.")]
+  internal static SqlExpression EmitSet(IReadOnlyList<SqlExpression> args) {
+    ArgumentNullException.ThrowIfNull(args);
+
+    if (args.Count != 2 || args[0] is not JsonScalarExpression json || json.Json.TypeMapping is null) {
+      throw new InvalidOperationException("A set-membership translation expects a JSON member and a candidate array.");
+    }
+
+    if (json.Path.Count != 1 || json.Path[0].PropertyName is not { } key) {
+      throw new InvalidOperationException(
+        "Set membership is only compiled for a top-level member; the rewriter should not have offered this path.");
+    }
+
+    var documents = new SqlFunctionExpression(
+      "jsonb_containment_set",
+      [new SqlConstantExpression(key, typeof(string), StringTypeMapping.Default), args[1]],
+      nullable: true,
+      argumentsPropagateNullability: _argumentsPropagateNullability,
+      typeof(string),
+      json.Json.TypeMapping);
+
+    return new PgUnknownBinaryExpression(json.Json, documents, "@> ANY", typeof(bool), BoolTypeMapping.Default);
+  }
+
+  /// <summary>
   /// The comparison the query originally expressed, used when a tree turns out not to be the shape
   /// the rewrite understands. Losing an index is acceptable; changing an answer is not.
   /// </summary>
@@ -205,6 +321,10 @@ public static class JsonbContainmentModelExtensions {
 
     foreach (var overload in JsonbContainment.Overloads) {
       modelBuilder.HasDbFunction(overload).HasTranslation(JsonbContainment.Emit);
+    }
+
+    foreach (var overload in JsonbContainment.SetOverloads) {
+      modelBuilder.HasDbFunction(overload).HasTranslation(JsonbContainment.EmitSet);
     }
 
     return modelBuilder;
