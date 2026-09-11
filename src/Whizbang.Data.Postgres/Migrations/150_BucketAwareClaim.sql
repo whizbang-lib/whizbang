@@ -29,6 +29,11 @@ COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_arrival_standard IS
   'Arrival-order partial index over pending STANDARD events (150), so the standard lane''s breadth-first walk with an '
   'early stop never steps over background rows.';
 
+-- The band boundaries below are literals in three independent places: Whizbang.Core.Priority.WorkPriority, the
+-- CONSTANT declarations in claim_orphaned_inbox further down, and these index predicates. Index DDL cannot
+-- reference a plpgsql constant and neither can reference the C# one, so there is no textual way to share them;
+-- PriorityLaneIndexUsabilityTests reads all three back and pins them to WorkPriority instead.
+--
 -- The predicate below MUST be written exactly as the lane queries it, 'priority > 199', not the equivalent
 -- 'priority >= 200'. A partial index is only considered when Postgres can prove the query's predicate implies the
 -- index's, and that proof is textual: it does not know an integer above 199 is an integer of at least 200. Declared

@@ -3,6 +3,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Priority;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -18,8 +19,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <code-under-test>src/Whizbang.Data.Postgres/Migrations/150_BucketAwareClaim.sql</code-under-test>
 [Category("Shard1")]
 public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
-  private const int INTERACTIVE_BAND_END = 99;
-  private const int STANDARD_BAND_END = 199;
+  // Deliberately not re-declared here. WorkPriority is the one place the bands are defined; a test that wrote its
+  // own 99 and 199 would be a fourth copy of the very literals these cases exist to keep in agreement.
+  private static readonly int _interactiveBandEnd = WorkPriority.INTERACTIVE_BAND_END;
+  private static readonly int _standardBandEnd = WorkPriority.STANDARD_BAND_END;
 
   private static async Task<NpgsqlConnection> _openAsync(DbContext ctx) {
     var connection = ctx.Database.GetDbConnection();
@@ -88,7 +91,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await _seedEveryBandAsync(conn);
 
     var plan = await _planForAsync(conn,
-      $"i.is_event = TRUE AND i.priority > {STANDARD_BAND_END}",
+      $"i.is_event = TRUE AND i.priority > {_standardBandEnd}",
       "i.received_at, i.message_id");
 
     await Assert.That(plan).Contains("idx_inbox_pending_arrival_background")
@@ -102,7 +105,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await _seedEveryBandAsync(conn);
 
     var plan = await _planForAsync(conn,
-      $"i.is_event = TRUE AND i.priority BETWEEN {INTERACTIVE_BAND_END + 1} AND {STANDARD_BAND_END}",
+      $"i.is_event = TRUE AND i.priority BETWEEN {_interactiveBandEnd + 1} AND {_standardBandEnd}",
       "i.received_at, i.message_id");
 
     await Assert.That(plan).Contains("idx_inbox_pending_arrival_standard").Because($"plan was:\n{plan}");
@@ -115,7 +118,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await _seedEveryBandAsync(conn);
 
     var plan = await _planForAsync(conn,
-      $"i.priority <= {INTERACTIVE_BAND_END}",
+      $"i.priority <= {_interactiveBandEnd}",
       "i.stream_id, i.received_at, i.message_id");
 
     await Assert.That(plan).Contains("idx_inbox_pending_interactive").Because($"plan was:\n{plan}");
@@ -143,9 +146,31 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       }
     }
 
-    await Assert.That(predicates["idx_inbox_pending_arrival_background"]).Contains($"priority > {STANDARD_BAND_END}")
+    await Assert.That(predicates["idx_inbox_pending_arrival_background"]).Contains($"priority > {_standardBandEnd}")
       .Because("claim_orphaned_inbox's background lane filters with 'priority > c_standard_band_end'; an index declaring the same set as 'priority >= 200' cannot be matched to it");
-    await Assert.That(predicates["idx_inbox_pending_interactive"]).Contains($"priority <= {INTERACTIVE_BAND_END}");
-    await Assert.That(predicates["idx_inbox_pending_arrival_standard"]).Contains($"priority >= {INTERACTIVE_BAND_END + 1}");
+    await Assert.That(predicates["idx_inbox_pending_interactive"]).Contains($"priority <= {_interactiveBandEnd}");
+    await Assert.That(predicates["idx_inbox_pending_arrival_standard"]).Contains($"priority >= {_interactiveBandEnd + 1}");
+    await Assert.That(predicates["idx_inbox_pending_arrival_standard"]).Contains($"priority <= {_standardBandEnd}");
+  }
+
+  /// <summary>
+  /// The third place the bands are written. Index DDL cannot reference a function's constants and neither can
+  /// reference the C# ones, so the boundaries exist as literals in three independent places: WorkPriority, the
+  /// claim function's CONSTANT declarations, and the partial index predicates. There is no textual way to share
+  /// them, which leaves this: the deployed function is read back and pinned to the C# definition, so a change to
+  /// one that is not made in the others fails here instead of quietly costing a scan on every claim.
+  /// </summary>
+  [Test]
+  public async Task TheClaimFunctionsBandConstants_MatchTheFrameworkDefinitionAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT prosrc FROM pg_proc WHERE proname = 'claim_orphaned_inbox' LIMIT 1";
+    var source = (string?)await cmd.ExecuteScalarAsync() ?? string.Empty;
+
+    await Assert.That(source).Contains($"c_interactive_band_end CONSTANT INTEGER := {_interactiveBandEnd};")
+      .Because("the claim's band constants and WorkPriority describe one set of bands; if they disagree the lanes and the buckets the rest of the framework reports stop meaning the same thing");
+    await Assert.That(source).Contains($"c_standard_band_end CONSTANT INTEGER := {_standardBandEnd};");
   }
 }
