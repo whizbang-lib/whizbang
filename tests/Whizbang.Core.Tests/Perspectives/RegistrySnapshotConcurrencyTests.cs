@@ -9,10 +9,11 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// The perspective registries are filled by module initializers, which run as assemblies load, and read by startup
 /// work that may already be running. Both promise a snapshot safe to enumerate while further assemblies initialize,
 /// and that promise is the whole reason the read exists in a form separate from the dictionary.
-///
+/// <para>
 /// A collection expression over a ConcurrentDictionary does not keep it. It reads Count, allocates, then copies, and
 /// the copy throws if a registration landed in between. The failure needs no unusual load: it surfaced as two
 /// unrelated reconciler tests failing in CI, because a sibling test registered a model while they enumerated.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/perspectives/transient-storage</docs>
 /// <code-under-test>src/Whizbang.Core/Perspectives/PerspectiveTtlRegistry.cs</code-under-test>
@@ -23,7 +24,7 @@ public class RegistrySnapshotConcurrencyTests {
   private static Type _marker(int i) => typeof(_slot<>).MakeGenericType(i % 2 == 0 ? typeof(int) : typeof(long))
     .MakeArrayType(Math.Max(1, i % 8));
 
-  private sealed class _slot<T> { }
+  private sealed class _slot<T>;
 
   /// <summary>
   /// Registers continuously on one thread while snapshotting on another. Before the fix this throws

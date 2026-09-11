@@ -21,8 +21,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   // Deliberately not re-declared here. WorkPriority is the one place the bands are defined; a test that wrote its
   // own 99 and 199 would be a fourth copy of the very literals these cases exist to keep in agreement.
-  private static readonly int _interactiveBandEnd = WorkPriority.INTERACTIVE_BAND_END;
-  private static readonly int _standardBandEnd = WorkPriority.STANDARD_BAND_END;
+  private const int _interactiveBandEnd = WorkPriority.INTERACTIVE_BAND_END;
+  private const int _standardBandEnd = WorkPriority.STANDARD_BAND_END;
 
   private static async Task<NpgsqlConnection> _openAsync(DbContext ctx) {
     var connection = ctx.Database.GetDbConnection();

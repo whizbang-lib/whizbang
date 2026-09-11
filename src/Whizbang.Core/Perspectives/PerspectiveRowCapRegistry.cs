@@ -30,6 +30,8 @@ public static class PerspectiveRowCapRegistry {
   /// <summary>
   /// A snapshot of every model registered across the loaded assemblies, for the startup sync.
   /// </summary>
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0305:Collection initialization can be simplified",
+    Justification = "The suggested collection expression is the defect this replaced: it reads Count, allocates, then copies, and the copy throws when a registration lands in between. ToArray takes the dictionary's own locks.")]
   public static IReadOnlyList<KeyValuePair<Type, RowCapRegistration>> RegisteredModels() =>
     _capsByModel.ToArray();
 }

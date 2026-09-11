@@ -41,6 +41,8 @@ public static class PerspectiveTtlRegistry {
   /// takes the dictionary's own locks and is the only accessor that actually delivers the snapshot promised above.
   /// </para>
   /// </remarks>
+  [global::System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0305:Collection initialization can be simplified",
+    Justification = "The suggested collection expression is the defect this replaced: it reads Count, allocates, then copies, and the copy throws when a registration lands in between. ToArray takes the dictionary's own locks.")]
   public static IReadOnlyList<KeyValuePair<Type, int>> RegisteredModels() =>
     _ttlSecondsByModel.ToArray();
 
