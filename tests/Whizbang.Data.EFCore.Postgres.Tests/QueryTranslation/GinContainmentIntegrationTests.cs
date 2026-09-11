@@ -1,13 +1,12 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
-using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
@@ -44,61 +43,6 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     public int Rank { get; init; }
   }
 
-  /// <summary>Marker whose translation rewrites a member comparison into a containment test.</summary>
-  public static bool GinEquals(string member, string value) => throw new NotSupportedException();
-
-  /// <summary>Marker for a Guid member.</summary>
-  public static bool GinEquals(Guid member, Guid value) => throw new NotSupportedException();
-
-  private static readonly bool[] _noPropagate = [false, false];
-
-  /// <summary>
-  /// Rewrites <c>GinEquals(row.Data.Field, value)</c> into <c>data @&gt; jsonb_build_object('Field', value)</c>.
-  /// The column comes out of the translated argument, which is a <see cref="JsonScalarExpression"/>
-  /// carrying both the column and the JSON path.
-  /// </summary>
-  private static SqlExpression _toContainment(IReadOnlyList<SqlExpression> args) {
-    if (args[0] is not JsonScalarExpression json) {
-      return args[0];
-    }
-
-    var column = json.Json;
-    SqlExpression payload = args[1];
-
-    for (var i = json.Path.Count - 1; i >= 0; i--) {
-      var name = json.Path[i].PropertyName;
-      if (name is null) {
-        return args[0];
-      }
-
-      payload = new SqlFunctionExpression(
-        "jsonb_build_object",
-        [new SqlConstantExpression(name, typeof(string), StringTypeMapping.Default), payload],
-        nullable: true,
-        argumentsPropagateNullability: _noPropagate,
-        typeof(string),
-        column.TypeMapping!);
-    }
-
-    var pgBinary = System.Reflection.Assembly.Load("Npgsql.EntityFrameworkCore.PostgreSQL")
-      .GetType("Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal.PgUnknownBinaryExpression")!;
-    var ctor = pgBinary.GetConstructors()[0];
-    var ps = ctor.GetParameters();
-    var values = new object?[ps.Length];
-    for (var i = 0; i < ps.Length; i++) {
-      values[i] = ps[i].Name switch {
-        "left" => column,
-        "right" => payload,
-        "binaryOperator" => "@>",
-        "type" => typeof(bool),
-        "typeMapping" => BoolTypeMapping.Default,
-        _ => null,
-      };
-    }
-
-    return (SqlExpression)ctor.Invoke(values);
-  }
-
   private sealed class GinDbContext(DbContextOptions<GinDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       modelBuilder.Entity<PerspectiveRow<CatalogModel>>(entity => {
@@ -116,11 +60,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
         entity.Property(e => e.Version).HasColumnName("version").IsRequired();
       });
 
-      foreach (var method in typeof(GinContainmentIntegrationTests)
-                 .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
-                 .Where(m => m.Name == nameof(GinEquals))) {
-        modelBuilder.HasDbFunction(method).HasTranslation(_toContainment);
-      }
+      modelBuilder.UseWhizbangJsonbContainment();
     }
   }
 
@@ -158,10 +98,22 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
         );
         CREATE INDEX idx_gin_probe_data ON {TABLE} USING gin (data);
         """);
+
+      // The real migration text, not a copy of it: if 152 stops producing a usable function the
+      // end-to-end tests below fail rather than passing against a local imitation. 000 comes first
+      // because 152 opens by dropping any earlier overload of itself, and the helper that does that
+      // is defined there.
+      foreach (var migration in new[] { "000_MigrationTracking.sql", "152_JsonbContainmentSet.sql" }) {
+        await _execAsync(db, (await File.ReadAllTextAsync(_migrationPath(migration)))
+          .Replace("__SCHEMA__", "public", StringComparison.Ordinal));
+      }
     }
 
     _context = new GinDbContext(new DbContextOptionsBuilder<GinDbContext>()
       .UseNpgsql(_connectionString)
+      // The shipped wiring, so these tests exercise the real rewrite rather than a local imitation
+      // of it. Without this the fixture proved only that the SQL shape works if something emits it.
+      .UseWhizbangPhysicalFields()
       .Options);
 
     _needleTenant = Guid.NewGuid();
@@ -239,7 +191,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       .ToListAsync(cancellationToken);
 
     var byContainment = await _context.Set<PerspectiveRow<CatalogModel>>()
-      .Where(r => GinEquals(r.Data.Title, needle))
+      .Where(r => r.Data.Title == needle)
       .Select(r => r.Id)
       .ToListAsync(cancellationToken);
 
@@ -259,7 +211,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       .ToListAsync(cancellationToken);
 
     var byContainment = await _context.Set<PerspectiveRow<CatalogModel>>()
-      .Where(r => GinEquals(r.Data.TenantId, tenant))
+      .Where(r => r.Data.TenantId == tenant)
       .Select(r => r.Id)
       .ToListAsync(cancellationToken);
 
@@ -407,6 +359,97 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
 
     return string.Join('\n', lines);
   }
+
+  /// <summary>
+  /// The seam. Every other test proves one half: that the rewrite emits containment, or that
+  /// containment uses the index and means the same thing. This runs a real lens query through the
+  /// real rewrite against a real database and checks the rows that come back.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task SetMembership_ThroughTheLens_ReturnsTheRightRowsAsync(CancellationToken cancellationToken) {
+    var candidates = new[] { "needle", "bulk-7" };
+
+    var byMembership = await _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => candidates.Contains(r.Data.Title))
+      .Select(r => r.Data.Title)
+      .ToListAsync(cancellationToken);
+
+    var byEquality = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Title == "needle" || r.Data.Title == "bulk-7")
+      .Select(r => r.Data.Title)
+      .ToListAsync(cancellationToken);
+
+    await Assert.That(byMembership.Order()).IsEquivalentTo(byEquality.Order());
+    await Assert.That(byMembership).Count().IsEqualTo(2);
+  }
+
+  /// <summary>The membership query really did compile to the helper, not quietly fall back to IN.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task SetMembership_ThroughTheLens_CompilesToTheHelperAsync(CancellationToken cancellationToken) {
+    var candidates = new[] { "needle" };
+
+    var sql = _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => candidates.Contains(r.Data.Title))
+      .ToQueryString();
+
+    await Assert.That(sql).Contains("jsonb_containment_set", StringComparison.Ordinal);
+    await Assert.That(sql).Contains("@> ANY", StringComparison.Ordinal);
+
+    // And it executes, which a compiled-text assertion alone would not prove.
+    var rows = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => candidates.Contains(r.Data.Title))
+      .CountAsync(cancellationToken);
+
+    await Assert.That(rows).IsEqualTo(1);
+  }
+
+  /// <summary>An Equals spelling returns the same rows the operator form does, executed for real.</summary>
+  [Test]
+  [Timeout(120000)]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Globalization", "CA1309:Use ordinal string comparison",
+    Justification = "The overload without a StringComparison is the one under test: it is what a developer " +
+      "writes, Entity Framework can translate it, and the rewrite has to agree with that translation.")]
+  public async Task EqualsSpelling_ThroughTheLens_ReturnsTheRightRowsAsync(CancellationToken cancellationToken) {
+    var needle = "needle";
+
+    var byEquals = await _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Title.Equals(needle))
+      .Select(r => r.Id)
+      .ToListAsync(cancellationToken);
+
+    var byOperator = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.Title == needle)
+      .Select(r => r.Id)
+      .ToListAsync(cancellationToken);
+
+    await Assert.That(byEquals).IsEquivalentTo(byOperator);
+    await Assert.That(byEquals).Count().IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// The projected dialect, which is how most repositories are written, returns the right rows when
+  /// its predicate has been rewritten.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task ProjectedDialect_ThroughTheLens_ReturnsTheRightRowsAsync(CancellationToken cancellationToken) {
+    var needle = "needle";
+
+    var projected = await _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Select(r => r.Data)
+      .Where(m => m.Title == needle)
+      .Select(m => m.Title)
+      .ToListAsync(cancellationToken);
+
+    await Assert.That(projected).Count().IsEqualTo(1);
+    await Assert.That(projected[0]).IsEqualTo(needle);
+  }
+
+  private static string _migrationPath(string fileName) => Path.Combine(
+    AppContext.BaseDirectory, "..", "..", "..", "..", "..",
+    "src", "Whizbang.Data.Postgres", "Migrations", fileName);
 
   private static async Task _execAsync(NpgsqlConnection db, string sql) {
     await using var command = new NpgsqlCommand(sql, db);

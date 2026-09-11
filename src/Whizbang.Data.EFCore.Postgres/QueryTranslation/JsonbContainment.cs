@@ -291,7 +291,19 @@ public static class JsonbContainment {
       typeof(string),
       json.Json.TypeMapping);
 
-    return new PgUnknownBinaryExpression(json.Json, documents, "@> ANY", typeof(bool), BoolTypeMapping.Default);
+    // "x @> ANY (y)" needs its parentheses: they are part of the ANY grammar, not decoration, and the
+    // arbitrary-operator expression renders its operands bare. Npgsql's own ANY expression cannot
+    // carry containment (it knows only Equal, Like and ILike), so the parentheses are produced by a
+    // nameless function call, which renders as "(argument)".
+    var parenthesized = new SqlFunctionExpression(
+      string.Empty,
+      [documents],
+      nullable: true,
+      argumentsPropagateNullability: _oneArgumentKeepsNullability,
+      typeof(string),
+      json.Json.TypeMapping);
+
+    return new PgUnknownBinaryExpression(json.Json, parenthesized, "@> ANY", typeof(bool), BoolTypeMapping.Default);
   }
 
   /// <summary>
@@ -303,6 +315,7 @@ public static class JsonbContainment {
       System.Linq.Expressions.ExpressionType.Equal, left, right, typeof(bool), BoolTypeMapping.Default);
 
   private static readonly bool[] _argumentsPropagateNullability = [false, false];
+  private static readonly bool[] _oneArgumentKeepsNullability = [false];
 }
 
 /// <summary>
