@@ -229,9 +229,11 @@ public static class JsonbContainment {
       throw new ArgumentException("A containment translation takes exactly two arguments.", nameof(args));
     }
 
-    if (args[0] is not JsonScalarExpression json || json.Json.TypeMapping is null) {
-      // Not the shape this rewrite understands. Fall back to the comparison the query originally
-      // expressed, so an unexpected tree costs an index rather than a wrong answer.
+    if (args[0] is not JsonScalarExpression json || json.Json.TypeMapping is null
+        || !_storedFormIsNatural(json)) {
+      // Not the shape this rewrite understands, or a value converter has changed what the document
+      // holds. Fall back to the comparison the query originally expressed, so the cost is an index
+      // rather than an answer.
       return _equality(args[0], args[1]);
     }
 
@@ -278,6 +280,11 @@ public static class JsonbContainment {
       throw new InvalidOperationException("A set-membership translation expects a JSON member and a candidate array.");
     }
 
+    if (!_storedFormIsNatural(json)) {
+      throw new InvalidOperationException(
+        "Set membership cannot be compiled for a property whose stored form is changed by a value converter.");
+    }
+
     if (json.Path.Count != 1 || json.Path[0].PropertyName is not { } key) {
       throw new InvalidOperationException(
         "Set membership is only compiled for a top-level member; the rewriter should not have offered this path.");
@@ -304,6 +311,27 @@ public static class JsonbContainment {
       json.Json.TypeMapping);
 
     return new PgUnknownBinaryExpression(json.Json, parenthesized, "@> ANY", typeof(bool), BoolTypeMapping.Default);
+  }
+
+
+  /// <summary>
+  /// Whether the member's stored form is the natural form for its CLR type, or whether a value
+  /// converter has changed it.
+  /// </summary>
+  /// <remarks>
+  /// This is the difference between a lost index and a wrong answer. A property configured with a
+  /// converter is written in the converter's form: an <c>int</c> with a string conversion lands in the
+  /// document as <c>"7"</c>, not <c>7</c>. An extraction still matches it, because <c>-&gt;&gt;</c>
+  /// renders a JSON string and a JSON number as the same text. A containment test does not, because it
+  /// compares documents and a string is not a number, so the filter would return nothing at all and
+  /// look fast while doing it.
+  /// </remarks>
+  private static bool _storedFormIsNatural(JsonScalarExpression json) {
+    // The mapping carries the converter when one is configured, and comparing CLR types does not
+    // reveal it: the mapping's ClrType stays the model type either way. The marker's own parameter is
+    // typed by the CLR type, so the document would be built in the unconverted form while the row
+    // holds the converted one.
+    return json.TypeMapping is { Converter: null };
   }
 
   /// <summary>

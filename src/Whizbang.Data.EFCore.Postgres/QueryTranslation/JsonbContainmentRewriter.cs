@@ -273,7 +273,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     // overload has to accept the shape as it stands. Arrays and lists are the two Npgsql maps to a
     // PostgreSQL array; anything else keeps the IN form, which is correct and unindexed.
     var overload = JsonbContainment.SetOverloadFor(m.Type, collection.Type);
-    if (overload is null) {
+    if (overload is null || _isValueConverted(m)) {
       return false;
     }
 
@@ -311,7 +311,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     }
 
     var overload = JsonbContainment.OverloadFor(member.Type);
-    if (overload is null) {
+    if (overload is null || _isValueConverted(member)) {
       return false;
     }
 
@@ -326,6 +326,75 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
 
     rewritten = Expression.Call(overload, memberArgument, valueArgument);
     return true;
+  }
+
+  /// <summary>
+  /// Whether a value converter changes what this member's stored form looks like.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the difference between losing an index and giving a wrong answer, so it is checked here
+  /// rather than at translation. A converted property is written in the converter's form: an
+  /// <c>int</c> configured as text lands in the document as <c>"7"</c>, not <c>7</c>. The marker's
+  /// parameter is typed by the CLR type, so the containment document would be built unconverted and
+  /// match nothing, while the extraction it replaced matches fine because the text rendering of a
+  /// JSON string and a JSON number are the same.
+  /// </para>
+  /// <para>
+  /// Standing down at translation time is too late: by then the marker has been chosen and its
+  /// parameter typed, and the only available fallback compares a text extraction with a numeric
+  /// parameter, which the database rejects outright.
+  /// </para>
+  /// </remarks>
+  private bool _isValueConverted(MemberExpression member) {
+    if (_model is null) {
+      return true;
+    }
+
+    // Rebuild the path from the document root outwards: Data.A.B has B outermost.
+    var names = new List<string>();
+    Type? rootModel = null;
+
+    for (Expression? current = member; current is MemberExpression link; current = link.Expression) {
+      if (string.Equals(link.Member.Name, nameof(PerspectiveRow<object>.Data), StringComparison.Ordinal)
+          && _isPerspectiveRow(link.Expression?.Type)) {
+        rootModel = link.Type;
+        break;
+      }
+
+      names.Insert(0, link.Member.Name);
+
+      if (link.Expression is ParameterExpression parameter) {
+        rootModel = parameter.Type;
+        break;
+      }
+    }
+
+    if (rootModel is null || names.Count == 0) {
+      return true;
+    }
+
+    var row = _model.FindEntityType(typeof(PerspectiveRow<>).MakeGenericType(rootModel));
+    var complex = row?.FindComplexProperty(nameof(PerspectiveRow<object>.Data))?.ComplexType;
+    if (complex is null) {
+      return true;
+    }
+
+    for (var i = 0; i < names.Count - 1; i++) {
+      complex = complex.FindComplexProperty(names[i])?.ComplexType;
+      if (complex is null) {
+        return true;
+      }
+    }
+
+    var leaf = complex.FindProperty(names[^1]);
+    if (leaf is null) {
+      return true;
+    }
+
+    // The converter can sit on either the property or its type mapping depending on how it was
+    // configured, and the translation sees the mapping, so check both and agree with it.
+    return leaf.GetValueConverter() is not null || leaf.GetTypeMapping().Converter is not null;
   }
 
   /// <summary>
