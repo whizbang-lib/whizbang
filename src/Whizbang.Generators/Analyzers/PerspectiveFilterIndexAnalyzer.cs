@@ -1,0 +1,280 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Utilities;
+
+namespace Whizbang.Generators.Analyzers;
+
+/// <summary>
+/// Roslyn analyzer that reports a lens query filtering a perspective on a field that has no
+/// physical column, which the database can only answer by reading every row of the table.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A perspective stores its read model as a JSON document, so only properties promoted to a real
+/// column by <c>[PhysicalField]</c> can carry an index. A predicate over any other property is
+/// evaluated by extracting it from the JSON of every candidate row, which is correct and linear.
+/// That cost is invisible in development, where the table holds tens of rows, and dominates in
+/// production, where it holds millions.
+/// </para>
+/// <para>
+/// The analyzer keys on <c>PerspectiveRow&lt;TModel&gt;.Data</c> rather than on any particular
+/// query API, so both the scoped lens surface and the older direct one are covered, in method and
+/// in query syntax.
+/// </para>
+/// <para>
+/// Opting out is <c>[SuppressIndexAdvisory("reason")]</c> on the property, the model, or the
+/// assembly. The reason is required and a blank one does not suppress, so the opt-out reads as a
+/// decision in review; the same attribute also stands down the runtime index advisory, which a
+/// <c>#pragma</c> would not.
+/// </para>
+/// </remarks>
+/// <docs>operations/diagnostics/whiz302</docs>
+/// <tests>tests/Whizbang.Generators.Tests/Analyzers/PerspectiveFilterIndexAnalyzerTests.cs</tests>
+[DiagnosticAnalyzer(LanguageNames.CSharp)]
+public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
+  // Diagnostic IDs: WHIZ300-399 reserved for perspective validation
+  private const string CATEGORY = "Whizbang.PerspectiveValidation";
+
+  private const string PERSPECTIVE_ROW_PREFIX = "Whizbang.Core.Lenses.PerspectiveRow<";
+  private const string DATA_PROPERTY = "Data";
+  private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
+  private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+  private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
+  private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.Perspectives.SuppressIndexAdvisoryAttribute";
+  private const string ASYNC_SUFFIX = "Async";
+
+  /// <summary>
+  /// The operators whose lambda decides which rows the database has to look at. Projection and
+  /// paging operators are deliberately absent: they read a field out of rows already chosen, so a
+  /// missing index on them costs nothing.
+  /// </summary>
+  private static readonly HashSet<string> _rowSelectingOperators = new(StringComparer.Ordinal) {
+    "Where", "Any", "All", "Count", "LongCount", "SkipWhile", "TakeWhile",
+    "First", "FirstOrDefault", "Single", "SingleOrDefault", "Last", "LastOrDefault",
+    "OrderBy", "OrderByDescending", "ThenBy", "ThenByDescending",
+    "Min", "Max", "MinBy", "MaxBy",
+  };
+
+  /// <summary>
+  /// WHIZ302: Warning - a lens query filters a perspective field that has no physical column.
+  /// </summary>
+  public static readonly DiagnosticDescriptor FilteredFieldHasNoIndex = new(
+      id: "WHIZ302",
+      title: "Filtered perspective field has no index",
+      messageFormat: "This query filters '{0}.{1}', which is stored only in the model's JSON, so the database reads every row of the perspective. Mark it [PhysicalField(Indexed = true)], or record the decision with [SuppressIndexAdvisory(\"reason\")].",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A perspective stores its model as JSON, so only properties promoted to a physical column can be indexed. " +
+                   "Filtering, ordering, or counting on a property that has no [PhysicalField(Indexed = true)] forces a full scan " +
+                   "that grows with the table. When a scan is the right answer, say so with [SuppressIndexAdvisory(\"reason\")]: " +
+                   "the reason is required, a blank one does not suppress, and the same attribute also stands down the runtime " +
+                   "index advisory raised by the maintenance cycle."
+  );
+
+  /// <inheritdoc/>
+  public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
+      [FilteredFieldHasNoIndex];
+
+  /// <inheritdoc/>
+  public override void Initialize(AnalysisContext context) {
+    context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+    context.EnableConcurrentExecution();
+
+    context.RegisterSyntaxNodeAction(
+      _analyzeMemberAccess,
+      SyntaxKind.SimpleMemberAccessExpression);
+  }
+
+  private static void _analyzeMemberAccess(SyntaxNodeAnalysisContext context) {
+    var node = (MemberAccessExpressionSyntax)context.Node;
+
+    // Only `<row>.Data.<Field>` is interesting: the row's own columns are not model JSON.
+    var model = _modelBehindDataAccess(context, node.Expression);
+    if (model is null) {
+      return;
+    }
+
+    if (context.SemanticModel.GetSymbolInfo(node, context.CancellationToken).Symbol is not IPropertySymbol field) {
+      return;
+    }
+
+    if (_isIndexBacked(field) || !_decidesWhichRowsAreRead(node)) {
+      return;
+    }
+
+    if (_isSuppressed(field, model, context.Compilation.Assembly)) {
+      return;
+    }
+
+    context.ReportDiagnostic(Diagnostic.Create(
+      FilteredFieldHasNoIndex,
+      node.Name.GetLocation(),
+      TypeNameUtilities.MinimallyQualified(model),
+      field.Name));
+  }
+
+  /// <summary>
+  /// Resolves <paramref name="expression"/> as <c>PerspectiveRow&lt;TModel&gt;.Data</c> and returns
+  /// TModel, or null when the expression is anything else.
+  /// </summary>
+  private static INamedTypeSymbol? _modelBehindDataAccess(SyntaxNodeAnalysisContext context, ExpressionSyntax expression) {
+    if (expression is not MemberAccessExpressionSyntax) {
+      return null;
+    }
+
+    if (context.SemanticModel.GetSymbolInfo(expression, context.CancellationToken).Symbol is not IPropertySymbol data) {
+      return null;
+    }
+
+    if (!string.Equals(data.Name, DATA_PROPERTY, StringComparison.Ordinal)) {
+      return null;
+    }
+
+    var row = data.ContainingType;
+    if (row is null || !TypeNameUtilities.Display(row).StartsWith(PERSPECTIVE_ROW_PREFIX, StringComparison.Ordinal)) {
+      return null;
+    }
+
+    return row.TypeArguments.Length == 1 ? row.TypeArguments[0] as INamedTypeSymbol : null;
+  }
+
+  /// <summary>
+  /// Whether this field reference sits where it narrows or orders the rows the database reads,
+  /// rather than in a projection over rows already chosen.
+  /// </summary>
+  private static bool _decidesWhichRowsAreRead(SyntaxNode node) {
+    for (var current = node.Parent; current is not null; current = current.Parent) {
+      switch (current) {
+        // Query syntax carries no lambda node of its own.
+        case WhereClauseSyntax:
+        case OrderingSyntax:
+          return true;
+        case LambdaExpressionSyntax lambda:
+          return _feedsRowSelectingOperator(lambda);
+        case AnonymousFunctionExpressionSyntax:
+        case MemberDeclarationSyntax:
+          return false;
+      }
+    }
+
+    return false;
+  }
+
+  private static bool _feedsRowSelectingOperator(LambdaExpressionSyntax lambda) {
+    if (lambda.Parent is not ArgumentSyntax argument ||
+        argument.Parent?.Parent is not InvocationExpressionSyntax invocation ||
+        invocation.Expression is not MemberAccessExpressionSyntax invoked) {
+      return false;
+    }
+
+    var name = invoked.Name.Identifier.ValueText;
+
+    // Entity Framework's asynchronous operators take the same predicates as their synchronous twins.
+    if (name.EndsWith(ASYNC_SUFFIX, StringComparison.Ordinal)) {
+      name = name.Substring(0, name.Length - ASYNC_SUFFIX.Length);
+    }
+
+    return _rowSelectingOperators.Contains(name);
+  }
+
+  /// <summary>
+  /// Whether the generators would give this property an index: the stream id becomes the row key,
+  /// a physical field asks for one outright or gets one from its unique constraint, and a vector
+  /// field is indexed unless its declaration turns the index off.
+  /// </summary>
+  private static bool _isIndexBacked(IPropertySymbol property) {
+    foreach (var attribute in property.GetAttributes()) {
+      var name = attribute.AttributeClass is null ? null : TypeNameUtilities.Display(attribute.AttributeClass);
+
+      switch (name) {
+        case STREAM_ID_ATTRIBUTE:
+          return true;
+        case PHYSICAL_FIELD_ATTRIBUTE:
+          if (_namedFlag(attribute, "Indexed") == true || _namedFlag(attribute, "Unique") == true) {
+            return true;
+          }
+
+          break;
+        case VECTOR_FIELD_ATTRIBUTE:
+          if (_namedFlag(attribute, "Indexed") != false) {
+            return true;
+          }
+
+          break;
+        default:
+          break;
+      }
+    }
+
+    return false;
+  }
+
+  private static bool? _namedFlag(AttributeData attribute, string key) {
+    foreach (var named in attribute.NamedArguments) {
+      if (string.Equals(named.Key, key, StringComparison.Ordinal)) {
+        return named.Value.Value as bool?;
+      }
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Whether the field, its model or any of the model's bases, the type that declares the field,
+  /// or an assembly in play carries a reasoned opt-out. A blank reason is not a decision, so it
+  /// does not count.
+  /// </summary>
+  private static bool _isSuppressed(IPropertySymbol field, INamedTypeSymbol model, IAssemblySymbol compiling) {
+    if (_hasReasonedSuppression(field.GetAttributes())) {
+      return true;
+    }
+
+    for (var type = model; type is not null; type = type.BaseType) {
+      if (_hasReasonedSuppression(type.GetAttributes())) {
+        return true;
+      }
+    }
+
+    // The property may be declared on a type the model only composes.
+    var declaring = field.ContainingType;
+    if (declaring is not null &&
+        !SymbolEqualityComparer.Default.Equals(declaring, model) &&
+        _hasReasonedSuppression(declaring.GetAttributes())) {
+      return true;
+    }
+
+    // The assembly-wide opt-out is honored from either side: the assembly being compiled, which is
+    // where a team writes it, and the model's own assembly, for a model that arrives as a package.
+    if (_hasReasonedSuppression(compiling.GetAttributes())) {
+      return true;
+    }
+
+    var owning = model.ContainingAssembly;
+    return owning is not null &&
+           !SymbolEqualityComparer.Default.Equals(owning, compiling) &&
+           _hasReasonedSuppression(owning.GetAttributes());
+  }
+
+  private static bool _hasReasonedSuppression(ImmutableArray<AttributeData> attributes) {
+    foreach (var attribute in attributes) {
+      if (attribute.AttributeClass is null ||
+          !string.Equals(TypeNameUtilities.Display(attribute.AttributeClass), SUPPRESS_ATTRIBUTE, StringComparison.Ordinal)) {
+        continue;
+      }
+
+      if (attribute.ConstructorArguments.Length > 0 &&
+          attribute.ConstructorArguments[0].Value is string reason &&
+          !string.IsNullOrWhiteSpace(reason)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+}
