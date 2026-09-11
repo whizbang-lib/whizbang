@@ -311,7 +311,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     }
 
     var overload = JsonbContainment.OverloadFor(member.Type);
-    if (overload is null || _isValueConverted(member)) {
+    if (overload is null || _isValueConverted(member) || _hasOwnIndex(member)) {
       return false;
     }
 
@@ -346,12 +346,16 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
   /// parameter, which the database rejects outright.
   /// </para>
   /// </remarks>
-  private bool _isValueConverted(MemberExpression member) {
-    if (_model is null) {
-      return true;
-    }
-
-    // Rebuild the path from the document root outwards: Data.A.B has B outermost.
+  /// <summary>
+  /// The model the member belongs to, and the document path to it from the root outwards.
+  /// </summary>
+  /// <remarks>
+  /// Two shapes reach the same place. One keeps the row, <c>row.Data.A.B</c>, and is recognized by
+  /// the chain passing through <c>Data</c> on a perspective row. The other has projected the row away
+  /// first, <c>model.A.B</c>, and is recognized by the chain ending at a parameter. Either way the
+  /// names come back ordered from the document root, so <c>Data.A.B</c> yields A then B.
+  /// </remarks>
+  private static (Type? Root, List<string> Names) _resolvePath(MemberExpression member) {
     var names = new List<string>();
     Type? rootModel = null;
 
@@ -370,6 +374,39 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
       }
     }
 
+    return (rootModel, names);
+  }
+
+  /// <summary>
+  /// Whether the member has a btree index of its own, in which case containment must stand down.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Rewriting such a filter would send the planner to the GIN index over the whole document and
+  /// leave the field's own index unused. That is precisely the wasted-index situation the containment
+  /// rewrite exists to correct, so producing it would be worse than leaving the filter alone.
+  /// </para>
+  /// <para>
+  /// Only a depth-one member qualifies, because a declared index is built over
+  /// <c>data -&gt;&gt; 'Key'</c> and a nested value is not reachable by that expression. A nested
+  /// member therefore keeps the containment rewrite, which is correct: it has no index of its own to
+  /// protect.
+  /// </para>
+  /// </remarks>
+  private static bool _hasOwnIndex(MemberExpression member) {
+    var (rootModel, names) = _resolvePath(member);
+
+    return rootModel is not null
+        && names.Count == 1
+        && JsonIndexRegistry.HasBtree(rootModel, names[0]);
+  }
+
+  private bool _isValueConverted(MemberExpression member) {
+    if (_model is null) {
+      return true;
+    }
+
+    var (rootModel, names) = _resolvePath(member);
     if (rootModel is null || names.Count == 0) {
       return true;
     }
