@@ -36,6 +36,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 public class JsonbContainmentAuthoringTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=authoring;Username=u;Password=p";
 
+  public enum Priority { Low, High }
+
   /// <summary>A value-object style identifier, which serializes as a nested object rather than a scalar.</summary>
   public readonly record struct OrderNumber(Guid Value);
 
@@ -48,6 +50,7 @@ public class JsonbContainmentAuthoringTests {
     public int Count { get; init; }
     public string? Note { get; init; }
     public OrderNumber Number { get; init; }
+    public Priority Rank { get; init; }
   }
 
   private sealed class AuthoringDbContext(DbContextOptions<AuthoringDbContext> options) : DbContext(options) {
@@ -127,6 +130,7 @@ public class JsonbContainmentAuthoringTests {
   [Arguments("ternary value")]
   [Arguments("coalesced value")]
   [Arguments("nested value object member")]
+  [Arguments("enumeration")]
   [Arguments("instance Equals")]
   [Arguments("instance Equals, ordinal")]
   [Arguments("static string.Equals")]
@@ -151,6 +155,7 @@ public class JsonbContainmentAuthoringTests {
       "ternary value" => _rewrites(x => x.Data.Code == (flag ? "a" : "b")),
       "coalesced value" => _rewrites(x => x.Data.Code == (maybe ?? "d")),
       "nested value object member" => _rewrites(x => x.Data.Number.Value == _probe),
+      "enumeration" => _rewrites(x => x.Data.Rank == Priority.High),
       "instance Equals" => _rewrites(x => x.Data.Code.Equals(local)),
       "instance Equals, ordinal" => _rewrites(x => x.Data.Code.Equals("v", StringComparison.Ordinal)),
       "static string.Equals" => _rewrites(x => string.Equals(x.Data.Code, local)),

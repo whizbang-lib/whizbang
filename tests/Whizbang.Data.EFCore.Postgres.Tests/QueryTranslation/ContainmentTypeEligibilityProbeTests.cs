@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
@@ -64,6 +65,13 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     // An ALREADY-eligible type with a converter. If this stores as text while the rewrite builds a
     // numeric document, then the shipped rewrite is silently wrong on such a model.
     public int ConvertedNum { get; init; }
+
+    // How much of the serialized form is stable? The fraction is what decides whether a SQL-side
+    // format string can reproduce it.
+    public DateTime WholeSecond { get; init; }
+    public DateTime Millis { get; init; }
+    public DateTime Ticks { get; init; }
+    public DateTime TrailingZeros { get; init; }
   }
 
   private sealed class ProbeDbContext(DbContextOptions<ProbeDbContext> options) : DbContext(options) {
@@ -153,6 +161,10 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
         Shifted = new DateTimeOffset(2026, 3, 4, 5, 6, 7, TimeSpan.FromMinutes(330)),
         Named = Mood.High,
         ConvertedNum = 7,
+        WholeSecond = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc),
+        Millis = new DateTime(2026, 3, 4, 5, 6, 7, 123, DateTimeKind.Utc),
+        Ticks = new DateTime(638_700_000_001_234_567L, DateTimeKind.Utc),
+        TrailingZeros = new DateTime(2026, 3, 4, 5, 6, 7, 100, DateTimeKind.Utc),
       },
       Metadata = new PerspectiveMetadata(),
       Scope = new PerspectiveScope(),
@@ -351,5 +363,153 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     // eligible set is pinned by JsonbContainmentTypeSetTests, and a type only moves into it once the
     // two text forms here are shown to agree.
     await Assert.That(line).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// Records how a binary floating-point value reaches the document, which is what decides whether
+  /// the containment form can be built for one at all.
+  /// </summary>
+  /// <remarks>
+  /// A parameter and a literal are not the same question. Npgsql sends a parameter with its own type,
+  /// so <c>jsonb_build_object('k', @p)</c> builds from a <c>double precision</c>. A literal written
+  /// into the statement has no type annotation, and PostgreSQL reads a bare decimal literal as
+  /// <c>numeric</c>, whose text form is not the shortest round-trip form the serializer wrote.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task FloatingPointLiteralForms_AreRecordedAsync(CancellationToken cancellationToken) {
+    var lines = new List<string>();
+
+    foreach (var (field, literal) in new[] {
+      ("Dbl", "0.1"), ("Flt", "0.1"), ("Third", "0.3333333333333333"), ("FloatThird", "0.33333334"),
+    }) {
+      var stored = await _scalarAsync($"SELECT data ->> '{field}' FROM {TABLE}");
+      var asNumeric = await _scalarAsync($"SELECT jsonb_build_object('{field}', {literal}) ->> '{field}'");
+      var asDouble = await _scalarAsync($"SELECT jsonb_build_object('{field}', {literal}::float8) ->> '{field}'");
+      var matchedNumeric = await _scalarAsync(
+        $"SELECT count(*) FROM {TABLE} WHERE data @> jsonb_build_object('{field}', {literal})");
+      var matchedDouble = await _scalarAsync(
+        $"SELECT count(*) FROM {TABLE} WHERE data @> jsonb_build_object('{field}', {literal}::float8)");
+
+      lines.Add(string.Create(CultureInfo.InvariantCulture,
+        $"{field}: stored={stored} numeric={asNumeric} float8={asDouble} matchNumeric={matchedNumeric} matchFloat8={matchedDouble}"));
+    }
+
+    // Whether jsonb compares numbers by value or by the text they were written as, and whether the
+    // text a cast produces is stable. Both decide if a cast can be relied on to normalize the value.
+    lines.Add($"valueNotText: {await _scalarAsync("SELECT ('{\"a\":1.0}'::jsonb @> '{\"a\":1}'::jsonb)::text")}");
+    foreach (var digits in new[] { "-1", "0", "1", "3" }) {
+      var rendered = await _scalarAsync(
+        $"SET LOCAL extra_float_digits = {digits}; SELECT jsonb_build_object('k', 0.1::float8) ->> 'k'");
+      lines.Add($"extra_float_digits={digits}: {rendered}");
+    }
+
+    foreach (var type in new[] { "double", "float", "awkward double", "awkward float" }) {
+      var (filter, rephrased) = _filtersFor(type);
+      var on = _context!.Set<PerspectiveRow<ProbeModel>>().Where(filter).ToQueryString();
+      var onRows = await _context.Set<PerspectiveRow<ProbeModel>>().CountAsync(filter, cancellationToken);
+
+      string off;
+      int offRows;
+      JsonbContainmentSwitch.Set(false);
+      try {
+        off = _context.Set<PerspectiveRow<ProbeModel>>().Where(rephrased).ToQueryString();
+        offRows = await _context.Set<PerspectiveRow<ProbeModel>>().CountAsync(rephrased, cancellationToken);
+      } finally {
+        JsonbContainmentSwitch.Reset();
+      }
+
+      lines.Add(string.Create(CultureInfo.InvariantCulture,
+        $"{type}: on={onRows} {on.Split('\n')[^1].Trim()}"));
+      lines.Add(string.Create(CultureInfo.InvariantCulture,
+        $"{type}: off={offRows} {off.Split('\n')[^1].Trim()}"));
+    }
+
+    var report = string.Join('\n', lines);
+    var target = Environment.GetEnvironmentVariable("WHIZ_ELIGIBILITY_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, report, cancellationToken);
+    }
+
+    await Assert.That(report).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// The filter for a newly eligible type, and the same filter with a term added that no row fails.
+  /// </summary>
+  /// <remarks>
+  /// The second spelling exists only to be a different cache key. Entity Framework caches a compiled
+  /// query by its expression tree, so running the identical filter with the rewrite switched off
+  /// would replay the plan compiled while it was on and compare a result against itself. Every row in
+  /// this fixture has a version, so the added term changes the plan without changing the answer.
+  /// </remarks>
+  private static (Expression<Func<PerspectiveRow<ProbeModel>, bool>> Filter,
+    Expression<Func<PerspectiveRow<ProbeModel>, bool>> Rephrased) _filtersFor(string type) => type switch {
+      "enumeration" => (r => r.Data.State == Mood.High, r => r.Data.State == Mood.High && r.Version > 0),
+      "double" => (r => r.Data.Dbl == 0.1d, r => r.Data.Dbl == 0.1d && r.Version > 0),
+      "float" => (r => r.Data.Flt == 0.1f, r => r.Data.Flt == 0.1f && r.Version > 0),
+      "awkward double" => (r => r.Data.Third == 1.0d / 3.0d, r => r.Data.Third == 1.0d / 3.0d && r.Version > 0),
+      "awkward float" => (r => r.Data.FloatThird == 1f / 3f, r => r.Data.FloatThird == 1f / 3f && r.Version > 0),
+      _ => throw new InvalidOperationException(type),
+    };
+
+  /// <summary>
+  /// Each type the measurements admitted is compiled to containment and finds the row that the
+  /// filter describes.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Two claims, and the second is the one that matters. The generated SQL saying <c>@&gt;</c> only
+  /// shows the rewrite fired; a containment document built in a form the row does not hold would say
+  /// exactly the same thing while matching nothing. So the rows are counted, and the count with the
+  /// rewrite switched off is pinned alongside, which is how a change in either is noticed.
+  /// </para>
+  /// <para>
+  /// An enumeration is the case that needed the work. It is stored through a value converter to its
+  /// underlying number, so the comparison reaches the overload for that number through a conversion,
+  /// and that conversion survives translation as a cast wrapped around the member. Until the
+  /// emission looked underneath it, an enumeration filter compiled back to the extraction form.
+  /// </para>
+  /// <para>
+  /// <strong>Single precision is where the two forms disagree, and containment is the correct one.</strong>
+  /// The extraction form compares <c>CAST(data -&gt;&gt; 'k' AS real)</c> with a bare decimal literal,
+  /// which PostgreSQL reads as numeric; there is no operator for that pair, so both sides widen to
+  /// double precision, and a single-precision 0.1 widened to double is 0.10000000149011612 while the
+  /// literal is 0.1. It therefore finds nothing, for any value that is not exactly representable.
+  /// Containment compares the stored value itself and finds the row. The unrewritten counts of zero
+  /// below are that defect on record: this rewrite corrects it rather than preserving it, which is a
+  /// deliberate decision and the reason the counts are asserted per case instead of as agreement.
+  /// The awkward fractions are here because one value proves nothing about a floating-point format.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  [Arguments("enumeration", 1)]
+  [Arguments("double", 1)]
+  [Arguments("awkward double", 1)]
+  [Arguments("float", 0)]
+  [Arguments("awkward float", 0)]
+  public async Task ANewlyEligibleType_ReachesTheIndexAsync(
+    string type, int unrewrittenRows, CancellationToken cancellationToken) {
+    var (filter, rephrased) = _filtersFor(type);
+
+    var sql = _context!.Set<PerspectiveRow<ProbeModel>>().Where(filter).ToQueryString();
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal)
+      .Because("the filter has to compile to containment or the index cannot answer it");
+
+    var withRewrite = await _context.Set<PerspectiveRow<ProbeModel>>().CountAsync(filter, cancellationToken);
+
+    int withoutRewrite;
+    JsonbContainmentSwitch.Set(false);
+    try {
+      withoutRewrite = await _context.Set<PerspectiveRow<ProbeModel>>().CountAsync(rephrased, cancellationToken);
+    } finally {
+      JsonbContainmentSwitch.Reset();
+    }
+
+    await Assert.That(withRewrite).IsEqualTo(1)
+      .Because("the seeded row is the row this filter describes, so containment has to find it");
+    await Assert.That(withoutRewrite).IsEqualTo(unrewrittenRows)
+      .Because("the form being replaced is pinned too, so a change in what it answers is noticed");
   }
 }

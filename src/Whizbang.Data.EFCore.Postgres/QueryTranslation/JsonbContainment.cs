@@ -1,8 +1,10 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
@@ -35,11 +37,25 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// <see cref="OverloadFor"/> is likewise static.
 /// </para>
 /// <para>
-/// The set of types is deliberately narrow. It covers values whose JSON form written by the
-/// serializer and whose JSON form produced by <c>jsonb_build_object</c> are the same text. Dates,
-/// times and enumerations are excluded because those two forms differ and a containment test would
-/// silently match nothing. <c>double</c> and <c>float</c> are excluded for the same reason, since
-/// their shortest round-trip text is not guaranteed to agree with PostgreSQL's.
+/// The set of types covers values whose stored JSON number or string and whose form produced by
+/// <c>jsonb_build_object</c> are the same value, which was established by writing rows through the
+/// real mapping and reading back what landed rather than by assumption.
+/// <c>ContainmentTypeEligibilityProbeTests</c> holds that measurement. The comparison is by value
+/// and not by text, so a number written with different trailing digits still matches.
+/// <para>
+/// An enumeration resolves to its underlying numeric overload, because that is how it is stored.
+/// Binary floating point is included, with the compared value cast to the member's store type so
+/// PostgreSQL renders it the way the serializer did; see <c>_normalized</c> for why a literal needs
+/// that and a parameter does not. It agreed for every awkward value tried, including a third, a very
+/// large magnitude and a very small one.
+/// </para>
+/// <para>
+/// Dates and times are excluded, and for two different reasons. A <c>DateTime</c> is written with a
+/// trailing <c>Z</c> where PostgreSQL generates an explicit <c>+00:00</c> offset, so the texts differ
+/// for the same instant. A <c>DateTimeOffset</c> is worse in kind: its stored text preserves the
+/// offset it was written with, while equality compares instants, so two values that are equal in
+/// .NET can be stored as different text and no formatting on the query side can recover which.
+/// </para>
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
@@ -125,6 +141,24 @@ public static class JsonbContainment {
   /// <inheritdoc cref="MatchesAny(string, string[])"/>
   public static bool MatchesAny(long member, List<long> values) => throw _notCallable();
 
+  /// <summary>Containment test for a <see cref="double"/> member.</summary>
+  /// <param name="member">The JSON member being compared.</param>
+  /// <param name="value">The value it is compared with.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool Matches(double member, double value) => throw _notCallable();
+
+  /// <summary>Containment test for a <see cref="float"/> member.</summary>
+  /// <param name="member">The JSON member being compared.</param>
+  /// <param name="value">The value it is compared with.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool Matches(float member, float value) => throw _notCallable();
+
+  /// <summary>Containment test for a <see cref="byte"/> member, which is how a small enum arrives.</summary>
+  /// <param name="member">The JSON member being compared.</param>
+  /// <param name="value">The value it is compared with.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool Matches(byte member, byte value) => throw _notCallable();
+
   private static NotSupportedException _notCallable() =>
     new("JsonbContainment.Matches is a query marker and is only valid inside a LINQ query over a perspective.");
 
@@ -137,6 +171,9 @@ public static class JsonbContainment {
   private static readonly MethodInfo _intOverload = ((Func<int, int, bool>)Matches).Method;
   private static readonly MethodInfo _longOverload = ((Func<long, long, bool>)Matches).Method;
   private static readonly MethodInfo _decimalOverload = ((Func<decimal, decimal, bool>)Matches).Method;
+  private static readonly MethodInfo _doubleOverload = ((Func<double, double, bool>)Matches).Method;
+  private static readonly MethodInfo _floatOverload = ((Func<float, float, bool>)Matches).Method;
+  private static readonly MethodInfo _byteOverload = ((Func<byte, byte, bool>)Matches).Method;
 
   private static readonly MethodInfo _stringSet = ((Func<string, string[], bool>)MatchesAny).Method;
   private static readonly MethodInfo _guidSet = ((Func<Guid, Guid[], bool>)MatchesAny).Method;
@@ -184,6 +221,7 @@ public static class JsonbContainment {
   private static readonly MethodInfo[] _allOverloads = [
     _stringOverload, _guidOverload, _boolOverload,
     _shortOverload, _intOverload, _longOverload, _decimalOverload,
+    _doubleOverload, _floatOverload, _byteOverload,
   ];
 
   /// <summary>Every overload, for registration.</summary>
@@ -199,6 +237,13 @@ public static class JsonbContainment {
   internal static MethodInfo? OverloadFor(Type type) {
     var bare = Nullable.GetUnderlyingType(type) ?? type;
 
+    // An enumeration is stored as its underlying number, so it resolves to that overload. A member
+    // configured with a converter is stored as text instead, and the rewriter stands down for it
+    // before ever asking here.
+    if (bare.IsEnum) {
+      bare = Enum.GetUnderlyingType(bare);
+    }
+
     if (bare == typeof(string)) { return _stringOverload; }
     if (bare == typeof(Guid)) { return _guidOverload; }
     if (bare == typeof(bool)) { return _boolOverload; }
@@ -206,6 +251,9 @@ public static class JsonbContainment {
     if (bare == typeof(int)) { return _intOverload; }
     if (bare == typeof(long)) { return _longOverload; }
     if (bare == typeof(decimal)) { return _decimalOverload; }
+    if (bare == typeof(double)) { return _doubleOverload; }
+    if (bare == typeof(float)) { return _floatOverload; }
+    if (bare == typeof(byte)) { return _byteOverload; }
 
     return null;
   }
@@ -229,7 +277,7 @@ public static class JsonbContainment {
       throw new ArgumentException("A containment translation takes exactly two arguments.", nameof(args));
     }
 
-    if (args[0] is not JsonScalarExpression json || json.Json.TypeMapping is null
+    if (_withoutPlantedConversion(args[0]) is not JsonScalarExpression json || json.Json.TypeMapping is null
         || !_storedFormIsNatural(json)) {
       // Not the shape this rewrite understands, or a value converter has changed what the document
       // holds. Fall back to the comparison the query originally expressed, so the cost is an index
@@ -237,7 +285,7 @@ public static class JsonbContainment {
       return _equality(args[0], args[1]);
     }
 
-    SqlExpression payload = args[1];
+    SqlExpression payload = _normalized(args[1], json);
 
     // Build the containment document from the inside out, so a.b.c becomes {"a":{"b":{"c":value}}}.
     for (var i = json.Path.Count - 1; i >= 0; i--) {
@@ -315,6 +363,67 @@ public static class JsonbContainment {
 
 
   /// <summary>
+  /// The compared value, cast to the member's own store type when that is what makes the built
+  /// document agree with the stored one.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Binary floating point is the case that needs this, and a literal is where it bites. The
+  /// serializer writes the shortest text that round-trips the value, so a double 0.1 is stored as
+  /// <c>0.1</c>. Entity Framework renders the same value as a literal in seventeen digits,
+  /// <c>0.10000000000000001</c>, which round-trips to the same double but is a different number, and
+  /// jsonb compares numbers by value. Without the cast the document would be built from the longer
+  /// number and match nothing.
+  /// </para>
+  /// <para>
+  /// Casting to the member's store type hands the normalization to PostgreSQL: the longer text parses
+  /// to the same binary value, and converting that value to a jsonb number produces the shortest form
+  /// again, which is the form the row holds. This is not sensitive to
+  /// <c>extra_float_digits</c>, which was measured across its range. A parameter already arrives as
+  /// the store type, so the cast changes nothing there, and the cast is immutable so the planner can
+  /// still match the index.
+  /// </para>
+  /// <para>
+  /// No other type needs it. Values compare by number rather than by text, so an integer or a decimal
+  /// written with a different number of trailing zeros still matches.
+  /// </para>
+  /// </remarks>
+  private static SqlExpression _normalized(SqlExpression value, JsonScalarExpression member) {
+    var clrType = Nullable.GetUnderlyingType(member.Type) ?? member.Type;
+    if (clrType != typeof(double) && clrType != typeof(float)) {
+      return value;
+    }
+
+    return new SqlUnaryExpression(ExpressionType.Convert, value, clrType, member.TypeMapping);
+  }
+
+  /// <summary>
+  /// The JSON member underneath the conversion the rewriter plants when a member's CLR type is not
+  /// the overload's parameter type.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An overload exists per stored type, not per model type, so an enumeration is compared through
+  /// the overload for its underlying number and the rewriter adds a <c>Convert</c> to reach it. Most
+  /// such conversions cost nothing at the store: a nullable's underlying type has the same store
+  /// type, and Entity Framework drops the node. An enumeration's does not, because a value converter
+  /// already sits between the model type and the store type, so the conversion survives translation
+  /// as a cast wrapped around the member. Left in place it hides the column and the path, and the
+  /// filter falls back to the extraction form it was rewritten to avoid.
+  /// </para>
+  /// <para>
+  /// Only a conversion directly around a JSON member is removed, and only the one layer. The
+  /// rewriter is the only thing that plants these markers and it converts nothing but a member to its
+  /// own stored type, so there is no widening or narrowing here to preserve. Anything else is left
+  /// alone and falls back.
+  /// </para>
+  /// </remarks>
+  private static SqlExpression _withoutPlantedConversion(SqlExpression argument) =>
+    argument is SqlUnaryExpression { OperatorType: ExpressionType.Convert, Operand: JsonScalarExpression member }
+      ? member
+      : argument;
+
+  /// <summary>
   /// Whether the member's stored form is the natural form for its CLR type, or whether a value
   /// converter has changed it.
   /// </summary>
@@ -331,7 +440,45 @@ public static class JsonbContainment {
     // reveal it: the mapping's ClrType stays the model type either way. The marker's own parameter is
     // typed by the CLR type, so the document would be built in the unconverted form while the row
     // holds the converted one.
-    return json.TypeMapping is { Converter: null };
+    return json.TypeMapping is { } mapping && StoredFormIsNatural(mapping.Converter, mapping.ClrType);
+  }
+
+  /// <summary>
+  /// Whether a property with this converter and CLR type is stored in the natural form for its type,
+  /// so a containment document built from the unconverted value matches what the row holds.
+  /// </summary>
+  /// <param name="converter">The property's value converter, or null when it has none.</param>
+  /// <param name="clrType">The property's model CLR type.</param>
+  /// <returns>True when the stored form is the natural one.</returns>
+  /// <remarks>
+  /// <para>
+  /// The rewriter asks this of the model before planting a marker and the translation asks it of the
+  /// type mapping before emitting containment. Both have to answer the same way, because a
+  /// disagreement is how a filter ends up compiled into a test that matches nothing: the rewriter
+  /// would offer a property whose document the emission cannot build correctly.
+  /// </para>
+  /// <para>
+  /// One conversion is not a hazard. An enumeration to its own underlying number is how every
+  /// enumeration is stored, and the overload chosen for it is the underlying type's, so the document
+  /// is built in exactly the stored form. Treating that as converted would exclude every enumeration
+  /// for the wrong reason. An enumeration stored as its name is a real conversion and is excluded,
+  /// because the document would be built with a number against a stored string.
+  /// </para>
+  /// </remarks>
+  internal static bool StoredFormIsNatural(ValueConverter? converter, Type clrType) {
+    ArgumentNullException.ThrowIfNull(clrType);
+
+    if (converter is null) {
+      return true;
+    }
+
+    var model = Nullable.GetUnderlyingType(clrType) ?? clrType;
+    if (!model.IsEnum) {
+      return false;
+    }
+
+    var provider = Nullable.GetUnderlyingType(converter.ProviderClrType) ?? converter.ProviderClrType;
+    return provider == Enum.GetUnderlyingType(model);
   }
 
   /// <summary>

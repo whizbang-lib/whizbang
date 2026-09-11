@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -38,6 +39,7 @@ public class JsonbContainmentTypeSetTests {
     var expected = new[] {
       typeof(string), typeof(Guid), typeof(bool),
       typeof(short), typeof(int), typeof(long), typeof(decimal),
+      typeof(double), typeof(float), typeof(byte),
     }.Select(t => t.FullName!).OrderBy(n => n, StringComparer.Ordinal).ToArray();
 
     var actual = JsonbContainment.Overloads
@@ -50,20 +52,76 @@ public class JsonbContainmentTypeSetTests {
 
   /// <summary>
   /// The excluded types, named so that adding one is a deliberate act with a reason rather than an
-  /// oversight. Dates and times, enumerations and binary floating point all have two text forms that
-  /// are not guaranteed to agree, and a containment test that disagrees matches nothing silently.
+  /// oversight. The date and time family is excluded for two different reasons, both measured: a
+  /// DateTime is written with a trailing Z where PostgreSQL generates an explicit offset, and a
+  /// DateTimeOffset preserves the offset it was written with while equality compares instants, so
+  /// two values equal in .NET can be stored as different text.
   /// </summary>
   [Test]
   [Arguments(typeof(DateTime))]
   [Arguments(typeof(DateTimeOffset))]
   [Arguments(typeof(DateOnly))]
   [Arguments(typeof(TimeOnly))]
-  [Arguments(typeof(double))]
-  [Arguments(typeof(float))]
-  [Arguments(typeof(byte))]
   [Arguments(typeof(char))]
+  [Arguments(typeof(TimeSpan))]
   public async Task ExcludedTypes_HaveNoOverloadAsync(Type excluded) {
     await Assert.That(JsonbContainment.OverloadFor(excluded)).IsNull();
+  }
+
+  /// <summary>Diagnostic: what the model walk sees for an enumeration inside a JSON complex property.</summary>
+  [Test]
+  public async Task EnumPropertyMetadata_IsRecordedAsync() {
+    using var db = new MatrixProbeContext(
+      new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<MatrixProbeContext>()
+        .UseNpgsql("Host=localhost;Database=meta;Username=u;Password=p")
+        .Options);
+
+    var row = db.Model.FindEntityType(typeof(Whizbang.Core.Lenses.PerspectiveRow<MetaModel>));
+    var complex = row?.FindComplexProperty("Data")?.ComplexType;
+    var leaf = complex?.FindProperty(nameof(MetaModel.State));
+
+    var report = $"row={row is not null} complex={complex is not null} leaf={leaf is not null} " +
+      $"clr={leaf?.ClrType.Name} valueConverter={leaf?.GetValueConverter()?.GetType().Name ?? "none"} " +
+      $"mappingConverter={leaf?.GetTypeMapping().Converter?.GetType().Name ?? "none"} " +
+      $"provider={leaf?.GetTypeMapping().Converter?.ProviderClrType.Name ?? "none"}";
+
+    var target = Environment.GetEnvironmentVariable("WHIZ_META_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, report);
+    }
+
+    await Assert.That(report).IsNotEmpty();
+  }
+
+  public enum Shade { Dim, Bright }
+
+  [Whizbang.Core.Perspectives.SuppressIndexAdvisory("metadata probe")]
+  public class MetaModel {
+    public Shade State { get; init; }
+  }
+
+  private sealed class MatrixProbeContext(Microsoft.EntityFrameworkCore.DbContextOptions<MatrixProbeContext> o)
+    : Microsoft.EntityFrameworkCore.DbContext(o) {
+    protected override void OnModelCreating(Microsoft.EntityFrameworkCore.ModelBuilder b) =>
+      b.Entity<Whizbang.Core.Lenses.PerspectiveRow<MetaModel>>(e => {
+        e.ToTable("wh_per_meta");
+        e.HasKey(x => x.Id);
+        e.ComplexProperty(x => x.Data, d => d.ToJson("data"));
+        e.ComplexProperty(x => x.Metadata, m => m.ToJson("metadata"));
+        e.ComplexProperty(x => x.Scope, sc => {
+          sc.ToJson("scope");
+          sc.ComplexCollection(p => p.Extensions, ex => ex.HasJsonPropertyName("ex"));
+        });
+      });
+  }
+
+  /// <summary>An enumeration resolves to the overload for its underlying numeric type.</summary>
+  [Test]
+  public async Task Enumerations_ResolveToTheirUnderlyingOverloadAsync() {
+    var overload = JsonbContainment.OverloadFor(typeof(DayOfWeek));
+
+    await Assert.That(overload).IsNotNull();
+    await Assert.That(overload!.GetParameters()[0].ParameterType).IsEqualTo(typeof(int));
   }
 
   /// <summary>A nullable member resolves to its underlying overload, since only non-null values are rewritten.</summary>

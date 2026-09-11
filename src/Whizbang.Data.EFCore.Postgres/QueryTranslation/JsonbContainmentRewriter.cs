@@ -393,8 +393,10 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     }
 
     // The converter can sit on either the property or its type mapping depending on how it was
-    // configured, and the translation sees the mapping, so check both and agree with it.
-    return leaf.GetValueConverter() is not null || leaf.GetTypeMapping().Converter is not null;
+    // configured, so check both. The rule itself lives next to the emission that has to agree with
+    // it: the two answering differently is what would compile a filter into a test matching nothing.
+    var converter = leaf.GetValueConverter() ?? leaf.GetTypeMapping().Converter;
+    return !JsonbContainment.StoredFormIsNatural(converter, leaf.ClrType);
   }
 
   /// <summary>

@@ -223,14 +223,14 @@ public class JsonbContainmentSqlMatrixTests {
     var offset = _probeOffset;
     var state = Status.Live;
 
-    Base("ineligible/double/const", rows => rows.Where(x => x.Data.Dbl == 1.5d), Destination.Extraction);
-    Base("ineligible/double/param", rows => rows.Where(x => x.Data.Dbl == dbl), Destination.Extraction);
-    Base("ineligible/float/const", rows => rows.Where(x => x.Data.Flt == 1.5f), Destination.Extraction);
-    Base("ineligible/float/param", rows => rows.Where(x => x.Data.Flt == flt), Destination.Extraction);
+    Base("eligible-now/double/const", rows => rows.Where(x => x.Data.Dbl == 1.5d), Destination.Containment);
+    Base("eligible-now/double/param", rows => rows.Where(x => x.Data.Dbl == dbl), Destination.Containment);
+    Base("eligible-now/float/const", rows => rows.Where(x => x.Data.Flt == 1.5f), Destination.Containment);
+    Base("eligible-now/float/param", rows => rows.Where(x => x.Data.Flt == flt), Destination.Containment);
     Base("ineligible/datetime/param", rows => rows.Where(x => x.Data.When == when), Destination.Extraction);
     Base("ineligible/datetimeoffset/param", rows => rows.Where(x => x.Data.WhenOffset == offset), Destination.Extraction);
-    Base("ineligible/enum/const", rows => rows.Where(x => x.Data.State == Status.Live), Destination.Extraction);
-    Base("ineligible/enum/param", rows => rows.Where(x => x.Data.State == state), Destination.Extraction);
+    Base("eligible-now/enum/const", rows => rows.Where(x => x.Data.State == Status.Live), Destination.Containment);
+    Base("eligible-now/enum/param", rows => rows.Where(x => x.Data.State == state), Destination.Containment);
 
     // --- Nullable members: containment for a value, extraction for a null.
     string? maybeStr = "v";
