@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -49,9 +50,25 @@ public class JsonbContainmentSqlMatrixTests {
 
     /// <summary>Read from one of the row's own columns.</summary>
     RowColumn,
+
+    /// <summary>
+    /// Entity Framework refuses the expression outright, so the query fails at compile time rather
+    /// than running slowly.
+    /// </summary>
+    /// <remarks>
+    /// A distinct outcome from extraction and worth naming, because the two are opposite problems. An
+    /// extraction runs and returns the right rows without an index; this does not run at all. A
+    /// capability table that lumped them together would tell a reader their query is merely slow when
+    /// in fact it throws.
+    /// </remarks>
+    Untranslatable,
   }
 
   public enum Status { Draft, Live, Retired }
+
+  /// <summary>A combinable enumeration, where one stored value is a set of members.</summary>
+  [Flags]
+  public enum Access { None = 0, Read = 1, Write = 2 }
 
   [SuppressIndexAdvisory("the matrix exists to compile every shape, never to run one")]
   public class MatrixModel {
@@ -83,6 +100,7 @@ public class JsonbContainmentSqlMatrixTests {
     public DateTime When { get; init; }
     public DateTimeOffset WhenOffset { get; init; }
     public Status State { get; init; }
+    public Access Perms { get; init; }
 
     // Nullable.
     public string? MaybeStr { get; init; }
@@ -158,6 +176,16 @@ public class JsonbContainmentSqlMatrixTests {
   // The matrix
   // ========================================
 
+  [SuppressMessage("Globalization", "CA1304:Specify CultureInfo",
+    Justification = "The culture-dependent spelling is the subject: a developer writes ToLower() " +
+      "without a culture, and what this pins is where that filter lands.")]
+  [SuppressMessage("Globalization", "CA1311:Specify a culture or use an invariant version",
+    Justification = "As CA1304: the spelling under test is the one a developer actually writes.")]
+  [SuppressMessage("Performance", "CA1862:Use the StringComparison method overloads",
+    Justification = "Rewriting these to Equals(StringComparison) would remove the very shapes the " +
+      "matrix exists to cover, since case folding through a function is what keeps them unindexed.")]
+  [SuppressMessage("Readability", "RCS1155:Use StringComparison when comparing strings",
+    Justification = "As CA1862: the comparison without a StringComparison is the case under test.")]
   private static Dictionary<string, (Shape, Destination)> _buildMatrix() {
     var cases = new Dictionary<string, (Shape, Destination)>(StringComparer.Ordinal);
 
@@ -242,6 +270,76 @@ public class JsonbContainmentSqlMatrixTests {
     Base("ineligible/datetimeoffset/param", rows => rows.Where(x => x.Data.WhenOffset == offset), Destination.Extraction);
     Base("eligible-now/enum/const", rows => rows.Where(x => x.Data.State == Status.Live), Destination.Containment);
     Base("eligible-now/enum/param", rows => rows.Where(x => x.Data.State == state), Destination.Containment);
+
+    // --- Every operator other than equality, on the types that only had an equality case.
+    //
+    // Being eligible for containment is a property of the type, but reaching the index is a property
+    // of the operator, and only equality qualifies. A type admitted to the eligible set must not drag
+    // its other operators in with it: a range on an indexable type is still a range. These are the
+    // shapes a repository writes most after equality, so each is pinned rather than assumed.
+    var upper = _probeDate.AddDays(1);
+
+    Base("op/datetime/greater", rows => rows.Where(x => x.Data.When > when), Destination.Extraction);
+    Base("op/datetime/greater-or-equal", rows => rows.Where(x => x.Data.When >= when), Destination.Extraction);
+    Base("op/datetime/less", rows => rows.Where(x => x.Data.When < when), Destination.Extraction);
+    Base("op/datetime/less-or-equal", rows => rows.Where(x => x.Data.When <= when), Destination.Extraction);
+    Base("op/datetime/not-equal", rows => rows.Where(x => x.Data.When != when), Destination.Extraction);
+
+    // The dominant date shape in real repositories, and the one most at risk of being half rewritten.
+    Base("op/datetime/between",
+      rows => rows.Where(x => x.Data.When >= when && x.Data.When <= upper), Destination.Extraction);
+
+    // A component of a date is not the stored key, so the path walk has to stand down rather than
+    // treat "Year" as a member of the document.
+    Base("op/datetime/year", rows => rows.Where(x => x.Data.When.Year == 2026), Destination.Extraction);
+    Base("op/datetime/date-part", rows => rows.Where(x => x.Data.When.Date == when.Date), Destination.Extraction);
+    Base("op/datetime/shifted", rows => rows.Where(x => x.Data.When.AddDays(1) == upper), Destination.Extraction);
+
+    // An enumeration is ordered in C#, so these compile and must not reach the index.
+    Base("op/enum/greater", rows => rows.Where(x => x.Data.State > Status.Draft), Destination.Extraction);
+    Base("op/enum/greater-or-equal", rows => rows.Where(x => x.Data.State >= Status.Live), Destination.Extraction);
+    Base("op/enum/less", rows => rows.Where(x => x.Data.State < Status.Retired), Destination.Extraction);
+    Base("op/enum/not-equal", rows => rows.Where(x => x.Data.State != state), Destination.Extraction);
+
+    // A combinable enumeration holds a set, so neither spelling of a flag test is the equality that
+    // containment reproduces. Equality against a combination still is, and stays above.
+    Base("op/enum/has-flag", rows => rows.Where(x => x.Data.Perms.HasFlag(Access.Read)), Destination.Extraction);
+    Base("op/enum/bitwise",
+      rows => rows.Where(x => (x.Data.Perms & Access.Read) == Access.Read), Destination.Extraction);
+    Base("eq/enum/flags-combination",
+      rows => rows.Where(x => x.Data.Perms == (Access.Read | Access.Write)), Destination.Containment);
+
+    Base("op/double/greater", rows => rows.Where(x => x.Data.Dbl > dbl), Destination.Extraction);
+    Base("op/double/less-or-equal", rows => rows.Where(x => x.Data.Dbl <= dbl), Destination.Extraction);
+    Base("op/double/not-equal", rows => rows.Where(x => x.Data.Dbl != dbl), Destination.Extraction);
+    Base("op/double/between",
+      rows => rows.Where(x => x.Data.Dbl >= dbl && x.Data.Dbl <= dbl + 1), Destination.Extraction);
+    Base("op/float/greater", rows => rows.Where(x => x.Data.Flt > flt), Destination.Extraction);
+    Base("op/float/not-equal", rows => rows.Where(x => x.Data.Flt != flt), Destination.Extraction);
+
+    Base("op/guid/greater", rows => rows.Where(x => x.Data.Gid.CompareTo(g) > 0), Destination.Extraction);
+
+    // Two-sided ranges on the numeric types, which is what a paging or windowing filter is.
+    Base("op/int/between", rows => rows.Where(x => x.Data.Num >= 1 && x.Data.Num <= 10), Destination.Extraction);
+    Base("op/decimal/between",
+      rows => rows.Where(x => x.Data.Money >= 1.5m && x.Data.Money <= 2.5m), Destination.Extraction);
+
+    // Arithmetic moves the comparison off the member, so there is no member left to index.
+    Base("op/int/arithmetic", rows => rows.Where(x => (x.Data.Num * 2) == 10), Destination.Extraction);
+    Base("op/int/member-vs-member", rows => rows.Where(x => x.Data.Num == x.Data.Small), Destination.Extraction);
+
+    // The string functions that change the value before comparing it.
+    Base("op/string/to-lower", rows => rows.Where(x => x.Data.Str.ToLower() == "v"), Destination.Extraction);
+    Base("op/string/to-upper", rows => rows.Where(x => x.Data.Str.ToUpper() == "V"), Destination.Extraction);
+    Base("op/string/trimmed", rows => rows.Where(x => x.Data.Str.Trim() == "v"), Destination.Extraction);
+    Base("op/string/is-null-or-empty",
+      rows => rows.Where(x => string.IsNullOrEmpty(x.Data.MaybeStr)), Destination.Extraction);
+    // Entity Framework refuses this overload outright. It is worth pinning because the ordinal
+    // spelling of the very same call does reach the index through this framework's rewrite, so the
+    // pair marks exactly where the capability starts and stops.
+    Base("op/string/case-insensitive",
+      rows => rows.Where(x => x.Data.Str.Equals("v", StringComparison.OrdinalIgnoreCase)),
+      Destination.Untranslatable);
 
     // --- Nullable members: containment for a value, extraction for a null.
     string? maybeStr = "v";
@@ -397,6 +495,14 @@ public class JsonbContainmentSqlMatrixTests {
     var (shape, _) = _matrix[caseKey];
 
     using var db = _newContext();
+
+    if (expected == Destination.Untranslatable) {
+      await Assert.That(() => shape(db.Set<PerspectiveRow<MatrixModel>>()).ToQueryString())
+        .Throws<InvalidOperationException>()
+        .Because("the shape has to fail at query compilation rather than silently answer differently");
+      return;
+    }
+
     var sql = shape(db.Set<PerspectiveRow<MatrixModel>>()).ToQueryString();
 
     var containment = sql.Contains("@>", StringComparison.Ordinal);

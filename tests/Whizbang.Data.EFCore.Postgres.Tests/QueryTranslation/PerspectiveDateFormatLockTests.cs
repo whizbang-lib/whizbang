@@ -406,6 +406,82 @@ public class PerspectiveDateFormatLockTests : IAsyncDisposable {
     await Assert.That(matched).IsEqualTo("1");
   }
 
+  /// <summary>
+  /// Ordering by a date is chronological, across rows whose fractional precision differs.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the question the stored format raises and it has to be answered by executing, not by
+  /// reading the format. The rendering trims trailing zeros, so a whole second ends in <c>Z</c> while
+  /// a fractional one ends in a digit, and <c>Z</c> is greater than <c>.</c> in every byte ordering.
+  /// Sorting the stored strings therefore puts <c>05:06:07.1Z</c> before <c>05:06:07Z</c>, which is
+  /// backwards. The second assertion below shows exactly that, so the hazard is on record.
+  /// </para>
+  /// <para>
+  /// Ordering a query is nonetheless correct, because it never sorts the stored text. Entity Framework
+  /// casts the extracted value to a timestamp and sorts that, and the containment rewrite is scoped to
+  /// predicates and never reaches an ordering key, so nothing about the rewrite changes it. What the
+  /// text ordering rules out is a shortcut rather than a behavior: the raw string cannot be used as a
+  /// btree key to answer a range or an ordering. A fixed-width stored form could be, which is the one
+  /// thing that would argue for changing it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task OrderingByADate_IsChronologicalAcrossPrecisionsAsync(CancellationToken cancellationToken) {
+    var second = new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+    // Deliberately inserted in an order where the text ordering and the chronological one disagree.
+    var inserted = new[] {
+      second.AddTicks(1_000_000),
+      second,
+      second.AddTicks(1_234_560),
+      second.AddSeconds(1),
+    };
+
+    foreach (var value in inserted) {
+      _context!.Add(new PerspectiveRow<DateModel> {
+        Id = Guid.NewGuid(),
+        Data = new DateModel { WholeSecond = value },
+        Metadata = new PerspectiveMetadata(),
+        Scope = new PerspectiveScope(),
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+        Version = 1,
+      });
+    }
+
+    await _context!.SaveChangesAsync(cancellationToken);
+
+    var query = _context.Set<PerspectiveRow<DateModel>>()
+      .Where(r => r.Data.WholeSecond >= second)
+      .OrderBy(r => r.Data.WholeSecond)
+      .Select(r => r.Data.WholeSecond);
+
+    // The ordering key is the parsed instant, not the stored string.
+    await Assert.That(query.ToQueryString()).Contains("ORDER BY", StringComparison.Ordinal);
+
+    var ordered = await query.ToListAsync(cancellationToken);
+
+    await Assert.That(string.Join(",", ordered.Select(d => d.Ticks)))
+      .IsEqualTo(string.Join(",", inserted.OrderBy(d => d).Select(d => d.Ticks)))
+      .Because("a date orders by instant, whatever precision each row carries");
+
+    // And the same rows sorted by the stored text come back in a different order, which is why that
+    // text cannot stand in as an index key.
+    var byText = await _scalarAsync($"""
+      SELECT string_agg(t, ',' ORDER BY t COLLATE "C")
+      FROM (SELECT data ->> 'WholeSecond' AS t FROM {TABLE}
+            WHERE (data ->> 'WholeSecond') LIKE '2026-06-01%') s
+      """, cancellationToken);
+
+    // Not merely shifted: a longer fraction sorts before a shorter one because a digit precedes 'Z',
+    // and both precede the whole second. Three of the four are out of chronological order.
+    await Assert.That(byText).IsEqualTo(
+      "2026-06-01T12:00:00.123456Z,2026-06-01T12:00:00.1Z,2026-06-01T12:00:00Z,2026-06-01T12:00:01Z")
+      .Because("the trimmed fraction makes the stored text sort by width before it sorts by time");
+  }
+
   /// <summary>The filter a case name refers to, written the way a repository would write it.</summary>
   private static Expression<Func<PerspectiveRow<DateModel>, bool>> _filterFor(string precision) {
     var second = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);

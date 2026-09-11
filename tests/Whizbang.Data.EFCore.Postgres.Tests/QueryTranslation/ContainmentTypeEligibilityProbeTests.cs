@@ -8,6 +8,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Testing.Containers;
 
@@ -87,6 +88,21 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
 
     public Tier Unsupported { get; init; }
 
+    /// <summary>
+    /// The framework's own identifier value object, mapped the only way it can be.
+    /// </summary>
+    /// <remarks>
+    /// It cannot be mapped as a complex type: it exposes the value alongside creation metadata and
+    /// keeps its constructor private, so Entity Framework cannot bind one and the model fails to
+    /// build at all rather than merely failing to filter. A converter down to the underlying
+    /// identifier is the available mapping, and what this measures is where a filter on it then
+    /// lands.
+    /// </remarks>
+    public TrackedGuid Tracked { get; init; }
+
+    /// <summary>A time-ordered identifier held as a plain Guid, which is the usual shape.</summary>
+    public Guid SortableId { get; init; }
+
     // How much of the serialized form is stable? The fraction is what decides whether a SQL-side
     // format string can reproduce it.
     public DateTime WholeSecond { get; init; }
@@ -104,6 +120,8 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
         entity.ComplexProperty(e => e.Data, d => {
           d.ToJson("data");
           d.Property(p => p.Named).HasConversion<string>();
+          d.Property(p => p.Tracked)
+            .HasConversion(t => t.Value, g => TrackedGuid.FromExternal(g));
           d.Property(p => p.ConvertedNum).HasConversion<string>();
         });
         entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
@@ -124,6 +142,8 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   private string _connectionString = null!;
   private ProbeDbContext? _context;
 
+  private static readonly TrackedGuid _tracked = TrackedGuid.NewMedo();
+  private static readonly Guid _sortable = TrackedGuid.NewMedo().Value;
   private static readonly DateTime _when = new(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
   private static readonly DateTimeOffset _whenOffset = new(2026, 3, 4, 5, 6, 7, TimeSpan.Zero);
 
@@ -194,6 +214,8 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
         Letter = 'q',
         Perms = Access.Read | Access.Write,
         Unsupported = Tier.First,
+        Tracked = _tracked,
+        SortableId = _sortable,
       },
       Metadata = new PerspectiveMetadata(),
       Scope = new PerspectiveScope(),
@@ -395,6 +417,47 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// A time-ordered identifier sorts the same as text, as bytes, and chronologically, which is what a
+  /// date does not do.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The framework's convention is a UUIDv7 identifier, which carries its timestamp in the leading
+  /// bytes. Its stored rendering is fixed-width lowercase hexadecimal, so no trimming or variable
+  /// precision can reorder it: the text order, the <c>uuid</c> byte order and the creation order all
+  /// agree. That is the property the trimmed date rendering lacks.
+  /// </para>
+  /// <para>
+  /// It matters because it decides what can be indexed. Ordering and range filtering over a date held
+  /// in a document cannot use the stored text as a key, while over a time-ordered identifier they can,
+  /// and the <c>text</c> to <c>uuid</c> cast is immutable so an expression index is available too.
+  /// Cursor paging over a document-held identifier is therefore indexable, which is worth knowing
+  /// before reaching for a promoted column.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ATimeOrderedIdentifier_SortsTheSameAsTextAndAsBytesAsync(CancellationToken cancellationToken) {
+    // Generated in order, so the creation order is known independently of how they sort.
+    var created = new List<Guid>();
+    for (var i = 0; i < 12; i++) {
+      created.Add(TrackedGuid.NewMedo().Value);
+    }
+
+    await Assert.That(created.Select(g => g.ToString()).OrderBy(t => t, StringComparer.Ordinal).ToList())
+      .IsEquivalentTo(created.Select(g => g.ToString()).ToList())
+      .Because("a version 7 identifier's text rendering sorts in creation order");
+
+    var agrees = await _scalarAsync(
+      "SELECT bool_and((a < b) = ((a::uuid) < (b::uuid))) FROM unnest(@t) WITH ORDINALITY s(a, i) "
+      + "CROSS JOIN unnest(@t) WITH ORDINALITY t2(b, j) WHERE i <> j",
+      ("t", created.Select(g => g.ToString()).ToArray()));
+
+    await Assert.That(agrees).IsEqualTo("True")
+      .Because("the text ordering and the uuid ordering have to agree for either to serve as a key");
+  }
+
+  /// <summary>
   /// Records what the remaining date, time and enumeration shapes land as, and whether a filter on
   /// each currently reaches the index. The next eligibility decisions rest on this.
   /// </summary>
@@ -410,6 +473,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
 
     foreach (var field in new[] {
       "Day", "Clock", "ClockFine", "Span", "SpanWithDays", "Letter", "Perms", "Unsupported",
+      "Tracked", "SortableId",
     }) {
       var stored = await _scalarAsync($"SELECT data -> '{field}' FROM {TABLE}");
       var text = await _scalarAsync($"SELECT data ->> '{field}' FROM {TABLE}");
@@ -433,6 +497,10 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
         .Where(r => (r.Data.Perms & Access.Read) == Access.Read).ToQueryString()),
       ("Unsupported", _context.Set<PerspectiveRow<ProbeModel>>()
         .Where(r => r.Data.Unsupported == Tier.First).ToQueryString()),
+      ("Tracked", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Tracked == _tracked).ToQueryString()),
+      ("SortableId", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.SortableId == _sortable).ToQueryString()),
     }) {
       var form = sql.Contains("@>", StringComparison.Ordinal) ? "containment" : "extraction";
       lines.Add($"{name}: {form} :: {sql.Split('\n')[^1].Trim()}");
