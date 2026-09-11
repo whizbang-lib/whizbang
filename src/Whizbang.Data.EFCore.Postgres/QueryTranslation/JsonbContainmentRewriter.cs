@@ -87,6 +87,12 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     }
 
     if (!_predicateOperators.Contains(name) || node.Arguments.Count < 2) {
+      // Not a filtering operator. Inside one, an Equals call is the same comparison as == and is
+      // rewritten the same way; outside one, nothing here applies.
+      if (_enabled && _predicateDepth > 0 && _negationDepth == 0 && _tryRewriteEquals(node, out var asEquality)) {
+        return asEquality;
+      }
+
       return base.VisitMethodCall(node);
     }
 
@@ -153,10 +159,66 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     return base.VisitBinary(node);
   }
 
-  private static bool _tryRewrite(Expression candidateMember, Expression candidateValue, out Expression rewritten) {
+  /// <summary>
+  /// Treats an <c>Equals</c> call as the equality it is.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Covers the instance form <c>member.Equals(value)</c>, the static <c>string.Equals(a, b)</c> and
+  /// the static <c>object.Equals(a, b)</c>, with either operand holding the member. These compile to
+  /// the same comparison as <c>==</c>, so leaving them out would cost an index for nothing but the
+  /// node type.
+  /// </para>
+  /// <para>
+  /// A <see cref="StringComparison"/> argument is honored rather than ignored: only
+  /// <see cref="StringComparison.Ordinal"/> is the comparison containment performs. Anything
+  /// case-insensitive or culture-aware is a different question and keeps the extraction form.
+  /// </para>
+  /// </remarks>
+  private bool _tryRewriteEquals(MethodCallExpression node, out Expression rewritten) {
     rewritten = Expression.Empty();
 
-    if (candidateMember is not MemberExpression member || !_isJsonMemberOfPerspectiveData(member)) {
+    if (!string.Equals(node.Method.Name, nameof(object.Equals), StringComparison.Ordinal)
+        || node.Type != typeof(bool)) {
+      return false;
+    }
+
+    Expression first;
+    Expression second;
+    Expression? comparison;
+
+    if (node.Object is not null) {
+      if (node.Arguments.Count is < 1 or > 2) {
+        return false;
+      }
+
+      first = node.Object;
+      second = node.Arguments[0];
+      comparison = node.Arguments.Count == 2 ? node.Arguments[1] : null;
+    } else {
+      if (node.Arguments.Count is < 2 or > 3) {
+        return false;
+      }
+
+      first = node.Arguments[0];
+      second = node.Arguments[1];
+      comparison = node.Arguments.Count == 3 ? node.Arguments[2] : null;
+    }
+
+    if (comparison is not null && comparison is not ConstantExpression { Value: StringComparison.Ordinal }) {
+      return false;
+    }
+
+    var left = _stripConverts(first);
+    var right = _stripConverts(second);
+
+    return _tryRewrite(left, right, out rewritten) || _tryRewrite(right, left, out rewritten);
+  }
+
+  private bool _tryRewrite(Expression candidateMember, Expression candidateValue, out Expression rewritten) {
+    rewritten = Expression.Empty();
+
+    if (candidateMember is not MemberExpression member || !_isJsonMember(member)) {
       return false;
     }
 
@@ -189,26 +251,57 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
   }
 
   /// <summary>
-  /// Whether the expression is a member read out of a perspective row's model document, rather than
-  /// a real column or something else entirely.
+  /// Whether the expression is a member read out of a perspective's model document, rather than a
+  /// real column or something else entirely.
   /// </summary>
-  private static bool _isJsonMemberOfPerspectiveData(MemberExpression member) {
-    // Walk in towards the row: Data.A.B.C has C outermost.
+  /// <remarks>
+  /// <para>
+  /// Two shapes reach the same column. The obvious one keeps the row: <c>row.Data.Field</c>, where
+  /// the chain passes through <c>Data</c> on a <see cref="PerspectiveRow{TModel}"/>.
+  /// </para>
+  /// <para>
+  /// The other projects the row away first, <c>Query.Select(r =&gt; r.Data).Where(m =&gt; m.Field ==
+  /// value)</c>, which is how most repositories are written. The predicate then reads a member of
+  /// the model directly and there is no <c>Data</c> left in the chain, but the query still runs
+  /// against the same table and the member still compiles to a path into the same JSON document. It
+  /// is recognized by asking the model whether a perspective row exists for that model type, which
+  /// is a much tighter test than the type's shape alone.
+  /// </para>
+  /// </remarks>
+  private bool _isJsonMember(MemberExpression member) {
     for (var current = member.Expression; current is not null;) {
-      if (current is MemberExpression inner) {
-        if (string.Equals(inner.Member.Name, nameof(PerspectiveRow<object>.Data), StringComparison.Ordinal)
-            && _isPerspectiveRow(inner.Expression?.Type)) {
+      switch (current) {
+        case MemberExpression inner
+          when string.Equals(inner.Member.Name, nameof(PerspectiveRow<object>.Data), StringComparison.Ordinal)
+               && _isPerspectiveRow(inner.Expression?.Type):
           return true;
-        }
 
-        current = inner.Expression;
-        continue;
+        case MemberExpression inner:
+          current = inner.Expression;
+          continue;
+
+        // The root of the chain is the range variable itself, so this is a projected model.
+        case ParameterExpression parameter:
+          return _isProjectedPerspectiveModel(parameter.Type);
+
+        default:
+          return false;
       }
-
-      return false;
     }
 
     return false;
+  }
+
+  /// <summary>
+  /// Whether a perspective is stored for this model type, which is what makes a bare member of it a
+  /// path into the data column rather than an ordinary property.
+  /// </summary>
+  private bool _isProjectedPerspectiveModel(Type type) {
+    if (_model is null || !type.IsClass || type == typeof(string)) {
+      return false;
+    }
+
+    return _model.FindEntityType(typeof(PerspectiveRow<>).MakeGenericType(type)) is not null;
   }
 
   private static bool _isPerspectiveRow(Type? type) {

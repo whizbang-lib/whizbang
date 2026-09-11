@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -126,6 +127,15 @@ public class JsonbContainmentAuthoringTests {
   [Arguments("ternary value")]
   [Arguments("coalesced value")]
   [Arguments("nested value object member")]
+  [Arguments("instance Equals")]
+  [Arguments("instance Equals, ordinal")]
+  [Arguments("static string.Equals")]
+  [Arguments("static string.Equals, ordinal")]
+  [Arguments("object.Equals")]
+  [Arguments("Equals with the value first")]
+  [SuppressMessage("Globalization", "CA1309:Use ordinal string comparison",
+    Justification = "The comparison overload is the subject of the test: the spellings without an explicit " +
+      "StringComparison are exactly the ones a developer writes, and the point is that they still reach the index.")]
   public async Task EqualitySpellings_ReachTheIndexAsync(string spelling) {
     var local = "v";
     var flag = true;
@@ -141,6 +151,12 @@ public class JsonbContainmentAuthoringTests {
       "ternary value" => _rewrites(x => x.Data.Code == (flag ? "a" : "b")),
       "coalesced value" => _rewrites(x => x.Data.Code == (maybe ?? "d")),
       "nested value object member" => _rewrites(x => x.Data.Number.Value == _probe),
+      "instance Equals" => _rewrites(x => x.Data.Code.Equals(local)),
+      "instance Equals, ordinal" => _rewrites(x => x.Data.Code.Equals("v", StringComparison.Ordinal)),
+      "static string.Equals" => _rewrites(x => string.Equals(x.Data.Code, local)),
+      "static string.Equals, ordinal" => _rewrites(x => string.Equals(x.Data.Code, "v", StringComparison.Ordinal)),
+      "object.Equals" => _rewrites(x => Equals(x.Data.Code, "v")),
+      "Equals with the value first" => _rewrites(x => "v".Equals(x.Data.Code, StringComparison.Ordinal)),
       _ => throw new InvalidOperationException(spelling),
     };
 
@@ -194,9 +210,6 @@ public class JsonbContainmentAuthoringTests {
   /// not see them and the query keeps the extraction form. They are correct, just not indexed.
   /// </summary>
   [Test]
-  [Arguments("instance Equals")]
-  [Arguments("static string.Equals")]
-  [Arguments("object.Equals")]
   [Arguments("list Contains")]
   [Arguments("array Contains")]
   [Arguments("bare boolean member")]
@@ -206,9 +219,6 @@ public class JsonbContainmentAuthoringTests {
     var array = new[] { "a", "b" };
 
     var rewritten = spelling switch {
-      "instance Equals" => _rewrites(x => x.Data.Code.Equals("v", StringComparison.Ordinal)),
-      "static string.Equals" => _rewrites(x => string.Equals(x.Data.Code, "v", StringComparison.Ordinal)),
-      "object.Equals" => _rewrites(x => Equals(x.Data.Code, "v")),
       "list Contains" => _rewrites(x => codes.Contains(x.Data.Code)),
       "array Contains" => _rewrites(x => array.Contains(x.Data.Code)),
       "bare boolean member" => _rewrites(x => x.Data.Active),
@@ -228,7 +238,12 @@ public class JsonbContainmentAuthoringTests {
   [Arguments("member compared with null")]
   [Arguments("negated equality")]
   [Arguments("value object compared whole")]
+  [Arguments("case-insensitive Equals")]
+  [Arguments("culture-aware Equals")]
   [Arguments("member compared with a row column")]
+  [SuppressMessage("Globalization", "CA1309:Use ordinal string comparison",
+    Justification = "A culture-aware comparison is deliberately written here to prove it is NOT rewritten; " +
+      "containment performs an ordinal comparison and must not claim to do anything else.")]
   public async Task SpellingsThatMustNotBeRewritten_AreNotAsync(string spelling) {
     var number = new OrderNumber(_probe);
 
@@ -237,6 +252,8 @@ public class JsonbContainmentAuthoringTests {
       "member compared with null" => _rewrites(x => x.Data.Note == null),
       "negated equality" => _rewrites(x => !(x.Data.Code == "v")),
       "value object compared whole" => _rewrites(x => x.Data.Number == number),
+      "case-insensitive Equals" => _rewrites(x => x.Data.Code.Equals("v", StringComparison.OrdinalIgnoreCase)),
+      "culture-aware Equals" => _rewrites(x => x.Data.Code.Equals("v", StringComparison.CurrentCulture)),
       "member compared with a row column" => _rewrites(x => x.Data.Code == x.Id.ToString()),
       _ => throw new InvalidOperationException(spelling),
     };
@@ -259,6 +276,84 @@ public class JsonbContainmentAuthoringTests {
     finder.Visit(rewritten);
 
     await Assert.That(finder.Found).IsFalse();
+  }
+
+  // ========================================
+  // The projected dialect: Select(r => r.Data) first, then filter the model
+  // ========================================
+
+  /// <summary>
+  /// The shape most repositories are actually written in. The row is projected away before the
+  /// predicate, so the member has no <c>Data</c> left in its chain, but it still compiles to a path
+  /// into the same JSON document and still deserves the index.
+  /// </summary>
+  [Test]
+  [Arguments("projected then filtered")]
+  [Arguments("projected, ordered, then filtered")]
+  [Arguments("projected with a terminal predicate")]
+  [Arguments("projected then filtered twice")]
+  [Arguments("projected then filtered on a nested member")]
+  public async Task ProjectedModelPredicates_ReachTheIndexAsync(string shape) {
+    var code = "v";
+    var owner = _probe;
+    var rows = _db.Set<PerspectiveRow<OrderModel>>();
+
+    var sql = shape switch {
+      "projected then filtered" =>
+        rows.Select(r => r.Data).Where(m => m.Code == code).ToQueryString(),
+      "projected, ordered, then filtered" =>
+        rows.Select(r => r.Data).OrderBy(m => m.Code).AsQueryable().Where(m => m.Owner == owner).ToQueryString(),
+      "projected then filtered twice" =>
+        rows.Select(r => r.Data).Where(m => m.Code == code).Where(m => m.Owner == owner).ToQueryString(),
+      "projected then filtered on a nested member" =>
+        rows.Select(r => r.Data).Where(m => m.Number.Value == owner).ToQueryString(),
+      "projected with a terminal predicate" =>
+        rows.Select(r => r.Data).Where(m => m.Code == code).Take(1).ToQueryString(),
+      _ => throw new InvalidOperationException(shape),
+    };
+
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal);
+    await Assert.That(sql).Contains("jsonb_build_object", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// The same care applies after a projection: a range, a null test and a negation keep the
+  /// extraction form there too.
+  /// </summary>
+  [Test]
+  [Arguments("range")]
+  [Arguments("null check")]
+  [Arguments("negated")]
+  [Arguments("ordering")]
+  public async Task ProjectedModelPredicates_KeepTheSafeFormAsync(string shape) {
+    var rows = _db.Set<PerspectiveRow<OrderModel>>();
+
+    var sql = shape switch {
+      "range" => rows.Select(r => r.Data).Where(m => m.Count > 3).ToQueryString(),
+      "null check" => rows.Select(r => r.Data).Where(m => m.Note == null).ToQueryString(),
+      "negated" => rows.Select(r => r.Data).Where(m => !(m.Code == "v")).ToQueryString(),
+      "ordering" => rows.Select(r => r.Data).OrderBy(m => m.Code).ToQueryString(),
+      _ => throw new InvalidOperationException(shape),
+    };
+
+    await Assert.That(sql).DoesNotContain("@>", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// A model type with no perspective behind it is an ordinary projection and must never be treated
+  /// as a JSON document.
+  /// </summary>
+  [Test]
+  public async Task ProjectedAnonymousShape_IsNotTreatedAsAPerspectiveAsync() {
+    var rows = _db.Set<PerspectiveRow<OrderModel>>();
+    var code = "v";
+
+    var sql = rows
+      .Select(r => new { r.Data.Code, r.Id })
+      .Where(x => x.Code == code)
+      .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("@>", StringComparison.Ordinal);
   }
 
   private static readonly Guid _probe = new("6f9619ff-8b86-d011-b42d-00cf4fc964ff");
