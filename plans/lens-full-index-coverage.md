@@ -62,21 +62,33 @@ Chosen so the extraction is both immutable-castable and order-preserving.
 | `short`, `int`, `long`, `byte`, enum | number | `((data ->> 'X')::bigint)` |
 | `decimal` | number | `((data ->> 'X')::numeric)` |
 | `double`, `float` | number | `((data ->> 'X')::float8)` |
-| `DateTime` | `yyyy-MM-ddTHH:mm:ss.ffffffZ`, fixed width, UTC | `(data ->> 'X') COLLATE "C"` |
-| `DateTimeOffset` | the same, normalized to UTC | `(data ->> 'X') COLLATE "C"` |
-| `DateOnly` | `yyyy-MM-dd`, already fixed width | `(data ->> 'X') COLLATE "C"` |
-| `TimeOnly` | `HH:mm:ss.fffffff`, already fixed width | `(data ->> 'X') COLLATE "C"` |
-| `TimeSpan` | total ticks, as a number | `((data ->> 'X')::numeric)` |
-| a value object | its underlying type's form | its underlying type's expression |
+| `DateTime` | microseconds since the epoch, as a number | `((data ->> 'X')::bigint)` |
+| `DateTimeOffset` | the same, normalized to UTC, with the offset in a sibling key | `((data ->> 'X')::bigint)` |
+| `DateOnly` | days since the epoch, as a number | `((data ->> 'X')::bigint)` |
+| `TimeOnly` | microseconds since midnight, as a number | `((data ->> 'X')::bigint)` |
+| `TimeSpan` | total ticks, as a number | `((data ->> 'X')::bigint)` |
+| `char` | its code point, as a number | `((data ->> 'X')::bigint)` |
+| `TrackedGuid` | a bare v7 identifier, as text | `((data ->> 'X')::uuid)` |
 
-The collation is pinned to `C` because a text index answers a range only in its own collation order.
-Byte ordering over a fixed-width ASCII rendering is the chronological order; a locale-aware collation
-may weight punctuation differently and the guarantee is lost.
+The collation is pinned to `C` for the one text key that remains, because a text index answers a
+range only in its own collation order.
 
-Two notes on what the format change buys where. For `DateTime` it is not needed for equality, which
-already works by rendering the token in SQL; it is needed for the range and the ordering. For
-`TimeOnly`, `TimeSpan` and `DateTimeOffset` it is needed for all three, because the token cannot be
-constructed from the default form at all.
+**A number rather than text for the date and time family, measured.** Both forms are correct and both
+index, so the choice is a performance one. On thirty-nine thousand rows the text index was 1,982,464
+bytes against 901,120 for the numeric one, and the estimated cost of the same range was within a few
+percent either way. So the per-query work is a wash and the win is size: an eight-byte key against a
+twenty-seven byte one means more of the index stays resident and less of it has to be read.
+`ANumericDateIndexesSmallerThanATextOne_IsRecordedAsync` holds the measurement.
+
+Three consequences of the numeric form worth naming, all of them simplifications:
+
+- Equality needs no rendering at all. jsonb compares numbers by value, so the containment document is
+  built by passing the number through, and the `to_char`, the trims and the concatenation all go away.
+- **The infinities stop being a special case.** `DateTime.MaxValue` in epoch microseconds is
+  253402300799999999, which fits an `int64` comfortably, so it is an ordinary number rather than the
+  word `infinity`. The whole `isfinite` branch disappears.
+- The stored document is no longer human readable for these fields. That is the cost, accepted
+  deliberately in favour of the index size.
 
 ## Phases
 
@@ -86,6 +98,18 @@ Add an attribute declaring that a JSON-only field carries an index, and have the
 expression index alongside the table. Everything except the date and time family gains indexed
 equality, ranges and ordering immediately.
 
+The mode is a flag enumeration so the kinds can be combined, and the attribute may be repeated where
+that reads better than combining. A range wants btree; `Contains` and `StartsWith` want GIN with
+`pg_trgm`; both together is a legitimate ask for a field that is filtered each way.
+
+A perspective can also ask for every field at once, so a read model that is queried every way does
+not need a decoration per property:
+
+```csharp
+[IndexAllFields]                   // every eligible field gets the default mode
+public class ReportRow { /* … */ }
+```
+
 ```csharp
 public class OrderModel {
   [PhysicalField(Indexed = true)]   // real column: everything, costs a column and a hydration path
@@ -94,7 +118,9 @@ public class OrderModel {
   [JsonIndexed]                     // expression index: everything, costs only an index
   public int Rank { get; init; }
 
-  public string Title { get; init; } = string.Empty;   // nothing declared: GIN equality, the rest scans
+  [JsonIndexed(JsonIndexKind.Btree | JsonIndexKind.Trigram)]   // filtered by range and by substring
+  public string Title { get; init; } = string.Empty;
+
 }
 ```
 
@@ -126,12 +152,22 @@ Note that a row only rewrites itself when its stream sees a new event, so cold s
 on their own. The backfill is required, not optional; the tolerant reader is the safety net around it
 rather than a substitute for it.
 
-### Phase 2: value objects keep their index.
+### Phase 2: value objects keep their index, and TrackedGuid is just a v7 identifier.
 
 A converter down to an eligible type stores exactly what the bare type stores. `TrackedGuid` lands as
 a plain guid string, byte for byte what a `Guid` lands as, yet the filter currently falls back to
 extraction because the converter guard is a blanket one. Resolving the overload from the converter's
 provider type rather than the model type fixes it for every wrapper of this shape.
+
+`TrackedGuid` is then treated as what it is, a time-ordered identifier, with the converter registered
+by the framework rather than written out per property. Its creation metadata is not persisted and was
+never meant to be: it is authoritative only at creation, and a value read back from a document
+reports itself as untracked anyway.
+
+That also makes it fully orderable and range-scannable, which is worth more than it sounds. A version
+7 identifier's text ordering, its `uuid` byte ordering and its creation ordering all agree, asserted
+in `ATimeOrderedIdentifier_SortsTheSameAsTextAndAsBytesAsync`, so cursor paging over a document-held
+identifier is answerable from an index.
 
 ### Phase 3: advise the cheap fix.
 
@@ -139,19 +175,22 @@ WHIZ302 currently advises promoting a field to a column, which is the heaviest o
 already knows the filter shape, so it can name the fields that want `[JsonIndexed]` and reserve the
 promotion advice for cases that need a constraint or a foreign key.
 
-## Decisions needed
+## Decisions taken
 
-1. **Opt-in or index everything?** Indexing every field is write amplification and disk for fields
-   nobody filters. Recommended: opt-in, with the analyzer naming the fields that want it, since it
-   already sees how each field is queried.
-2. **`DateTimeOffset` read-back.** Normalizing to UTC makes equality mean what `==` means and makes
-   the field indexable, at the cost of the offset the row was written with. Preserving it needs a
-   sibling key. Recommended: normalize, and keep the offset in a sibling key only where a model asks.
-3. **Date as text or as a number?** Fixed-width text keeps the document readable and is verified
-   working. Epoch microseconds need no collation care and no infinity special case, but make the
-   document opaque. Recommended: text.
-4. **One attribute or several?** A range wants btree; `Contains` and `StartsWith` want GIN with
-   `pg_trgm`. Recommended: one attribute with a mode, defaulting to btree.
+1. **Opt-in per field, with a perspective-level option to index everything.** A field carries
+   `[JsonIndexed]`; a read model that is queried every way carries `[IndexAllFields]` instead of a
+   decoration per property. The analyzer still names the fields that want it, so the opt-in is guided
+   rather than guessed.
+2. **`DateTimeOffset` normalizes to UTC, and the offset is kept in a sibling key.** Equality and
+   ordering then mean what `==` and a chronological sort mean, both are indexable, and the offset the
+   row was written with is still recoverable for display. The offset is derived from the normalized
+   instant at query time rather than filtered on.
+3. **A number, not text.** Measured: an eight-byte key indexes at less than half the size of a
+   twenty-seven byte one for the same rows and the same plan. Readability of the stored document is
+   the deliberate cost.
+4. **One attribute, a flag enumeration for the mode, repeatable.** Btree by default, `pg_trgm` for
+   substring matching, combinable where a field is filtered both ways.
+5. **A null character is refused at the mapping, not at the driver.** See below.
 
 ## What is already done
 
@@ -166,13 +205,24 @@ promotion advice for cases that need a constraint or a foreign key.
 
 ## Findings worth their own issues
 
-- **A `char` property left at its default cannot be persisted at all.** The default is the null
-  character, Entity Framework writes it as a backslash-u-0000 escape, and jsonb rejects that with `22P05`. Any model
-  with an unset `char` fails on save. Worth an analyzer diagnostic or a mapping refusal rather than a
-  runtime error.
-- **`TrackedGuid` cannot be mapped as a complex type.** It exposes its value alongside creation
-  metadata and keeps its constructor private, so the model fails to build rather than failing to
-  filter. A converter is the only mapping, which Phase 2 then makes indexable.
 - **`TimeOnly` is written with seven fractional digits while `DateTime` is written with six.** The
   document writer does not truncate uniformly, which is why the `DateTime` precision is locked by a
-  test rather than trusted.
+  test rather than trusted. The numeric stored form removes the discrepancy along with the question.
+
+## The null character, and where it is refused
+
+A `char` left at its default is the null character, and jsonb has no representation for one. The save
+fails with a driver error naming neither the property nor the model, and a string carrying an embedded
+null fails the same way: `22021` when it arrives as a parameter, `22P05` when it arrives as an escape
+in a document. `ANullCharacterCannotReachTheDocumentAsync` pins both.
+
+Two fixes, and they are for two different problems:
+
+- **`char` stores as its code point**, a number, which is where the canonical-format table already
+  puts it. A default `char` is then the number zero, which is an ordinary value, so the common case
+  stops failing rather than being reported better.
+- **A string carrying a null is refused by the framework**, at the point of writing the document,
+  with a message naming the perspective and the property. It cannot be fixed by a format choice
+  because the value itself has no representation, so the only improvement available is to fail where
+  a developer can act on it instead of at the driver. An analyzer cannot catch it, since the value is
+  only known at run time.

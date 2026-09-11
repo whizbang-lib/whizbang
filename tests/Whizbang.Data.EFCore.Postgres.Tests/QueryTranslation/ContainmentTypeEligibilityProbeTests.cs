@@ -38,6 +38,9 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   private const string TABLE = "wh_per_eligibility";
 
+  /// <summary>The codes PostgreSQL refuses a null character with, depending on the path in.</summary>
+  private static readonly string[] _nullCharacterRefusals = ["22021", "22P05"];
+
   /// <summary>Fixed width, always UTC, so the text sorts in the same order as the instant.</summary>
   private const string CANONICAL_DATE = "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'";
 
@@ -433,6 +436,133 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     // eligible set is pinned by JsonbContainmentTypeSetTests, and a type only moves into it once the
     // two text forms here are shown to agree.
     await Assert.That(line).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// Which canonical date form indexes better: fixed-width text, or the same instant as a number.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Both forms are correct and both are indexable, so the choice is a performance one and is settled
+  /// by measuring rather than by preference. A text key is twenty-seven bytes and compares
+  /// byte-wise in the C collation; a microsecond epoch fits an eight-byte integer and compares as
+  /// one. What that is worth depends on the index size, since a smaller key means fewer pages to
+  /// walk, and on what the planner then estimates.
+  /// </para>
+  /// <para>
+  /// Measured on its own table rather than through the model, because the question is about the two
+  /// index shapes and not about how a row got written. Both columns hold the same instants.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ANumericDateIndexesSmallerThanATextOne_IsRecordedAsync(CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    async Task execAsync(string sql) {
+      await using var command = new NpgsqlCommand(sql, db);
+      await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    async Task<string?> scalarAsync(string sql) {
+      await using var command = new NpgsqlCommand(sql, db);
+      var value = await command.ExecuteScalarAsync(cancellationToken);
+      return value is null or DBNull ? null : value.ToString();
+    }
+
+    await execAsync("""
+      CREATE TABLE date_form_probe (id uuid PRIMARY KEY, data jsonb NOT NULL);
+      INSERT INTO date_form_probe (id, data)
+      SELECT gen_random_uuid(),
+             jsonb_build_object(
+               'AsText', to_char(timezone('UTC', t), 'YYYY-MM-DD"T"HH24:MI:SS.US') || 'Z',
+               'AsEpoch', (extract(epoch FROM t) * 1000000)::bigint)
+      FROM generate_series(
+        timestamptz '2020-01-01', timestamptz '2026-01-01', interval '80 minutes') t;
+      CREATE INDEX idx_form_text ON date_form_probe (((data ->> 'AsText') COLLATE "C"));
+      CREATE INDEX idx_form_epoch ON date_form_probe (((data ->> 'AsEpoch')::bigint));
+      ANALYZE date_form_probe;
+      """);
+
+    var rows = await scalarAsync("SELECT count(*) FROM date_form_probe");
+    var textSize = await scalarAsync("SELECT pg_relation_size('idx_form_text')");
+    var epochSize = await scalarAsync("SELECT pg_relation_size('idx_form_epoch')");
+
+    async Task<string> planAsync(string where) {
+      await using var command = new NpgsqlCommand(
+        $"EXPLAIN (FORMAT TEXT) SELECT id FROM date_form_probe WHERE {where}", db);
+      var lines = new List<string>();
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        lines.Add(reader.GetString(0).Trim());
+      }
+
+      return string.Join(" | ", lines);
+    }
+
+    // The same one-month window expressed against each form.
+    var textPlan = await planAsync(
+      "(data ->> 'AsText') COLLATE \"C\" >= '2024-03-01T00:00:00.000000Z' "
+      + "AND (data ->> 'AsText') COLLATE \"C\" < '2024-04-01T00:00:00.000000Z'");
+    var epochPlan = await planAsync(
+      "(data ->> 'AsEpoch')::bigint >= 1709251200000000 "
+      + "AND (data ->> 'AsEpoch')::bigint < 1711929600000000");
+
+    var report = string.Create(CultureInfo.InvariantCulture,
+      $"rows={rows}\ntextIndexBytes={textSize}\nepochIndexBytes={epochSize}\ntext: {textPlan}\nepoch: {epochPlan}");
+
+    var target = Environment.GetEnvironmentVariable("WHIZ_FORM_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, report, cancellationToken);
+    }
+
+    // Both have to be index scans, or the comparison is meaningless.
+    await Assert.That(textPlan).Contains("idx_form_text", StringComparison.Ordinal);
+    await Assert.That(epochPlan).Contains("idx_form_epoch", StringComparison.Ordinal);
+
+    await Assert.That(long.Parse(epochSize!, CultureInfo.InvariantCulture))
+      .IsLessThan(long.Parse(textSize!, CultureInfo.InvariantCulture))
+      .Because("an eight-byte key indexes smaller than a twenty-seven byte one, which is the whole question");
+  }
+
+  /// <summary>
+  /// A null character cannot be stored in a document at all, whether it arrives in a char or inside a
+  /// string. This is the boundary the mapping has to enforce before PostgreSQL does.
+  /// </summary>
+  /// <remarks>
+  /// A default char is the null character, so a model carrying one that nobody assigned cannot be
+  /// persisted. jsonb rejects the escape outright rather than storing it, and the error surfaces as a
+  /// driver exception from the save with no indication of which property caused it. A string
+  /// containing one fails identically, which is why the fix belongs at the mapping rather than only
+  /// at the char type.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  [Arguments("a bare null character")]
+  [Arguments("a null inside a longer string")]
+  public async Task ANullCharacterCannotReachTheDocumentAsync(string shape, CancellationToken cancellationToken) {
+    var value = shape switch {
+      "a bare null character" => "\0",
+      "a null inside a longer string" => "be\0fore",
+      _ => throw new InvalidOperationException(shape),
+    };
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    await using var command = new NpgsqlCommand(
+      "SELECT jsonb_build_object('k', @p)", db);
+    command.Parameters.AddWithValue("p", value);
+
+    var failure = await Assert.That(async () => await command.ExecuteScalarAsync(cancellationToken))
+      .Throws<PostgresException>()
+      .Because("jsonb has no representation for a null character, so it is refused rather than stored");
+
+    // The code depends on which path the value took in: a parameter is rejected as a character
+    // outside the repertoire, while a document written with the escape spelled out is rejected as an
+    // unsupported escape. Both are refusals of the same thing, and a caller sees neither of them as
+    // the name of the property that caused it, which is the reason to catch this earlier.
+    await Assert.That(_nullCharacterRefusals).Contains(failure!.SqlState);
   }
 
   /// <summary>
