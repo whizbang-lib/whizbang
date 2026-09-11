@@ -29,13 +29,30 @@ COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_arrival_standard IS
   'Arrival-order partial index over pending STANDARD events (150), so the standard lane''s breadth-first walk with an '
   'early stop never steps over background rows.';
 
+-- The band boundaries below are literals in three independent places: Whizbang.Core.Priority.WorkPriority, the
+-- CONSTANT declarations in claim_orphaned_inbox further down, and these index predicates. Index DDL cannot
+-- reference a plpgsql constant and neither can reference the C# one, so there is no textual way to share them;
+-- PriorityLaneIndexUsabilityTests reads all three back and pins them to WorkPriority instead.
+--
+-- The predicate below MUST be written exactly as the lane queries it, 'priority > 199', not the equivalent
+-- 'priority >= 200'. A partial index is only considered when Postgres can prove the query's predicate implies the
+-- index's, and that proof is textual: it does not know an integer above 199 is an integer of at least 200. Declared
+-- as '>= 200' while claim_orphaned_inbox's background lane filters with 'priority > c_standard_band_end', this index
+-- was never once consulted, and the lane read the whole pending set through idx_inbox_received_at, filtering roughly
+-- half of it away and then sorting, on every claim. Nothing about the rows returned changes, so only a plan says so:
+-- PriorityLaneIndexUsabilityTests asserts each lane can reach its own index.
+--
+-- The DROP is load-bearing. CREATE INDEX IF NOT EXISTS matches on name alone, so without it a database already
+-- carrying the '>= 200' form would keep it forever; the re-run this file's changed hash triggers would do nothing.
+DROP INDEX IF EXISTS __SCHEMA__.idx_inbox_pending_arrival_background;
 CREATE INDEX IF NOT EXISTS idx_inbox_pending_arrival_background
   ON __SCHEMA__.wh_inbox (received_at, message_id)
   INCLUDE (stream_id, instance_id, lease_expiry, scheduled_for, partition_number)
-  WHERE processed_at IS NULL AND is_event = TRUE AND priority >= 200;
+  WHERE processed_at IS NULL AND is_event = TRUE AND priority > 199;
 COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_arrival_background IS
   'Arrival-order partial index over pending BACKGROUND events (150): the background lane''s walk, and the promotion '
-  'of streams that waited past the background wait target (a leading range on received_at).';
+  'of streams that waited past the background wait target (a leading range on received_at). Its predicate is written '
+  'the way the lane queries it (priority > 199) because a partial index matches by textual implication, not arithmetic.';
 
 -- ---------------------------------------------------------------------------------------------
 -- claim_orphaned_inbox: last word 148_ActiveStreamLeases.sql, with the lane block replaced by the bucket lanes.
