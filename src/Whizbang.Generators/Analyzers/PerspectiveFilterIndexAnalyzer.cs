@@ -104,7 +104,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    if (_isIndexBacked(field) || !_decidesWhichRowsAreRead(node)) {
+    if (_isIndexBacked(field) || !_decidesWhichRowsAreRead(node) || _containmentCanServe(node, field)) {
       return;
     }
 
@@ -181,6 +181,127 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     }
 
     return _rowSelectingOperators.Contains(name);
+  }
+
+  /// <summary>
+  /// Whether the lens can already answer this filter from the GIN index on the data column, which
+  /// makes the advisory wrong rather than merely noisy.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An equality filter on a JSON-only scalar is compiled into a jsonb containment test, so it is a
+  /// lookup already and needs no physical column. The advisory is therefore about the shapes
+  /// containment cannot express: ranges and inequalities, ordering, pattern matching, a comparison
+  /// against null, anything under a negation, and the types whose serialized text and PostgreSQL's
+  /// are not guaranteed to agree.
+  /// </para>
+  /// <para>
+  /// The eligible type set is duplicated from <c>JsonbContainment</c> in the Postgres driver, and it
+  /// has to be: an analyzer is referenced as an analyzer rather than as a library, so neither side
+  /// can see the other's list and no single test can compare them. Each side pins its own list
+  /// instead, here by <c>EqualityContainmentCanServe_IsNotReportedAsync</c> and there by
+  /// <c>JsonbContainmentTypeSetTests</c>, and each names the other. Drift shows up as an advisory
+  /// that fires on a filter already indexed, or one that stays silent on a filter that scans; both
+  /// are quality faults rather than wrong answers.
+  /// </para>
+  /// </remarks>
+  private static bool _containmentCanServe(MemberAccessExpressionSyntax node, IPropertySymbol field) {
+    if (!_isContainmentEligibleType(field.Type) || _isUnderNegation(node)) {
+      return false;
+    }
+
+    for (SyntaxNode? current = node; current is not null; current = current.Parent) {
+      switch (current.Parent) {
+        case ParenthesizedExpressionSyntax:
+          continue;
+
+        case BinaryExpressionSyntax binary when binary.IsKind(SyntaxKind.EqualsExpression):
+          // Comparing against null is the one equality containment cannot reproduce.
+          var other = binary.Left == current ? binary.Right : binary.Left;
+          return !other.IsKind(SyntaxKind.NullLiteralExpression);
+
+        case BinaryExpressionSyntax:
+          // Any other binary operator: a range, an inequality, or a logical join of them.
+          return false;
+
+        case ArgumentSyntax argument when _isOrdinalEqualsCall(argument):
+          return true;
+
+        case MemberAccessExpressionSyntax member when member.Expression == current:
+          return _isOrdinalEqualsCall(member);
+
+        case LambdaExpressionSyntax:
+        case ArgumentSyntax:
+          return false;
+
+        default:
+          continue;
+      }
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Whether a negation encloses this reference anywhere up to the predicate that holds it.
+  /// </summary>
+  /// <remarks>
+  /// Checked before the comparison rather than during the walk: the comparison is always the nearer
+  /// ancestor, so looking for the negation on the way past finds the equality first and never sees
+  /// the negation at all.
+  /// </remarks>
+  private static bool _isUnderNegation(SyntaxNode node) {
+    for (var current = node.Parent; current is not null; current = current.Parent) {
+      switch (current) {
+        case PrefixUnaryExpressionSyntax unary when unary.IsKind(SyntaxKind.LogicalNotExpression):
+          return true;
+        case LambdaExpressionSyntax:
+        case WhereClauseSyntax:
+        case MemberDeclarationSyntax:
+          return false;
+        default:
+          continue;
+      }
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Whether the enclosing call is <c>Equals</c> performing the ordinal comparison containment does.
+  /// A case-insensitive or culture-aware comparison is a different question and keeps the advisory.
+  /// </summary>
+  private static bool _isOrdinalEqualsCall(SyntaxNode node) {
+    var invocation = node.FirstAncestorOrSelf<InvocationExpressionSyntax>();
+    if (invocation?.Expression is not MemberAccessExpressionSyntax invoked
+        || !string.Equals(invoked.Name.Identifier.ValueText, "Equals", StringComparison.Ordinal)) {
+      return false;
+    }
+
+    foreach (var argument in invocation.ArgumentList.Arguments) {
+      var text = argument.Expression.ToString();
+      if (text.Contains("StringComparison", StringComparison.Ordinal)) {
+        return text.EndsWith(".Ordinal", StringComparison.Ordinal);
+      }
+    }
+
+    return true;
+  }
+
+  /// <summary>
+  /// The CLR types whose serialized form and PostgreSQL's generated form are the same text, which is
+  /// what makes a containment test equivalent to the equality it replaces.
+  /// </summary>
+  private static bool _isContainmentEligibleType(ITypeSymbol type) {
+    var bare = type is INamedTypeSymbol { IsGenericType: true, ConstructedFrom.SpecialType: SpecialType.System_Nullable_T } nullable
+      ? nullable.TypeArguments[0]
+      : type;
+
+    return bare.SpecialType switch {
+      SpecialType.System_String or SpecialType.System_Boolean or SpecialType.System_Int16
+        or SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Decimal => true,
+      _ => string.Equals(TypeNameUtilities.Display(bare), "System.Guid", StringComparison.Ordinal),
+    };
   }
 
   /// <summary>

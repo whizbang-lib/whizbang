@@ -42,7 +42,25 @@ public class PerspectiveFilterIndexAnalyzerTests {
         public string JsonOnly { get; init; } = string.Empty;
 
         public Guid AlsoJsonOnly { get; init; }
+
+        public int Num { get; init; }
+
+        public bool Flag { get; init; }
+
+        public decimal Money { get; init; }
+
+        public long Big { get; init; }
+
+        public short Small { get; init; }
+
+        public double Dbl { get; init; }
+
+        public DateTime When { get; init; }
+
+        public Mood State { get; init; }
       }
+
+      public enum Mood { Low, High }
 
       """;
 
@@ -69,7 +87,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Filter_OnJsonOnlyField_ReportsAsync() {
     var source = _repositoryOver("""
-            return _rows.Where(r => r.Data.JsonOnly == "x").ToList();
+            return _rows.Where(r => r.Data.JsonOnly.Contains("ab")).ToList();
       """);
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
@@ -89,7 +107,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Filter_OnPromotedButUnindexedField_ReportsAsync() {
     var source = _repositoryOver("""
-            return _rows.Where(r => r.Data.PromotedButNotIndexed == "x").ToList();
+            return _rows.Where(r => r.Data.PromotedButNotIndexed.Contains("ab")).ToList();
       """);
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
@@ -103,7 +121,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task Filter_OnTwoJsonOnlyFields_ReportsEachAsync() {
     var source = _repositoryOver("""
-            return _rows.Where(r => r.Data.JsonOnly == "x" && r.Data.AlsoJsonOnly == id).ToList();
+            return _rows.Where(r => r.Data.JsonOnly.Contains("ab") && r.Data.AlsoJsonOnly != id).ToList();
       """);
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
@@ -140,7 +158,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
         private readonly IQueryable<PerspectiveRow<ThingModel>> _rows = null!;
 
         public object Find(Guid id) =>
-          _rows.FirstOrDefaultAsync(r => r.Data.JsonOnly == "x");
+          _rows.FirstOrDefaultAsync(r => r.Data.JsonOnly.Contains("ab"));
       }
       """;
 
@@ -154,7 +172,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task QuerySyntaxWhere_OnJsonOnlyField_ReportsAsync() {
     var source = _repositoryOver("""
-            return (from r in _rows where r.Data.JsonOnly == "x" select r).ToList();
+            return (from r in _rows where r.Data.JsonOnly.Contains("ab") select r).ToList();
       """);
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
@@ -385,7 +403,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
         private readonly IQueryable<PerspectiveRow<PairModel>> _rows = null!;
 
         public object Find() =>
-          _rows.Where(r => r.Data.Excused == "a" && r.Data.NotExcused == "b").ToList();
+          _rows.Where(r => r.Data.Excused.Contains("a") && r.Data.NotExcused.Contains("b")).ToList();
       }
       """;
 
@@ -420,7 +438,97 @@ public class PerspectiveFilterIndexAnalyzerTests {
       public class SmallRepository {
         private readonly IQueryable<PerspectiveRow<SmallModel>> _rows = null!;
 
-        public object Find() => _rows.Where(r => r.Data.Region == "x").ToList();
+        public object Find() => _rows.Where(r => r.Data.Region.Contains("ab")).ToList();
       }
       """;
+
+  // ========================================
+  // Refocus: equality is already indexed, so the advisory is about what containment cannot serve
+  // ========================================
+
+  /// <summary>
+  /// An equality filter on a JSON-only scalar compiles to a containment test the GIN index answers,
+  /// so telling the author to promote the field would be wrong as well as noisy.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("r.Data.JsonOnly == \"x\"")]
+  [Arguments("\"x\" == r.Data.JsonOnly")]
+  [Arguments("r.Data.AlsoJsonOnly == id")]
+  [Arguments("r.Data.Num == 1")]
+  [Arguments("r.Data.Big == 1L")]
+  [Arguments("r.Data.Small == (short)1")]
+  [Arguments("r.Data.Money == 1.5m")]
+  [Arguments("r.Data.Flag == true")]
+  [Arguments("r.Data.JsonOnly.Equals(\"x\", System.StringComparison.Ordinal)")]
+  public async Task EqualityContainmentCanServe_IsNotReportedAsync(string predicate) {
+    var source = _repositoryOver($"""
+            return _rows.Where(r => {predicate}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty();
+  }
+
+  /// <summary>
+  /// Everything containment cannot express still forces a scan, and those are exactly the filters
+  /// the advisory now exists for.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("r.Data.Num > 1")]
+  [Arguments("r.Data.Num >= 1")]
+  [Arguments("r.Data.Num < 1")]
+  [Arguments("r.Data.Num <= 1")]
+  [Arguments("r.Data.JsonOnly != \"x\"")]
+  [Arguments("!(r.Data.JsonOnly == \"x\")")]
+  [Arguments("r.Data.JsonOnly == null")]
+  [Arguments("r.Data.JsonOnly.Contains(\"ab\")")]
+  [Arguments("r.Data.JsonOnly.StartsWith(\"ab\")")]
+  [Arguments("r.Data.JsonOnly.Equals(\"x\", System.StringComparison.OrdinalIgnoreCase)")]
+  [Arguments("r.Data.Dbl == 1.5")]
+  [Arguments("r.Data.When == when")]
+  [Arguments("r.Data.State == Mood.High")]
+  public async Task ShapesContainmentCannotServe_AreStillReportedAsync(string predicate) {
+    var source = _repositoryOver($"""
+            var when = System.DateTime.UnixEpoch;
+            return _rows.Where(r => {predicate}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsNotEmpty();
+  }
+
+  /// <summary>Ordering needs the value itself, which containment never supplies.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task OrderingOnAJsonOnlyField_IsStillReportedAsync() {
+    var source = _repositoryOver("""
+            return _rows.OrderBy(r => r.Data.JsonOnly).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// A compound predicate reports only the half containment cannot serve, so the author is pointed
+  /// at the field that actually needs a column.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task CompoundPredicate_ReportsOnlyTheUnservedHalfAsync() {
+    var source = _repositoryOver("""
+            return _rows.Where(r => r.Data.JsonOnly == "x" && r.Data.Num > 1).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    var reported = _whiz302(diagnostics).ToList();
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Num");
+  }
 }
