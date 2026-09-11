@@ -168,15 +168,22 @@ public class SlidingWindowApplyBatchStrategyTests {
   /// blocked worker keeps `Task.WhenAll` waiting until the caller's cancellation token
   /// fires, which exercises the OCE catch + CancelAsync path.
   /// </summary>
+  /// <remarks>
+  /// Both waits here are signals rather than durations. Sleeping to "let the flush start" and arming the caller's
+  /// token on a timer made this fail on a loaded runner, where the flush had not begun inside the sleep: the test
+  /// then asserted against a token no flush was ever handed, and read as a defect in the strategy.
+  /// </remarks>
   [Test]
   public async Task FlushAndStopAsync_CallerCanceled_CancelsStopCtsAsync() {
     var streamId = _idProvider.NewGuid();
     var keepFlushBusy = new TaskCompletionSource();
+    var flushStarted = new TaskCompletionSource();
     // The token the in-flight flush was handed — the strategy's own stop token.
     var flushToken = CancellationToken.None;
     var sut = new SlidingWindowApplyBatchStrategy(
       flush: async (_, _, ct) => {
         flushToken = ct;
+        flushStarted.TrySetResult();
         await keepFlushBusy.Task.ConfigureAwait(false);
       },
       options: new SlidingWindowApplyOptions {
@@ -185,11 +192,13 @@ public class SlidingWindowApplyBatchStrategyTests {
       });
 
     await sut.AppendAsync(streamId);
-    await Task.Delay(60);  // let the flush start
+    await flushStarted.Task;  // the flush is in flight and stuck, whatever the machine's load
 
-    using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+    using var cts = new CancellationTokenSource();
+    var stopping = sut.FlushAndStopAsync(cts.Token);
+    await cts.CancelAsync();  // the caller gives up while that flush is still blocked
     try {
-      await sut.FlushAndStopAsync(cts.Token);
+      await stopping;
     } catch (OperationCanceledException) {
       // expected when WaitAsync surfaces the cancellation
     }
