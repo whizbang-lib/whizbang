@@ -33,6 +33,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
+[Category("Shard1")]
 public class JsonIndexStandDownTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=standdown;Username=u;Password=p";
 
