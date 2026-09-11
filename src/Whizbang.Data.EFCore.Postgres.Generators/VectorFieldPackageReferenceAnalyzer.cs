@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </para>
 /// </remarks>
 /// <docs>operations/diagnostics/whiz070</docs>
-/// <docs>diagnostics/WHIZ071</docs>
+/// <docs>operations/diagnostics/whiz071</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorFieldPackageReferenceAnalyzerTests.cs</tests>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class VectorFieldPackageReferenceAnalyzer : DiagnosticAnalyzer {

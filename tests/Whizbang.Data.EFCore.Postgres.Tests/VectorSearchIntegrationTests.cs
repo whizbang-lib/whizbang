@@ -32,6 +32,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// Test model with two vector columns for column-comparison tests.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   public class VectorTestModel {
     [PhysicalField]
     public Guid Id { get; set; }
@@ -48,6 +49,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// Second test model for cross-table comparison tests.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   public class SecondVectorTestModel {
     [PhysicalField]
     public Guid Id { get; set; }

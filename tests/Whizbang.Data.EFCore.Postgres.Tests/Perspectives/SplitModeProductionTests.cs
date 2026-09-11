@@ -44,6 +44,7 @@ public class SplitModeProductionTests : IAsyncDisposable {
   /// Split-mode model with physical fields, vector field, AND nullable collection of structs.
   /// This is the exact production pattern that was crashing.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; its columns are configured through the DbContext rather than by attribute")]
   public class SplitProductionModel {
     public Guid TenantId { get; set; }
     public string Category { get; set; } = string.Empty;

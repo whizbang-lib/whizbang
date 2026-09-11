@@ -61,6 +61,7 @@ public class FullLinqSupportTests : IAsyncDisposable {
   /// <summary>
   /// Test model with various property types for comprehensive LINQ testing.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows and exists to exercise query translation")]
   public class CustomerOrder {
     public string CustomerName { get; set; } = string.Empty;
     public decimal TotalAmount { get; set; }

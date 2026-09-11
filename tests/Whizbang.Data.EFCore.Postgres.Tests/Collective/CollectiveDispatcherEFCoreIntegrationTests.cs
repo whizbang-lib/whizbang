@@ -437,6 +437,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     public DateTimeOffset? ArchivedAt { get; set; }
   }
 
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   internal sealed class _jobStatusModel {
     public string Status { get; set; } = string.Empty;
   }

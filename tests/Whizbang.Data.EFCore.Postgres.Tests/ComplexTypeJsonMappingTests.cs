@@ -52,6 +52,7 @@ public class ComplexTypeJsonMappingTests : IAsyncDisposable {
   /// <summary>
   /// Test model with both physical and JSONB-only fields.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   public class ProductModel {
     public string Name { get; set; } = string.Empty;
     public decimal Price { get; set; }

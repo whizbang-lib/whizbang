@@ -46,6 +46,7 @@ public class UnifiedQuerySyntaxTests : IAsyncDisposable {
   /// Physical fields: Name, Price, Category, IsActive
   /// JSONB-only fields: Description, Tags
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; its columns are configured through the DbContext rather than by attribute")]
   public class ProductModel {
     public string Name { get; init; } = string.Empty;
     public decimal Price { get; init; }
