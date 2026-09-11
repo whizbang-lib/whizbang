@@ -26,6 +26,9 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// <item>Anything but equality. Ranges, ordering and pattern matching cannot be expressed as
 /// containment at all.</item>
 /// <item>Members reached through a collection, where containment means subset rather than equality.</item>
+/// <item>A comparison anywhere but a filter. In a projection or an ordering the comparison's own
+/// value is surfaced, and an absent key reads as null from an extraction and as false from a
+/// containment test; inside a filter both exclude the row, so the difference cannot be observed.</item>
 /// <item>Types whose serialized text and PostgreSQL's generated text are not guaranteed to agree,
 /// which is every date and time type, enumerations, and binary floating point.</item>
 /// </list>
@@ -52,6 +55,57 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     && _model.FindDbFunction(JsonbContainment.Overloads[0]) is not null;
 
   private int _negationDepth;
+  private int _predicateDepth;
+
+  /// <summary>
+  /// The operators whose lambda argument decides which rows survive. Only inside one of these is a
+  /// comparison a filter, and only there do an extraction and a containment test agree.
+  /// </summary>
+  /// <remarks>
+  /// Matched by name, because the same names arrive from <c>Queryable</c>, <c>Enumerable</c> and
+  /// Entity Framework's asynchronous extensions. Projection and ordering operators are deliberately
+  /// absent: those surface the comparison's own value, and for a key that is absent an extraction
+  /// yields null where containment yields false. In a filter both exclude the row, so the difference
+  /// cannot be observed; in a projection or an ordering it can.
+  /// </remarks>
+  private static readonly HashSet<string> _predicateOperators = new(StringComparer.Ordinal) {
+    "Where", "Any", "All", "Count", "LongCount", "TakeWhile", "SkipWhile",
+    "First", "FirstOrDefault", "Single", "SingleOrDefault", "Last", "LastOrDefault",
+  };
+
+  /// <summary>
+  /// Enters a predicate scope for the lambda arguments of a filtering operator.
+  /// </summary>
+  /// <param name="node">The call being visited.</param>
+  /// <returns>The visited node.</returns>
+  protected override Expression VisitMethodCall(MethodCallExpression node) {
+    ArgumentNullException.ThrowIfNull(node);
+
+    var name = node.Method.Name;
+    if (name.EndsWith("Async", StringComparison.Ordinal)) {
+      name = name[..^"Async".Length];
+    }
+
+    if (!_predicateOperators.Contains(name) || node.Arguments.Count < 2) {
+      return base.VisitMethodCall(node);
+    }
+
+    // The source is not a predicate; the arguments after it are.
+    var source = Visit(node.Arguments[0]);
+    var arguments = new Expression[node.Arguments.Count];
+    arguments[0] = source;
+
+    _predicateDepth++;
+    try {
+      for (var i = 1; i < node.Arguments.Count; i++) {
+        arguments[i] = Visit(node.Arguments[i]);
+      }
+    } finally {
+      _predicateDepth--;
+    }
+
+    return node.Update(Visit(node.Object)!, arguments);
+  }
 
   /// <summary>
   /// Tracks negation, because that is where the two forms stop agreeing.
@@ -84,7 +138,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
   protected override Expression VisitBinary(BinaryExpression node) {
     ArgumentNullException.ThrowIfNull(node);
 
-    if (node.NodeType != ExpressionType.Equal || !_enabled || _negationDepth > 0) {
+    if (node.NodeType != ExpressionType.Equal || !_enabled || _negationDepth > 0 || _predicateDepth == 0) {
       return base.VisitBinary(node);
     }
 
