@@ -368,7 +368,40 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       await File.WriteAllTextAsync(target, report, cancellationToken);
     }
 
-    await Assert.That(report).IsNotEmpty();
+    string plan(string label) =>
+      lines.Find(l => l.StartsWith(label + ":", StringComparison.Ordinal))
+        ?? throw new InvalidOperationException($"no plan recorded for {label}");
+
+    // Two containment tests joined by AND become one index scan carrying both conditions, not two
+    // scans combined afterwards. This is why the rewrite emits them separately rather than folding
+    // them into a single document: the planner already does the folding, and the unfolded form
+    // additionally gets its selectivity estimated per condition.
+    await Assert.That(plan("and-two-tests")).Contains("Bitmap Index Scan", StringComparison.Ordinal);
+    await Assert.That(plan("and-two-tests").Split("Bitmap Index Scan").Length - 1).IsEqualTo(1)
+      .Because("both conditions belong to one index scan, which is why the rewrite emits a test "
+        + "per comparison instead of folding them into a single containment document. IF THIS "
+        + "ASSERTION FAILS BECAUSE THE PLANNER NOW USES A SCAN PER CONDITION, folding becomes worth "
+        + "doing and that decision should be revisited.");
+
+    // OR cannot fold, because containment is conjunctive, so it fans out and recombines. Both arms
+    // still reach the index, which is what makes an OR of equality filters viable at all.
+    await Assert.That(plan("or-two-tests")).Contains("BitmapOr", StringComparison.Ordinal);
+    await Assert.That(plan("or-two-tests").Split("Bitmap Index Scan").Length - 1).IsEqualTo(2);
+
+    // A range cannot be answered by the GIN index at any cost, and can be answered by a btree on the
+    // extraction. This pair is the whole case for offering expression indexes.
+    await Assert.That(plan("range-unindexed")).Contains("Seq Scan", StringComparison.Ordinal);
+    await Assert.That(plan("range-indexed")).Contains("Index Scan", StringComparison.Ordinal);
+    await Assert.That(plan("range-indexed")).Contains("idx_gin_probe_rank", StringComparison.Ordinal)
+      .Because("the index the extraction carries has to be the one the planner chooses");
+
+    // And the stored date text does not sort chronologically, which is why it cannot stand in as a
+    // btree key without changing the format first.
+    await Assert.That(plan("date-text-ordering")).Contains("fraction=f", StringComparison.Ordinal)
+      .Because("a whole second sorts after a fractional one, so the stored text cannot serve as a "
+        + "btree key for a range or an ordering. This is what a canonical stored form exists to fix. "
+        + "IF THIS ASSERTION FAILS BECAUSE THE DEFAULT RENDERING IS NOW FIXED WIDTH, the default "
+        + "form is already range-indexable and the canonical form is only a size optimization.");
   }
 
   /// <summary>

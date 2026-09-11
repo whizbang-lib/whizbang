@@ -342,7 +342,11 @@ public class PerspectiveDateFormatLockTests : IAsyncDisposable {
 
     await Assert.That(await _storedAsync(field, cancellationToken)).IsEqualTo(stored);
     await Assert.That(formatted).IsNotEqualTo(stored)
-      .Because("an infinity has to be produced by name, not by formatting an instant");
+      .Because("an infinity has to be produced by name, not by formatting an instant, which is why "
+        + "the emission carries an isfinite branch at all. That branch disappears once dates are "
+        + "stored as a number, because MaxValue in epoch microseconds is an ordinary integer. IF "
+        + "THIS ASSERTION FAILS BECAUSE to_char NOW RENDERS AN INFINITE TIMESTAMP USABLY, the branch "
+        + "can go without waiting for the format change.");
   }
 
   /// <summary>

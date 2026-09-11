@@ -110,6 +110,15 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     public Guid SortableId { get; init; }
 
     /// <summary>
+    /// An optional string, left unassigned. A null value and a string carrying a null character are
+    /// different problems, and only the second one has no representation in a document.
+    /// </summary>
+    public string? MaybeStr { get; init; }
+
+    /// <summary>An optional number, left unassigned, for the same reason.</summary>
+    public int? MaybeNum { get; init; }
+
+    /// <summary>
     /// A date stored in a fixed-width canonical rendering rather than the writer's default.
     /// </summary>
     /// <remarks>
@@ -556,7 +565,11 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
 
     var failure = await Assert.That(async () => await command.ExecuteScalarAsync(cancellationToken))
       .Throws<PostgresException>()
-      .Because("jsonb has no representation for a null character, so it is refused rather than stored");
+      .Because("jsonb has no representation for a null character, so it is refused rather than "
+        + "stored. Two decisions follow from this: a char is stored as its code point so that an "
+        + "unassigned one is an ordinary zero, and a string carrying a null is refused by the "
+        + "framework with the property named. IF THIS ASSERTION FAILS BECAUSE THE VALUE IS NOW "
+        + "ACCEPTED, both of those become unnecessary.");
 
     // The code depends on which path the value took in: a parameter is rejected as a character
     // outside the repertoire, while a document written with the escape spelled out is rejected as an
@@ -739,7 +752,11 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     // PostgreSQL rejects the index rather than building one that could silently go stale.
     await Assert.That(async () => await create.ExecuteNonQueryAsync(cancellationToken))
       .Throws<PostgresException>()
-      .Because($"a cast to {target} is not immutable, so no expression index can carry it");
+      .Because($"a cast to {target} is not immutable, so no expression index can carry it. This "
+        + "refusal is the entire reason the date and time family is stored as a number rather than "
+        + "as text: a number reaches an immutable cast and a timestamp does not. IF THIS ASSERTION "
+        + "FAILS BECAUSE POSTGRESQL NOW ACCEPTS THE INDEX, that storage decision was made to work "
+        + "around a limit that no longer exists and should be revisited.");
   }
 
   /// <summary>
@@ -799,7 +816,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
 
     foreach (var field in new[] {
       "Day", "Clock", "ClockFine", "Span", "SpanWithDays", "Letter", "Perms", "Unsupported",
-      "Tracked", "SortableId",
+      "Tracked", "SortableId", "MaybeStr", "MaybeNum",
     }) {
       var stored = await _scalarAsync($"SELECT data -> '{field}' FROM {TABLE}");
       var text = await _scalarAsync($"SELECT data ->> '{field}' FROM {TABLE}");
@@ -838,7 +855,60 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
       await File.WriteAllTextAsync(target, report, cancellationToken);
     }
 
-    await Assert.That(report).IsNotEmpty();
+    string recorded(string label) =>
+      lines.Find(l => l.StartsWith(label + ":", StringComparison.Ordinal)
+                      && !l.Contains(" :: ", StringComparison.Ordinal))
+        ?? throw new InvalidOperationException($"nothing recorded for {label}");
+
+    string destination(string label) =>
+      lines.Find(l => l.StartsWith(label + ":", StringComparison.Ordinal)
+                      && l.Contains(" :: ", StringComparison.Ordinal))
+        ?? throw new InvalidOperationException($"no destination recorded for {label}");
+
+    // The stored form of each remaining candidate, asserted rather than printed, because the
+    // canonical-format decisions in plans/lens-full-index-coverage.md are derived from exactly these
+    // strings. A change here invalidates that plan and should say so.
+    await Assert.That(recorded("Day")).IsEqualTo("Day: json=\"2026-03-04\" text=2026-03-04")
+      .Because("a date-only value is already fixed width, which is why it is the cheapest to adopt");
+    await Assert.That(recorded("Clock"))
+      .IsEqualTo("Clock: json=\"05:06:07.0000000\" text=05:06:07.0000000");
+    await Assert.That(recorded("ClockFine"))
+      .IsEqualTo("ClockFine: json=\"05:06:07.1234567\" text=05:06:07.1234567")
+      .Because("seven fractional digits, where a DateTime is written with six. This asymmetry is why "
+        + "TimeOnly is excluded from the eligible set: a time parameter carries six digits, so the "
+        + "seventh cannot be matched. IF THIS ASSERTION FAILS BECAUSE THE WRITER NOW TRUNCATES TO "
+        + "SIX, that exclusion is obsolete and TimeOnly should be reconsidered for eligibility.");
+    await Assert.That(recorded("Span")).IsEqualTo("Span: json=\"05:06:07\" text=05:06:07");
+    await Assert.That(recorded("SpanWithDays"))
+      .IsEqualTo("SpanWithDays: json=\"2 05:06:07.123\" text=2 05:06:07.123")
+      .Because("the day part appears only when non-zero and the fraction is trimmed, which is why "
+        + "reproducing this rendering in SQL was judged not worth attempting and TimeSpan is stored "
+        + "as a tick count instead. IF THIS ASSERTION FAILS BECAUSE THE RENDERING IS NOW FIXED "
+        + "WIDTH, reproducing it becomes cheap and that decision can be revisited.");
+    await Assert.That(recorded("Letter")).IsEqualTo("Letter: json=\"q\" text=q");
+    await Assert.That(recorded("Perms")).IsEqualTo("Perms: json=3 text=3")
+      .Because("a combinable enumeration stores the combined number, so equality against a "
+        + "combination is exact numeric equality");
+    await Assert.That(recorded("MaybeStr")).IsEqualTo("MaybeStr: json=null text=")
+      .Because("an optional value stores as a JSON null, so nullability is not what makes a string "
+        + "unstorable; only a null character in its content is");
+    await Assert.That(recorded("MaybeNum")).IsEqualTo("MaybeNum: json=null text=");
+
+    // Where each filter lands today. The two that matter are the pair on either side of the
+    // converter guard: an identifier held in a value object stores exactly what a bare one stores,
+    // and still loses the index.
+    await Assert.That(destination("Perms equality")).Contains("containment", StringComparison.Ordinal);
+    await Assert.That(destination("Perms bitwise")).Contains("extraction", StringComparison.Ordinal)
+      .Because("a flag test is not equality, so it must not be compiled into containment");
+    await Assert.That(destination("SortableId")).Contains("containment", StringComparison.Ordinal);
+    await Assert.That(destination("Tracked")).Contains("extraction", StringComparison.Ordinal)
+      .Because("an identifier held in a value object stores byte for byte what a bare one stores, "
+        + "and still loses the index, because the converter guard is a blanket one. THIS ASSERTION "
+        + "IS EXPECTED TO FAIL when the value-object phase of plans/lens-full-index-coverage.md "
+        + "lands: at that point the destination becomes containment and this line should be "
+        + "inverted rather than deleted.");
+    await Assert.That(destination("Unsupported")).Contains("extraction", StringComparison.Ordinal)
+      .Because("an enumeration over an unsigned number has no overload and must stand down");
   }
 
   /// <summary>
@@ -907,7 +977,35 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
       await File.WriteAllTextAsync(target, report, cancellationToken);
     }
 
-    await Assert.That(report).IsNotEmpty();
+    string recorded(string label) =>
+      lines.Find(l => l.StartsWith(label, StringComparison.Ordinal))
+        ?? throw new InvalidOperationException($"nothing recorded for {label}");
+
+    // jsonb compares numbers by value rather than by the text they were written as, which is why an
+    // integer or a decimal needs no normalization and only binary floating point does.
+    await Assert.That(recorded("valueNotText")).IsEqualTo("valueNotText: true");
+
+    // The rendering a cast to the store type produces is the shortest round-trip form, and it does
+    // not move with extra_float_digits. That is what makes the cast in the emission reliable rather
+    // than a guess that happened to work on one session.
+    foreach (var digits in new[] { "-1", "0", "1", "3" }) {
+      await Assert.That(recorded($"extra_float_digits={digits}"))
+        .IsEqualTo($"extra_float_digits={digits}: 0.1")
+        .Because("the float8 to jsonb conversion is not sensitive to the output setting");
+    }
+
+    // The finding the cast exists for: a literal arrives in seventeen digits while the row holds the
+    // shortest form, so without the cast the document would be built from a different number.
+    await Assert.That(recorded("double: on")).Contains("0.10000000000000001::double precision",
+      StringComparison.Ordinal)
+      .Because("the literal is rendered long and the cast is what normalizes it back");
+    await Assert.That(recorded("double: on")).StartsWith("double: on=1", StringComparison.Ordinal);
+    await Assert.That(recorded("double: off")).StartsWith("double: off=1", StringComparison.Ordinal);
+
+    // Single precision is where the rewrite corrects the form it replaces rather than preserving it.
+    await Assert.That(recorded("float: on")).StartsWith("float: on=1", StringComparison.Ordinal);
+    await Assert.That(recorded("float: off")).StartsWith("float: off=0", StringComparison.Ordinal)
+      .Because("the extraction widens both sides to double precision and finds nothing");
   }
 
   /// <summary>
