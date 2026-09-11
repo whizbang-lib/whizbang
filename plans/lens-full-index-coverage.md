@@ -191,6 +191,92 @@ WHIZ302 currently advises promoting a field to a column, which is the heaviest o
 already knows the filter shape, so it can name the fields that want `[JsonIndexed]` and reserve the
 promotion advice for cases that need a constraint or a foreign key.
 
+## Reshaping the translated SQL instead of the expression tree
+
+The rewrite currently happens on the LINQ tree: a comparison is replaced with a marker call before
+Entity Framework translates anything, and the marker's registered translation builds the containment
+test. The alternative is to let Entity Framework translate the query as it normally would and then
+reshape the result, turning `CAST(data ->> 'K' AS t) = <value>` into
+`data @> jsonb_build_object('K', <value>)`.
+
+### What it entails
+
+Subclass `RelationalQueryTranslationPostprocessor`, override `Process`, call the base implementation
+first and then run a visitor over what it returns. The ordering is the whole point: the base pass is
+where type mappings are assigned, so afterwards every node carries one. Register it by replacing
+`IQueryTranslationPostprocessorFactory` from `UseWhizbangJsonbContainment`.
+
+The visitor reshapes a comparison only in a predicate position, which at this level is a structural
+fact rather than an inference: `SelectExpression.Predicate`, a join's predicate, and a `Having`
+clause are predicates, and a projection is not.
+
+### Why it is worth considering
+
+**It makes value converters correct for free, which is the thing the current design cannot do.** By
+the time the translated tree exists, Entity Framework has applied the converter to *both* sides of the
+comparison. An identifier held in a value object arrives as the identifier; a number configured to
+store as text arrives as that text. Reshaping either produces a document built in exactly the stored
+form, so there is nothing to convert by hand and no mapping to invent. That is the whole of the
+reverted value-object phase, and it also removes the class of bug the converter guard exists to
+prevent rather than merely guarding against it.
+
+**It removes the type dispatch.** No overload per type, no `OverloadFor`, no eligibility list, no
+agreement required between the rewriter and the emission, and no planted conversion to see through.
+Whatever Entity Framework produced is reshaped.
+
+**It narrows what has to agree.** Today the rewriter and the emission must reach the same conclusion
+about a stored form, and the analyzer must reach it a third time. A reshape has one place.
+
+### What it costs, and one correction
+
+**It does not solve the date problem, and I said earlier that it did.** That was wrong. Entity
+Framework renders a date parameter as a timestamp, so a reshaped date comparison would build
+`jsonb_build_object('When', <timestamptz>)`, whose text is PostgreSQL's ISO form with an explicit
+offset rather than the trailing `Z` the serializer writes. Stored-form agreement is a separate
+problem from type dispatch, and only the canonical format fixes it. The two changes are
+complementary, not substitutes.
+
+**It would lose a capability unless it stays a hybrid.** The one place this framework does more than
+Entity Framework is `Equals(value, StringComparison.Ordinal)`, which Entity Framework refuses to
+translate at all. Intercepting it depends on seeing the LINQ tree; after translation it has already
+thrown. So the expression-tree rewriter has to stay for that, and the change is an addition rather
+than a replacement.
+
+**It goes deeper into internals.** `PgUnknownBinaryExpression` is already an internal seam. Replacing
+a translation postprocessor and reconstructing a `SelectExpression` is more of that surface, which
+makes the version pin in `ProviderCapabilities` matter more rather than less.
+
+**It replaces a mechanism that currently has 1040 green cases.** That is the strongest argument for
+caution and also, as below, the strongest tool for managing it.
+
+### Reducing the risk
+
+**Two spike gates, and abandon if either fails.** First, that a visitor running after the base pass
+sees type mappings assigned on every node, which is the claim the whole idea rests on. Second, that a
+`SelectExpression` predicate can actually be replaced from that position: the type is close to
+immutable by design and the update surface may not permit it. Neither is worth guessing about, and
+failing the second means the idea is dead rather than merely harder.
+
+**Run both mechanisms against the same matrix.** The 1040 cases assert where a filter landed by
+reading compiled SQL, which makes them indifferent to how it got there. Parameterizing them over the
+mechanism doubles the suite and turns any divergence into a named failing case rather than a
+production surprise. This is the single most valuable thing available and it costs almost nothing,
+because the asset already exists.
+
+**Keep the execution tests per mechanism.** Asserting on generated SQL cannot distinguish a valid
+statement from an invalid one, which this work has already been caught by once. The on-versus-off row
+comparisons have to run against the new path too.
+
+**Three-state configuration rather than two.** Off, expression tree, translated tree, defaulting to
+the current mechanism until the new one has been green in continuous integration for a release. The
+existing switch already proves the plumbing for a default-on flag.
+
+**Sequence it before the canonical formats, not after.** Phase 1 adds a converter to every date
+property, and converters are exactly what the current mechanism handles badly and this one handles for
+free. Doing Phase 1 first means teaching the current emission about canonical date converters and
+then deleting that work; doing this first means Phase 1's converters simply work, and the date
+rendering it still needs is the only part left to build.
+
 ## Decisions taken
 
 1. **Opt-in per field, with a perspective-level option to index everything.** A field carries
