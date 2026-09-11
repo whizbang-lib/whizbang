@@ -31,7 +31,7 @@ public static class PerspectiveRowCapRegistry {
   /// A snapshot of every model registered across the loaded assemblies, for the startup sync.
   /// </summary>
   public static IReadOnlyList<KeyValuePair<Type, RowCapRegistration>> RegisteredModels() =>
-    [.. _capsByModel];
+    _capsByModel.ToArray();
 }
 
 /// <summary>One perspective's declared cap and the scope key partitioning its ranking.</summary>

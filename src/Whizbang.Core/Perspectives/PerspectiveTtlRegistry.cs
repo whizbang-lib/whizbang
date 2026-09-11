@@ -35,9 +35,14 @@ public static class PerspectiveTtlRegistry {
   /// perspectives: assembly scanning needs reflection, which is exactly what the source-generated
   /// self-registration pattern exists to avoid. Returns a snapshot, so it is safe to enumerate
   /// while further assemblies initialize.
+  /// <para>
+  /// ToArray, not a collection expression: a collection expression over a ConcurrentDictionary reads Count,
+  /// allocates, then copies, and the copy throws if a registration lands in between. ConcurrentDictionary.ToArray
+  /// takes the dictionary's own locks and is the only accessor that actually delivers the snapshot promised above.
+  /// </para>
   /// </remarks>
   public static IReadOnlyList<KeyValuePair<Type, int>> RegisteredModels() =>
-    [.. _ttlSecondsByModel];
+    _ttlSecondsByModel.ToArray();
 
   private static volatile bool _enabled = true;
   private static volatile Dictionary<string, int?>? _runtimeOverrides;
