@@ -447,6 +447,51 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     await Assert.That(projected[0]).IsEqualTo(needle);
   }
 
+  /// <summary>
+  /// Why rewriting the <c>StringComparison.Ordinal</c> overload is not merely convenient: containment
+  /// actually delivers the semantics that overload asks for, and an extraction does not.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Entity Framework refuses to translate <c>string.Equals(value, StringComparison)</c> at all, and
+  /// the refusal is principled: it would have to compile to <c>=</c> on text, whose meaning follows
+  /// the collation in force. Under a case-insensitive collation that comparison is case-insensitive,
+  /// which is not what the caller asked for.
+  /// </para>
+  /// <para>
+  /// Containment compares values inside the document rather than as collated text, so it is exact
+  /// whatever the collation says. That is ordinal, which is what the overload requested. So the
+  /// rewrite is not doing something Entity Framework declined out of caution; it is doing the thing
+  /// Entity Framework had no correct way to express.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ContainmentIsOrdinal_WhereAnExtractionFollowsTheCollationAsync(CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    await _execAsync(db, """
+      CREATE COLLATION IF NOT EXISTS case_insensitive
+        (provider = icu, locale = 'und-u-ks-level2', deterministic = false);
+      """);
+
+    // The same stored value and the same candidate, differing only in case.
+    var byExtraction = await _scalarAsync(db, """
+      SELECT count(*) FROM (SELECT '{"t":"ABC"}'::jsonb AS data) s
+      WHERE (s.data ->> 't') COLLATE case_insensitive = 'abc'
+      """);
+
+    var byContainment = await _scalarAsync(db, """
+      SELECT count(*) FROM (SELECT '{"t":"ABC"}'::jsonb AS data) s
+      WHERE s.data @> '{"t":"abc"}'
+      """);
+
+    // The extraction follows the collation and matches; containment is exact and does not.
+    await Assert.That(byExtraction).IsEqualTo(1L);
+    await Assert.That(byContainment).IsEqualTo(0L);
+  }
+
   private static string _migrationPath(string fileName) => Path.Combine(
     AppContext.BaseDirectory, "..", "..", "..", "..", "..",
     "src", "Whizbang.Data.Postgres", "Migrations", fileName);
