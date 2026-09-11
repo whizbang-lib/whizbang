@@ -49,6 +49,9 @@ public class JsonIndexUsageTests : IAsyncDisposable {
 
   public enum Grade { Low = 0, Mid = 1, High = 2 }
 
+  /// <summary>Almost no random identifier sorts above this, which makes a range over one selective.</summary>
+  private static readonly Guid _nearMaximumReference = new("ffffffff-ffff-ffff-ffff-fffffffffff0");
+
   [SuppressIndexAdvisory("this fixture exists to compare an indexed extraction with an unindexed one")]
   public class IndexModel {
     public string Title { get; init; } = string.Empty;
@@ -209,6 +212,12 @@ public class JsonIndexUsageTests : IAsyncDisposable {
       "double" => (r => r.Data.Dbl > 39990d, "Dbl", JsonIndexCast.Float8),
       "float" => (r => r.Data.Flt > 39990f, "Flt", JsonIndexCast.Float4),
       "enum" => (r => r.Data.Level > Grade.Mid, "Level", JsonIndexCast.Int4),
+      // An identifier compares through CompareTo, which is how a cursor page over one is written.
+      // The bound is near the top of the range on purpose: the seeded references are random, so a
+      // comparison against the empty identifier matches every row and a sequential scan is then
+      // correctly the cheaper plan. That would fail this test for a reason that has nothing to do
+      // with the index expression being right.
+      "guid" => (r => r.Data.Reference.CompareTo(_nearMaximumReference) > 0, "Reference", JsonIndexCast.Uuid),
       _ => throw new InvalidOperationException(type),
     };
 
@@ -231,6 +240,7 @@ public class JsonIndexUsageTests : IAsyncDisposable {
   [Arguments("double")]
   [Arguments("float")]
   [Arguments("enum")]
+  [Arguments("guid")]
   public async Task TheGeneratedIndexExpression_IsTheOneAQueryUsesAsync(
     string type, CancellationToken cancellationToken) {
     var (filter, key, cast) = _caseFor(type);

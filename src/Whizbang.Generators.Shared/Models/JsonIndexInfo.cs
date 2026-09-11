@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 
 namespace Whizbang.Generators.Shared.Models;
@@ -135,5 +136,41 @@ public static class JsonIndexSql {
     var storeType = StoreType(cast);
 
     return storeType is null ? extraction : $"({extraction}::{storeType})";
+  }
+
+  /// <summary>
+  /// The index statements a declared field needs, one per kind, idempotent so the schema pass can run
+  /// on every start.
+  /// </summary>
+  /// <param name="index">The field's declaration.</param>
+  /// <param name="qualifiedTable">The table, schema-qualified.</param>
+  /// <param name="indexPrefix">A prefix making the index names unique to the table.</param>
+  /// <returns>One statement per declared kind.</returns>
+  /// <remarks>
+  /// A trigram index is a wholly different thing from a btree and not a variant of one: a different
+  /// access method, a different operator class, and it answers substring matching rather than
+  /// ordering. Hence one statement each rather than one statement with options.
+  /// </remarks>
+  public static IEnumerable<string> CreateStatements(
+      JsonIndexInfo index, string qualifiedTable, string indexPrefix) {
+    if (index is null) {
+      yield break;
+    }
+
+    var element = Expression("data", index.JsonKey, index.Cast);
+    var suffix = index.JsonKey.ToLowerInvariant();
+
+    if (index.Btree) {
+      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}_json "
+          + $"ON {qualifiedTable} ({element});";
+    }
+
+    if (index.Trigram) {
+      // Requires pg_trgm. Created alongside rather than assumed, so a consumer who declares a
+      // trigram index does not have to know that.
+      yield return "CREATE EXTENSION IF NOT EXISTS pg_trgm;";
+      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}_trgm "
+          + $"ON {qualifiedTable} USING gin ({element} gin_trgm_ops);";
+    }
   }
 }
