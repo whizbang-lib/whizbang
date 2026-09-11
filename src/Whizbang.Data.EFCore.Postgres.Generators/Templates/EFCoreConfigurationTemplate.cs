@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Postgres.Configuration;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres.Generated;
@@ -47,6 +48,13 @@ public static class WhizbangModelBuilderExtensions {
     // ===== Discovered Perspective Entities =====
     // Perspective configurations injected here by source generator
     #endregion
+
+    // Registers the jsonb containment translations. A perspective filter on a property that has no
+    // physical column would otherwise compile to a text extraction, which the GIN index on the data
+    // column cannot answer; with these registered it compiles to a containment test, which it can.
+    // Only equality on a non-null scalar is rewritten, and only in a positive position: see
+    // JsonbContainmentRewriter for why negation and null comparisons keep the extraction form.
+    modelBuilder.UseWhizbangJsonbContainment();
 
     return modelBuilder;
   }

@@ -32,8 +32,14 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   /// before compilation.
   /// </summary>
   public Expression QueryCompilationStarting(Expression queryExpression, QueryExpressionEventData eventData) {
-    // Apply our visitor to transform r.Data.PropertyName to EF.Property(r, "column")
-    // Apply our visitor to transform r.Data.PropertyName to EF.Property(r, "column")
-    return _visitor.Visit(queryExpression);
+    ArgumentNullException.ThrowIfNull(eventData);
+
+    // First, redirect promoted properties to their real columns.
+    var rewritten = _visitor.Visit(queryExpression);
+
+    // Then compile what is left, which is genuinely JSON, into a containment test where that is
+    // equivalent. Order matters: a promoted property is already an EF.Property call by now, so the
+    // containment pass cannot see it and cannot claim it.
+    return new JsonbContainmentRewriter(eventData.Context?.Model).Visit(rewritten);
   }
 }
