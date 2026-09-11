@@ -39,6 +39,13 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
 
   public enum Mood { Low = 0, High = 1 }
 
+  /// <summary>A combinable enumeration, where a stored value is a set rather than one member.</summary>
+  [Flags]
+  public enum Access { None = 0, Read = 1, Write = 2, Both = Read | Write }
+
+  /// <summary>An enumeration over a number no overload accepts.</summary>
+  public enum Tier : uint { First = 1 }
+
   [SuppressIndexAdvisory("probe fixture; one row, read back to see what the mapping wrote")]
   public class ProbeModel {
     public Mood State { get; init; }
@@ -65,6 +72,20 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     // An ALREADY-eligible type with a converter. If this stores as text while the rewrite builds a
     // numeric document, then the shipped rewrite is silently wrong on such a model.
     public int ConvertedNum { get; init; }
+
+    // The remaining date and time family, plus the two enumeration shapes the equality overloads do
+    // not obviously cover. Each is here to be read back rather than reasoned about.
+    public DateOnly Day { get; init; }
+    public TimeOnly Clock { get; init; }
+    public TimeOnly ClockFine { get; init; }
+    public TimeSpan Span { get; init; }
+    public TimeSpan SpanWithDays { get; init; }
+    public char Letter { get; init; }
+
+    /// <summary>Two flags set at once, which is the case a single-member comparison does not describe.</summary>
+    public Access Perms { get; init; }
+
+    public Tier Unsupported { get; init; }
 
     // How much of the serialized form is stable? The fraction is what decides whether a SQL-side
     // format string can reproduce it.
@@ -165,6 +186,14 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
         Millis = new DateTime(2026, 3, 4, 5, 6, 7, 123, DateTimeKind.Utc),
         Ticks = new DateTime(638_700_000_001_234_567L, DateTimeKind.Utc),
         TrailingZeros = new DateTime(2026, 3, 4, 5, 6, 7, 100, DateTimeKind.Utc),
+        Day = new DateOnly(2026, 3, 4),
+        Clock = new TimeOnly(5, 6, 7),
+        ClockFine = new TimeOnly(5, 6, 7).Add(TimeSpan.FromTicks(1_234_567)),
+        Span = new TimeSpan(5, 6, 7),
+        SpanWithDays = new TimeSpan(2, 5, 6, 7, 123),
+        Letter = 'q',
+        Perms = Access.Read | Access.Write,
+        Unsupported = Tier.First,
       },
       Metadata = new PerspectiveMetadata(),
       Scope = new PerspectiveScope(),
@@ -363,6 +392,59 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     // eligible set is pinned by JsonbContainmentTypeSetTests, and a type only moves into it once the
     // two text forms here are shown to agree.
     await Assert.That(line).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// Records what the remaining date, time and enumeration shapes land as, and whether a filter on
+  /// each currently reaches the index. The next eligibility decisions rest on this.
+  /// </summary>
+  /// <remarks>
+  /// No expectation is asserted beyond the report being produced. Two assumptions about stored forms
+  /// have already turned out wrong in this area, so the list of candidates is measured before anything
+  /// is claimed about it.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task RemainingCandidates_AreRecordedAsync(CancellationToken cancellationToken) {
+    var lines = new List<string>();
+
+    foreach (var field in new[] {
+      "Day", "Clock", "ClockFine", "Span", "SpanWithDays", "Letter", "Perms", "Unsupported",
+    }) {
+      var stored = await _scalarAsync($"SELECT data -> '{field}' FROM {TABLE}");
+      var text = await _scalarAsync($"SELECT data ->> '{field}' FROM {TABLE}");
+      lines.Add($"{field}: json={stored} text={text}");
+    }
+
+    // Whether a filter on each reaches the index today, which is a separate question from whether the
+    // stored form would allow it to.
+    foreach (var (name, sql) in new[] {
+      ("Day", _context!.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Day == new DateOnly(2026, 3, 4)).ToQueryString()),
+      ("Clock", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Clock == new TimeOnly(5, 6, 7)).ToQueryString()),
+      ("Span", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Span == new TimeSpan(5, 6, 7)).ToQueryString()),
+      ("Letter", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Letter == 'q').ToQueryString()),
+      ("Perms equality", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Perms == Access.Both).ToQueryString()),
+      ("Perms bitwise", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => (r.Data.Perms & Access.Read) == Access.Read).ToQueryString()),
+      ("Unsupported", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Unsupported == Tier.First).ToQueryString()),
+    }) {
+      var form = sql.Contains("@>", StringComparison.Ordinal) ? "containment" : "extraction";
+      lines.Add($"{name}: {form} :: {sql.Split('\n')[^1].Trim()}");
+    }
+
+    var report = string.Join('\n', lines);
+    var target = Environment.GetEnvironmentVariable("WHIZ_CANDIDATES_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, report, cancellationToken);
+    }
+
+    await Assert.That(report).IsNotEmpty();
   }
 
   /// <summary>

@@ -28,9 +28,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [Category("Shard1")]
 public class JsonbContainmentTypeSetTests {
   /// <summary>
-  /// Exactly these types, and the reason each is here: the text the serializer writes and the text
-  /// PostgreSQL generates for the same value are the same, so a containment test means what the
-  /// equality it replaces meant.
+  /// Exactly these types, and the reason each is here: the value the serializer writes and the value
+  /// PostgreSQL generates for the same input are the same, so a containment test means what the
+  /// equality it replaces meant. A number is compared by value, so trailing digits do not matter; a
+  /// date is compared as a string and is rendered into the stored text deliberately, with the format
+  /// locked on both sides by PerspectiveDateFormatLockTests.
   /// </summary>
   [Test]
   public async Task EligibleTypes_AreExactlyTheOnesWhoseTextFormsAgreeAsync() {
@@ -39,7 +41,7 @@ public class JsonbContainmentTypeSetTests {
     var expected = new[] {
       typeof(string), typeof(Guid), typeof(bool),
       typeof(short), typeof(int), typeof(long), typeof(decimal),
-      typeof(double), typeof(float), typeof(byte),
+      typeof(double), typeof(float), typeof(byte), typeof(DateTime),
     }.Select(t => t.FullName!).OrderBy(n => n, StringComparer.Ordinal).ToArray();
 
     var actual = JsonbContainment.Overloads
@@ -52,13 +54,16 @@ public class JsonbContainmentTypeSetTests {
 
   /// <summary>
   /// The excluded types, named so that adding one is a deliberate act with a reason rather than an
-  /// oversight. The date and time family is excluded for two different reasons, both measured: a
-  /// DateTime is written with a trailing Z where PostgreSQL generates an explicit offset, and a
-  /// DateTimeOffset preserves the offset it was written with while equality compares instants, so
-  /// two values equal in .NET can be stored as different text.
+  /// oversight.
   /// </summary>
+  /// <remarks>
+  /// A DateTimeOffset is the one exclusion that is not about effort. Its stored text preserves the
+  /// offset the row was written with, while equality compares instants, so one instant corresponds to
+  /// many stored texts that are all equal to it and no rendering of that instant can produce them
+  /// all. A DateTime has no such ambiguity, which is why it is eligible and this is not. The
+  /// remaining types simply have no overload yet; nothing measured rules them out.
+  /// </remarks>
   [Test]
-  [Arguments(typeof(DateTime))]
   [Arguments(typeof(DateTimeOffset))]
   [Arguments(typeof(DateOnly))]
   [Arguments(typeof(TimeOnly))]

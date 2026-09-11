@@ -57,7 +57,11 @@ public class PerspectiveFilterIndexAnalyzerTests {
 
         public DateTime When { get; init; }
 
+        public float Single { get; init; }
+
         public Mood State { get; init; }
+
+        public DateTimeOffset WhenOffset { get; init; }
       }
 
       public enum Mood { Low, High }
@@ -461,8 +465,13 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Arguments("r.Data.Money == 1.5m")]
   [Arguments("r.Data.Flag == true")]
   [Arguments("r.Data.JsonOnly.Equals(\"x\", System.StringComparison.Ordinal)")]
+  [Arguments("r.Data.Dbl == 1.5")]
+  [Arguments("r.Data.Single == 1.5f")]
+  [Arguments("r.Data.State == Mood.High")]
+  [Arguments("r.Data.When == when")]
   public async Task EqualityContainmentCanServe_IsNotReportedAsync(string predicate) {
     var source = _repositoryOver($"""
+            var when = System.DateTime.UnixEpoch;
             return _rows.Where(r => {predicate}).ToList();
       """);
 
@@ -487,12 +496,12 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Arguments("r.Data.JsonOnly.Contains(\"ab\")")]
   [Arguments("r.Data.JsonOnly.StartsWith(\"ab\")")]
   [Arguments("r.Data.JsonOnly.Equals(\"x\", System.StringComparison.OrdinalIgnoreCase)")]
-  [Arguments("r.Data.Dbl == 1.5")]
-  [Arguments("r.Data.When == when")]
-  [Arguments("r.Data.State == Mood.High")]
+  [Arguments("r.Data.WhenOffset == offset")]
+  [Arguments("r.Data.When > when")]
   public async Task ShapesContainmentCannotServe_AreStillReportedAsync(string predicate) {
     var source = _repositoryOver($"""
             var when = System.DateTime.UnixEpoch;
+            var offset = System.DateTimeOffset.UnixEpoch;
             return _rows.Where(r => {predicate}).ToList();
       """);
 

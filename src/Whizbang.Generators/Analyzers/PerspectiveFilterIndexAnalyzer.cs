@@ -289,17 +289,39 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// The CLR types whose serialized form and PostgreSQL's generated form are the same text, which is
-  /// what makes a containment test equivalent to the equality it replaces.
+  /// The CLR types a perspective filter can be compiled into a containment test for, which is what
+  /// makes the advisory unnecessary: the filter is already a lookup rather than a scan.
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This list is the same one <c>JsonbContainment.OverloadFor</c> holds, and the duplication is
+  /// forced: an analyzer is referenced as an analyzer rather than as a library, so this assembly
+  /// cannot see that one. Each side pins its own list in a test and names the other.
+  /// <c>JsonbContainmentTypeSetTests</c> is the counterpart.
+  /// </para>
+  /// <para>
+  /// Disagreeing with that list costs an advisory rather than an answer. Naming a type here that the
+  /// rewrite does not handle leaves a scanning filter with no warning; omitting one it does handle
+  /// warns about a filter that is already indexed.
+  /// </para>
+  /// </remarks>
   private static bool _isContainmentEligibleType(ITypeSymbol type) {
     var bare = type is INamedTypeSymbol { IsGenericType: true, ConstructedFrom.SpecialType: SpecialType.System_Nullable_T } nullable
       ? nullable.TypeArguments[0]
       : type;
 
+    // An enumeration is stored as its underlying number and compared through that overload, so it is
+    // eligible exactly when the number is. An underlying type without an overload, such as an
+    // unsigned one, therefore falls through to false rather than being assumed eligible.
+    if (bare.TypeKind == TypeKind.Enum && bare is INamedTypeSymbol { EnumUnderlyingType: { } underlying }) {
+      bare = underlying;
+    }
+
     return bare.SpecialType switch {
       SpecialType.System_String or SpecialType.System_Boolean or SpecialType.System_Int16
-        or SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Decimal => true,
+        or SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Decimal
+        or SpecialType.System_Double or SpecialType.System_Single or SpecialType.System_Byte
+        or SpecialType.System_DateTime => true,
       _ => string.Equals(TypeNameUtilities.Display(bare), "System.Guid", StringComparison.Ordinal),
     };
   }

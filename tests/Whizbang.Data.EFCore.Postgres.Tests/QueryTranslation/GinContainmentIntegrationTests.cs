@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -41,7 +42,14 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
     public string Title { get; init; } = string.Empty;
     public Guid TenantId { get; init; }
     public int Rank { get; init; }
+
+    /// <summary>A date, which reaches the index through a rendering rather than through the value.</summary>
+    public DateTime OccurredAt { get; init; }
   }
+
+  // One row in the table carries this instant, so a filter on it is genuinely selective. It has a
+  // fractional part, which is the case where the rendering has to trim.
+  private static readonly DateTime _needleInstant = new(2026, 3, 4, 5, 6, 7, 123, DateTimeKind.Utc);
 
   private sealed class GinDbContext(DbContextOptions<GinDbContext> options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
@@ -114,6 +122,11 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
       // The shipped wiring, so these tests exercise the real rewrite rather than a local imitation
       // of it. Without this the fixture proved only that the SQL shape works if something emits it.
       .UseWhizbangPhysicalFields()
+      // Every test here gets its own database, so the options cannot be shared the way a fixture
+      // over one schema would share them, and each instance asks Entity Framework for another
+      // internal service provider. Past twenty of those it raises this as an error, which fails the
+      // whole class in a full run while passing when the class runs alone.
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options);
 
     _needleTenant = Guid.NewGuid();
@@ -126,6 +139,7 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
           Title = i == 0 ? "needle" : $"hay-{i.ToString(CultureInfo.InvariantCulture)}",
           TenantId = i == 0 ? _needleTenant : Guid.NewGuid(),
           Rank = i,
+          OccurredAt = i == 0 ? _needleInstant : _needleInstant.AddDays(i),
         },
         Metadata = new PerspectiveMetadata(),
         Scope = new PerspectiveScope(),
@@ -240,6 +254,145 @@ public class GinContainmentIntegrationTests : IAsyncDisposable {
 
     await Assert.That(extractionPlan).Contains("Seq Scan", StringComparison.Ordinal);
     await Assert.That(extractionPlan).DoesNotContain("idx_gin_probe_data", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// A date filter reaches the index too, even though the value on the right of the operator is a
+  /// rendering of the instant rather than the instant.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the question a date raises that no other eligible type does. A number or an identifier
+  /// is handed to <c>jsonb_build_object</c> as it stands; a date has to be formatted into the text
+  /// the document holds, and that formatting is built from <c>to_char</c>, which PostgreSQL declares
+  /// STABLE rather than IMMUTABLE. A stable expression cannot appear in an index definition, which
+  /// invites the assumption that it cannot be used with an index either. It can: the planner
+  /// evaluates it once per statement and treats the result as a run-time constant, so the bitmap
+  /// index scan is still available.
+  /// </para>
+  /// <para>
+  /// Asserted through the shipped wiring on a table large enough for a sequential scan to be the
+  /// genuinely cheaper plan if the index were unusable, because that is the only way the assertion
+  /// means anything. The row count is checked alongside the plan, since an index scan that returns
+  /// the wrong rows is worse than a sequential one that returns the right ones.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ADateFilterUsesTheGinIndexAsync(CancellationToken cancellationToken) {
+    var sql = _context!.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.OccurredAt == _needleInstant)
+      .ToQueryString();
+
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal);
+
+    var found = await _context.Set<PerspectiveRow<CatalogModel>>()
+      .Where(r => r.Data.OccurredAt == _needleInstant)
+      .Select(r => r.Id)
+      .ToListAsync(cancellationToken);
+
+    await Assert.That(found).Count().IsEqualTo(1)
+      .Because("the rendering has to produce the text the row holds");
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    var plan = await _explainDateAsync(db, _needleInstant);
+
+    await Assert.That(plan).Contains("idx_gin_probe_data", StringComparison.Ordinal)
+      .Because("a stable expression on the right of the operator is still a run-time constant");
+    await Assert.That(plan).Contains("Bitmap Index Scan", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// Records how the planner treats composed predicates and ranges, which is what decides whether
+  /// there is anything left to win for them.
+  /// </summary>
+  /// <remarks>
+  /// Four separate questions, none of which can be answered by reading generated SQL. Whether two
+  /// containment tests joined by AND use the index twice or fold into one probe; whether OR does;
+  /// whether a range over a JSON member can be indexed at all; and whether the stored date text can
+  /// be range-scanned as text, which depends on its ordering being chronological.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ComposedPredicatesAndRanges_AreRecordedAsync(CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    var lines = new List<string>();
+
+    async Task<string> planAsync(string label, string where) {
+      await using var command = new NpgsqlCommand(
+        $"EXPLAIN (FORMAT TEXT) SELECT id FROM {TABLE} WHERE {where}", db);
+      var rows = new List<string>();
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        rows.Add(reader.GetString(0).Trim());
+      }
+
+      var plan = string.Join(" | ", rows);
+      lines.Add($"{label}: {plan}");
+      return plan;
+    }
+
+    // Two containment tests ANDed, as the rewrite emits them today, against the same pair folded into
+    // one document. The question is whether folding buys a probe.
+    await planAsync("and-two-tests",
+      "data @> jsonb_build_object('Title', 'needle') AND data @> jsonb_build_object('Rank', 0)");
+    await planAsync("and-folded",
+      "data @> jsonb_build_object('Title', 'needle', 'Rank', 0)");
+    await planAsync("or-two-tests",
+      "data @> jsonb_build_object('Title', 'needle') OR data @> jsonb_build_object('Title', 'hay-7')");
+
+    // A range over a JSON member, before and after a btree index on the extraction. The cast has to be
+    // immutable for such an index to be allowed at all.
+    await planAsync("range-unindexed", "(data ->> 'Rank')::int > 199000");
+    await _execAsync(db, $"CREATE INDEX idx_gin_probe_rank ON {TABLE} (((data ->> 'Rank')::int))");
+    await _execAsync(db, $"ANALYZE {TABLE}");
+    await planAsync("range-indexed", "(data ->> 'Rank')::int > 199000");
+
+    // And whether a date can be range-scanned as stored text, which needs the text ordering to agree
+    // with the chronological one. The variable-width fraction is what puts that in doubt.
+    await using (var ordering = new NpgsqlCommand("""
+      SELECT format('whole<fraction=%s next-second>fraction=%s',
+        ('2026-03-04T05:06:07Z' < '2026-03-04T05:06:07.1Z' COLLATE "C"),
+        ('2026-03-04T05:06:08Z' > '2026-03-04T05:06:07.1Z' COLLATE "C"))
+      """, db)) {
+      lines.Add($"date-text-ordering: {await ordering.ExecuteScalarAsync(cancellationToken)}");
+    }
+
+    var report = string.Join('\n', lines);
+    var target = Environment.GetEnvironmentVariable("WHIZ_COMPOSE_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, report, cancellationToken);
+    }
+
+    await Assert.That(report).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// The plan for the date form, spelled the way the translation emits it so the plan being read is
+  /// the plan the framework produces.
+  /// </summary>
+  private static async Task<string> _explainDateAsync(NpgsqlConnection db, DateTime value) {
+    await using var command = new NpgsqlCommand($"""
+      EXPLAIN (FORMAT TEXT) SELECT id FROM {TABLE}
+      WHERE data @> jsonb_build_object('OccurredAt', CASE
+        WHEN isfinite(@p) THEN to_jsonb(concat(rtrim(rtrim(to_char(
+          timezone('UTC', @p), 'YYYY-MM-DD"T"HH24:MI:SS.US'), '0'), '.'), 'Z'))
+        ELSE to_jsonb(@p)
+      END)
+      """, db);
+    command.Parameters.AddWithValue("p", value);
+
+    var lines = new List<string>();
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) {
+      lines.Add(reader.GetString(0));
+    }
+
+    return string.Join('\n', lines);
   }
 
   /// <summary>

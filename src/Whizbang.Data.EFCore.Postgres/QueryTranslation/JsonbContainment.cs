@@ -50,11 +50,18 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// large magnitude and a very small one.
 /// </para>
 /// <para>
-/// Dates and times are excluded, and for two different reasons. A <c>DateTime</c> is written with a
-/// trailing <c>Z</c> where PostgreSQL generates an explicit <c>+00:00</c> offset, so the texts differ
-/// for the same instant. A <c>DateTimeOffset</c> is worse in kind: its stored text preserves the
-/// offset it was written with, while equality compares instants, so two values that are equal in
-/// .NET can be stored as different text and no formatting on the query side can recover which.
+/// A <c>DateTime</c> is included and is the one type whose value is rendered rather than passed
+/// through, because a date is stored as a JSON string and strings compare character for character.
+/// <see cref="_asStoredText"/> builds that rendering and explains each part;
+/// <c>PerspectiveDateFormatLockTests</c> pins the format on both sides so the serializer and the
+/// query cannot drift apart.
+/// </para>
+/// <para>
+/// A <c>DateTimeOffset</c> is excluded, and not for want of effort. Its stored text preserves the
+/// offset the row was written with, while equality compares instants, so one instant corresponds to
+/// many stored texts that are all equal to it, and no rendering of that instant can produce them
+/// all. The exclusion is a property of the comparison rather than of the formatting, which is what
+/// separates it from <c>DateTime</c>.
 /// </para>
 /// </para>
 /// </remarks>
@@ -159,6 +166,18 @@ public static class JsonbContainment {
   /// <returns>Never returns; the call is translated to SQL.</returns>
   public static bool Matches(byte member, byte value) => throw _notCallable();
 
+  /// <summary>Containment test for a <see cref="DateTime"/> member.</summary>
+  /// <param name="member">The JSON member being compared.</param>
+  /// <param name="value">The value it is compared with.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  /// <remarks>
+  /// A date is stored as a JSON string, so unlike every other overload here the value has to be
+  /// rendered into the exact text the serializer wrote rather than passed through.
+  /// <see cref="_normalized"/> does that, and <c>PerspectiveDateFormatLockTests</c> pins the format
+  /// on both sides so the two cannot drift apart.
+  /// </remarks>
+  public static bool Matches(DateTime member, DateTime value) => throw _notCallable();
+
   private static NotSupportedException _notCallable() =>
     new("JsonbContainment.Matches is a query marker and is only valid inside a LINQ query over a perspective.");
 
@@ -174,6 +193,7 @@ public static class JsonbContainment {
   private static readonly MethodInfo _doubleOverload = ((Func<double, double, bool>)Matches).Method;
   private static readonly MethodInfo _floatOverload = ((Func<float, float, bool>)Matches).Method;
   private static readonly MethodInfo _byteOverload = ((Func<byte, byte, bool>)Matches).Method;
+  private static readonly MethodInfo _dateTimeOverload = ((Func<DateTime, DateTime, bool>)Matches).Method;
 
   private static readonly MethodInfo _stringSet = ((Func<string, string[], bool>)MatchesAny).Method;
   private static readonly MethodInfo _guidSet = ((Func<Guid, Guid[], bool>)MatchesAny).Method;
@@ -221,7 +241,7 @@ public static class JsonbContainment {
   private static readonly MethodInfo[] _allOverloads = [
     _stringOverload, _guidOverload, _boolOverload,
     _shortOverload, _intOverload, _longOverload, _decimalOverload,
-    _doubleOverload, _floatOverload, _byteOverload,
+    _doubleOverload, _floatOverload, _byteOverload, _dateTimeOverload,
   ];
 
   /// <summary>Every overload, for registration.</summary>
@@ -254,6 +274,7 @@ public static class JsonbContainment {
     if (bare == typeof(double)) { return _doubleOverload; }
     if (bare == typeof(float)) { return _floatOverload; }
     if (bare == typeof(byte)) { return _byteOverload; }
+    if (bare == typeof(DateTime)) { return _dateTimeOverload; }
 
     return null;
   }
@@ -285,7 +306,7 @@ public static class JsonbContainment {
       return _equality(args[0], args[1]);
     }
 
-    SqlExpression payload = _normalized(args[1], json);
+    SqlExpression payload = _normalized(args[1], json, json.Json.TypeMapping);
 
     // Build the containment document from the inside out, so a.b.c becomes {"a":{"b":{"c":value}}}.
     for (var i = json.Path.Count - 1; i >= 0; i--) {
@@ -384,18 +405,144 @@ public static class JsonbContainment {
   /// still match the index.
   /// </para>
   /// <para>
-  /// No other type needs it. Values compare by number rather than by text, so an integer or a decimal
-  /// written with a different number of trailing zeros still matches.
+  /// A date needs more than a cast, because it is stored as a JSON string and strings compare
+  /// character for character. <see cref="_asStoredText"/> renders it.
+  /// </para>
+  /// <para>
+  /// No other type needs anything. Values compare by number rather than by text, so an integer or a
+  /// decimal written with a different number of trailing zeros still matches.
   /// </para>
   /// </remarks>
-  private static SqlExpression _normalized(SqlExpression value, JsonScalarExpression member) {
+  private static SqlExpression _normalized(
+    SqlExpression value, JsonScalarExpression member, RelationalTypeMapping jsonb) {
     var clrType = Nullable.GetUnderlyingType(member.Type) ?? member.Type;
+
+    if (clrType == typeof(DateTime)) {
+      return _asStoredText(value, member, jsonb);
+    }
+
     if (clrType != typeof(double) && clrType != typeof(float)) {
       return value;
     }
 
     return new SqlUnaryExpression(ExpressionType.Convert, value, clrType, member.TypeMapping);
   }
+
+  /// <summary>
+  /// The instant, rendered as the JSON string the serializer wrote for it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Builds
+  /// <c>CASE WHEN isfinite(v) THEN to_jsonb(concat(rtrim(rtrim(to_char(timezone('UTC', v),
+  /// 'YYYY-MM-DD"T"HH24:MI:SS.US'), '0'), '.'), 'Z')) ELSE to_jsonb(v) END</c>, which reproduces the
+  /// stored text exactly. Each part answers something measured rather than assumed, and
+  /// <c>PerspectiveDateFormatLockTests</c> holds every one of those measurements:
+  /// </para>
+  /// <para>
+  /// The zone is pinned to UTC rather than left to the session, because <c>to_char</c> on a
+  /// <c>timestamptz</c> renders in whatever zone the session is set to, and the stored text is always
+  /// UTC. Converting first makes the rendering independent of the connection.
+  /// </para>
+  /// <para>
+  /// Microseconds are the finest part written, and the mapping truncates to the same precision on the
+  /// way in, so no digit is lost on either side even for a value carrying finer .NET ticks.
+  /// </para>
+  /// <para>
+  /// The two trims are what make the fraction variable-width: the serializer writes no trailing zeros
+  /// and omits the decimal point entirely for a whole second, while <c>to_char</c> always writes six
+  /// digits. Trimming the zeros and then the point it leaves behind produces the same text. The order
+  /// matters and the point trim is safe, because the zeros of a whole second stop at the point.
+  /// </para>
+  /// <para>
+  /// The infinities are the one pair of values that cannot be formatted: a <c>DateTime.MaxValue</c> or
+  /// <c>MinValue</c> is stored as the word <c>infinity</c> or <c>-infinity</c>, and <c>to_char</c>
+  /// yields nothing at all for them. They are also exactly what a "never expires" sentinel is written
+  /// as, so leaving them to silently match nothing would not be an edge case. <c>to_jsonb</c> spells
+  /// them the way the document holds them, so the second branch delegates rather than hard-coding the
+  /// words.
+  /// </para>
+  /// <para>
+  /// Both branches produce jsonb rather than text so the result can be handed straight to
+  /// <c>jsonb_build_object</c>, which embeds it as the JSON string it already is. The whole expression
+  /// is stable rather than immutable, because <c>to_char</c> is; that is enough for the planner to
+  /// treat it as a run-time constant and still answer from the index, which
+  /// <c>GinContainmentIntegrationTests</c> verifies on a table large enough for the choice to matter.
+  /// </para>
+  /// </remarks>
+  private static CaseExpression _asStoredText(
+    SqlExpression value, JsonScalarExpression member, RelationalTypeMapping jsonb) {
+    var utc = new SqlFunctionExpression(
+      "timezone",
+      [new SqlConstantExpression("UTC", typeof(string), StringTypeMapping.Default), value],
+      nullable: true,
+      argumentsPropagateNullability: _argumentsPropagateNullability,
+      typeof(DateTime),
+      member.TypeMapping);
+
+    var formatted = new SqlFunctionExpression(
+      "to_char",
+      [utc, new SqlConstantExpression(STORED_DATE_FORMAT, typeof(string), StringTypeMapping.Default)],
+      nullable: true,
+      argumentsPropagateNullability: _argumentsPropagateNullability,
+      typeof(string),
+      StringTypeMapping.Default);
+
+    SqlExpression trimmed = formatted;
+    foreach (var trailing in _trimmedInOrder) {
+      trimmed = new SqlFunctionExpression(
+        "rtrim",
+        [trimmed, new SqlConstantExpression(trailing, typeof(string), StringTypeMapping.Default)],
+        nullable: true,
+        argumentsPropagateNullability: _argumentsPropagateNullability,
+        typeof(string),
+        StringTypeMapping.Default);
+    }
+
+    // concat is used rather than the concatenation operator because it never returns null: the
+    // trimmed rendering is not null on this branch, and a suffix that vanished would silently produce
+    // a text that matches nothing.
+    var withZone = new SqlFunctionExpression(
+      "concat",
+      [trimmed, new SqlConstantExpression("Z", typeof(string), StringTypeMapping.Default)],
+      nullable: false,
+      argumentsPropagateNullability: _argumentsPropagateNullability,
+      typeof(string),
+      StringTypeMapping.Default);
+
+    return new CaseExpression(
+      [new CaseWhenClause(_isFinite(value), _asJsonb(withZone, jsonb))],
+      _asJsonb(value, jsonb));
+  }
+
+  /// <summary>Whether the instant is a real one rather than one of the two infinities.</summary>
+  private static SqlFunctionExpression _isFinite(SqlExpression value) =>
+    new(
+      "isfinite",
+      [value],
+      nullable: true,
+      argumentsPropagateNullability: _oneArgumentKeepsNullability,
+      typeof(bool),
+      BoolTypeMapping.Default);
+
+  /// <summary>The value as a jsonb scalar, which is what a containment document is assembled from.</summary>
+  private static SqlFunctionExpression _asJsonb(SqlExpression value, RelationalTypeMapping jsonb) =>
+    new(
+      "to_jsonb",
+      [value],
+      nullable: true,
+      argumentsPropagateNullability: _oneArgumentKeepsNullability,
+      typeof(string),
+      jsonb);
+
+  /// <summary>
+  /// The widest fraction PostgreSQL can render, which is also the precision the mapping writes.
+  /// Locked by <c>PerspectiveDateFormatLockTests</c>.
+  /// </summary>
+  private const string STORED_DATE_FORMAT = "YYYY-MM-DD\"T\"HH24:MI:SS.US";
+
+  /// <summary>Trailing zeros first, then the decimal point they leave behind. The order matters.</summary>
+  private static readonly string[] _trimmedInOrder = ["0", "."];
 
   /// <summary>
   /// The JSON member underneath the conversion the rewriter plants when a member's CLR type is not

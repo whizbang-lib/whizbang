@@ -227,7 +227,18 @@ public class JsonbContainmentSqlMatrixTests {
     Base("eligible-now/double/param", rows => rows.Where(x => x.Data.Dbl == dbl), Destination.Containment);
     Base("eligible-now/float/const", rows => rows.Where(x => x.Data.Flt == 1.5f), Destination.Containment);
     Base("eligible-now/float/param", rows => rows.Where(x => x.Data.Flt == flt), Destination.Containment);
-    Base("ineligible/datetime/param", rows => rows.Where(x => x.Data.When == when), Destination.Extraction);
+    // A date reaches the index through a rendering of the instant, not by being passed through; the
+    // format is locked on both sides by PerspectiveDateFormatLockTests.
+    Base("eligible-now/datetime/const",
+      rows => rows.Where(x => x.Data.When == new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc)),
+      Destination.Containment);
+    Base("eligible-now/datetime/param", rows => rows.Where(x => x.Data.When == when), Destination.Containment);
+    Base("eligible-now/datetime/sentinel",
+      rows => rows.Where(x => x.Data.When == DateTime.MaxValue), Destination.Containment);
+
+    // An offset is not a formatting problem but an information one: the stored text keeps the offset
+    // the row was written with, and equality compares instants, so one instant cannot produce every
+    // text that equals it.
     Base("ineligible/datetimeoffset/param", rows => rows.Where(x => x.Data.WhenOffset == offset), Destination.Extraction);
     Base("eligible-now/enum/const", rows => rows.Where(x => x.Data.State == Status.Live), Destination.Containment);
     Base("eligible-now/enum/param", rows => rows.Where(x => x.Data.State == state), Destination.Containment);
