@@ -154,6 +154,22 @@ rather than a substitute for it.
 
 ### Phase 2: value objects keep their index, and TrackedGuid is just a v7 identifier.
 
+**Attempted and reverted once; read this before trying again.** Resolving the overload from the
+converter's provider type does make the rewrite fire for a value object, and the member side
+translates correctly. The value side does not: the comparison is written against the value object, so
+reaching the identifier's overload needs a conversion on that operand too, and the converted constant
+arrives at the SQL tree with no type mapping assigned. Entity Framework then refuses the query
+outright. The obvious workarounds are all worse than the problem: evaluating the conversion at
+rewrite time needs reflection this assembly avoids, and supplying a mapping from the emission means
+guessing one for a CLR type the emission has no mapping source for.
+
+What would actually solve it is the seam noted below rather than another attempt at this one: a
+translation post-processor reshapes the comparison Entity Framework has already translated, converter
+applied to both sides, so no operand needs converting by hand and no mapping has to be invented. The
+test that records the current behavior is
+`RemainingCandidates_AreRecordedAsync`, whose `Tracked: extraction` assertion is written to say it is
+expected to fail when this lands.
+
 A converter down to an eligible type stores exactly what the bare type stores. `TrackedGuid` lands as
 a plain guid string, byte for byte what a `Guid` lands as, yet the filter currently falls back to
 extraction because the converter guard is a blanket one. Resolving the overload from the converter's
