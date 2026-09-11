@@ -21,6 +21,8 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveSqlShapeTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonbContainmentSqlMatrixTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:Where_PhysicalField_SqlUsesColumn_NotJsonbAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:Sql_Where_GuidField_UsesPhysicalColumnAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:GroupBy_PhysicalField_SqlNotClientEvalAsync</tests>

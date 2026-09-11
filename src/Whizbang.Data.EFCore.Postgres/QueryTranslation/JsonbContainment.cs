@@ -42,9 +42,10 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// their shortest round-trip text is not guaranteed to agree with PostgreSQL's.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/physical-fields#index-advisories</docs>
+/// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonbContainmentSqlMatrixTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/GinContainmentIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveSqlShapeTests.cs</tests>
 public static class JsonbContainment {
   /// <summary>Containment test for a string member.</summary>
   /// <param name="member">The JSON member being compared.</param>
@@ -191,7 +192,7 @@ public static class JsonbContainment {
 /// <summary>
 /// Registers the containment translations on a model.
 /// </summary>
-/// <docs>fundamentals/perspectives/physical-fields#index-advisories</docs>
+/// <docs>fundamentals/perspectives/jsonb-containment</docs>
 public static class JsonbContainmentModelExtensions {
   /// <summary>
   /// Registers every <see cref="JsonbContainment"/> overload with its SQL translation. Without this

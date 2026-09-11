@@ -36,7 +36,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// provider does this itself.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/physical-fields#index-advisories</docs>
+/// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonbContainmentSqlMatrixTests.cs</tests>
 public sealed class JsonbContainmentRewriter : ExpressionVisitor {
   private readonly IModel? _model;

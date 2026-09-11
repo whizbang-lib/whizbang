@@ -19,7 +19,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// object through the query pipeline.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/physical-fields#index-advisories</docs>
+/// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonbContainmentSwitchTests.cs</tests>
 public static class JsonbContainmentSwitch {
   private static volatile bool _enabled = true;

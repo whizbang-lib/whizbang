@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Configuration;
 /// perspective, with no other behavioral change.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/physical-fields#index-advisories</docs>
+/// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonbContainmentSwitchTests.cs</tests>
 public sealed class PerspectiveQueryTranslationOptions {
   /// <summary>

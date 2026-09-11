@@ -29,7 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// statically referenced, and resolves nothing by name.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/physical-fields#index-advisories</docs>
+/// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/ProviderCapabilitiesTests.cs</tests>
 public static class ProviderCapabilities {
   /// <summary>The lowest Entity Framework Core version the containment rewrite was verified against.</summary>
