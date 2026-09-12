@@ -185,4 +185,27 @@ public class JsonIndexDeclarationAnalyzerTests {
       .Because("a date that has to be range-filtered wants a real column, which is the answer "
         + "available today");
   }
+
+  /// <summary>
+  /// Opting out is not a claim, so it is not reported even on a type that could not carry one.
+  /// </summary>
+  /// <remarks>
+  /// The diagnostic exists because a declaration on a specific field is a claim about that field.
+  /// Asking for no kind is the opposite of a claim: the author has said this field is not indexed,
+  /// which is exactly what the diagnostic would otherwise be telling them.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task OptingOutIsNotReportedAsync() {
+    var source = _model("""
+        [JsonIndexed(JsonIndexKind.None)]
+        public object Value { get; init; } = new();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(source);
+
+    await Assert.That(_whiz303(diagnostics)).IsEmpty()
+      .Because("the author has said this field carries no index, which is the thing the diagnostic "
+        + "would otherwise be asking them to say");
+  }
 }

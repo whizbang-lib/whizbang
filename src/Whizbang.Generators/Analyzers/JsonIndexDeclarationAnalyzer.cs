@@ -121,9 +121,10 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var declared = property.GetAttributes()
-        .FirstOrDefault(a => TypeNameUtilities.IsNamed(a.AttributeClass, JSON_INDEXED));
-    if (declared is null) {
+    // Zero is an opt-out and null is silence, and neither is a claim about this field. Asking for no
+    // index is the author saying what this diagnostic would otherwise be asking them to say.
+    var declared = JsonIndexDiscovery.DeclaredKind(property);
+    if (declared is null or 0) {
       return;
     }
 
@@ -178,8 +179,10 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   /// <summary>Whether the model asks for any index over its JSON, per field or wholesale.</summary>
   private static bool _declaresAnyIndex(INamedTypeSymbol model) =>
     model.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, INDEX_ALL_FIELDS))
-    || model.GetMembers().OfType<IPropertySymbol>().Any(p =>
-        p.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, JSON_INDEXED)));
+    // An opt-out is not a declaration, so a model carrying only those has claimed nothing for the
+    // storage to put out of reach.
+    || model.GetMembers().OfType<IPropertySymbol>()
+        .Any(p => JsonIndexDiscovery.DeclaredKind(p) is > 0);
 
   /// <summary>
   /// The member that forces the model into opaque storage, described for the message.

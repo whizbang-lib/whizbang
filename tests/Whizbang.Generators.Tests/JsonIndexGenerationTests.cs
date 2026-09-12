@@ -248,4 +248,62 @@ public class JsonIndexGenerationTests {
       .Because("a record of an int and a string is mapped property by property like any other "
         + "model, so its extraction is exactly what a query produces");
   }
+
+  /// <summary>
+  /// A field can opt out of a blanket declaration, which is the only way to say "all but this one".
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A per-field declaration overrides the model's, so asking for no kind at all means no index. That
+  /// is what makes <c>[IndexAllFields]</c> usable on a real model: without it the blanket is
+  /// all-or-nothing, and a model with one field nobody filters has to give up the blanket entirely
+  /// or carry write amplification for a column that is never read.
+  /// </para>
+  /// <para>
+  /// This was previously covered only by a test asserting the attribute returns the kind it was
+  /// given, which proves the attribute stores a value and nothing about whether opting out works.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AFieldCanOptOutOfABlanketDeclarationAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Reported : IEvent;
+
+      [IndexAllFields]
+      public record ReportModel {
+        [StreamId]
+        public Guid ReportId { get; init; }
+
+        public int Counted { get; init; }
+
+        [JsonIndexed(JsonIndexKind.None)]
+        public int NeverFiltered { get; init; }
+      }
+
+      public class ReportPerspective : IPerspectiveFor<ReportModel, Reported> {
+        public ReportModel Apply(ReportModel currentData, Reported eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ReportDbContext : DbContext {
+        public ReportDbContext(DbContextOptions<ReportDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).Contains("((data ->> 'Counted')::integer)", StringComparison.Ordinal)
+      .Because("the blanket still covers everything it was not told to skip");
+    await Assert.That(output).DoesNotContain("'NeverFiltered'", StringComparison.Ordinal)
+      .Because("a per-field declaration overrides the model's, so asking for no kind is how a field "
+        + "declines an index it would otherwise be given");
+  }
 }

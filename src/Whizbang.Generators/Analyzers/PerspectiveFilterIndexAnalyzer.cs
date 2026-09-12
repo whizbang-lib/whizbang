@@ -165,7 +165,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// </para>
   /// </remarks>
   private static bool _declaredIndexServes(MemberAccessExpressionSyntax node, IPropertySymbol field) {
-    var kind = _declaredIndexKind(field);
+    var kind = JsonIndexDiscovery.DeclaredKind(field);
     if (kind is null) {
       return false;
     }
@@ -175,23 +175,6 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     }
 
     return (kind.Value & KIND_TRIGRAM) != 0 && _isSubstringMatch(node);
-  }
-
-  /// <summary>The kinds a [JsonIndexed] declaration asks for, or null when there is none.</summary>
-  private static int? _declaredIndexKind(IPropertySymbol field) {
-    foreach (var attribute in field.GetAttributes()) {
-      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, JSON_INDEXED_ATTRIBUTE)) {
-        continue;
-      }
-
-      // The constructor defaults to Btree, so an attribute with no argument asks for one.
-      return attribute.ConstructorArguments.Length > 0
-             && attribute.ConstructorArguments[0].Value is int declared
-        ? declared
-        : KIND_BTREE;
-    }
-
-    return null;
   }
 
   /// <summary>Whether this member access is the receiver of a substring match.</summary>

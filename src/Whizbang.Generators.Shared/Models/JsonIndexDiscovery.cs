@@ -119,6 +119,40 @@ public static class JsonIndexDiscovery {
   }
 
   /// <summary>
+  /// The index kinds a property declares for itself, or null when it declares nothing.
+  /// </summary>
+  /// <param name="property">The property to inspect.</param>
+  /// <returns>The combined kinds, zero when the property opts out, or null when it is silent.</returns>
+  /// <remarks>
+  /// <para>
+  /// Zero and null are different answers and the difference is the whole point. Null means the
+  /// property said nothing, so a model-level declaration still applies to it. Zero means it asked
+  /// for no index, which overrides the model and is the only way to say "every field but this one".
+  /// </para>
+  /// <para>
+  /// Asked here rather than in each caller because three of them need it: the discovery that emits
+  /// the index, the diagnostic that reports one that cannot be built, and the advisory that stops
+  /// reporting a field once it carries one. Three copies would be three chances to disagree about
+  /// whether an opt-out counts as a declaration.
+  /// </para>
+  /// </remarks>
+  public static int? DeclaredKind(IPropertySymbol? property) {
+    if (property is null) {
+      return null;
+    }
+
+    var declared = property.GetAttributes()
+        .Where(a => TypeNameUtilities.IsNamed(a.AttributeClass, JSON_INDEXED))
+        .ToList();
+
+    // Repeated declarations combine, which is what makes writing the attribute twice meaningful
+    // rather than merely allowed.
+    return declared.Count == 0
+      ? null
+      : declared.Aggregate(0, (acc, a) => acc | _kindOf(a, KIND_BTREE));
+  }
+
+  /// <summary>
   /// Every JSON-only field on a model that carries a declared index.
   /// </summary>
   /// <param name="model">The perspective's model type.</param>
@@ -156,15 +190,7 @@ public static class JsonIndexDiscovery {
         continue;
       }
 
-      var declared = attributes
-          .Where(a => TypeNameUtilities.IsNamed(a.AttributeClass, JSON_INDEXED))
-          .ToList();
-
-      // Repeated declarations combine, which is what makes writing the attribute twice meaningful
-      // rather than merely allowed.
-      var kind = declared.Count > 0
-          ? declared.Aggregate(0, (acc, a) => acc | _kindOf(a, KIND_BTREE))
-          : blanketKind;
+      var kind = DeclaredKind(property) ?? blanketKind;
 
       if (kind == 0) {
         continue;

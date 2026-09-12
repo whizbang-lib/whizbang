@@ -199,4 +199,38 @@ public class JsonIndexStorageAnalyzerTests {
       .Because("a promoted column is a real column with a real index, which is reachable no matter "
         + "how the rest of the document is stored");
   }
+
+  /// <summary>
+  /// Opting out is not a declaration, so an opaquely stored model carrying only opt-outs is quiet.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AModelDeclaringOnlyAnOptOutIsNotReportedAsync() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public abstract class PaymentMethod {
+        public string Name { get; init; } = "";
+      }
+
+      public record OrderModel {
+        [StreamId]
+        public Guid OrderId { get; init; }
+
+        public PaymentMethod? Payment { get; init; }
+
+        [JsonIndexed(JsonIndexKind.None)]
+        public string Reference { get; init; } = "";
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(source);
+
+    await Assert.That(_whiz304(diagnostics)).IsEmpty()
+      .Because("nothing was claimed, so there is no claim the storage puts out of reach");
+  }
 }
