@@ -132,68 +132,40 @@ plan and not merely the safer one.
 
 Three tiers, each with an honest cost, and nothing implicit.
 
-### Phase 1: canonical date and time formats. Needs a migration.
+### Phase 1: canonical date and time formats.
 
-Bring the date and time family into Phase 0's mechanism by owning their stored form.
+Bring the date and time family into Phase 0's mechanism by owning their stored form: microseconds
+since the epoch as a number, which the measurements chose over fixed-width text.
 
-- A converter per type, emitted by the generator rather than hand-written per property.
-- **A tolerant reader, shipped one release ahead of everything else.** This is the part that is easy
-  to get subtly wrong, and fusing it into the migration release does get it wrong. The backfill writes
-  a form only the new code understands, and the new code has to run against rows the backfill has not
-  reached, so a window where both forms exist is unavoidable and something has to read through it.
-  That much argues only for tolerance existing. What argues for it existing *first* is rollback: if
-  the release that starts writing the canonical form is also the release that learns to read it, then
-  rolling back lands on a version that cannot read what its successor wrote.
+**The rows are rewritten before anything queries them, which removes most of the machinery an
+in-place format change would otherwise need.** Migrations run ahead of the application serving
+traffic, so there is no window in which a query can observe a mixed column: the rows are rewritten,
+then the index is created, then queries run. That deletes the tolerant reader, the filter that had to
+match both forms while they coexisted, and the three-release sequence those implied. This is a pre-1.0
+library whose consumers migrate deliberately, which is exactly the situation that sequence exists to
+avoid needing.
 
-  So it is plain expand and contract, in three releases:
+What remains is three things.
 
-  | Release | Does | Can the rollback target read? |
-  |---------|------|-------------------------------|
-  | 1 | Reads both forms. Writes nothing differently, changes no behavior | not applicable |
-  | 2 | Writes the canonical form, backfills, then creates the index | yes, release 1 reads both |
-  | 3 | Drops the tolerance, optionally | yes, everything is canonical |
+- **A converter per type, emitted by the generator** rather than written out per property, so the
+  stored form is a decision the framework makes once rather than one every model repeats.
+- **A backfill emitted per perspective, not a hand-written migration.** Which keys hold dates is
+  per-model knowledge, so it belongs where the perspective's other schema is generated. It rewrites
+  only what is not already converted, which makes re-running it a no-op and a restored backup
+  self-correcting.
+- **The index, in the same script, after the rewrite.** The ordering is not merely convention: with
+  the numeric form PostgreSQL refuses to build the index while any row is still a string, so a
+  backfill that did not finish fails at the next step rather than leaving a silently useless index.
 
-  Release one is a no-op that can be deployed and forgotten; it is the thing that makes release two
-  reversible.
+The measurement behind requiring the rewrite at all is still worth keeping, because it is what rules
+out the cheaper options. On a column holding one row of each form, an equality against the new form
+still finds its row so nothing looks broken; a range raises an error rather than skipping the odd
+row; and the index cannot be built, because building it evaluates the expression for every row.
+`AMixedFormatColumnCannotBeIndexedOrRangeQueriedAsync` holds it.
 
-  Worth keeping afterwards regardless, for two reasons that cost almost nothing. A backup restored
-  from before the migration, a shard added late or a batch that failed leaves rows in the old form,
-  and tolerance makes those degraded rather than broken. And with the numeric form the discriminator
-  is the JSON type itself, a number being canonical and a string being legacy, so it is one type test
-  rather than a parse attempt.
-
-  What stops it hiding an incomplete backfill is the index: PostgreSQL refuses to build one while any
-  row is still a string, so a migration that did not finish fails loudly at exactly the step that
-  depends on it.
-- **A tolerant filter while migrating.** Containment emits
-  `data @> {canonical} OR data @> {legacy}`; both arms stay indexed, measured as a `BitmapOr` over two
-  index scans. Behind a flag defaulting on, removable a release later. Without this a filter silently
-  returns only the migrated rows, which is the failure mode to avoid above all others.
-- **A backfill migration, which is required rather than optional.** A tolerant reader makes
-  materializing a row work whichever format it holds, and that is worth having, but it settles
-  nothing about what the database can do while the rows are mixed. Measured on a table holding one
-  row of each form: an equality against the new form still finds its row, so nothing looks broken; a
-  range over the column raises an error rather than skipping the odd row; and the index cannot be
-  created at all, because building it evaluates the expression for every row. Since the index is the
-  whole point of the change, a reader that tolerates both formats does not remove the need to rewrite
-  them. `AMixedFormatColumnCannotBeIndexedOrRangeQueriedAsync` holds that measurement.
-
-  The backfill itself is small: the format is reproducible in SQL, so it is an in-place `jsonb_set`
-  over the data column in batches, with no replay, no rebuild and no .NET involvement.
-
-  This is also a second and independent argument for the numeric form. A mixed column of numbers
-  fails loudly, refusing both the index and the range; a mixed column of fixed-width text builds an
-  index happily and answers ranges with the wrong rows, because the two renderings do not sort
-  consistently against each other. Writing the canonical value to a second key instead of replacing
-  the first has the same defect: the index builds, and every range silently skips whatever has not
-  been migrated yet.
-- **The expression index is created after the backfill, not with it**, and usefully this enforces
-  itself: with the numeric form PostgreSQL refuses to build it while any row is still in the old
-  rendering, so the optimization cannot be shipped ahead of the data that supports it.
-
-Note that a row only rewrites itself when its stream sees a new event, so cold streams never migrate
-on their own. The backfill is required, not optional; the tolerant reader is the safety net around it
-rather than a substitute for it.
+That measurement also argues again for numbers over fixed-width text, and against writing the
+canonical value to a second key while leaving the first. Both of those alternatives build an index
+happily over a half-migrated column and answer ranges with the wrong rows.
 
 ### Phase 2: value objects keep their index, and TrackedGuid is just a v7 identifier.
 
