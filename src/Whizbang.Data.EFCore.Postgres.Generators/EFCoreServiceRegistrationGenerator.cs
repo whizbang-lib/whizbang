@@ -1529,10 +1529,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     foreach (var index in model.JsonIndexes) {
       var kinds = new System.Collections.Generic.List<string>();
       if (index.Btree) {
-        kinds.Add("Whizbang.Core.Perspectives.IndexKind.Btree");
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Btree");
       }
       if (index.Trigram) {
-        kinds.Add("Whizbang.Core.Perspectives.IndexKind.Trigram");
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Trigram");
       }
 
       var kindExpression = string.Join(" | ", kinds);

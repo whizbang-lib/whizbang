@@ -40,7 +40,7 @@ public class JsonIndexGenerationTests {
       [Indexed]
       public int Rank { get; init; }
 
-      [Indexed(IndexKind.Btree | IndexKind.Trigram)]
+      [Indexed(IndexKinds.Btree | IndexKinds.Trigram)]
       public string Title { get; init; } = string.Empty;
 
       public string Plain { get; init; } = string.Empty;
@@ -284,7 +284,7 @@ public class JsonIndexGenerationTests {
 
         public int Counted { get; init; }
 
-        [Indexed(IndexKind.None)]
+        [Indexed(IndexKinds.None)]
         public int NeverFiltered { get; init; }
       }
 

@@ -48,10 +48,10 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
   private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.Perspectives.SuppressIndexAdvisoryAttribute";
 
-  /// <summary>IndexKind.Btree.</summary>
+  /// <summary>IndexKinds.Btree.</summary>
   private const int KIND_BTREE = 1;
 
-  /// <summary>IndexKind.Trigram.</summary>
+  /// <summary>IndexKinds.Trigram.</summary>
   private const int KIND_TRIGRAM = 2;
 
   /// <summary>The string operations a trigram index answers.</summary>

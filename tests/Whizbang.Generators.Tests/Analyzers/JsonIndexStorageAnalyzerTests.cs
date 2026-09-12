@@ -223,7 +223,7 @@ public class JsonIndexStorageAnalyzerTests {
 
         public PaymentMethod? Payment { get; init; }
 
-        [Indexed(IndexKind.None)]
+        [Indexed(IndexKinds.None)]
         public string Reference { get; init; } = "";
       }
       """;

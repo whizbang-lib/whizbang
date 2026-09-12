@@ -264,7 +264,7 @@ public class ContainmentSqlRewriterTests {
   /// </remarks>
   [Test]
   public async Task ABtreeIndexedFieldIsNotReshapedAsync() {
-    JsonIndexRegistry.RegisterForTable("wh_per_reshape", nameof(ReshapeModel.IndexedRank), IndexKind.Btree);
+    JsonIndexRegistry.RegisterForTable("wh_per_reshape", nameof(ReshapeModel.IndexedRank), IndexKinds.Btree);
 
     var sql = _sql(rows => rows.Where(r => r.Data.IndexedRank == 11));
 

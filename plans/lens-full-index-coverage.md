@@ -118,7 +118,7 @@ public class OrderModel {
   [Indexed]                     // expression index: everything, costs only an index
   public int Rank { get; init; }
 
-  [Indexed(IndexKind.Btree | IndexKind.Trigram)]   // filtered by range and by substring
+  [Indexed(IndexKinds.Btree | IndexKinds.Trigram)]   // filtered by range and by substring
   public string Title { get; init; } = string.Empty;
 
 }

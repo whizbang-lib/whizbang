@@ -198,7 +198,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task OptingOutIsNotReportedAsync() {
     var source = _model("""
-        [Indexed(IndexKind.None)]
+        [Indexed(IndexKinds.None)]
         public object Value { get; init; } = new();
       """);
 

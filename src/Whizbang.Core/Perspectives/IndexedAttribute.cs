@@ -1,19 +1,17 @@
-using System.Diagnostics.CodeAnalysis;
-
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
 /// The kinds of index a JSON-only field can carry. Combinable, because a field filtered by a range
 /// and by a substring wants both.
 /// </summary>
+/// <remarks>
+/// Plural, as a combinable enumeration is named. A single kind is the common case and reads fine that
+/// way, <c>[Indexed(IndexKinds.Trigram)]</c>, and the name stays honest for the combination it exists
+/// to allow.
+/// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Flags]
-[SuppressMessage("Minor Code Smell", "S2342:Enumeration types should comply with a naming convention",
-  Justification = "Singular because a declaration names one kind at a time, which is the common case: " +
-    "[Indexed(IndexKind.Trigram)] reads as the author's intent where a plural would not. The combining " +
-    "form is the exception, and the framework offers a second spelling for it (the attribute is " +
-    "AllowMultiple). System.IO.FileAccess and System.IO.FileShare are flag enumerations named the same way.")]
-public enum IndexKind {
+public enum IndexKinds {
   /// <summary>No index. Present so that an explicit "not indexed" can be written down.</summary>
   None = 0,
 
@@ -77,7 +75,7 @@ public enum IndexKind {
 /// its model's storage puts out of reach, is reported at build time rather than silently skipped.
 /// </para>
 /// <para>
-/// <see cref="IndexKind.None"/> declines an index, which is how one field opts out of
+/// <see cref="IndexKinds.None"/> declines an index, which is how one field opts out of
 /// <see cref="IndexAllFieldsAttribute"/>. Declining is not declaring, so it is not reported as a
 /// claim the framework cannot honor.
 /// </para>
@@ -95,16 +93,16 @@ public enum IndexKind {
 ///   public int Rank { get; init; }
 ///
 ///   // Filtered both by range and by substring.
-///   [Indexed(IndexKind.Btree | IndexKind.Trigram)]
+///   [Indexed(IndexKinds.Btree | IndexKinds.Trigram)]
 ///   public string Title { get; init; }
 /// }
 /// </code>
 /// </example>
-/// <param name="kind">The kinds to create. Defaults to <see cref="IndexKind.Btree"/>.</param>
+/// <param name="kind">The kinds to create. Defaults to <see cref="IndexKinds.Btree"/>.</param>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = true, Inherited = true)]
-public sealed class IndexedAttribute(IndexKind kind = IndexKind.Btree) : Attribute {
+public sealed class IndexedAttribute(IndexKinds kind = IndexKinds.Btree) : Attribute {
   /// <summary>The kinds of index to create over this field.</summary>
-  public IndexKind Kind { get; } = kind;
+  public IndexKinds Kind { get; } = kind;
 }
 
 /// <summary>
@@ -130,9 +128,9 @@ public sealed class IndexedAttribute(IndexKind kind = IndexKind.Btree) : Attribu
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/IndexedAttributeTests.cs</tests>
-/// <param name="kind">The kinds to create. Defaults to <see cref="IndexKind.Btree"/>.</param>
+/// <param name="kind">The kinds to create. Defaults to <see cref="IndexKinds.Btree"/>.</param>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
-public sealed class IndexAllFieldsAttribute(IndexKind kind = IndexKind.Btree) : Attribute {
+public sealed class IndexAllFieldsAttribute(IndexKinds kind = IndexKinds.Btree) : Attribute {
   /// <summary>The kinds of index to create over every eligible field.</summary>
-  public IndexKind Kind { get; } = kind;
+  public IndexKinds Kind { get; } = kind;
 }

@@ -78,7 +78,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
         [Indexed]
         public int DeclaredBtree { get; init; }
 
-        [Indexed(IndexKind.Trigram)]
+        [Indexed(IndexKinds.Trigram)]
         public string DeclaredTrigram { get; init; } = string.Empty;
       }
 

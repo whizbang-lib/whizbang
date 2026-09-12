@@ -29,13 +29,13 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonIndexStandDownTests.cs</tests>
 public static class JsonIndexRegistry {
-  private static readonly ConcurrentDictionary<(Type ModelType, string PropertyName), IndexKind> _kinds = new();
+  private static readonly ConcurrentDictionary<(Type ModelType, string PropertyName), IndexKinds> _kinds = new();
 
   /// <summary>Records that a model's property carries an index of the given kinds.</summary>
   /// <typeparam name="TModel">The model holding the property.</typeparam>
   /// <param name="propertyName">The property's name, for example <c>Rank</c>.</param>
   /// <param name="kind">The kinds of index declared.</param>
-  public static void Register<TModel>(string propertyName, IndexKind kind) =>
+  public static void Register<TModel>(string propertyName, IndexKinds kind) =>
     Register(typeof(TModel), propertyName, kind);
 
   /// <summary>Records that a model's property carries an index of the given kinds.</summary>
@@ -46,7 +46,7 @@ public static class JsonIndexRegistry {
   /// Additive: declaring a btree and then a trigram for one property leaves it carrying both, which is
   /// what lets the attribute be written more than once instead of demanding a combination.
   /// </remarks>
-  public static void Register(Type modelType, string propertyName, IndexKind kind) {
+  public static void Register(Type modelType, string propertyName, IndexKinds kind) {
     ArgumentNullException.ThrowIfNull(modelType);
     ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
 
@@ -57,10 +57,10 @@ public static class JsonIndexRegistry {
   /// <param name="modelType">The model holding the property.</param>
   /// <param name="propertyName">The property's name.</param>
   /// <returns>The declared kinds.</returns>
-  public static IndexKind Kinds(Type modelType, string propertyName) {
+  public static IndexKinds Kinds(Type modelType, string propertyName) {
     ArgumentNullException.ThrowIfNull(modelType);
 
-    return _kinds.TryGetValue((modelType, propertyName), out var kind) ? kind : IndexKind.None;
+    return _kinds.TryGetValue((modelType, propertyName), out var kind) ? kind : IndexKinds.None;
   }
 
   /// <summary>
@@ -76,9 +76,9 @@ public static class JsonIndexRegistry {
   /// than scanning, and standing down for it would cost an index rather than save one.
   /// </remarks>
   public static bool HasBtree(Type modelType, string propertyName) =>
-    Kinds(modelType, propertyName).HasFlag(IndexKind.Btree);
+    Kinds(modelType, propertyName).HasFlag(IndexKinds.Btree);
 
-  private static readonly ConcurrentDictionary<(string TableName, string PropertyName), IndexKind> _byTable =
+  private static readonly ConcurrentDictionary<(string TableName, string PropertyName), IndexKinds> _byTable =
     new();
 
   /// <summary>
@@ -93,7 +93,7 @@ public static class JsonIndexRegistry {
   /// being queried; the one that reshapes translated SQL does not, because that tree is gone by then,
   /// and what it has instead is the table the column belongs to.
   /// </remarks>
-  public static void RegisterForTable(string tableName, string propertyName, IndexKind kind) {
+  public static void RegisterForTable(string tableName, string propertyName, IndexKinds kind) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
 
@@ -118,6 +118,6 @@ public static class JsonIndexRegistry {
     ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
 
     return _byTable.TryGetValue((tableName, propertyName), out var kind)
-        && kind.HasFlag(IndexKind.Btree);
+        && kind.HasFlag(IndexKinds.Btree);
   }
 }
