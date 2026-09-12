@@ -211,7 +211,7 @@ public class JsonbContainmentRewriterGuardTests {
   /// </remarks>
   [Test]
   public async Task AnAsynchronousOperatorIsStillAPredicateAsync() {
-    using var db = _newContext();
+    await using var db = _newContext();
 
     var source = Enumerable.Empty<PerspectiveRow<GuardModel>>().AsQueryable();
     Expression<Func<PerspectiveRow<GuardModel>, bool>> predicate = r => r.Data.Code == "v";
