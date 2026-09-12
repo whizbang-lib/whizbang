@@ -171,3 +171,24 @@ Add a GIN index to every jsonb column. That is how the 261 unused indexes and th
 there. An index earns its place by being reached by a query, demonstrated on a table large enough that
 a sequential scan would otherwise be the cheaper plan, which is how every index in the perspective work
 was justified.
+
+## A finding from the same sweep, on the write path rather than the read path
+
+`BaseUpsertStrategy` resolves its persistence serializer options **per upsert**, uncached: every row
+written rebuilds a `JsonSerializerOptions`, recombines every registered resolver, and re-adds every
+converter. That was deliberate, and the comment says why: the previous shape was a process-wide single
+slot that only ever held one assembly's view and raced across tests. Correctness first, and correctly
+so.
+
+But the cost is real and it is on the hottest write path in the system. A fresh options instance also
+means the serializer's own per-options type metadata cache is cold on every call, which is the larger
+half: the resolver combination is cheap next to re-resolving type metadata for the whole model graph
+each time a row is written.
+
+Not changed here, and deliberately not. Undoing a caching decision that was made to fix a real race,
+in the same change that alters the stored format, would make a regression in either impossible to
+attribute. It wants its own change, its own measurement, and a cache keyed so that a late assembly
+registration still invalidates it.
+
+Recorded because it was found while auditing what these tables cost, and because the next person to
+profile an import will find it and deserve to know it was seen and left on purpose.
