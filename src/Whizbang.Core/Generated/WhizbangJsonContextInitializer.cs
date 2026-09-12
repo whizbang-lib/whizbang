@@ -69,24 +69,6 @@ public static class WhizbangJsonContextInitializer {
     JsonContextRegistry.RegisterConverter(new LenientDateTimeOffsetConverter());
     JsonContextRegistry.RegisterConverter(new LenientNullableDateTimeOffsetConverter());
 
-    // The canonical stored form for a perspective's dates, times and durations: a number rather than
-    // a rendering, so the extraction casts through an immutable expression and can carry an index.
-    //
-    // Scoped to the persistence profile, which is the perspective-document profile. The default
-    // profile is transport and the event store, where a date is part of a payload other systems and
-    // older releases read; nothing about indexing a perspective asks for that to change.
-    //
-    // A perspective document has two writers and they have to agree. The mapping's value conversion
-    // covers what Entity Framework writes and reads; this covers what the upsert serializes, which
-    // is the path production takes. Without both, a row written by one is unreadable by the other.
-    //
-    // Registered above the lenient converters, which exist to read the PostgreSQL infinity literals
-    // a rendering produced. Those stay for the default profile and for documents written before this.
-    foreach (var converter in Perspectives.CanonicalTemporalJsonConverters.All()) {
-      JsonContextRegistry.RegisterConverter(
-        converter, priority: 100, profile: SerializationProfile.Persistence);
-    }
-
     // Register type name mappings for infrastructure types
     // This enables Azure Service Bus and other transports to deserialize messages by assembly-qualified name
     JsonContextRegistry.RegisterTypeName(

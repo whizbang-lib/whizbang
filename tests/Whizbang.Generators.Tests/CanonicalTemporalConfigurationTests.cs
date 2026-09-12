@@ -150,6 +150,82 @@ public class CanonicalTemporalConfigurationTests {
   }
 
   /// <summary>
+  /// The serializer is told about the same properties, so the writer matches the reader.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A perspective row is written by the upsert, which serializes with System.Text.Json, and read by
+  /// the mapping, which applies the value conversions above. Both sides have to convert the same set
+  /// or a row written by one is unreadable by the other.
+  /// </para>
+  /// <para>
+  /// Emitted per model rather than registered per type, and that distinction is load-bearing. A
+  /// converter on the options reaches every date in every document, including the framework's own
+  /// <c>PerspectiveMetadata.Timestamp</c>, which is mapped and read with no matching conversion: it
+  /// became a number the reader could not parse, and broke every perspective row until the shape
+  /// changed to this one.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task TheSerializerIsToldAboutTheSamePropertiesAsync() {
+    var result = GeneratorTestHelper.RunGenerator<
+      global::Whizbang.Data.EFCore.Postgres.Generators.PerspectivePersistenceJsonContextGenerator>(MODEL);
+    var output = string.Join("\n",
+      result.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SourceText.ToString()));
+
+    await Assert.That(output).Contains("RegisterTypeInfoModifier", StringComparison.Ordinal)
+      .Because("the upsert writes the document, so a conversion the mapping alone knows about "
+        + "leaves the writer producing rows the reader cannot parse");
+    await Assert.That(output).Contains("CanonicalTemporalJsonConverters.ApplyTo", StringComparison.Ordinal);
+
+    foreach (var property in new[] { "OccurredAt", "RecordedAt", "Day", "Clock", "Elapsed", "MaybeAt" }) {
+      await Assert.That(output).Contains($"\"{property}\"", StringComparison.Ordinal)
+        .Because($"'{property}' is converted by the mapping, so the writer has to convert it too");
+    }
+  }
+
+  /// <summary>
+  /// A model with nothing temporal gets no modifier, so nothing is registered for nothing.
+  /// </summary>
+  [Test]
+  public async Task AModelWithNoTemporalPropertyGetsNoModifierAsync() {
+    var result = GeneratorTestHelper.RunGenerator<
+      global::Whizbang.Data.EFCore.Postgres.Generators.PerspectivePersistenceJsonContextGenerator>("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record Occurred : IEvent;
+
+      public record PlainModel {
+        [StreamId]
+        public Guid Id { get; init; }
+        public string Label { get; init; } = string.Empty;
+      }
+
+      public class PlainPerspective : IPerspectiveFor<PlainModel, Occurred> {
+        public PlainModel Apply(PlainModel currentData, Occurred eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class PlainDbContext : DbContext {
+        public PlainDbContext(DbContextOptions<PlainDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n",
+      result.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SourceText.ToString()));
+
+    await Assert.That(output).DoesNotContain("CanonicalTemporalJsonConverters.ApplyTo",
+      StringComparison.Ordinal)
+      .Because("a model with no date has nothing to convert, and a modifier that matches nothing "
+        + "still runs for every type the serializer resolves");
+  }
+
+  /// <summary>
   /// The conversion is the framework's own, not an expression written out per property.
   /// </summary>
   /// <remarks>

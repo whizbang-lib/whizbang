@@ -59,10 +59,22 @@ public class CanonicalTemporalJsonConverterTests {
   /// </summary>
   private static JsonSerializerOptions _optionsFor(SerializationProfile profile) {
     var union = JsonContextRegistry.CreateCombinedOptions(profile);
-    return new JsonSerializerOptions(union) {
-      TypeInfoResolver = JsonTypeInfoResolver.Combine(
-        union.TypeInfoResolver!, TemporalWriterJsonContext.Default),
-    };
+    var resolver = JsonTypeInfoResolver.Combine(
+      union.TypeInfoResolver!, TemporalWriterJsonContext.Default);
+
+    // What the generator emits for a perspective: the canonical form applied to this model's own
+    // temporal properties and to nothing else. Applied here rather than registered globally, because
+    // a global registration reaches every date in every document — including the framework's own
+    // PerspectiveMetadata.Timestamp, which is mapped and read with no matching conversion and became
+    // unreadable the moment it was written as a number.
+    if (profile == SerializationProfile.Persistence) {
+      resolver = resolver.WithAddedModifier(info =>
+        CanonicalTemporalJsonConverters.ApplyTo(
+          info, typeof(TemporalWriterModel),
+          "OccurredAt", "RecordedAt", "Day", "Clock", "Elapsed", "MaybeAt"));
+    }
+
+    return new JsonSerializerOptions(union) { TypeInfoResolver = resolver };
   }
 
   private static TemporalWriterModel _model() => new() {
@@ -159,6 +171,28 @@ public class CanonicalTemporalJsonConverterTests {
 
     var present = written.TryGetProperty("MaybeAt", out var value);
     await Assert.That(!present || value.ValueKind == JsonValueKind.Null).IsTrue();
+  }
+
+  /// <summary>
+  /// A date on a framework document is not converted, which is the failure this shape prevents.
+  /// </summary>
+  /// <remarks>
+  /// <c>PerspectiveMetadata.Timestamp</c> is mapped by the framework with no matching conversion, so
+  /// a canonical number written there is a row the reader cannot parse. A converter registered on the
+  /// options reached it; one applied to a named model's named properties does not. This is the test
+  /// that would have caught that, and it did not exist when the converter was registered globally.
+  /// </remarks>
+  [Test]
+  public async Task AFrameworkDocumentIsNotConvertedAsync() {
+    var options = _optionsFor(SerializationProfile.Persistence);
+    var metadata = new Whizbang.Core.Lenses.PerspectiveMetadata { Timestamp = _origin };
+
+    var json = JsonSerializer.Serialize(metadata, options);
+    var written = JsonDocument.Parse(json).RootElement;
+
+    await Assert.That(written.GetProperty("Timestamp").ValueKind).IsEqualTo(JsonValueKind.String)
+      .Because("the framework maps and reads this document with no matching conversion, so a number "
+        + "written here is a row nothing can parse");
   }
 
   /// <summary>

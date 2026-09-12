@@ -43,6 +43,9 @@ public static class JsonContextRegistry {
   /// </summary>
   private static readonly ConcurrentQueue<_resolverEntry> _resolvers = new();
 
+  /// <summary>A per-type metadata customization and the profile it applies to.</summary>
+  private sealed record _modifierEntry(Action<JsonTypeInfo> Modifier, SerializationProfile? Profile, long Seq);
+
   /// <summary>
   /// Thread-safe collection of converter instances to add to JsonSerializerOptions.
   /// Populated via [ModuleInitializer] methods in each assembly.
@@ -50,6 +53,19 @@ public static class JsonContextRegistry {
   /// Converters are instantiated at compile-time by source generators for AOT compatibility.
   /// </summary>
   private static readonly ConcurrentQueue<_converterEntry> _converters = new();
+
+  /// <summary>
+  /// Per-type customizations applied to the resolved metadata, scoped by profile.
+  /// </summary>
+  /// <remarks>
+  /// A converter registered on the options applies to every occurrence of its type, everywhere. That
+  /// is right for a value object, whose representation is a property of the type itself, and wrong
+  /// for a representation chosen per property: the perspective's canonical temporal form applies to
+  /// a model's own dates and must not reach a date on a framework document that is mapped and read
+  /// by something else entirely. A modifier can say which properties of which type it applies to,
+  /// which is the precision that requires.
+  /// </remarks>
+  private static readonly ConcurrentQueue<_modifierEntry> _modifiers = new();
 
   private static bool _appliesTo(SerializationProfile? entryProfile, SerializationProfile requested)
     => entryProfile is null || entryProfile.Value == requested;
@@ -113,6 +129,33 @@ public static class JsonContextRegistry {
   }
 
   /// <summary>
+  /// Registers a per-type customization of the resolved metadata, scoped to a profile.
+  /// </summary>
+  /// <param name="modifier">Runs for each type the serializer resolves; it should return immediately
+  /// for a type it does not apply to.</param>
+  /// <param name="profile">Profile to scope this to, or <c>null</c> for every profile.</param>
+  /// <remarks>
+  /// <para>
+  /// Use this where a representation belongs to a property rather than to a type. A converter
+  /// registered on the options applies to every occurrence of its type everywhere, which is correct
+  /// for a value object and wrong for a choice made per property: the perspective's canonical
+  /// temporal form applies to a model's own dates, and applying it to every date in every document
+  /// reaches framework documents that are mapped and read by something else, where it is not merely
+  /// unnecessary but unreadable.
+  /// </para>
+  /// <para>
+  /// No reflection: a modifier inspects the source-generated metadata it is handed and compares a
+  /// type it names, so this stays ahead-of-time safe.
+  /// </para>
+  /// </remarks>
+  public static void RegisterTypeInfoModifier(
+      Action<JsonTypeInfo> modifier, SerializationProfile? profile = null) {
+    ArgumentNullException.ThrowIfNull(modifier);
+
+    _modifiers.Enqueue(new _modifierEntry(modifier, profile, Interlocked.Increment(ref _registrationSeq)));
+  }
+
+  /// <summary>
   /// Creates JsonSerializerOptions combining all registered contexts.
   /// Contexts are combined in registration order - Core contexts should register first
   /// to ensure infrastructure types (MessageHop, MessageId) take precedence.
@@ -160,6 +203,12 @@ public static class JsonContextRegistry {
     // member fails to (de)serialize. The base resolvers handle every concrete type.
     var combinedResolver = JsonTypeInfoResolver.Combine(
       [new _polymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
+
+    // Per-type customizations run after the metadata is resolved, in registration order, so a
+    // modifier sees whatever the contexts produced and adjusts only the properties it names.
+    foreach (var entry in _modifiers.Where(e => _appliesTo(e.Profile, profile)).OrderBy(e => e.Seq)) {
+      combinedResolver = combinedResolver.WithAddedModifier(entry.Modifier);
+    }
     var options = new JsonSerializerOptions {
       TypeInfoResolver = combinedResolver,
       DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
