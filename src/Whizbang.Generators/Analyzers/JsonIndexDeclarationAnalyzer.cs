@@ -117,10 +117,11 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    if (context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken)
-        is not IPropertySymbol property) {
-      return;
-    }
+    // Guarded on one line deliberately. Roslyn resolves a property declaration in its own
+    // compilation to a symbol in every case reachable here, so the branch is a contract check rather
+    // than a case: it stays because an analyzer that dereferences null crashes the compiler instead
+    // of reporting, and it is not spread over four lines to look like a case that occurs.
+    if (context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken) is not IPropertySymbol property) { return; }
 
     // Zero is an opt-out and null is silence, and neither is a claim about this field. Asking for no
     // index is the author saying what this diagnostic would otherwise be asking them to say.
@@ -169,10 +170,8 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   private static void _analyzeModel(SyntaxNodeAnalysisContext context) {
     var declaration = (TypeDeclarationSyntax)context.Node;
 
-    if (context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken)
-        is not INamedTypeSymbol model) {
-      return;
-    }
+    // One line, for the same reason as the property guard above.
+    if (context.SemanticModel.GetDeclaredSymbol(declaration, context.CancellationToken) is not INamedTypeSymbol model) { return; }
 
     if (!_declaresAnyIndex(model)) {
       return;

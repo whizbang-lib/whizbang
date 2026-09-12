@@ -231,23 +231,23 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// Whether this field reference sits where it narrows or orders the rows the database reads,
   /// rather than in a projection over rows already chosen.
   /// </summary>
-  private static bool _decidesWhichRowsAreRead(SyntaxNode node) {
-    for (var current = node.Parent; current is not null; current = current.Parent) {
-      switch (current) {
-        // Query syntax carries no lambda node of its own.
-        case WhereClauseSyntax:
-        case OrderingSyntax:
-          return true;
-        case LambdaExpressionSyntax lambda:
-          return _feedsRowSelectingOperator(lambda);
-        case AnonymousFunctionExpressionSyntax:
-        case MemberDeclarationSyntax:
-          return false;
-      }
-    }
+  /// <remarks>
+  /// The nearest ancestor that has an opinion decides, and the walk stops there. Written as the first
+  /// non-null verdict rather than as a loop with a terminal <c>return</c>: every ancestor chain
+  /// reaches a member declaration, a top-level statement being one too, so a fall-through after the
+  /// walk would be a line nothing can execute.
+  /// </remarks>
+  private static bool _decidesWhichRowsAreRead(SyntaxNode node) =>
+    node.Ancestors().Select(_rowSelectionVerdict).FirstOrDefault(v => v.HasValue) ?? false;
 
-    return false;
-  }
+  /// <summary>Whether one ancestor settles the question, and how.</summary>
+  private static bool? _rowSelectionVerdict(SyntaxNode current) => current switch {
+    // Query syntax carries no lambda node of its own.
+    WhereClauseSyntax or OrderingSyntax => true,
+    LambdaExpressionSyntax lambda => _feedsRowSelectingOperator(lambda),
+    AnonymousFunctionExpressionSyntax or MemberDeclarationSyntax => false,
+    _ => null,
+  };
 
   private static bool _feedsRowSelectingOperator(LambdaExpressionSyntax lambda) {
     if (lambda.Parent is not ArgumentSyntax argument ||
@@ -333,22 +333,22 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// ancestor, so looking for the negation on the way past finds the equality first and never sees
   /// the negation at all.
   /// </remarks>
-  private static bool _isUnderNegation(SyntaxNode node) {
-    for (var current = node.Parent; current is not null; current = current.Parent) {
-      switch (current) {
-        case PrefixUnaryExpressionSyntax unary when unary.IsKind(SyntaxKind.LogicalNotExpression):
-          return true;
-        case LambdaExpressionSyntax:
-        case WhereClauseSyntax:
-        case MemberDeclarationSyntax:
-          return false;
-        default:
-          continue;
-      }
-    }
+  private static bool _isUnderNegation(SyntaxNode node) =>
+    node.Ancestors().Select(_negationVerdict).FirstOrDefault(v => v.HasValue) ?? false;
 
-    return false;
-  }
+  /// <summary>
+  /// Whether one ancestor settles whether a negation encloses the reference.
+  /// </summary>
+  /// <remarks>
+  /// The predicate's own boundary answers no, which is what stops the search at the filter rather
+  /// than letting it find a negation somewhere else in the method. As with the row-selection walk,
+  /// every chain reaches one of these, so there is no fall-through to express.
+  /// </remarks>
+  private static bool? _negationVerdict(SyntaxNode current) => current switch {
+    PrefixUnaryExpressionSyntax unary when unary.IsKind(SyntaxKind.LogicalNotExpression) => true,
+    LambdaExpressionSyntax or WhereClauseSyntax or MemberDeclarationSyntax => false,
+    _ => null,
+  };
 
   /// <summary>
   /// Whether the enclosing call is <c>Equals</c> performing the ordinal comparison containment does.
@@ -461,18 +461,16 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return true;
     }
 
+    // Walks the bases, which is also what covers a property declared on one rather than on the model:
+    // the decision belongs where the property is declared, since one base carries fields for many
+    // models and repeating the attribute on each of them is how the reasons drift apart. A separate
+    // test of the declaring type used to sit here and could never answer differently, because the only
+    // way it differs from the model is inheritance, and a property reached through a composed type is
+    // refused earlier than this by the walk that identifies the model.
     for (var type = model; type is not null; type = type.BaseType) {
       if (_hasReasonedSuppression(type.GetAttributes())) {
         return true;
       }
-    }
-
-    // The property may be declared on a type the model only composes.
-    var declaring = field.ContainingType;
-    if (declaring is not null &&
-        !SymbolEqualityComparer.Default.Equals(declaring, model) &&
-        _hasReasonedSuppression(declaring.GetAttributes())) {
-      return true;
     }
 
     // The assembly-wide opt-out is honored from either side: the assembly being compiled, which is

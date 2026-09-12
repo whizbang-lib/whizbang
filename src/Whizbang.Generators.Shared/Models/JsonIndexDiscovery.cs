@@ -202,36 +202,15 @@ public static class JsonIndexDiscovery {
     return [.. found];
   }
 
-  /// <summary>
-  /// Whether a field declares an index the extraction cannot carry, which is worth reporting because
-  /// the declaration is a claim about that specific field.
-  /// </summary>
-  /// <param name="model">The perspective's model type.</param>
-  /// <returns>The properties that asked for an index and cannot have one.</returns>
-  public static ImmutableArray<IPropertySymbol> UnindexableDeclarations(INamedTypeSymbol? model) {
-    if (model is null) {
-      return [];
-    }
-
-    return [.. model.GetMembers()
-        .OfType<IPropertySymbol>()
-        .Where(p => !p.IsStatic
-                    && p.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, JSON_INDEXED))
-                    && CastFor(p.Type) is null)];
-  }
-
-  /// <summary>The kind argument of a declaration, positional or named, defaulting to btree.</summary>
-  private static int _kindOf(AttributeData attribute, int fallback) {
-    if (attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is int positional) {
-      return positional;
-    }
-
-    foreach (var named in attribute.NamedArguments) {
-      if (named.Key == "Kind" && named.Value.Value is int value) {
-        return value;
-      }
-    }
-
-    return fallback;
-  }
+  /// <summary>The kind argument of a declaration, defaulting to btree.</summary>
+  /// <remarks>
+  /// Positional only, and that is a property of the attributes rather than a limitation here: both
+  /// declare <c>Kind</c> as get-only, so <c>[Indexed(Kind = …)]</c> does not compile and no caller can
+  /// produce a named argument to read. The parameter is defaulted, so the constructor argument is
+  /// always present; the fallback covers source that does not bind, which an analyzer sees mid-edit.
+  /// </remarks>
+  private static int _kindOf(AttributeData attribute, int fallback) =>
+    attribute.ConstructorArguments.Length > 0 && attribute.ConstructorArguments[0].Value is int positional
+      ? positional
+      : fallback;
 }
