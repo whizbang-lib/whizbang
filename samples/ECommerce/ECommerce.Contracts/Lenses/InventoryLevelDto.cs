@@ -30,7 +30,7 @@ public record InventoryLevelDto {
   /// <summary>
   /// Available quantity (computed: Quantity - Reserved)
   /// </summary>
-  [JsonIndexed]
+  [Indexed]
   public int Available { get; init; }
 
   /// <summary>

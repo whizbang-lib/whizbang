@@ -535,7 +535,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       public record ProductDto {
         public string Name { get; init; } = "";
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string VeryLongPropertyNameThatWillExceedTheSixtyThreeByteLimitForPostgresColumnNames { get; init; } = "";
       }
 
@@ -576,7 +577,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       public record ProductDto {
         public string Name { get; init; } = "";
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string Status { get; init; } = "";
       }
 
@@ -616,7 +618,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       public record LongModelNameForTableThatWillCauseIndexNameOverflow {
         public string Name { get; init; } = "";
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string SomeReasonablyLongPropertyNameForColumn { get; init; } = "";
       }
 
@@ -663,7 +666,8 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       public record ProductDto {
         public string Name { get; init; } = "";
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string Status { get; init; } = "";
       }
 

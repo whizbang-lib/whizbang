@@ -447,16 +447,18 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract named arguments
-    bool isIndexed = false;
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
+    // [Indexed] is the universal way to ask for an index, so a promoted field uses the same attribute
+    // a document field does: [PhysicalField] says promote, [Indexed] says index, and together they
+    // say promote and index. PhysicalField's own Indexed flag still works for code written before
+    // that, so either spelling is honored and neither turns the other off.
+
     bool isUnique = false;
     int? maxLength = null;
     string? columnName = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "Unique":
           isUnique = namedArg.Value.Value is true;
           break;
@@ -509,7 +511,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Extract named arguments
     var distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
     var indexType = GeneratorVectorIndexType.IVFFlat; // Default
-    var isIndexed = true; // Vectors are indexed by default
+    var isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0; // [Indexed] is how a vector asks for its index, like any other field
     string? columnName = null;
     int? indexLists = null;
 
@@ -524,9 +526,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
           if (namedArg.Value.Value is int indexTypeValue) {
             indexType = (GeneratorVectorIndexType)indexTypeValue;
           }
-          break;
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
           break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;

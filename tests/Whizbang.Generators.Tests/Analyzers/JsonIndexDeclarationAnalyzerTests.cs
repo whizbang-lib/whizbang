@@ -61,7 +61,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [Arguments("object")]
   public async Task ATypeThatCannotCarryAnIndex_IsReportedAsync(string type) {
     var source = _model($$"""
-        [JsonIndexed]
+        [Indexed]
         public {{type}} Value { get; init; }
       """);
 
@@ -98,7 +98,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [Arguments("DateTime?")]
   public async Task AnIndexableType_IsNotReportedAsync(string type) {
     var source = _model($$"""
-        [JsonIndexed]
+        [Indexed]
         public {{type}} Value { get; init; }
       """);
 
@@ -126,7 +126,7 @@ public class JsonIndexDeclarationAnalyzerTests {
         [StreamId]
         public Guid OrderId { get; init; }
 
-        [JsonIndexed]
+        [Indexed]
         public Grade Level { get; init; }
       }
       """;
@@ -173,7 +173,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task TheMessageNamesThePropertyAndTheAlternativeAsync() {
     var source = _model("""
-        [JsonIndexed]
+        [Indexed]
         public object OccurredAt { get; init; } = new();
       """);
 
@@ -198,7 +198,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [RequiresAssemblyFiles]
   public async Task OptingOutIsNotReportedAsync() {
     var source = _model("""
-        [JsonIndexed(JsonIndexKind.None)]
+        [Indexed(IndexKind.None)]
         public object Value { get; init; } = new();
       """);
 
@@ -207,5 +207,50 @@ public class JsonIndexDeclarationAnalyzerTests {
     await Assert.That(_whiz303(diagnostics)).IsEmpty()
       .Because("the author has said this field carries no index, which is the thing the diagnostic "
         + "would otherwise be asking them to say");
+  }
+
+  /// <summary>
+  /// A promoted field is judged on its column, not on what the document's cast could carry.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the consequence of <c>[Indexed]</c> being universal: the same attribute asks for an
+  /// index on either side of the promotion, so the diagnostic has to know which side it is on before
+  /// deciding whether the cast out of the document is immutable. For a promoted field that question
+  /// is simply irrelevant, because the index is on a real column.
+  /// </para>
+  /// <para>
+  /// A vector is the case that makes it obvious and the one that caught it: no cast out of a document
+  /// reaches an array, so every indexed vector field was reported as impossible while its column
+  /// index was being created perfectly well.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("[PhysicalField]")]
+  [Arguments("[VectorField(8)]")]
+  public async Task APromotedFieldIsNotJudgedOnTheDocumentCastAsync(string promotion) {
+    var source = $$"""
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record OrderModel {
+        [StreamId]
+        public Guid OrderId { get; init; }
+
+        {{promotion}}
+        [Indexed]
+        public float[] Value { get; init; } = Array.Empty<float>();
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(source);
+
+    await Assert.That(_whiz303(diagnostics)).IsEmpty()
+      .Because("the index goes on the column, so whether a cast out of the document could carry one "
+        + "says nothing about whether this index can be built");
   }
 }

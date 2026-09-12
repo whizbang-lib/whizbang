@@ -30,6 +30,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding { get; set; }
                 }
 
@@ -66,6 +67,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding { get; set; }
                 }
 
@@ -104,6 +106,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding { get; set; }
                 }
 
@@ -142,6 +145,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding { get; set; }
                 }
 
@@ -217,6 +221,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding { get; set; }
                 }
 
@@ -252,12 +257,14 @@ public class VectorFieldPackageReferenceAnalyzerTests {
                 public class Model1 {
                     public Guid Id { get; set; }
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding1 { get; set; }
                 }
 
                 public class Model2 {
                     public Guid Id { get; set; }
                     [VectorField(768)]
+                    [Indexed]
                     public float[]? Embedding2 { get; set; }
                 }
 
@@ -300,6 +307,7 @@ public class VectorFieldPackageReferenceAnalyzerTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding { get; set; }
                 }
             }

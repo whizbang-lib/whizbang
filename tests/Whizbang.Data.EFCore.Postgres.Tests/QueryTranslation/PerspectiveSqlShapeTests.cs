@@ -47,10 +47,12 @@ public class PerspectiveSqlShapeTests {
     public Guid CatalogId { get; init; }
 
     // Promoted to real columns.
-    [PhysicalField(Indexed = true)]
+    [PhysicalField]
+    [Indexed]
     public Guid OwnerId { get; init; }
 
-    [PhysicalField(Indexed = true)]
+    [PhysicalField]
+    [Indexed]
     public decimal Price { get; init; }
 
     [PhysicalField(Unique = true)]

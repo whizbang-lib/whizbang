@@ -306,7 +306,8 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
         [PerspectiveStorage(FieldStorageMode.Split)]
         public class SensorReading {
-          [PhysicalField(Indexed = true)]
+          [PhysicalField]
+          [Indexed]
           public string DeviceId { get; init; } = "";
 
           public string Payload { get; init; } = "";
@@ -463,7 +464,8 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
         namespace TestApp;
 
         public class Catalog {
-          [PhysicalField(Indexed = true, Unique = true)]
+          [PhysicalField(Unique = true)]
+          [Indexed]
           public string Sku { get; init; } = "";
         }
 
@@ -614,6 +616,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
         public class Document {
           [VectorField(768, DistanceMetric = VectorDistanceMetric.L2, IndexType = VectorIndexType.HNSW, ColumnName = "embedding_vec", IndexLists = 200)]
+          [Indexed]
           public float[]? Embedding { get; init; }
         }
 
@@ -655,6 +658,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
         public class Article {
           [VectorField(384, DistanceMetric = VectorDistanceMetric.InnerProduct)]
+          [Indexed]
           public float[]? Embedding { get; init; }
         }
 
@@ -680,7 +684,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
   }
 
   /// <summary>
-  /// Test that [VectorField(Indexed = false)] generates the vector column but NO index,
+  /// Test that [VectorField()] generates the vector column but NO index,
   /// while still requiring the pgvector extension.
   /// </summary>
   [Test]
@@ -694,7 +698,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
         namespace TestApp;
 
         public class Snapshot {
-          [VectorField(128, Indexed = false)]
+          [VectorField(128)]
           public float[]? Embedding { get; init; }
         }
 
@@ -734,6 +738,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
         public class Sketch {
           [VectorField(64, DistanceMetric = (VectorDistanceMetric)99)]
+          [Indexed]
           public float[]? Embedding { get; init; }
         }
 

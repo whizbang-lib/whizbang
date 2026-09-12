@@ -56,6 +56,6 @@ public record ProductDto {
   /// A date is indexable because its stored form is a number, which casts through an immutable
   /// expression; stored as a rendering it could not carry an index at all.
   /// </remarks>
-  [JsonIndexed]
+  [Indexed]
   public DateTime? DeletedAt { get; init; }
 }

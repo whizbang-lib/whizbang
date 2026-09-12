@@ -84,7 +84,7 @@ public class EFCoreSnippets {
       //
       // The index that DOES serve a filtered field is an expression index on the extraction itself,
       // for example (((data ->> 'TenantId')::uuid)), or promotion to a real column with
-      // [PhysicalField(Indexed = true)]. Note that text-to-timestamp casts are STABLE rather than
+      // [PhysicalField] plus [Indexed]. Note that text-to-timestamp casts are STABLE rather than
       // IMMUTABLE, so date and time fields cannot be expression-indexed and need the column.
       //
       // EF Core doesn't support HasIndex on ComplexProperty directly (GitHub #28605),

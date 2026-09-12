@@ -41,6 +41,7 @@ public class VectorFieldPackageReferenceAnalyzerCoverageTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding { get; set; }
                 }
 
@@ -97,6 +98,7 @@ public class VectorFieldPackageReferenceAnalyzerCoverageTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public float[]? Embedding { get; set; }
                 }
 
@@ -143,6 +145,7 @@ public class VectorFieldPackageReferenceAnalyzerCoverageTests {
                     public Guid Id { get; set; }
 
                     [VectorField(1536)]
+                    [Indexed]
                     public static float[]? StaticEmbedding { get; set; }
                 }
 

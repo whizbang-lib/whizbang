@@ -27,7 +27,8 @@ public class PerspectiveFilterIndexAnalyzerTests {
         [StreamId]
         public Guid ThingId { get; init; }
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public Guid IndexedOwnerId { get; init; }
 
         [PhysicalField(Unique = true)]
@@ -36,7 +37,12 @@ public class PerspectiveFilterIndexAnalyzerTests {
         [PhysicalField]
         public string PromotedButNotIndexed { get; init; } = string.Empty;
 
+        [PhysicalField]
+        [Indexed]
+        public string PromotedAndIndexed { get; init; } = string.Empty;
+
         [VectorField(8)]
+        [Indexed]
         public float[] Embedding { get; init; } = Array.Empty<float>();
 
         public string JsonOnly { get; init; } = string.Empty;
@@ -69,10 +75,10 @@ public class PerspectiveFilterIndexAnalyzerTests {
 
         public TimeSpan Elapsed { get; init; }
 
-        [JsonIndexed]
+        [Indexed]
         public int DeclaredBtree { get; init; }
 
-        [JsonIndexed(JsonIndexKind.Trigram)]
+        [Indexed(IndexKind.Trigram)]
         public string DeclaredTrigram { get; init; } = string.Empty;
       }
 
@@ -266,7 +272,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
       namespace TestApp;
 
       public class RawModel {
-        [VectorField(8, Indexed = false)]
+        [VectorField(8)]
         public float[] Embedding { get; init; } = Array.Empty<float>();
       }
 
@@ -629,9 +635,10 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(message).Contains("PhysicalField", StringComparison.Ordinal)
       .Because("a promoted column is a real column and stays reachable however the rest of the "
         + "document is stored, which makes it the fix that works here");
-    await Assert.That(message).DoesNotContain("[JsonIndexed]", StringComparison.Ordinal)
-      .Because("an index over this model's document is skipped and reported by WHIZ304, so naming "
-        + "it as a fix would send the author into the other diagnostic for following the advice");
+    await Assert.That(message).DoesNotContain("Mark it [Indexed]", StringComparison.Ordinal)
+      .Because("an index over this model's document is skipped and reported by WHIZ304, so offering "
+        + "it alone would send the author into the other diagnostic for following the advice; on "
+        + "this model the attribute only works alongside the promotion");
   }
 
   /// <summary>
@@ -647,7 +654,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
     var message = _whiz302(diagnostics).Single().GetMessage(CultureInfo.InvariantCulture);
 
-    await Assert.That(message).Contains("[JsonIndexed]", StringComparison.Ordinal)
+    await Assert.That(message).Contains("[Indexed]", StringComparison.Ordinal)
       .Because("it is the cheaper of the two fixes wherever it works, and narrowing the advice for "
         + "one kind of model must not narrow it for every model");
   }
@@ -660,7 +667,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   /// A field that declares its own btree is not reported, for any shape a btree serves.
   /// </summary>
   /// <remarks>
-  /// The advisory tells an author to mark the field <c>[JsonIndexed]</c>. If it kept reporting after
+  /// The advisory tells an author to mark the field <c>[Indexed]</c>. If it kept reporting after
   /// they did, the advice would be a loop with no exit, and the only way out would be to suppress a
   /// warning that was telling the truth before the fix and a lie after it.
   /// </remarks>
@@ -735,5 +742,26 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(_whiz302(diagnostics)).IsNotEmpty()
       .Because("a trigram index answers substring matching and nothing else, so an ordering on the "
         + "field still reads every row");
+  }
+
+  /// <summary>
+  /// A promoted field indexed by the universal attribute is not reported.
+  /// </summary>
+  /// <remarks>
+  /// The same advice loop as the document case: the diagnostic asks for an index, so it has to stop
+  /// asking once one is declared, whichever side of the promotion the field sits on.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task APromotedAndIndexedField_IsNotReportedAsync() {
+    var source = _repositoryOver("""
+            return _rows.Where(r => r.Data.PromotedAndIndexed.Contains("ab")).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty()
+      .Because("[PhysicalField] promotes it and [Indexed] indexes the column, so the filter is a "
+        + "lookup and there is nothing left to advise");
   }
 }

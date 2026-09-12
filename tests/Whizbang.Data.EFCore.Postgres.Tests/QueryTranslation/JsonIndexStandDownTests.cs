@@ -40,11 +40,11 @@ public class JsonIndexStandDownTests {
   [SuppressIndexAdvisory("compile-only fixture, never run")]
   public class StandDownModel {
     /// <summary>Declared as carrying its own index, so equality must not be rewritten.</summary>
-    [JsonIndexed]
+    [Indexed]
     public int Rank { get; init; }
 
     /// <summary>Declared for substring matching only, which leaves equality to containment.</summary>
-    [JsonIndexed(JsonIndexKind.Trigram)]
+    [Indexed(IndexKind.Trigram)]
     public string Title { get; init; } = string.Empty;
 
     /// <summary>Undeclared, so equality reaches the document index as before.</summary>
@@ -59,7 +59,7 @@ public class JsonIndexStandDownTests {
     /// same reasoning applies: rewriting the equality would send the planner to the document index
     /// and leave the index just paid for unused.
     /// </remarks>
-    [JsonIndexed]
+    [Indexed]
     public DateTime OccurredAt { get; init; }
   }
 
@@ -99,10 +99,10 @@ public class JsonIndexStandDownTests {
       .Options;
 
   private static StandDownDbContext _newContext() {
-    // What the generator emits at startup for a model carrying [JsonIndexed].
-    JsonIndexRegistry.Register<StandDownModel>("Rank", JsonIndexKind.Btree);
-    JsonIndexRegistry.Register<StandDownModel>("Title", JsonIndexKind.Trigram);
-    JsonIndexRegistry.Register<StandDownModel>("OccurredAt", JsonIndexKind.Btree);
+    // What the generator emits at startup for a model carrying [Indexed].
+    JsonIndexRegistry.Register<StandDownModel>("Rank", IndexKind.Btree);
+    JsonIndexRegistry.Register<StandDownModel>("Title", IndexKind.Trigram);
+    JsonIndexRegistry.Register<StandDownModel>("OccurredAt", IndexKind.Btree);
 
     return new StandDownDbContext(_options);
   }
@@ -196,7 +196,7 @@ public class JsonIndexStandDownTests {
   /// </summary>
   [Test]
   public async Task TheRegistryIsPerModelAsync() {
-    JsonIndexRegistry.Register<StandDownModel>("Rank", JsonIndexKind.Btree);
+    JsonIndexRegistry.Register<StandDownModel>("Rank", IndexKind.Btree);
 
     await Assert.That(JsonIndexRegistry.HasBtree(typeof(StandDownModel), "Rank")).IsTrue();
     await Assert.That(JsonIndexRegistry.HasBtree(typeof(StandDownModel), "Plain")).IsFalse();
@@ -218,7 +218,7 @@ public class JsonIndexStandDownTests {
   /// </remarks>
   [Test]
   public async Task TheTableKeyedRegistrationDoesNotLeakAcrossPerspectivesAsync() {
-    JsonIndexRegistry.RegisterForTable("wh_per_one", "Rank", JsonIndexKind.Btree);
+    JsonIndexRegistry.RegisterForTable("wh_per_one", "Rank", IndexKind.Btree);
 
     await Assert.That(JsonIndexRegistry.HasBtreeForTable("wh_per_one", "Rank")).IsTrue();
     await Assert.That(JsonIndexRegistry.HasBtreeForTable("wh_per_two", "Rank")).IsFalse()
@@ -231,11 +231,11 @@ public class JsonIndexStandDownTests {
   /// </summary>
   [Test]
   public async Task RepeatedRegistrationsCombineAsync() {
-    JsonIndexRegistry.Register<StandDownModel>("Combined", JsonIndexKind.Btree);
-    JsonIndexRegistry.Register<StandDownModel>("Combined", JsonIndexKind.Trigram);
+    JsonIndexRegistry.Register<StandDownModel>("Combined", IndexKind.Btree);
+    JsonIndexRegistry.Register<StandDownModel>("Combined", IndexKind.Trigram);
 
     await Assert.That(JsonIndexRegistry.HasBtree(typeof(StandDownModel), "Combined")).IsTrue();
     await Assert.That(JsonIndexRegistry.Kinds(typeof(StandDownModel), "Combined"))
-      .IsEqualTo(JsonIndexKind.Btree | JsonIndexKind.Trigram);
+      .IsEqualTo(IndexKind.Btree | IndexKind.Trigram);
   }
 }

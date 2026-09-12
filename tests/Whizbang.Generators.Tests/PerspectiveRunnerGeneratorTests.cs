@@ -1961,6 +1961,7 @@ namespace TestNamespace {
     public Guid Id { get; init; }
 
     [VectorField(1536)]
+    [Indexed]
     public float[]? Embeddings { get; init; }
   }
 
@@ -2007,7 +2008,8 @@ namespace TestNamespace {
     [StreamId]
     public Guid Id { get; init; }
 
-    [PhysicalField(Indexed = true)]
+    [PhysicalField]
+    [Indexed]
     public string Status { get; init; } = "";
   }
 
@@ -2098,10 +2100,12 @@ namespace TestNamespace {
     [StreamId]
     public Guid Id { get; init; }
 
-    [PhysicalField(Indexed = true)]
+    [PhysicalField]
+    [Indexed]
     public string Sku { get; init; } = "";
 
     [VectorField(768)]
+    [Indexed]
     public float[]? DescriptionEmbedding { get; init; }
 
     [PhysicalField]
@@ -2154,6 +2158,7 @@ namespace TestNamespace {
     public Guid Id { get; init; }
 
     [VectorField(1536, ColumnName = "custom_embedding_col")]
+    [Indexed]
     public float[]? Vector { get; init; }
   }
 
@@ -2197,6 +2202,7 @@ namespace TestNamespace {
     public Guid Id { get; init; }
 
     [VectorField(512)]
+    [Indexed]
     public static float[]? StaticVector { get; set; }  // Static - should be ignored
 
     public string Name { get; init; } = "";
@@ -2860,6 +2866,7 @@ namespace TestNamespace {
     public string Status { get; init; } = "";
 
     [VectorField(1536)]
+    [Indexed]
     public float[]? Embedding { get; init; }
   }
 
@@ -2911,6 +2918,7 @@ namespace TestNamespace {
     public string Status { get; set; } = "";
 
     [VectorField(1536)]
+    [Indexed]
     public float[]? Embedding { get; set; }
   }
 

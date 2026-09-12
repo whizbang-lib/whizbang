@@ -762,15 +762,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract named arguments
-    bool isIndexed = false;
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
+    // [Indexed] is the universal way to ask for an index, so a promoted field uses the same attribute
+    // a document field does: [PhysicalField] says promote, [Indexed] says index, and together they
+    // say promote and index. PhysicalField's own Indexed flag still works for code written before
+    // that, so either spelling is honored and neither turns the other off.
+
     bool isUnique = false;
     string? columnName = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "Unique":
           isUnique = namedArg.Value.Value is true;
           break;
@@ -812,7 +814,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Extract named arguments
-    bool isIndexed = true; // Vectors are typically indexed
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0; // [Indexed] is how a vector asks for its index, like any other field
     string? columnName = null;
     GeneratorVectorDistanceMetric? distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
     GeneratorVectorIndexType? indexType = GeneratorVectorIndexType.IVFFlat; // Default
@@ -820,9 +822,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
           break;
@@ -1530,10 +1529,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     foreach (var index in model.JsonIndexes) {
       var kinds = new System.Collections.Generic.List<string>();
       if (index.Btree) {
-        kinds.Add("Whizbang.Core.Perspectives.JsonIndexKind.Btree");
+        kinds.Add("Whizbang.Core.Perspectives.IndexKind.Btree");
       }
       if (index.Trigram) {
-        kinds.Add("Whizbang.Core.Perspectives.JsonIndexKind.Trigram");
+        kinds.Add("Whizbang.Core.Perspectives.IndexKind.Trigram");
       }
 
       var kindExpression = string.Join(" | ", kinds);

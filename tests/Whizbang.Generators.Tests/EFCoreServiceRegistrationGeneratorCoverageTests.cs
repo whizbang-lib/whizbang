@@ -371,7 +371,8 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
         [StreamId]
         public Guid Id { get; set; }
 
-        [PhysicalField(Indexed = true, Unique = true, ColumnName = "ext_id")]
+        [PhysicalField(Unique = true, ColumnName = "ext_id")]
+        [Indexed]
         public string? ExternalId { get; set; }
       }
 
@@ -405,7 +406,7 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
   /// <summary>
   /// All [VectorField] named arguments (ColumnName, DistanceMetric, IndexType, IndexLists,
   /// Indexed) are extracted: the custom column name carries the dimensions, and a field with
-  /// Indexed = false gets a column but no vector index.
+  /// gets a column but no vector index.
   /// </summary>
   [Test]
   public async Task Generator_WithVectorFieldNamedArguments_AppliesCustomColumnAndIndexSettingsAsync() {
@@ -426,10 +427,11 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
         [StreamId]
         public Guid Id { get; set; }
 
-        [VectorField(768, Indexed = true, ColumnName = "title_vec", DistanceMetric = VectorDistanceMetric.L2, IndexType = VectorIndexType.HNSW, IndexLists = 200)]
+        [VectorField(768, ColumnName = "title_vec", DistanceMetric = VectorDistanceMetric.L2, IndexType = VectorIndexType.HNSW, IndexLists = 200)]
+        [Indexed]
         public float[]? TitleEmbedding { get; set; }
 
-        [VectorField(512, Indexed = false)]
+        [VectorField(512)]
         public float[]? BodyEmbedding { get; set; }
       }
 
@@ -459,7 +461,7 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
     await Assert.That(sourceText).Contains("body_embedding vector(512)")
       .Because("Second vector field should use default snake_case column name");
     await Assert.That(sourceText).DoesNotContain("idx_search_body_embedding_vec")
-      .Because("Indexed = false must suppress the vector index");
+      .Because(" must suppress the vector index");
   }
 
   /// <summary>
@@ -486,6 +488,7 @@ public class EFCoreServiceRegistrationGeneratorCoverageTests {
         public Guid Id { get; set; }
 
         [VectorField(3072)]
+        [Indexed]
         public float[]? Embeddings { get; set; }
       }
 

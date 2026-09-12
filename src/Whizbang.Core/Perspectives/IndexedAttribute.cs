@@ -6,7 +6,7 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Flags]
-public enum JsonIndexKind {
+public enum IndexKind {
   /// <summary>No index. Present so that an explicit "not indexed" can be written down.</summary>
   None = 0,
 
@@ -51,14 +51,32 @@ public enum JsonIndexKind {
 /// off either way.
 /// </para>
 /// <para>
+/// <strong>Universal.</strong> It says what the author means, and that is the same wherever the field
+/// lives: this field is filtered, make it fast. Where the index goes follows from whether the field
+/// was promoted, which the framework already knows. On a field held in the document it builds an
+/// index over the extraction a query produces; on a field promoted by <c>[PhysicalField]</c> it
+/// indexes the column. Use both together when you need a real column and an index on it.
+/// </para>
+/// <para>
+/// A promoted column is what you need for a constraint, a foreign key or uniqueness. An index over
+/// the document needs no schema change and no write-path column, and can offer none of those. That
+/// distinction belongs to <c>[PhysicalField]</c> rather than here, which is why this attribute does
+/// not mention either storage.
+/// </para>
+/// <para>
 /// Not every type can carry one. An index has to be built from an immutable expression, and the cast
-/// out of a document is immutable for text, the integer family, numerics, booleans and identifiers
-/// but not for a timestamp or a date. Asking for an index on a type that cannot carry one is
-/// reported at build time rather than silently skipped.
+/// out of a document is immutable for text, the integer family, numerics, booleans, identifiers and
+/// the date family, whose stored form is a number. Asking for an index a field cannot carry, or one
+/// its model's storage puts out of reach, is reported at build time rather than silently skipped.
+/// </para>
+/// <para>
+/// <see cref="IndexKind.None"/> declines an index, which is how one field opts out of
+/// <see cref="IndexAllFieldsAttribute"/>. Declining is not declaring, so it is not reported as a
+/// claim the framework cannot honor.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/JsonIndexedAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/IndexedAttributeTests.cs</tests>
 /// <example>
 /// <code>
 /// public record OrderModel {
@@ -66,23 +84,23 @@ public enum JsonIndexKind {
 ///   public Guid OrderId { get; init; }
 ///
 ///   // Filtered by range and sorted on: a btree over the extraction answers both.
-///   [JsonIndexed]
+///   [Indexed]
 ///   public int Rank { get; init; }
 ///
 ///   // Filtered both by range and by substring.
-///   [JsonIndexed(JsonIndexKind.Btree | JsonIndexKind.Trigram)]
+///   [Indexed(IndexKind.Btree | IndexKind.Trigram)]
 ///   public string Title { get; init; }
 /// }
 /// </code>
 /// </example>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = true, Inherited = true)]
-public sealed class JsonIndexedAttribute : Attribute {
+public sealed class IndexedAttribute : Attribute {
   /// <summary>Declares an index of the given kinds over this field's extraction.</summary>
-  /// <param name="kind">The kinds to create. Defaults to <see cref="JsonIndexKind.Btree"/>.</param>
-  public JsonIndexedAttribute(JsonIndexKind kind = JsonIndexKind.Btree) => Kind = kind;
+  /// <param name="kind">The kinds to create. Defaults to <see cref="IndexKind.Btree"/>.</param>
+  public IndexedAttribute(IndexKind kind = IndexKind.Btree) => Kind = kind;
 
   /// <summary>The kinds of index to create over this field.</summary>
-  public JsonIndexKind Kind { get; }
+  public IndexKind Kind { get; }
 }
 
 /// <summary>
@@ -92,7 +110,7 @@ public sealed class JsonIndexedAttribute : Attribute {
 /// <remarks>
 /// <para>
 /// For a read model that is genuinely queried every way, naming each field is noise. This says it
-/// once. A field that also carries <see cref="JsonIndexedAttribute"/> uses that field's kinds
+/// once. A field that also carries <see cref="IndexedAttribute"/> uses that field's kinds
 /// instead, so an exception to the rule stays local to the property it applies to.
 /// </para>
 /// <para>
@@ -107,13 +125,13 @@ public sealed class JsonIndexedAttribute : Attribute {
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Core.Tests/Perspectives/JsonIndexedAttributeTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/IndexedAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
 public sealed class IndexAllFieldsAttribute : Attribute {
   /// <summary>Declares an index of the given kinds over every eligible field.</summary>
-  /// <param name="kind">The kinds to create. Defaults to <see cref="JsonIndexKind.Btree"/>.</param>
-  public IndexAllFieldsAttribute(JsonIndexKind kind = JsonIndexKind.Btree) => Kind = kind;
+  /// <param name="kind">The kinds to create. Defaults to <see cref="IndexKind.Btree"/>.</param>
+  public IndexAllFieldsAttribute(IndexKind kind = IndexKind.Btree) => Kind = kind;
 
   /// <summary>The kinds of index to create over every eligible field.</summary>
-  public JsonIndexKind Kind { get; }
+  public IndexKind Kind { get; }
 }

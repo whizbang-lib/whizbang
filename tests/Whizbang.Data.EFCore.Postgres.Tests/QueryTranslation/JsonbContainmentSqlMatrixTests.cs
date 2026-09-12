@@ -77,10 +77,12 @@ public class JsonbContainmentSqlMatrixTests {
     public Guid StreamKey { get; init; }
 
     // Promoted to real columns.
-    [PhysicalField(Indexed = true)]
+    [PhysicalField]
+    [Indexed]
     public Guid PhysGuid { get; init; }
 
-    [PhysicalField(Indexed = true)]
+    [PhysicalField]
+    [Indexed]
     public int PhysInt { get; init; }
 
     [PhysicalField(Unique = true)]

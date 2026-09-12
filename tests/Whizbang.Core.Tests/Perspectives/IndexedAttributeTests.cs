@@ -15,24 +15,24 @@ namespace Whizbang.Core.Tests.Perspectives;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-public class JsonIndexedAttributeTests {
+public class IndexedAttributeTests {
   /// <summary>
   /// A range and an ordering need a btree, which is the common case and so the default.
   /// </summary>
   [Test]
   public async Task DefaultKind_IsBtreeAsync() {
-    var attribute = new JsonIndexedAttribute();
+    var attribute = new IndexedAttribute();
 
-    await Assert.That(attribute.Kind).IsEqualTo(JsonIndexKind.Btree);
+    await Assert.That(attribute.Kind).IsEqualTo(IndexKind.Btree);
   }
 
   /// <summary>The kinds combine, because a field can be filtered by range and by substring both.</summary>
   [Test]
   public async Task KindsCombineAsync() {
-    var attribute = new JsonIndexedAttribute(JsonIndexKind.Btree | JsonIndexKind.Trigram);
+    var attribute = new IndexedAttribute(IndexKind.Btree | IndexKind.Trigram);
 
-    await Assert.That(attribute.Kind.HasFlag(JsonIndexKind.Btree)).IsTrue();
-    await Assert.That(attribute.Kind.HasFlag(JsonIndexKind.Trigram)).IsTrue();
+    await Assert.That(attribute.Kind.HasFlag(IndexKind.Btree)).IsTrue();
+    await Assert.That(attribute.Kind.HasFlag(IndexKind.Trigram)).IsTrue();
   }
 
   /// <summary>
@@ -40,7 +40,7 @@ public class JsonIndexedAttributeTests {
   /// </summary>
   [Test]
   public async Task IsRepeatableOnAPropertyAsync() {
-    var usage = typeof(JsonIndexedAttribute)
+    var usage = typeof(IndexedAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), inherit: false)
       .Cast<AttributeUsageAttribute>()
       .Single();
@@ -55,8 +55,8 @@ public class JsonIndexedAttributeTests {
   /// </summary>
   [Test]
   public async Task NoneIsNotAnIndexAsync() {
-    await Assert.That(new JsonIndexedAttribute(JsonIndexKind.None).Kind).IsEqualTo(JsonIndexKind.None);
-    await Assert.That(JsonIndexKind.None.HasFlag(JsonIndexKind.Btree)).IsFalse();
+    await Assert.That(new IndexedAttribute(IndexKind.None).Kind).IsEqualTo(IndexKind.None);
+    await Assert.That(IndexKind.None.HasFlag(IndexKind.Btree)).IsFalse();
   }
 
   /// <summary>
@@ -67,7 +67,7 @@ public class JsonIndexedAttributeTests {
   public async Task IndexAllFields_AppliesToAModelAndCarriesAKindAsync() {
     var attribute = new IndexAllFieldsAttribute();
 
-    await Assert.That(attribute.Kind).IsEqualTo(JsonIndexKind.Btree);
+    await Assert.That(attribute.Kind).IsEqualTo(IndexKind.Btree);
 
     var usage = typeof(IndexAllFieldsAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), inherit: false)

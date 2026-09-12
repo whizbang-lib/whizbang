@@ -44,8 +44,10 @@ namespace Whizbang.Generators.Analyzers;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   private const string CATEGORY = "Whizbang.Perspectives";
-  private const string JSON_INDEXED = "Whizbang.Core.Perspectives.JsonIndexedAttribute";
+  private const string JSON_INDEXED = "Whizbang.Core.Perspectives.IndexedAttribute";
   private const string INDEX_ALL_FIELDS = "Whizbang.Core.Perspectives.IndexAllFieldsAttribute";
+  private const string PHYSICAL_FIELD = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
+  private const string VECTOR_FIELD = "Whizbang.Core.Perspectives.VectorFieldAttribute";
 
   /// <summary>
   /// WHIZ303: Warning - a field declares an index its stored form cannot carry.
@@ -53,9 +55,9 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor DeclaredIndexCannotBeBuilt = new(
       id: "WHIZ303",
       title: "Declared index cannot be built for this field's type",
-      messageFormat: "'{0}' declares [JsonIndexed], but a {1} held in the model's JSON cannot carry an index: "
+      messageFormat: "'{0}' declares [Indexed], but a {1} held in the model's JSON cannot carry an index: "
           + "the cast out of the document is not immutable, so PostgreSQL will not index it. "
-          + "Promote it with [PhysicalField(Indexed = true)] to get a real indexed column, or remove the "
+          + "Promote it with [PhysicalField] plus [Indexed] to get a real indexed column, or remove the "
           + "declaration to leave the field unindexed.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
@@ -78,7 +80,7 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
           + "({1}), so its document is stored as one serialized value rather than as mapped properties. "
           + "A filter on a field inside it never compiles to the extraction the index is built over, so "
           + "the index would be maintained on every write and scanned by nothing. Promote the fields you "
-          + "filter on with [PhysicalField(Indexed = true)] to get real indexed columns, or remove the "
+          + "filter on with [PhysicalField] plus [Indexed] to get real indexed columns, or remove the "
           + "declaration.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
@@ -128,6 +130,15 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
+    // A promoted field is indexed on its column, so what the document's cast could carry says
+    // nothing about it. This matters because [Indexed] is universal: the same attribute asks for an
+    // index on either side of the promotion, so this diagnostic has to check which side it is on
+    // before judging the cast. A vector is the case that makes it obvious, since no document cast
+    // reaches an array and the column index is a vector index rather than a btree.
+    if (_isPromoted(property)) {
+      return;
+    }
+
     // The one question that matters, answered by the same code the generator uses to decide what to
     // emit. Asking it twice in two places is how the two would come to disagree.
     if (JsonIndexDiscovery.CastFor(property.Type) is not null) {
@@ -140,6 +151,12 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
         property.Name,
         TypeNameUtilities.Display(property.Type)));
   }
+
+  /// <summary>Whether the field lives in a column of its own rather than in the document.</summary>
+  private static bool _isPromoted(IPropertySymbol property) =>
+    property.GetAttributes().Any(a =>
+      TypeNameUtilities.IsNamed(a.AttributeClass, PHYSICAL_FIELD)
+      || TypeNameUtilities.IsNamed(a.AttributeClass, VECTOR_FIELD));
 
   /// <summary>
   /// Reports a model that asks for an index its storage puts out of reach.
@@ -181,8 +198,10 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
     model.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, INDEX_ALL_FIELDS))
     // An opt-out is not a declaration, so a model carrying only those has claimed nothing for the
     // storage to put out of reach.
+    // A promoted field's index is on its own column, which is reachable however the rest of the
+    // document is stored, so declaring one is not a claim this diagnostic can fault.
     || model.GetMembers().OfType<IPropertySymbol>()
-        .Any(p => JsonIndexDiscovery.DeclaredKind(p) is > 0);
+        .Any(p => !_isPromoted(p) && JsonIndexDiscovery.DeclaredKind(p) is > 0);
 
   /// <summary>
   /// The member that forces the model into opaque storage, described for the message.

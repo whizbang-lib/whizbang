@@ -38,9 +38,11 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
     public Guid Id { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? Embedding { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? ReferenceEmbedding { get; set; }
 
     public string Name { get; set; } = "";
@@ -55,6 +57,7 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
     public Guid Id { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? TargetEmbedding { get; set; }
 
     public string Label { get; set; } = "";

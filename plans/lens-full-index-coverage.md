@@ -115,10 +115,10 @@ public class OrderModel {
   [PhysicalField(Indexed = true)]   // real column: everything, costs a column and a hydration path
   public Guid TenantId { get; init; }
 
-  [JsonIndexed]                     // expression index: everything, costs only an index
+  [Indexed]                     // expression index: everything, costs only an index
   public int Rank { get; init; }
 
-  [JsonIndexed(JsonIndexKind.Btree | JsonIndexKind.Trigram)]   // filtered by range and by substring
+  [Indexed(IndexKind.Btree | IndexKind.Trigram)]   // filtered by range and by substring
   public string Title { get; init; } = string.Empty;
 
 }
@@ -161,7 +161,7 @@ measurement that the reclassification breaks nothing.
 Three diagnostics were made to agree with it, since they now describe a fork that really exists:
 WHIZ304 reports an index declared on a model whose storage puts it out of reach, the generator skips
 emitting that index rather than maintaining one nothing can scan, and WHIZ302 stops offering
-`[JsonIndexed]` on such a model, which would have sent an author into WHIZ304 for taking the advice.
+`[Indexed]` on such a model, which would have sent an author into WHIZ304 for taking the advice.
 
 A genuinely polymorphic model is deliberately left in the serializer's own temporal form. It can carry
 no index either way, so converting it would be a stored-format change that buys nothing.
@@ -242,7 +242,7 @@ identifier is answerable from an index.
 ### Phase 3: advise the cheap fix.
 
 WHIZ302 currently advises promoting a field to a column, which is the heaviest of the three tiers. It
-already knows the filter shape, so it can name the fields that want `[JsonIndexed]` and reserve the
+already knows the filter shape, so it can name the fields that want `[Indexed]` and reserve the
 promotion advice for cases that need a constraint or a foreign key.
 
 ## Reshaping the translated SQL instead of the expression tree
@@ -424,7 +424,7 @@ rollback never depends on code that has already been removed.
 ## Decisions taken
 
 1. **Opt-in per field, with a perspective-level option to index everything.** A field carries
-   `[JsonIndexed]`; a read model that is queried every way carries `[IndexAllFields]` instead of a
+   `[Indexed]`; a read model that is queried every way carries `[IndexAllFields]` instead of a
    decoration per property. The analyzer still names the fields that want it, so the opt-in is guided
    rather than guessed.
 2. **`DateTimeOffset` normalizes to UTC, and the offset is kept in a sibling key.** Equality and

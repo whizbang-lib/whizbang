@@ -36,7 +36,7 @@ public class CanonicalTemporalBackfillGenerationTests {
       [StreamId]
       public Guid ReportId { get; init; }
 
-      [JsonIndexed]
+      [Indexed]
       public DateTime OccurredAt { get; init; }
 
       public TimeSpan Elapsed { get; init; }

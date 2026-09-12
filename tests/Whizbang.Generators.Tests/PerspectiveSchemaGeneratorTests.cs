@@ -41,7 +41,7 @@ public class PerspectiveSchemaGeneratorTests {
     // table is minutes of work and it is what the opt-out exists for. The column itself must
     // still be created, or the opt-out silently drops the data instead of the index.
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
-      _vectorPerspective("[VectorField(1536, Indexed = false)]"));
+      _vectorPerspective("[VectorField(1536)]"));
 
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
@@ -49,7 +49,7 @@ public class PerspectiveSchemaGeneratorTests {
     await Assert.That(sql!).Contains("vector(1536)")
       .Because("declining the index is not declining the column");
     await Assert.That(sql!).DoesNotContain("USING ivfflat")
-      .Because("Indexed = false is the opt-out for exactly this index");
+      .Because(" is the opt-out for exactly this index");
   }
 
   [Test]
@@ -59,7 +59,7 @@ public class PerspectiveSchemaGeneratorTests {
     // perspective maps onto a column that already exists, so ignoring it would generate a schema
     // that does not match the table it is meant to describe.
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
-      _vectorPerspective("[VectorField(768, ColumnName = \"doc_vec\")]"));
+      _vectorPerspective("[VectorField(768, ColumnName = \"doc_vec\")]\n        [Indexed]"));
 
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
@@ -102,7 +102,7 @@ public class PerspectiveSchemaGeneratorTests {
     // The companion to the opt-out: indexing is on unless asked otherwise, which is what makes
     // the opt-out meaningful rather than a no-op.
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
-      _vectorPerspective("[VectorField(1536)]"));
+      _vectorPerspective("[VectorField(1536)]\n        [Indexed]"));
 
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 

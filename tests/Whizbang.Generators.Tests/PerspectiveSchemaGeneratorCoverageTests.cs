@@ -138,7 +138,8 @@ public class PerspectiveSchemaGeneratorCoverageTests {
       [PerspectiveStorage(FieldStorageMode.Split)]
       public record OrderStorageModel {
         public Guid Id { get; set; }
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string Sku { get; set; } = string.Empty;
       }
 
@@ -169,7 +170,7 @@ public class PerspectiveSchemaGeneratorCoverageTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_VectorFieldWithExplicitNoneIndexTypeButIndexedTrue_EmitsNoIndexStatementAsync() {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
-      _vectorPerspective("[VectorField(1536, IndexType = VectorIndexType.None)]"));
+      _vectorPerspective("[VectorField(1536, IndexType = VectorIndexType.None)]\n        [Indexed]"));
 
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 
@@ -192,7 +193,7 @@ public class PerspectiveSchemaGeneratorCoverageTests {
   [RequiresAssemblyFiles()]
   public async Task Generator_VectorFieldWithDistanceMetricOutsideTheEnum_FallsBackToCosineOpsAsync() {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(
-      _vectorPerspective("[VectorField(1536, DistanceMetric = (VectorDistanceMetric)99)]"));
+      _vectorPerspective("[VectorField(1536, DistanceMetric = (VectorDistanceMetric)99)]\n        [Indexed]"));
 
     var sql = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
 

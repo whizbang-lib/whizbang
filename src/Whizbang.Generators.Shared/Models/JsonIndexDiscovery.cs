@@ -17,7 +17,7 @@ namespace Whizbang.Generators.Shared.Models;
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/JsonIndexGenerationTests.cs</tests>
 public static class JsonIndexDiscovery {
-  private const string JSON_INDEXED = "Whizbang.Core.Perspectives.JsonIndexedAttribute";
+  private const string JSON_INDEXED = "Whizbang.Core.Perspectives.IndexedAttribute";
   private const string INDEX_ALL_FIELDS = "Whizbang.Core.Perspectives.IndexAllFieldsAttribute";
   private const string PHYSICAL_FIELD = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD = "Whizbang.Core.Perspectives.VectorFieldAttribute";

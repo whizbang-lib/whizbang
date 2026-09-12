@@ -37,10 +37,10 @@ public class JsonIndexGenerationTests {
       [StreamId]
       public Guid OrderId { get; init; }
 
-      [JsonIndexed]
+      [Indexed]
       public int Rank { get; init; }
 
-      [JsonIndexed(JsonIndexKind.Btree | JsonIndexKind.Trigram)]
+      [Indexed(IndexKind.Btree | IndexKind.Trigram)]
       public string Title { get; init; } = string.Empty;
 
       public string Plain { get; init; } = string.Empty;
@@ -209,7 +209,7 @@ public class JsonIndexGenerationTests {
 
         public PaymentMethod? Payment { get; init; }
 
-        [JsonIndexed]
+        [Indexed]
         public int Count { get; init; }
       }
 
@@ -284,7 +284,7 @@ public class JsonIndexGenerationTests {
 
         public int Counted { get; init; }
 
-        [JsonIndexed(JsonIndexKind.None)]
+        [Indexed(IndexKind.None)]
         public int NeverFiltered { get; init; }
       }
 
@@ -305,5 +305,109 @@ public class JsonIndexGenerationTests {
     await Assert.That(output).DoesNotContain("'NeverFiltered'", StringComparison.Ordinal)
       .Because("a per-field declaration overrides the model's, so asking for no kind is how a field "
         + "declines an index it would otherwise be given");
+  }
+
+  // ========================================
+  // [Indexed] is universal
+  // ========================================
+
+  /// <summary>
+  /// A promoted field asks for its index the same way a document field does.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The attribute names the author's intent, which is the same in both places: this field is
+  /// filtered, make it fast. Where the index goes is the framework's knowledge, not theirs, and it
+  /// follows from whether the field was promoted. <c>[PhysicalField]</c> says promote, and
+  /// <c>[Indexed]</c> says index, so the two together say promote and index.
+  /// </para>
+  /// <para>
+  /// Before this, an author had to know their model was stored as a document to pick the right
+  /// attribute, and pick a different one for a promoted field. Two names for one intent, where the
+  /// difference between them was a storage detail the framework already knows.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task APromotedFieldIsIndexedByTheSameAttributeAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Reported : IEvent;
+
+      public record ReportModel {
+        [StreamId]
+        public Guid ReportId { get; init; }
+
+        [PhysicalField]
+        [Indexed]
+        public Guid TenantId { get; init; }
+
+        [PhysicalField]
+        public string NotFiltered { get; init; } = string.Empty;
+      }
+
+      public class ReportPerspective : IPerspectiveFor<ReportModel, Reported> {
+        public ReportModel Apply(ReportModel currentData, Reported eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ReportDbContext : DbContext {
+        public ReportDbContext(DbContextOptions<ReportDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).Contains("(tenant_id)", StringComparison.Ordinal)
+      .Because("the field was promoted to a column and asked to be indexed, so the index belongs on "
+        + "the column rather than over an extraction from a document it is no longer in");
+    await Assert.That(output).DoesNotContain("data ->> 'TenantId'", StringComparison.Ordinal)
+      .Because("a promoted field is not in the document, so an expression index over it would be "
+        + "built on a key that is never there");
+  }
+
+  /// <summary>A promoted field that asks for nothing gets no index of its own.</summary>
+  [Test]
+  public async Task APromotedFieldWithoutTheAttributeIsNotIndexedAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Reported : IEvent;
+
+      public record ReportModel {
+        [StreamId]
+        public Guid ReportId { get; init; }
+
+        [PhysicalField]
+        public string NotFiltered { get; init; } = string.Empty;
+      }
+
+      public class ReportPerspective : IPerspectiveFor<ReportModel, Reported> {
+        public ReportModel Apply(ReportModel currentData, Reported eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ReportDbContext : DbContext {
+        public ReportDbContext(DbContextOptions<ReportDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).DoesNotContain("(not_filtered)", StringComparison.Ordinal)
+      .Because("every index is write amplification, so a promoted column nobody filters pays for "
+        + "nothing");
   }
 }

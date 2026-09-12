@@ -45,7 +45,7 @@ public class JsonIndexStorageAnalyzerTests {
 
       public PaymentMethod? Payment { get; init; }
 
-      [JsonIndexed]
+      [Indexed]
       public string Reference { get; init; } = "";
     }
     """;
@@ -167,10 +167,10 @@ public class JsonIndexStorageAnalyzerTests {
         [StreamId]
         public Guid OrderId { get; init; }
 
-        [JsonIndexed]
+        [Indexed]
         public string Reference { get; init; } = "";
 
-        [JsonIndexed]
+        [Indexed]
         public int Quantity { get; init; }
       }
       """;
@@ -223,7 +223,7 @@ public class JsonIndexStorageAnalyzerTests {
 
         public PaymentMethod? Payment { get; init; }
 
-        [JsonIndexed(JsonIndexKind.None)]
+        [Indexed(IndexKind.None)]
         public string Reference { get; init; } = "";
       }
       """;

@@ -47,12 +47,12 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
   private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.Perspectives.SuppressIndexAdvisoryAttribute";
-  private const string JSON_INDEXED_ATTRIBUTE = "Whizbang.Core.Perspectives.JsonIndexedAttribute";
+  private const string JSON_INDEXED_ATTRIBUTE = "Whizbang.Core.Perspectives.IndexedAttribute";
 
-  /// <summary>JsonIndexKind.Btree.</summary>
+  /// <summary>IndexKind.Btree.</summary>
   private const int KIND_BTREE = 1;
 
-  /// <summary>JsonIndexKind.Trigram.</summary>
+  /// <summary>IndexKind.Trigram.</summary>
   private const int KIND_TRIGRAM = 2;
 
   /// <summary>The string operations a trigram index answers.</summary>
@@ -85,9 +85,9 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       isEnabledByDefault: true,
       description: "A perspective stores its model as JSON, and the GIN index on that document answers containment and " +
                    "nothing else, so a range, an ordering or a pattern match on a JSON-only property reads every row. " +
-                   "There are two fixes and they cost differently. [JsonIndexed] builds an index over the stored value: no " +
+                   "There are two fixes and they cost differently. [Indexed] builds an index over the stored value: no " +
                    "column, no schema change, no write-path work, and it answers equality, ranges, ordering and null tests. " +
-                   "[PhysicalField(Indexed = true)] promotes the property to a real column, which additionally allows " +
+                   "[PhysicalField] plus [Indexed] promotes the property to a real column, which additionally allows " +
                    "constraints and foreign keys and is the only option for a type whose stored form cannot carry an index, " +
                    "a date being the case that matters. When a scan is the right answer, say so with " +
                    "[SuppressIndexAdvisory(\"reason\")]: the reason is required, a blank one does not suppress, and the same " +
@@ -129,7 +129,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     }
 
     // A declared index is an index. Without this the advisory would tell an author to mark the field
-    // [JsonIndexed] and then keep reporting after they did, which is advice with no exit.
+    // [Indexed] and then keep reporting after they did, which is advice with no exit.
     if (_declaredIndexServes(node, field)) {
       return;
     }
@@ -147,7 +147,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// Whether a [JsonIndexed] declaration on this field covers the shape being written.
+  /// Whether a [Indexed] declaration on this field covers the shape being written.
   /// </summary>
   /// <param name="node">The member access being analyzed.</param>
   /// <param name="field">The property it resolves to.</param>
@@ -190,7 +190,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// <remarks>
   /// A model holding a polymorphic member is stored as one serialized value rather than as mapped
   /// properties, so an index over an extraction from it is unreachable and the generator skips it.
-  /// Offering <c>[JsonIndexed]</c> there would send an author who takes the advice straight into
+  /// Offering <c>[Indexed]</c> there would send an author who takes the advice straight into
   /// WHIZ304 for having taken it. The two diagnostics have to agree about what is possible, so the
   /// advice follows the storage rather than being fixed text.
   /// </remarks>
@@ -198,9 +198,9 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     PolymorphicModelDiscovery.IsPolymorphic(model)
       ? "This model holds a polymorphic member, so its document is stored as one serialized value and "
         + "an index over a field inside it cannot be reached. Promote it with "
-        + "[PhysicalField(Indexed = true)] to get a real indexed column, or record the decision with "
+        + "[PhysicalField] plus [Indexed] to get a real indexed column, or record the decision with "
         + "[SuppressIndexAdvisory(\"reason\")]"
-      : "Mark it [JsonIndexed] for an index over the stored value, [PhysicalField(Indexed = true)] to "
+      : "Mark it [Indexed] for an index over the stored value, [PhysicalField] plus [Indexed] to "
         + "promote it to a column, or record the decision with [SuppressIndexAdvisory(\"reason\")]";
 
   /// <summary>
@@ -434,10 +434,9 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
           break;
         case VECTOR_FIELD_ATTRIBUTE:
-          if (_namedFlag(attribute, "Indexed") != false) {
-            return true;
-          }
-
+          // A vector column exists whether or not it is indexed, and [Indexed] is what asks. The
+          // declaration is checked by _declaredIndexServes rather than assumed here, so a vector
+          // nobody asked to index reports like any other unindexed field.
           break;
         default:
           break;
