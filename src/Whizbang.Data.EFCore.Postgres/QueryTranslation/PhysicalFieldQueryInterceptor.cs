@@ -1,6 +1,8 @@
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Compatibility;
+
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 
 /// <summary>
@@ -28,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Perspectives/SplitModeProductionTests.cs:GroupBy_PhysicalField_SqlNotClientEvalAsync</tests>
 public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
   private readonly PhysicalFieldExpressionVisitor _visitor = new();
+  private readonly OrdinalEqualsRewriter _ordinalEquals = new();
 
   /// <summary>
   /// Called by EF Core to allow transformation of the query expression tree
@@ -39,9 +42,16 @@ public class PhysicalFieldQueryInterceptor : IQueryExpressionInterceptor {
     // First, redirect promoted properties to their real columns.
     var rewritten = _visitor.Visit(queryExpression);
 
+    // Then normalize the one shape Entity Framework refuses to translate at all. Unconditional,
+    // because it is a compatibility fix rather than an optimization: turning the containment rewrite
+    // off must not take a working translation with it, and the pass that reshapes translated SQL
+    // cannot do this itself, since by then the refusal has already been raised.
+    rewritten = _ordinalEquals.Visit(rewritten);
+
     // Then compile what is left, which is genuinely JSON, into a containment test where that is
-    // equivalent. Order matters: a promoted property is already an EF.Property call by now, so the
-    // containment pass cannot see it and cannot claim it.
+    // equivalent. Order matters twice over: a promoted property is already an EF.Property call by
+    // now, so the containment pass cannot claim it, and an ordinal Equals is already an equality, so
+    // the containment pass needs no knowledge of StringComparison.
     return new JsonbContainmentRewriter(eventData.Context?.Model).Visit(rewritten);
   }
 }
