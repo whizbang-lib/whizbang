@@ -253,4 +253,20 @@ public class JsonIndexDeclarationAnalyzerTests {
       .Because("the index goes on the column, so whether a cast out of the document could carry one "
         + "says nothing about whether this index can be built");
   }
+
+  /// <summary>
+  /// Asked about nothing, the shared question answers nothing.
+  /// </summary>
+  /// <remarks>
+  /// The guard exists because three callers ask this and one of them resolves a symbol that can be
+  /// absent. Covered directly because a defensive branch nothing reaches is indistinguishable from a
+  /// defensive branch that is wrong.
+  /// </remarks>
+  [Test]
+  public async Task NoPropertyDeclaresNothingAsync() {
+    await Assert.That(global::Whizbang.Generators.Shared.Models.JsonIndexDiscovery.DeclaredKind(null))
+      .IsNull()
+      .Because("null is silence rather than an opt-out, so a caller with no symbol must not be told "
+        + "the field declined an index");
+  }
 }

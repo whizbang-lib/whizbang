@@ -101,23 +101,6 @@ public static class CanonicalTemporalJsonConverters {
   }
 
   /// <summary>
-  /// Every converter, in the order they are registered.
-  /// </summary>
-  /// <returns>One converter per temporal type.</returns>
-  /// <remarks>
-  /// An optional value needs no converter of its own. The serializer unwraps a nullable and applies
-  /// the underlying type's converter, and a null is written as a null rather than reaching one at
-  /// all, which is the behavior an absent date wants.
-  /// </remarks>
-  public static IReadOnlyList<JsonConverter> All() => [
-    new InstantConverter(),
-    new OffsetInstantConverter(),
-    new DayConverter(),
-    new TimeOfDayConverter(),
-    new DurationConverter(),
-  ];
-
-  /// <summary>
   /// Applies the canonical form to the named properties of one model type, and to nothing else.
   /// </summary>
   /// <param name="info">The resolved metadata the serializer is about to use.</param>

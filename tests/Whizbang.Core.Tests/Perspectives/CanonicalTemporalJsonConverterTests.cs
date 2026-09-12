@@ -16,6 +16,15 @@ internal sealed class TemporalWriterModel {
   public DateTime? MaybeAt { get; init; }
 }
 
+/// <summary>A model used only to prove the registry seam, so registering for it is harmless.</summary>
+internal sealed class RegistryProbeModel {
+  public DateTime At { get; init; }
+}
+
+/// <summary>Metadata for the registry probe.</summary>
+[JsonSerializable(typeof(RegistryProbeModel))]
+internal sealed partial class RegistryProbeJsonContext : JsonSerializerContext { }
+
 /// <summary>
 /// The model's metadata, source-generated the way a perspective's is.
 /// </summary>
@@ -75,6 +84,23 @@ public class CanonicalTemporalJsonConverterTests {
     }
 
     return new JsonSerializerOptions(union) { TypeInfoResolver = resolver };
+  }
+
+  /// <summary>
+  /// The probe's options, built here rather than in each test so the options are created once per
+  /// call site rather than inline beside the serialization.
+  /// </summary>
+  private static JsonSerializerOptions _probeOptionsFor(SerializationProfile profile) {
+    var union = JsonContextRegistry.CreateCombinedOptions(profile);
+
+    // Mirrors what the upsert does with a caller's options: combine the union with another resolver,
+    // then wrap the finished chain so the modifiers reach what that resolver answers for.
+    var chain = JsonTypeInfoResolver.Combine(
+      union.TypeInfoResolver!, RegistryProbeJsonContext.Default);
+
+    return new JsonSerializerOptions(union) {
+      TypeInfoResolver = JsonContextRegistry.WithRegisteredModifiers(chain, profile),
+    };
   }
 
   private static TemporalWriterModel _model() => new() {
@@ -212,5 +238,113 @@ public class CanonicalTemporalJsonConverterTests {
     await Assert.That(written.GetProperty("OccurredAt").ValueKind).IsEqualTo(JsonValueKind.String)
       .Because("a date on the wire is read by systems and releases this one does not control, so "
         + "the canonical form is scoped to the documents this library owns");
+  }
+
+  /// <summary>
+  /// A modifier registered through the registry reaches the options the writer resolves.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the seam the generated code actually uses. The generator emits a
+  /// <c>RegisterTypeInfoModifier</c> call, and the generator test asserts that the call is emitted;
+  /// neither says the registry applies what it was handed. Without this, the text could be perfect
+  /// and the conversion never happen.
+  /// </para>
+  /// <para>
+  /// The modifier names a type declared only for this test, which is what makes registering one
+  /// process-wide harmless: it returns immediately for every other type the serializer resolves,
+  /// exactly as a real perspective's does.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AModifierRegisteredThroughTheRegistryIsAppliedAsync() {
+    JsonContextRegistry.RegisterTypeInfoModifier(
+      info => CanonicalTemporalJsonConverters.ApplyTo(info, typeof(RegistryProbeModel), "At"),
+      SerializationProfile.Persistence);
+
+    var options = _probeOptionsFor(SerializationProfile.Persistence);
+    var json = JsonSerializer.Serialize(new RegistryProbeModel { At = _origin }, options);
+    var written = JsonDocument.Parse(json).RootElement;
+
+    await Assert.That(written.GetProperty("At").ValueKind).IsEqualTo(JsonValueKind.Number)
+      .Because("the generated code registers its conversion this way, so a registry that did not "
+        + "apply what it was handed would leave every emitted call inert");
+    await Assert.That(written.GetProperty("At").GetInt64())
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_origin));
+  }
+
+  /// <summary>
+  /// A modifier scoped to one profile does not reach another.
+  /// </summary>
+  /// <remarks>
+  /// The scoping is what keeps the perspective's stored form out of the transport payload, so it is
+  /// worth proving rather than trusting: registered for the wrong profile, this change would be a
+  /// wire-format break rather than a storage decision.
+  /// </remarks>
+  [Test]
+  public async Task AModifierDoesNotReachAnotherProfileAsync() {
+    JsonContextRegistry.RegisterTypeInfoModifier(
+      info => CanonicalTemporalJsonConverters.ApplyTo(info, typeof(RegistryProbeModel), "At"),
+      SerializationProfile.Persistence);
+
+    var options = _probeOptionsFor(SerializationProfile.Default);
+    var json = JsonSerializer.Serialize(new RegistryProbeModel { At = _origin }, options);
+    var written = JsonDocument.Parse(json).RootElement;
+
+    await Assert.That(written.GetProperty("At").ValueKind).IsEqualTo(JsonValueKind.String)
+      .Because("a date on the wire is read by systems this release does not control, so a modifier "
+        + "scoped to persistence has to stay out of the transport profile");
+  }
+
+  /// <summary>
+  /// An optional value that is present round-trips through the wrapper that handles it.
+  /// </summary>
+  /// <remarks>
+  /// The model used elsewhere in this file leaves the optional property null, and a null is omitted
+  /// before a converter is reached, so nothing was exercising the wrapper's read path. A value that
+  /// is present is the case a model actually stores.
+  /// </remarks>
+  [Test]
+  public async Task APresentOptionalValueRoundTripsAsync() {
+    var options = _optionsFor(SerializationProfile.Persistence);
+    var model = new TemporalWriterModel {
+      OccurredAt = _origin,
+      RecordedAt = new DateTimeOffset(_origin, TimeSpan.Zero),
+      Day = new DateOnly(2026, 3, 4),
+      Clock = new TimeOnly(5, 6, 7),
+      Elapsed = TimeSpan.FromMinutes(3),
+      MaybeAt = _origin.AddHours(2),
+    };
+
+    var json = JsonSerializer.Serialize(model, options);
+    var written = JsonDocument.Parse(json).RootElement;
+
+    await Assert.That(written.GetProperty("MaybeAt").ValueKind).IsEqualTo(JsonValueKind.Number);
+
+    var restored = JsonSerializer.Deserialize<TemporalWriterModel>(json, options);
+    await Assert.That(restored!.MaybeAt).IsEqualTo(_origin.AddHours(2));
+  }
+
+  /// <summary>
+  /// An explicit JSON null reads back as absent rather than as the epoch.
+  /// </summary>
+  /// <remarks>
+  /// A document written before the optional property existed, or by something that writes nulls
+  /// rather than omitting them, still has to read. A wrapper without its null branch would hand the
+  /// underlying converter a null token and get the epoch, which reads back as a real date.
+  /// </remarks>
+  [Test]
+  public async Task AnExplicitNullReadsBackAsAbsentAsync() {
+    var options = _optionsFor(SerializationProfile.Persistence);
+    var json = $$"""
+      {"OccurredAt": 0, "RecordedAt": 0, "Day": 0, "Clock": 0, "Elapsed": 0, "MaybeAt": null}
+      """;
+
+    var restored = JsonSerializer.Deserialize<TemporalWriterModel>(json, options);
+
+    await Assert.That(restored).IsNotNull();
+    await Assert.That(restored!.MaybeAt).IsNull()
+      .Because("a null has to stay absent; handed to the underlying converter it would become the "
+        + "epoch, which reads back as a real date rather than as nothing");
   }
 }

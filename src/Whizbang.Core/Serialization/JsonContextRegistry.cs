@@ -156,6 +156,37 @@ public static class JsonContextRegistry {
   }
 
   /// <summary>
+  /// Wraps a resolver so the registered per-type customizations run over whatever it resolves.
+  /// </summary>
+  /// <param name="resolver">The resolver to wrap.</param>
+  /// <param name="profile">The profile whose modifiers apply.</param>
+  /// <returns>The resolver with the profile's modifiers attached.</returns>
+  /// <remarks>
+  /// <para>
+  /// Exposed because attaching modifiers to the union alone is not enough. A caller that combines
+  /// another resolver <em>after</em> the union produces metadata the modifiers never see, since they
+  /// were attached to the inner resolver rather than the outer one. Every type that outer resolver is
+  /// the first to answer for would then be serialized unconverted.
+  /// </para>
+  /// <para>
+  /// That matters here more than it would elsewhere: a missed conversion is not a formatting
+  /// difference but a row the reader cannot parse. So a caller that builds its own resolver chain
+  /// wraps the finished chain with this rather than relying on the union it started from.
+  /// </para>
+  /// </remarks>
+  public static IJsonTypeInfoResolver WithRegisteredModifiers(
+      IJsonTypeInfoResolver resolver, SerializationProfile profile) {
+    ArgumentNullException.ThrowIfNull(resolver);
+
+    // Registration order, so a later modifier sees what an earlier one did.
+    foreach (var entry in _modifiers.Where(e => _appliesTo(e.Profile, profile)).OrderBy(e => e.Seq)) {
+      resolver = resolver.WithAddedModifier(entry.Modifier);
+    }
+
+    return resolver;
+  }
+
+  /// <summary>
   /// Creates JsonSerializerOptions combining all registered contexts.
   /// Contexts are combined in registration order - Core contexts should register first
   /// to ensure infrastructure types (MessageHop, MessageId) take precedence.
@@ -204,11 +235,7 @@ public static class JsonContextRegistry {
     var combinedResolver = JsonTypeInfoResolver.Combine(
       [new _polymorphicBaseTypeInfoResolver(), .. orderedResolvers]);
 
-    // Per-type customizations run after the metadata is resolved, in registration order, so a
-    // modifier sees whatever the contexts produced and adjusts only the properties it names.
-    foreach (var entry in _modifiers.Where(e => _appliesTo(e.Profile, profile)).OrderBy(e => e.Seq)) {
-      combinedResolver = combinedResolver.WithAddedModifier(entry.Modifier);
-    }
+    combinedResolver = WithRegisteredModifiers(combinedResolver, profile);
     var options = new JsonSerializerOptions {
       TypeInfoResolver = combinedResolver,
       DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
