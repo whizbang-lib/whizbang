@@ -18,8 +18,15 @@ namespace Whizbang.Generators.Tests;
 public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
   private const string GENERATED_FILE = "WhizbangModelBuilderExtensions.g.cs";
 
-  /// <summary>Standard-mode snippet marker (ComplexProperty().ToJson() path).</summary>
-  private const string STANDARD_CONFIG_MARKER = "entity.ComplexProperty(e => e.Data, d => d.ToJson(\"data\"));";
+  /// <summary>
+  /// Standard-mode snippet marker (ComplexProperty().ToJson() path).
+  /// </summary>
+  /// <remarks>
+  /// The call itself rather than the whole statement, because the builder is configured in a block
+  /// once a model has temporal properties to convert. What identifies the path is that the document
+  /// is mapped as a complex property at all, not how many lines configure it.
+  /// </remarks>
+  private const string STANDARD_CONFIG_MARKER = "d.ToJson(\"data\");";
 
   /// <summary>Polymorphic-mode snippet marker (Property().HasColumnType("jsonb") path).</summary>
   private const string POLYMORPHIC_CONFIG_MARKER = "POLYMORPHIC MODEL";
@@ -1236,13 +1243,165 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
 
   #endregion
 
+  #region Record models classify on their declared shape
+
+  /// <summary>
+  /// A record model is classified by the properties its author declared, exactly as the equivalent
+  /// class model is.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A record carries a compiler-generated <c>EqualityContract</c> of type <c>System.Type</c>, and
+  /// <c>System.Type</c> is an abstract class. Read as a declared property, it answered "polymorphic"
+  /// on the first member of every record before the detector reached anything the author wrote, so
+  /// <c>record</c> versus <c>class</c> silently decided how the document was stored.
+  /// </para>
+  /// <para>
+  /// That mattered far beyond the snippet chosen. The polymorphic path maps the document as a single
+  /// opaque column, so nothing inside it is a mapped property: no extraction to build an index over,
+  /// nothing for the containment rewrite to recognize, and nowhere to attach a value conversion. A
+  /// record model was therefore excluded from every one of those, while an identical class model was
+  /// not, and the framework's own sample models are records.
+  /// </para>
+  /// <para>
+  /// The rule that settles it is the one both serializers already use: only public properties are
+  /// mapped, so only a public property can make a document polymorphic. <c>EqualityContract</c> is
+  /// protected and is serialized by nothing.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  [Arguments("record")]
+  [Arguments("class")]
+  public async Task AModelOfSimplePropertiesUsesStandardConfigAsync(string declaration) {
+    // Arrange
+    var source = $$"""
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public {{declaration}} OrderDto {
+          public string Name { get; init; } = "";
+          public int Quantity { get; init; }
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(STANDARD_CONFIG_MARKER)
+      .Because($"a {declaration} of a string and an int holds nothing polymorphic, and how it is "
+        + "stored has to follow from what the author declared rather than from which keyword "
+        + "they declared it with");
+    await Assert.That(generated).DoesNotContain(POLYMORPHIC_CONFIG_MARKER);
+  }
+
+  /// <summary>
+  /// A record that really does hold a polymorphic member is still classified polymorphic, so the
+  /// rule above narrows the question rather than answering it away.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ARecordHoldingAnAbstractPropertyIsStillPolymorphicAsync() {
+    // Arrange
+    const string source = """
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public record OrderDto {
+          public PaymentMethod? Payment { get; init; }
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER)
+      .Because("the declared property is genuinely abstract, which is the thing the detection is "
+        + "for; only the compiler-generated member stopped counting");
+  }
+
+  /// <summary>
+  /// A non-public property is not evidence either way, because neither serializer maps one.
+  /// </summary>
+  /// <remarks>
+  /// The general form of the <c>EqualityContract</c> case. Reported separately so the rule is pinned
+  /// as a rule rather than as a special case for records.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task ANonPublicPropertyDoesNotMakeAModelPolymorphicAsync() {
+    // Arrange
+    const string source = """
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public abstract class PaymentMethod {
+          public string Name { get; init; } = "";
+        }
+
+        public class OrderDto {
+          public string Reference { get; init; } = "";
+          protected PaymentMethod? Hidden { get; init; }
+        }
+
+        public class OrderPerspective(IPerspectiveStore<OrderDto> store)
+          : IPerspectiveFor<OrderDto, OrderPlaced> {
+          public OrderDto Apply(OrderDto currentData, OrderPlaced @event) => currentData;
+        }
+
+        public record OrderPlaced : IEvent;
+        """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveConfigurationGenerator>(source);
+
+    // Assert
+    var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
+    await Assert.That(generated).IsNotNull();
+    await Assert.That(generated).Contains(STANDARD_CONFIG_MARKER)
+      .Because("a protected property reaches neither the JSON document nor the mapped model, so it "
+        + "cannot be what decides how the document is stored");
+  }
+
+  #endregion
+
   #region Polymorphic detection on class models
 
-  // Every case below uses a CLASS model on purpose. A record model carries a compiler-generated
-  // EqualityContract property of type System.Type, and System.Type is an abstract class - so the
-  // very first property of any record model answers "polymorphic" before the detector ever looks
-  // at the property under test. On a record, all of these tests would pass without the code they
-  // are meant to exercise ever running.
+  // Every case below uses a CLASS model on purpose, which it no longer strictly has to: a record
+  // model is now classified on its declared properties like any other. Left as classes because the
+  // cases are about the shape of a property's type rather than about the keyword the model was
+  // declared with, and AModelOfSimplePropertiesUsesStandardConfigAsync covers that separately.
 
   /// <summary>
   /// A List of an abstract element type is polymorphic: the element type is what has to be

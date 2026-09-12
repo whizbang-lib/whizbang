@@ -49,7 +49,12 @@ public class EFCoreSnippets {
       //   2. PerspectiveScope.Extensions uses List<ScopeExtension> instead of Dictionary
       //   3. Custom principal filtering translators for AllowedPrincipals queries
       //
-      entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      entity.ComplexProperty(e => e.Data, d => {
+        d.ToJson("data");
+        // Dates, times and durations store as numbers rather than renderings, so their extraction
+        // reaches an immutable cast and can carry an index. See CanonicalTemporalFormat.
+        __TEMPORAL_CONVERTER_CONFIGS__
+      });
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
       entity.ComplexProperty(e => e.Scope, s => {
         s.ToJson("scope");

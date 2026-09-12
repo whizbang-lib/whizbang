@@ -364,7 +364,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
-        IsSplitMode: isSplitMode
+        IsSplitMode: isSplitMode,
+        TemporalProperties: CanonicalTemporalDiscovery.From(modelType as INamedTypeSymbol)
     );
   }
 
@@ -383,7 +384,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        IsSplitMode: candidate.IsSplitMode
+        IsSplitMode: candidate.IsSplitMode,
+        TemporalProperties: candidate.TemporalProperties
     );
   }
 
@@ -626,166 +628,18 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     return false;
   }
 
-  private static bool _hasPolymorphicProperties(INamedTypeSymbol? modelType) {
-    if (modelType is null) {
-      return false;
-    }
-
-    var visited = new HashSet<INamedTypeSymbol>(SymbolEqualityComparer.Default);
-    return _checkForPolymorphicTypes(modelType, visited);
-  }
-
   /// <summary>
-  /// Recursively checks if a type or its nested types contain polymorphic properties.
+  /// Whether the model has to be stored as one opaque value rather than as a mapped complex
+  /// property.
   /// </summary>
-  private static bool _checkForPolymorphicTypes(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
-    if (!visited.Add(type)) {
-      return false;
-    }
-
-    if (_isNonCollectionSystemType(type)) {
-      return false;
-    }
-
-    return type.GetMembers().OfType<IPropertySymbol>()
-        .Where(_isAnalyzableProperty)
-        .Select(p => p.Type)
-        .OfType<INamedTypeSymbol>()
-        .Any(propType => _isPropertyTypePolymorphic(propType, visited));
-  }
-
-  /// <summary>
-  /// Checks if a type is a System namespace type that is NOT a collections type.
-  /// </summary>
-  private static bool _isNonCollectionSystemType(INamedTypeSymbol type) {
-    var ns = type.ContainingNamespace is { } containingNamespace ? TypeNameUtilities.Display(containingNamespace) : null;
-    return ns?.StartsWith("System", StringComparison.Ordinal) == true &&
-           !ns.StartsWith("System.Collections", StringComparison.Ordinal);
-  }
-
-  /// <summary>
-  /// Checks if a property should be analyzed (not static, not indexer, not write-only, not ignored).
-  /// </summary>
-  private static bool _isAnalyzableProperty(IPropertySymbol property) {
-    return !property.IsStatic && !property.IsIndexer && !property.IsWriteOnly && !_isPropertyIgnored(property);
-  }
-
-  /// <summary>
-  /// Checks if a property type (or its element/argument types) contains polymorphic types.
-  /// </summary>
-  private static bool _isPropertyTypePolymorphic(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
-    var elementType = _getCollectionElementType(propType);
-    var typeToCheck = elementType ?? propType;
-
-    if (_isPolymorphicType(typeToCheck)) {
-      return true;
-    }
-
-    if (_isRecursivelyPolymorphic(typeToCheck, visited)) {
-      return true;
-    }
-
-    return _hasPolymorphicTypeArguments(propType, visited);
-  }
-
-  /// <summary>
-  /// Checks if a class/struct type recursively contains polymorphic properties.
-  /// </summary>
-  private static bool _isRecursivelyPolymorphic(INamedTypeSymbol type, HashSet<INamedTypeSymbol> visited) {
-    return (type.TypeKind == TypeKind.Class || type.TypeKind == TypeKind.Struct) &&
-           !_isSystemPrimitiveType(type) &&
-           _checkForPolymorphicTypes(type, visited);
-  }
-
-  /// <summary>
-  /// Checks if any generic type arguments of a type are polymorphic or contain polymorphic properties.
-  /// </summary>
-  private static bool _hasPolymorphicTypeArguments(INamedTypeSymbol propType, HashSet<INamedTypeSymbol> visited) {
-    // S3267: Loop has side effects (mutating visited set via _checkForPolymorphicTypes) — LINQ not appropriate
-#pragma warning disable S3267
-    foreach (var typeArg in propType.TypeArguments.OfType<INamedTypeSymbol>()) {
-      if (_isPolymorphicType(typeArg)) {
-        return true;
-      }
-      if (!_isSystemPrimitiveType(typeArg) && _checkForPolymorphicTypes(typeArg, visited)) {
-        return true;
-      }
-    }
-#pragma warning restore S3267
-
-    return false;
-  }
-
-  /// <summary>
-  /// Checks if a type is polymorphic (abstract class or has [JsonPolymorphic] attribute).
-  /// </summary>
-  private static bool _isPolymorphicType(INamedTypeSymbol type) {
-    // Check if type is an abstract class
-    if (type.IsAbstract && type.TypeKind == TypeKind.Class) {
-      return true;
-    }
-
-    // Check for [JsonPolymorphic] attribute
-    foreach (var attr in type.GetAttributes()) {
-      if (TypeNameUtilities.IsNamed(attr.AttributeClass, JSON_POLYMORPHIC_ATTRIBUTE)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /// <summary>
-  /// Checks if a property is marked as ignored by EF Core or JSON serialization.
-  /// </summary>
-  private static bool _isPropertyIgnored(IPropertySymbol property) {
-    foreach (var attr in property.GetAttributes()) {
-      if (TypeNameUtilities.IsNamed(attr.AttributeClass, "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute") ||
-          TypeNameUtilities.IsNamed(attr.AttributeClass, "System.Text.Json.Serialization.JsonIgnoreAttribute") ||
-          TypeNameUtilities.IsNamed(attr.AttributeClass, "Newtonsoft.Json.JsonIgnoreAttribute")) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// <summary>
-  /// Gets the element type if the type is a collection (List, IEnumerable, array, etc.).
-  /// </summary>
-  private static INamedTypeSymbol? _getCollectionElementType(INamedTypeSymbol type) {
-    // Check for generic collection types
-    if (!type.IsGenericType || type.TypeArguments.Length == 0) {
-      return null;
-    }
-
-    var originalDef = TypeNameUtilities.Display(type.ConstructedFrom);
-
-    // Common collection interfaces and types
-    if (originalDef.StartsWith("System.Collections.Generic.List<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.IList<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.ICollection<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.IEnumerable<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.IReadOnlyList<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Generic.IReadOnlyCollection<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Immutable.ImmutableList<", StringComparison.Ordinal) ||
-        originalDef.StartsWith("System.Collections.Immutable.ImmutableArray<", StringComparison.Ordinal)) {
-      return type.TypeArguments[0] as INamedTypeSymbol;
-    }
-
-    return null;
-  }
-
-  /// <summary>
-  /// Checks if a type is a system primitive type that won't contain polymorphic properties.
-  /// </summary>
-  private static bool _isSystemPrimitiveType(INamedTypeSymbol type) {
-    if (TypeNameUtilities.IsNamed(type.ContainingNamespace, "System")) {
-      var name = type.Name;
-      return name is "String" or "DateTime" or "DateTimeOffset" or "TimeSpan" or
-             "Guid" or "Decimal" or "Uri" or "Version" or "DateOnly" or "TimeOnly";
-    }
-    return false;
-  }
+  /// <remarks>
+  /// Asked of the shared discovery, because the analyzer that warns about an index declared on such
+  /// a model has to reach the same answer. Two copies of this question are two answers waiting to
+  /// disagree, and the disagreement would be silent: a model would be told its index is unservable
+  /// while the generator emitted it, or the reverse.
+  /// </remarks>
+  private static bool _hasPolymorphicProperties(INamedTypeSymbol? modelType) =>
+      PolymorphicModelDiscovery.IsPolymorphic(modelType);
 
   /// <summary>
   /// Generates EF Core shadow property configurations for physical fields.
@@ -1034,10 +888,22 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     var physicalFieldConfigs = _generatePhysicalFieldConfigurations(perspective.PhysicalFields, perspective.TableName);
 
+    // A polymorphic model is mapped as a jsonb column rather than a complex property, so its document
+    // is written by the serializer and a value converter has nothing to act on. The placeholder is
+    // absent from that snippet, so this replacement is simply a no-op there.
+    var temporalConfigs = perspective.TemporalProperties.IsDefaultOrEmpty
+      ? string.Empty
+      : string.Join(
+          // Four, not eight: the snippet's placeholder already carries the block's indentation for
+          // the first line, and the template pass indents every line it emits after that one.
+          "\n    ",
+          CanonicalTemporalDiscovery.ConfigurationFor(perspective.TemporalProperties, "d"));
+
     return snippet
         .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
         .Replace("__TABLE_NAME__", perspective.TableName)
         .Replace("__SCHEMA__", effectiveSchema)
+        .Replace("__TEMPORAL_CONVERTER_CONFIGS__", temporalConfigs)
         .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs);
   }
 

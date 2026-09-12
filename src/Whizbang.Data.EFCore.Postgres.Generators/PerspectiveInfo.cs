@@ -26,7 +26,8 @@ internal sealed record PerspectiveInfo(
     string TableName,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     bool HasPolymorphicProperties,
-    bool IsSplitMode = false
+    bool IsSplitMode = false,
+    ImmutableArray<CanonicalTemporalProperty> TemporalProperties = default
 );
 
 /// <summary>
@@ -43,5 +44,6 @@ internal sealed record PerspectiveCandidate(
     string TableBaseName,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     bool HasPolymorphicProperties,
-    bool IsSplitMode = false
+    bool IsSplitMode = false,
+    ImmutableArray<CanonicalTemporalProperty> TemporalProperties = default
 );
