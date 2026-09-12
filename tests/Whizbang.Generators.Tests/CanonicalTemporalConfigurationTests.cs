@@ -104,6 +104,52 @@ public class CanonicalTemporalConfigurationTests {
   }
 
   /// <summary>
+  /// The emitted line is pinned exactly, because something else has to mirror it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A value conversion needs a property expression per property, and those exist only at compile
+  /// time, so nothing at runtime can apply this configuration on a caller's behalf. That leaves a
+  /// seam: <c>CanonicalTemporalStorageTests</c> writes the same configuration by hand to prove it
+  /// works against a real database, and the two could drift apart without either failing.
+  /// </para>
+  /// <para>
+  /// A <c>Contains</c> on a method name would not catch a drift, which is why this is the whole line.
+  /// If it changes, that file has to change with it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task TheEmittedLineIsPinnedAsync() {
+    var output = await _generatedAsync();
+
+    await Assert.That(output).Contains(
+      "d.Property(p => p.OccurredAt).HasConversion<long>("
+      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.ToEpochMicroseconds(v), "
+      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.FromEpochMicroseconds(v));",
+      StringComparison.Ordinal)
+      .Because("the integration test that proves this configuration works writes it by hand, so the "
+        + "emitted form has to be pinned or the two can drift apart with both still passing");
+  }
+
+  /// <summary>
+  /// The optional form is pinned too, since its null branch is the part most easily got wrong.
+  /// </summary>
+  [Test]
+  public async Task TheOptionalEmittedLineIsPinnedAsync() {
+    var output = await _generatedAsync();
+
+    await Assert.That(output).Contains(
+      "d.Property(p => p.MaybeAt).HasConversion<long?>("
+      + "v => v == null ? (long?)null : "
+      + "global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.ToEpochMicroseconds(v.Value), "
+      + "v => v == null ? (global::System.DateTime?)null : "
+      + "global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.FromEpochMicroseconds(v.Value));",
+      StringComparison.Ordinal)
+      .Because("a converter that lost its null branch would write the epoch for an absent value, "
+        + "which reads back as a real date rather than as nothing");
+  }
+
+  /// <summary>
   /// The conversion is the framework's own, not an expression written out per property.
   /// </summary>
   /// <remarks>
