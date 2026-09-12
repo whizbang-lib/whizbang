@@ -49,6 +49,18 @@ public class JsonIndexStandDownTests {
 
     /// <summary>Undeclared, so equality reaches the document index as before.</summary>
     public string Plain { get; init; } = string.Empty;
+
+    /// <summary>
+    /// A date carrying its own index, which is a combination that could not exist before.
+    /// </summary>
+    /// <remarks>
+    /// A date used to be unindexable, so the question of standing containment down for one never
+    /// arose. Now that it is stored as a number it can carry a btree like anything else, and the
+    /// same reasoning applies: rewriting the equality would send the planner to the document index
+    /// and leave the index just paid for unused.
+    /// </remarks>
+    [JsonIndexed]
+    public DateTime OccurredAt { get; init; }
   }
 
   private sealed class StandDownDbContext(DbContextOptions<StandDownDbContext> options) : DbContext(options) {
@@ -57,7 +69,14 @@ public class JsonIndexStandDownTests {
         entity.ToTable("wh_per_standdown");
         entity.HasKey(e => e.Id);
         entity.Property(e => e.Id).HasColumnName("id");
-        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+        entity.ComplexProperty(e => e.Data, d => {
+          d.ToJson("data");
+          // What the generator emits for a mapped model: the date is stored as a number, which is
+          // what makes it indexable in the first place.
+          d.Property(p => p.OccurredAt).HasConversion<long>(
+            v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
+            v => CanonicalTemporalFormat.FromEpochMicroseconds(v));
+        });
         entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
         entity.ComplexProperty(e => e.Scope, s => {
           s.ToJson("scope");
@@ -83,6 +102,7 @@ public class JsonIndexStandDownTests {
     // What the generator emits at startup for a model carrying [JsonIndexed].
     JsonIndexRegistry.Register<StandDownModel>("Rank", JsonIndexKind.Btree);
     JsonIndexRegistry.Register<StandDownModel>("Title", JsonIndexKind.Trigram);
+    JsonIndexRegistry.Register<StandDownModel>("OccurredAt", JsonIndexKind.Btree);
 
     return new StandDownDbContext(_options);
   }
@@ -123,6 +143,39 @@ public class JsonIndexStandDownTests {
 
     await Assert.That(sql).Contains("@>", StringComparison.Ordinal)
       .Because("a trigram index does not answer an equality, so there is nothing to stand down for");
+  }
+
+  /// <summary>
+  /// A date with a btree of its own keeps the extraction form, like any other indexed field.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A combination that could not exist until the stored form changed. A date was unindexable, so
+  /// there was never an index to stand containment down for; now there can be, and leaving the
+  /// rewrite in place would send the planner to the document index and leave the new one unused.
+  /// </para>
+  /// <para>
+  /// Worth its own case rather than trusting the general rule, because the date path is the one with
+  /// a history of special handling. If anything still treats a date as a type needing a rendering,
+  /// this is where it shows.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task ABtreeIndexedDate_IsNotCompiledToContainmentAsync() {
+    using var db = _newContext();
+    var target = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+
+    var sql = db.Set<PerspectiveRow<StandDownModel>>()
+      .Where(r => r.Data.OccurredAt == target)
+      .ToQueryString();
+
+    await Assert.That(sql).DoesNotContain("@>", StringComparison.Ordinal)
+      .Because("the field has an index that answers this equality, and rewriting it would send the "
+        + "planner to the document index instead of the one just paid for");
+    await Assert.That(sql).Contains("data ->> 'OccurredAt'", StringComparison.Ordinal);
+    await Assert.That(sql).DoesNotContain("to_char", StringComparison.Ordinal)
+      .Because("a number needs no rendering, so nothing should still be treating a date as a type "
+        + "that does");
   }
 
   /// <summary>An undeclared field behaves exactly as it did before any of this existed.</summary>

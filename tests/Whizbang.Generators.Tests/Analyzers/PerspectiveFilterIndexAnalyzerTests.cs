@@ -62,6 +62,12 @@ public class PerspectiveFilterIndexAnalyzerTests {
         public Mood State { get; init; }
 
         public DateTimeOffset WhenOffset { get; init; }
+
+        public DateOnly Day { get; init; }
+
+        public TimeOnly Clock { get; init; }
+
+        public TimeSpan Elapsed { get; init; }
       }
 
       public enum Mood { Low, High }
@@ -468,7 +474,6 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Arguments("r.Data.Dbl == 1.5")]
   [Arguments("r.Data.Single == 1.5f")]
   [Arguments("r.Data.State == Mood.High")]
-  [Arguments("r.Data.When == when")]
   public async Task EqualityContainmentCanServe_IsNotReportedAsync(string predicate) {
     var source = _repositoryOver($"""
             var when = System.DateTime.UnixEpoch;
@@ -498,10 +503,23 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Arguments("r.Data.JsonOnly.Equals(\"x\", System.StringComparison.OrdinalIgnoreCase)")]
   [Arguments("r.Data.WhenOffset == offset")]
   [Arguments("r.Data.When > when")]
+  // Equality on the date family moved to this side when its stored form became a number. The value
+  // is stored converted, so the filter compiles to an extraction against that number rather than to
+  // a containment test, which is correct and, without a declared index, a scan. Saying so is the
+  // whole point: the alternative is a silent sequential scan on a filter that used to be a lookup.
+  // A declared index is also the better outcome, since a single-column btree probe beats containment,
+  // which reads the document index and then rechecks every candidate row.
+  [Arguments("r.Data.When == when")]
+  [Arguments("r.Data.Day == day")]
+  [Arguments("r.Data.Clock == clock")]
+  [Arguments("r.Data.Elapsed == elapsed")]
   public async Task ShapesContainmentCannotServe_AreStillReportedAsync(string predicate) {
     var source = _repositoryOver($"""
             var when = System.DateTime.UnixEpoch;
             var offset = System.DateTimeOffset.UnixEpoch;
+            var day = new System.DateOnly(2026, 3, 4);
+            var clock = new System.TimeOnly(5, 6, 7);
+            var elapsed = System.TimeSpan.FromMinutes(3);
             return _rows.Where(r => {predicate}).ToList();
       """);
 

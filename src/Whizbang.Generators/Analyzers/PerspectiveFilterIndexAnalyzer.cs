@@ -347,11 +347,16 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       bare = underlying;
     }
 
+    // The date family is deliberately absent. It is stored as a number, which is what made it
+    // indexable, and a converted property compiles to an extraction against that number rather than
+    // to a containment test: correct, and without a declared index, a scan. Treating it as served
+    // would be the silent sequential scan this advisory exists to prevent, on a filter that used to
+    // be a lookup. A declared index is also the better outcome, because a single-column btree probe
+    // beats containment, which reads the document index and then rechecks every candidate row.
     return bare.SpecialType switch {
       SpecialType.System_String or SpecialType.System_Boolean or SpecialType.System_Int16
         or SpecialType.System_Int32 or SpecialType.System_Int64 or SpecialType.System_Decimal
-        or SpecialType.System_Double or SpecialType.System_Single or SpecialType.System_Byte
-        or SpecialType.System_DateTime => true,
+        or SpecialType.System_Double or SpecialType.System_Single or SpecialType.System_Byte => true,
       _ => string.Equals(TypeNameUtilities.Display(bare), "System.Guid", StringComparison.Ordinal),
     };
   }

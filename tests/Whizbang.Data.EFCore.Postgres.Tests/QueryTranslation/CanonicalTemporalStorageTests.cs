@@ -7,6 +7,7 @@ using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
@@ -317,6 +318,90 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// The writer a perspective actually uses stores a temporal value the same way the mapping does.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// There are two writers, and only one of them is Entity Framework. A perspective row is written by
+  /// the upsert strategy, which serializes the model with System.Text.Json and sends the document as
+  /// a parameter; Entity Framework's mapping is what reads it back and what compiles a filter over
+  /// it. A value conversion attaches to the mapping, so on its own it changes the reading and not the
+  /// writing.
+  /// </para>
+  /// <para>
+  /// If the two disagree the failure is total rather than partial: the upsert writes a rendering, the
+  /// mapping reads a number, and every row written after the change is unreadable by the code meant
+  /// to read it. This is the assertion that keeps them honest, and it is deliberately made through
+  /// the real store rather than through change tracking, because change tracking is the path
+  /// production does not take.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Arguments("OccurredAt")]
+  [Arguments("Day")]
+  [Arguments("Clock")]
+  [Arguments("Elapsed")]
+  public async Task TheUpsertWriterAgreesWithTheMappingAsync(string key) {
+    var strategy = new PostgresUpsertStrategy();
+    var id = Guid.CreateVersion7();
+
+    await strategy.UpsertPerspectiveRowAsync(
+      _context!,
+      TABLE,
+      id,
+      new TemporalModel {
+        OccurredAt = _origin,
+        RecordedAt = new DateTimeOffset(_origin, TimeSpan.Zero),
+        Day = new DateOnly(2026, 3, 4),
+        Clock = new TimeOnly(5, 6, 7),
+        Elapsed = TimeSpan.FromMinutes(3),
+        Label = "upserted",
+      },
+      new PerspectiveMetadata(),
+      new PerspectiveScope());
+
+    var type = await _scalarAsync(
+      $"SELECT jsonb_typeof(data -> '{key}') FROM {TABLE} WHERE data ->> 'Label' = 'upserted'");
+
+    await Assert.That(type).IsEqualTo("number")
+      .Because("the upsert is the writer a perspective actually uses, so a stored form it does not "
+        + "produce is a stored form nothing produces");
+  }
+
+  /// <summary>
+  /// A row written by the real writer is readable by the mapping, which is the whole point of the
+  /// two agreeing.
+  /// </summary>
+  [Test]
+  public async Task ARowWrittenByTheUpsertReadsBackThroughTheMappingAsync() {
+    var strategy = new PostgresUpsertStrategy();
+
+    await strategy.UpsertPerspectiveRowAsync(
+      _context!,
+      TABLE,
+      Guid.CreateVersion7(),
+      new TemporalModel {
+        OccurredAt = _origin,
+        RecordedAt = new DateTimeOffset(_origin, TimeSpan.Zero),
+        Day = new DateOnly(2026, 3, 4),
+        Clock = new TimeOnly(5, 6, 7),
+        Elapsed = TimeSpan.FromMinutes(3),
+        Label = "upserted",
+      },
+      new PerspectiveMetadata(),
+      new PerspectiveScope());
+
+    var row = await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .FirstAsync(r => r.Data.Label == "upserted");
+
+    await Assert.That(row.Data.OccurredAt).IsEqualTo(_origin);
+    await Assert.That(row.Data.Day).IsEqualTo(new DateOnly(2026, 3, 4));
+    await Assert.That(row.Data.Clock).IsEqualTo(new TimeOnly(5, 6, 7));
+    await Assert.That(row.Data.Elapsed).IsEqualTo(TimeSpan.FromMinutes(3));
+  }
+
+  /// <summary>
   /// Equality on a date finds its row, which is the case the containment rewrite touches.
   /// </summary>
   /// <remarks>
@@ -345,6 +430,60 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
     await Assert.That(labels).IsEquivalentTo(_theMiddleRow)
       .Because("whatever form the filter is compiled into, it has to describe the value that was "
         + "actually stored; a rendering compared against a number returns nothing and says nothing");
+  }
+
+  /// <summary>
+  /// An equality filter on a date keeps the extraction form, under both mechanisms.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is a trade taken deliberately, and it is the one place the canonical form gives something
+  /// up. Stored as a rendering, a date equality was compiled into a containment test that the
+  /// document's GIN index answered, which was free because that index exists on every perspective
+  /// table. Stored as a number the value is converted, and neither mechanism reaches containment for
+  /// a converted property: the rewrite runs before translation, where its operand is typed by the
+  /// model rather than by what the row holds, and the reshape runs after, where the operand arrives
+  /// wrapped in a cast rather than as the bare extraction it matches on.
+  /// </para>
+  /// <para>
+  /// What is gained is larger than what is lost. Ranges, ordering and an index of any kind were
+  /// impossible for a date before and are ordinary now, and a declared btree answers equality faster
+  /// than containment did: one index probe and a heap fetch, against a document-index read that then
+  /// rechecks every candidate row. What is lost is the zero-configuration case, an exact date
+  /// equality on a field nobody declared an index for.
+  /// </para>
+  /// <para>
+  /// That case is not left silent, which is the condition for the trade being acceptable at all.
+  /// WHIZ302 reports it at build time and names the attribute that fixes it, where before it stayed
+  /// quiet because containment was serving the filter.
+  /// </para>
+  /// <para>
+  /// If this starts failing because containment appears, a mechanism learned to handle a converted
+  /// property. That is worth having, and the advisory above should be revisited with it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Arguments(ContainmentMode.ExpressionTree)]
+  [Arguments(ContainmentMode.TranslatedTree)]
+  public async Task ADateEqualityKeepsTheExtractionFormAsync(ContainmentMode mode) {
+    JsonbContainmentSwitch.SetMode(mode);
+    try {
+      var target = _origin.AddHours(1);
+
+      var sql = _context!.Set<PerspectiveRow<TemporalModel>>()
+        .Where(r => r.Data.OccurredAt == target)
+        .ToQueryString();
+
+      await Assert.That(sql).DoesNotContain("@>", StringComparison.Ordinal)
+        .Because("the value is stored converted, and neither mechanism builds a containment document "
+          + "from a converted property; the index that serves this is a declared btree");
+      await Assert.That(sql).Contains("OccurredAt", StringComparison.Ordinal);
+      await Assert.That(sql).DoesNotContain("to_char", StringComparison.Ordinal)
+        .Because("a number needs no rendering, so nothing should still be treating a date as a type "
+          + "that does");
+    } finally {
+      JsonbContainmentSwitch.Reset();
+    }
   }
 
   /// <summary>Equality on every other temporal type finds its row too.</summary>
