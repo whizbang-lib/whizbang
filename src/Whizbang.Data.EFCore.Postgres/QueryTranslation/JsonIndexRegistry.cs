@@ -78,37 +78,6 @@ public static class JsonIndexRegistry {
   public static bool HasBtree(Type modelType, string propertyName) =>
     Kinds(modelType, propertyName).HasFlag(IndexKind.Btree);
 
-  /// <summary>
-  /// Whether any model declares a btree over a property of this name.
-  /// </summary>
-  /// <param name="propertyName">The document key, which is the property's name.</param>
-  /// <returns>True when some model declares a btree for it.</returns>
-  /// <remarks>
-  /// <para>
-  /// Asked by the reshape, which works on translated SQL and therefore has a document key rather than
-  /// a model type: by that stage the expression tree that knew which model was being queried is gone.
-  /// </para>
-  /// <para>
-  /// So this is deliberately coarser than <see cref="HasBtree"/>, and the coarseness is safe in the
-  /// direction that matters. Standing down where another model declared the same key costs an index
-  /// on a filter that would otherwise have used the document index, which is a slower query. Failing
-  /// to stand down would leave a declared index unused, which is the problem being solved. Between a
-  /// query that is slower and a feature that does not work, the first is the right error.
-  /// </para>
-  /// </remarks>
-  public static bool HasAnyBtreeFor(string propertyName) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
-
-    foreach (var entry in _kinds) {
-      if (string.Equals(entry.Key.PropertyName, propertyName, StringComparison.Ordinal)
-          && entry.Value.HasFlag(IndexKind.Btree)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
   private static readonly ConcurrentDictionary<(string TableName, string PropertyName), IndexKind> _byTable =
     new();
 
@@ -150,11 +119,5 @@ public static class JsonIndexRegistry {
 
     return _byTable.TryGetValue((tableName, propertyName), out var kind)
         && kind.HasFlag(IndexKind.Btree);
-  }
-
-  /// <summary>Forgets every registration. For tests that need a known starting point.</summary>
-  public static void Clear() {
-    _kinds.Clear();
-    _byTable.Clear();
   }
 }

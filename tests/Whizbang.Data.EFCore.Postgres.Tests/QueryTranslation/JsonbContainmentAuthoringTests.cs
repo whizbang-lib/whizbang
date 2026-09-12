@@ -33,6 +33,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
+[SuppressMessage("Readability", "RCS1118:Mark local variable as const",
+  Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
 public class JsonbContainmentAuthoringTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=authoring;Username=u;Password=p";
 
@@ -111,8 +113,8 @@ public class JsonbContainmentAuthoringTests {
     }
   }
 
-  private string _instanceField = "v";
-  private static string _staticField = "v";
+  private readonly string _instanceField = "v";
+  private static readonly string _staticField = "v";
   private static string _method() => "v";
 
   // ========================================
@@ -140,6 +142,9 @@ public class JsonbContainmentAuthoringTests {
   [SuppressMessage("Globalization", "CA1309:Use ordinal string comparison",
     Justification = "The comparison overload is the subject of the test: the spellings without an explicit " +
       "StringComparison are exactly the ones a developer writes, and the point is that they still reach the index.")]
+  [SuppressMessage("Readability", "RCS1098:Constant values should be placed on right side of comparisons",
+    Justification = "Reading the member from either operand is what this asserts; moving the constant "
+      + "to the right removes the case.")]
   public async Task EqualitySpellings_ReachTheIndexAsync(string spelling) {
     var local = "v";
     var flag = true;
@@ -242,6 +247,10 @@ public class JsonbContainmentAuthoringTests {
   [SuppressMessage("Globalization", "CA1309:Use ordinal string comparison",
     Justification = "A culture-aware comparison is deliberately written here to prove it is NOT rewritten; " +
       "containment performs an ordinal comparison and must not claim to do anything else.")]
+  [SuppressMessage("Readability", "RCS1068:Simplify logical negation",
+    Justification = "The negated spelling is the subject. !(a == b) builds Not(Equal) and a != b "
+      + "builds NotEqual, which take different paths through the rewriter, so simplifying it would "
+      + "delete the case rather than tidy it.")]
   public async Task SpellingsThatMustNotBeRewritten_AreNotAsync(string spelling) {
     var number = new OrderNumber(_probe);
 
@@ -323,6 +332,10 @@ public class JsonbContainmentAuthoringTests {
   [Arguments("null check")]
   [Arguments("negated")]
   [Arguments("ordering")]
+  [SuppressMessage("Readability", "RCS1068:Simplify logical negation",
+    Justification = "The negated spelling is the subject. !(a == b) builds Not(Equal) and a != b "
+      + "builds NotEqual, which take different paths through the rewriter, so simplifying it would "
+      + "delete the case rather than tidy it.")]
   public async Task ProjectedModelPredicates_KeepTheSafeFormAsync(string shape) {
     var rows = _db.Set<PerspectiveRow<OrderModel>>();
 

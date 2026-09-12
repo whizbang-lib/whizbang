@@ -62,30 +62,17 @@ public static class JsonIndexDiscovery {
       type = underlying;
     }
 
-    switch (type.SpecialType) {
-      case SpecialType.System_String:
-        return JsonIndexCast.None;
-      case SpecialType.System_Boolean:
-        return JsonIndexCast.Bool;
-      case SpecialType.System_Byte:
-      case SpecialType.System_SByte:
-      case SpecialType.System_Int16:
-        return JsonIndexCast.Int2;
-      case SpecialType.System_Int32:
-      case SpecialType.System_UInt16:
-        return JsonIndexCast.Int4;
-      case SpecialType.System_Int64:
-      case SpecialType.System_UInt32:
-        return JsonIndexCast.Int8;
-      case SpecialType.System_Decimal:
-        return JsonIndexCast.Numeric;
-      case SpecialType.System_Single:
-        return JsonIndexCast.Float4;
-      case SpecialType.System_Double:
-        return JsonIndexCast.Float8;
-      default:
-        return _castForNamedType(type);
-    }
+    return type.SpecialType switch {
+      SpecialType.System_String => JsonIndexCast.None,
+      SpecialType.System_Boolean => JsonIndexCast.Bool,
+      SpecialType.System_Byte or SpecialType.System_SByte or SpecialType.System_Int16 => JsonIndexCast.Int2,
+      SpecialType.System_Int32 or SpecialType.System_UInt16 => JsonIndexCast.Int4,
+      SpecialType.System_Int64 or SpecialType.System_UInt32 => JsonIndexCast.Int8,
+      SpecialType.System_Decimal => JsonIndexCast.Numeric,
+      SpecialType.System_Single => JsonIndexCast.Float4,
+      SpecialType.System_Double => JsonIndexCast.Float8,
+      _ => _castForNamedType(type),
+    };
   }
 
   /// <summary>
@@ -172,7 +159,7 @@ public static class JsonIndexDiscovery {
   /// </remarks>
   public static ImmutableArray<JsonIndexInfo> From(INamedTypeSymbol? model) {
     if (model is null) {
-      return ImmutableArray<JsonIndexInfo>.Empty;
+      return [];
     }
 
     var blanket = model.GetAttributes()
@@ -212,7 +199,7 @@ public static class JsonIndexDiscovery {
           Trigram: trigram));
     }
 
-    return found.Count == 0 ? ImmutableArray<JsonIndexInfo>.Empty : found.ToImmutableArray();
+    return [.. found];
   }
 
   /// <summary>
@@ -223,17 +210,14 @@ public static class JsonIndexDiscovery {
   /// <returns>The properties that asked for an index and cannot have one.</returns>
   public static ImmutableArray<IPropertySymbol> UnindexableDeclarations(INamedTypeSymbol? model) {
     if (model is null) {
-      return ImmutableArray<IPropertySymbol>.Empty;
+      return [];
     }
 
-    var offenders = model.GetMembers()
+    return [.. model.GetMembers()
         .OfType<IPropertySymbol>()
-        .Where(p => !p.IsStatic)
-        .Where(p => p.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, JSON_INDEXED)))
-        .Where(p => CastFor(p.Type) is null)
-        .ToList();
-
-    return offenders.Count == 0 ? ImmutableArray<IPropertySymbol>.Empty : offenders.ToImmutableArray();
+        .Where(p => !p.IsStatic
+                    && p.GetAttributes().Any(a => TypeNameUtilities.IsNamed(a.AttributeClass, JSON_INDEXED))
+                    && CastFor(p.Type) is null)];
   }
 
   /// <summary>The kind argument of a declaration, positional or named, defaulting to btree.</summary>

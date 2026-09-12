@@ -44,7 +44,6 @@ namespace Whizbang.Generators.Analyzers;
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   private const string CATEGORY = "Whizbang.Perspectives";
-  private const string JSON_INDEXED = "Whizbang.Core.Perspectives.IndexedAttribute";
   private const string INDEX_ALL_FIELDS = "Whizbang.Core.Perspectives.IndexAllFieldsAttribute";
   private const string PHYSICAL_FIELD = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
   private const string VECTOR_FIELD = "Whizbang.Core.Perspectives.VectorFieldAttribute";
@@ -114,7 +113,7 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
 
   private static void _analyzeProperty(SyntaxNodeAnalysisContext context) {
     var declaration = (PropertyDeclarationSyntax)context.Node;
-    if (declaration.AttributeLists.Count == 0) {
+    if (!declaration.AttributeLists.Any()) {
       return;
     }
 

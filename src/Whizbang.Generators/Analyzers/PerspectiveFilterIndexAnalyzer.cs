@@ -47,7 +47,6 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
   private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.Perspectives.SuppressIndexAdvisoryAttribute";
-  private const string JSON_INDEXED_ATTRIBUTE = "Whizbang.Core.Perspectives.IndexedAttribute";
 
   /// <summary>IndexKind.Btree.</summary>
   private const int KIND_BTREE = 1;
@@ -261,7 +260,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
 
     // Entity Framework's asynchronous operators take the same predicates as their synchronous twins.
     if (name.EndsWith(ASYNC_SUFFIX, StringComparison.Ordinal)) {
-      name = name.Substring(0, name.Length - ASYNC_SUFFIX.Length);
+      name = name[..^ASYNC_SUFFIX.Length];
     }
 
     return _rowSelectingOperators.Contains(name);
@@ -447,10 +446,8 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   }
 
   private static bool? _namedFlag(AttributeData attribute, string key) {
-    foreach (var named in attribute.NamedArguments) {
-      if (string.Equals(named.Key, key, StringComparison.Ordinal)) {
-        return named.Value.Value as bool?;
-      }
+    foreach (var named in attribute.NamedArguments.Where(n => string.Equals(n.Key, key, StringComparison.Ordinal))) {
+      return named.Value.Value as bool?;
     }
 
     return null;

@@ -35,6 +35,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// <docs>operations/diagnostics/whiz302</docs>
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
+[SuppressMessage("Readability", "RCS1118:Mark local variable as const",
+  Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
 public class JsonbContainmentSqlMatrixTests {
   private const string UNUSED_CONNECTION = "Host=localhost;Database=matrix;Username=u;Password=p";
 
@@ -191,14 +193,6 @@ public class JsonbContainmentSqlMatrixTests {
       mode == ContainmentMode.TranslatedTree ? _reshapeOptions : _matrixOptions);
   }
 
-  private static MatrixDbContext _newContext() {
-    PhysicalFieldRegistry.Register<MatrixModel>("PhysGuid", "phys_guid");
-    PhysicalFieldRegistry.Register<MatrixModel>("PhysInt", "phys_int");
-    PhysicalFieldRegistry.Register<MatrixModel>("PhysString", "phys_string");
-
-    return new MatrixDbContext(_matrixOptions);
-  }
-
   private delegate IQueryable<PerspectiveRow<MatrixModel>> Shape(IQueryable<PerspectiveRow<MatrixModel>> rows);
 
   private static readonly Dictionary<string, (Shape Shape, Destination Expected)> _matrix = _buildMatrix();
@@ -217,6 +211,16 @@ public class JsonbContainmentSqlMatrixTests {
       "matrix exists to cover, since case folding through a function is what keeps them unindexed.")]
   [SuppressMessage("Readability", "RCS1155:Use StringComparison when comparing strings",
     Justification = "As CA1862: the comparison without a StringComparison is the case under test.")]
+  [SuppressMessage("Readability", "RCS1068:Simplify logical negation",
+    Justification = "Every negated row is named for its spelling. !(a == b) builds Not(Equal) and a != b "
+      + "builds NotEqual, which are different nodes down different paths: the negation-depth tracking "
+      + "exists for the first. Simplifying them would delete the cases, not tidy them.")]
+  [SuppressMessage("Readability", "RCS1098:Constant values should be placed on right side of comparisons",
+    Justification = "The value-first rows exist to prove the rewrite reads either operand as the member. "
+      + "Moving the constant to the right turns each of them into its member-first twin.")]
+  [SuppressMessage("Readability", "RCS1033:Remove redundant boolean literal",
+    Justification = "Flag == true is what produces an equality node to rewrite; a bare member access is "
+      + "not a comparison at all, so removing the literal removes the case.")]
   private static Dictionary<string, (Shape, Destination)> _buildMatrix() {
     var cases = new Dictionary<string, (Shape, Destination)>(StringComparer.Ordinal);
 
@@ -588,7 +592,7 @@ public class JsonbContainmentSqlMatrixTests {
     string caseKey, ContainmentMode mode, Destination expected) {
     var (shape, _) = _matrix[caseKey];
 
-    using var db = _newContext(mode);
+    await using var db = _newContext(mode);
 
     if (expected == Destination.Untranslatable) {
       await Assert.That(() => shape(db.Set<PerspectiveRow<MatrixModel>>()).ToQueryString())
@@ -649,7 +653,7 @@ public class JsonbContainmentSqlMatrixTests {
   /// </summary>
   [Test]
   public async Task WithoutRegistration_TheRewriteStandsDownAsync() {
-    using var db = new UnregisteredDbContext(_unregisteredOptions);
+    await using var db = new UnregisteredDbContext(_unregisteredOptions);
 
     var sql = db.Set<PerspectiveRow<MatrixModel>>().Where(x => x.Data.Str == "v").ToQueryString();
 
@@ -698,7 +702,7 @@ public class JsonbContainmentSqlMatrixTests {
 
     var mode = string.Equals(Environment.GetEnvironmentVariable("WHIZ_MATRIX_MODE"), "reshape",
       StringComparison.Ordinal) ? ContainmentMode.TranslatedTree : ContainmentMode.ExpressionTree;
-    using var db = _newContext(mode);
+    await using var db = _newContext(mode);
     var sink = new System.Text.StringBuilder();
     foreach (var (key, (shape, expected)) in _matrix.OrderBy(kv => kv.Key, StringComparer.Ordinal)) {
       sink.AppendLine(CultureInfo.InvariantCulture, $"##### {key}  [{expected}]");

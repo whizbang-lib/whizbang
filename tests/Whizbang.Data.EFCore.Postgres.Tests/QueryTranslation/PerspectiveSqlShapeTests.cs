@@ -323,7 +323,7 @@ public class PerspectiveSqlShapeTests {
   /// </summary>
   [Test]
   public async Task NpgsqlContainmentHelpers_DoNotTranslateOverTheComplexPropertyAsync() {
-    using var db = _newContext();
+    await using var db = _newContext();
     var rows = db.Set<PerspectiveRow<CatalogModel>>();
 
     await Assert.That(() => rows.Where(r => EF.Functions.JsonContains(r.Data, "{\"Title\":\"abc\"}")).ToQueryString())
@@ -359,7 +359,7 @@ public class PerspectiveSqlShapeTests {
   /// </remarks>
   [Test]
   public async Task ACustomTranslation_CanEmitAnyOperator_ButOnlyOverAnExtractionAsync() {
-    using var db = new OperatorDbContext(_operatorOptions);
+    await using var db = new OperatorDbContext(_operatorOptions);
 
     var sql = db.Set<PerspectiveRow<CatalogModel>>()
       .Where(r => JsonbContains(r.Data.Title, "\"abc\""))
@@ -385,7 +385,7 @@ public class PerspectiveSqlShapeTests {
       return db.Set<PerspectiveRow<CatalogModel>>().Where(r => r.Data.Title == "abc").ToQueryString();
     }).Throws<ArgumentException>();
 
-    using var plain = _newContext();
+    await using var plain = _newContext();
     var rows = plain.Set<PerspectiveRow<CatalogModel>>();
 
     // Addressing it by property name resolves to the complex property, which is not a scalar.

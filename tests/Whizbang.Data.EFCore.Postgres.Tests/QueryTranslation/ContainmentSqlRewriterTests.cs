@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using TUnit.Assertions;
@@ -168,6 +169,10 @@ public class ContainmentSqlRewriterTests {
   [Arguments("negation")]
   [Arguments("inequality")]
   [Arguments("range")]
+  [SuppressMessage("Readability", "RCS1068:Simplify logical negation",
+    Justification = "The negated spelling is the subject. !(a == b) builds Not(Equal) and a != b "
+      + "builds NotEqual, which take different paths through the rewriter, so simplifying it would "
+      + "delete the case rather than tidy it.")]
   public async Task WhereTheFormsDisagreeItStandsDownAsync(string shape) {
     var sql = shape switch {
       "null comparison" => _sql(rows => rows.Where(r => r.Data.Maybe == null)),
@@ -183,7 +188,7 @@ public class ContainmentSqlRewriterTests {
   /// <summary>A comparison in a projection is not a filter and is not reshaped.</summary>
   [Test]
   public async Task AProjectionIsNotReshapedAsync() {
-    using var db = _newContext();
+    await using var db = _newContext();
 
     var sql = db.Set<PerspectiveRow<ReshapeModel>>()
       .Select(r => new { Matches = r.Data.Rank == 7 })
@@ -196,6 +201,9 @@ public class ContainmentSqlRewriterTests {
 
   /// <summary>Both operand orders reshape, since which side holds the member is incidental.</summary>
   [Test]
+  [SuppressMessage("Readability", "RCS1098:Constant values should be placed on right side of comparisons",
+    Justification = "Reading the member from either operand is what this asserts; moving the constant "
+      + "to the right removes the case.")]
   public async Task EitherOperandOrderReshapesAsync() {
     await Assert.That(_sql(rows => rows.Where(r => 7 == r.Data.Rank)))
       .Contains("@>", StringComparison.Ordinal);

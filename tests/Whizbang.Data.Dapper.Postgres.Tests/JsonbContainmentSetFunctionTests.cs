@@ -66,7 +66,7 @@ public class JsonbContainmentSetFunctionTests : PostgresTestBase {
       ("p", new[] { id }));
 
     await Assert.That(text).IsNotNull();
-    await Assert.That(text!).Contains(id.ToString(), StringComparison.OrdinalIgnoreCase);
+    await Assert.That(text).Contains(id.ToString(), StringComparison.OrdinalIgnoreCase);
   }
 
   /// <summary>

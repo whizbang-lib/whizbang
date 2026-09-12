@@ -108,7 +108,7 @@ public class JsonbContainmentSwitchTests {
   public async Task On_CompilesToContainmentAsync() {
     JsonbContainmentSwitch.Set(true);
 
-    using var db = new GateDbContext(_options);
+    await using var db = new GateDbContext(_options);
     var sql = db.Set<PerspectiveRow<GateModel>>().Where(x => x.Data.Title == "v").ToQueryString();
 
     await Assert.That(sql).Contains("@>", StringComparison.Ordinal);
@@ -120,7 +120,7 @@ public class JsonbContainmentSwitchTests {
   public async Task Off_CompilesToExtractionAsync() {
     JsonbContainmentSwitch.Set(false);
 
-    using var db = new GateDbContext(_options);
+    await using var db = new GateDbContext(_options);
     var owner = Guid.NewGuid();
     var sql = db.Set<PerspectiveRow<GateModel>>().Where(x => x.Data.Owner == owner).ToQueryString();
 

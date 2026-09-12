@@ -112,6 +112,36 @@ public static class JsonbContainment {
   /// <returns>Never returns; the call is translated to SQL.</returns>
   public static bool Matches(decimal member, decimal value) => throw _notCallable();
 
+  /// <summary>Containment test for a <see cref="double"/> member.</summary>
+  /// <param name="member">The JSON member being compared.</param>
+  /// <param name="value">The value it is compared with.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool Matches(double member, double value) => throw _notCallable();
+
+  /// <summary>Containment test for a <see cref="float"/> member.</summary>
+  /// <param name="member">The JSON member being compared.</param>
+  /// <param name="value">The value it is compared with.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool Matches(float member, float value) => throw _notCallable();
+
+  /// <summary>Containment test for a <see cref="byte"/> member, which is how a small enum arrives.</summary>
+  /// <param name="member">The JSON member being compared.</param>
+  /// <param name="value">The value it is compared with.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  public static bool Matches(byte member, byte value) => throw _notCallable();
+
+  /// <summary>Containment test for a <see cref="DateTime"/> member.</summary>
+  /// <param name="member">The JSON member being compared.</param>
+  /// <param name="value">The value it is compared with.</param>
+  /// <returns>Never returns; the call is translated to SQL.</returns>
+  /// <remarks>
+  /// A date is stored as a JSON string, so unlike every other overload here the value has to be
+  /// rendered into the exact text the serializer wrote rather than passed through.
+  /// <see cref="_normalized"/> does that, and <c>PerspectiveDateFormatLockTests</c> pins the format
+  /// on both sides so the two cannot drift apart.
+  /// </remarks>
+  public static bool Matches(DateTime member, DateTime value) => throw _notCallable();
+
   /// <summary>Set-membership test for a string member.</summary>
   /// <param name="member">The JSON member being tested.</param>
   /// <param name="values">The candidate values.</param>
@@ -147,36 +177,6 @@ public static class JsonbContainment {
 
   /// <inheritdoc cref="MatchesAny(string, string[])"/>
   public static bool MatchesAny(long member, List<long> values) => throw _notCallable();
-
-  /// <summary>Containment test for a <see cref="double"/> member.</summary>
-  /// <param name="member">The JSON member being compared.</param>
-  /// <param name="value">The value it is compared with.</param>
-  /// <returns>Never returns; the call is translated to SQL.</returns>
-  public static bool Matches(double member, double value) => throw _notCallable();
-
-  /// <summary>Containment test for a <see cref="float"/> member.</summary>
-  /// <param name="member">The JSON member being compared.</param>
-  /// <param name="value">The value it is compared with.</param>
-  /// <returns>Never returns; the call is translated to SQL.</returns>
-  public static bool Matches(float member, float value) => throw _notCallable();
-
-  /// <summary>Containment test for a <see cref="byte"/> member, which is how a small enum arrives.</summary>
-  /// <param name="member">The JSON member being compared.</param>
-  /// <param name="value">The value it is compared with.</param>
-  /// <returns>Never returns; the call is translated to SQL.</returns>
-  public static bool Matches(byte member, byte value) => throw _notCallable();
-
-  /// <summary>Containment test for a <see cref="DateTime"/> member.</summary>
-  /// <param name="member">The JSON member being compared.</param>
-  /// <param name="value">The value it is compared with.</param>
-  /// <returns>Never returns; the call is translated to SQL.</returns>
-  /// <remarks>
-  /// A date is stored as a JSON string, so unlike every other overload here the value has to be
-  /// rendered into the exact text the serializer wrote rather than passed through.
-  /// <see cref="_normalized"/> does that, and <c>PerspectiveDateFormatLockTests</c> pins the format
-  /// on both sides so the two cannot drift apart.
-  /// </remarks>
-  public static bool Matches(DateTime member, DateTime value) => throw _notCallable();
 
   private static NotSupportedException _notCallable() =>
     new("JsonbContainment.Matches is a query marker and is only valid inside a LINQ query over a perspective.");
@@ -433,12 +433,14 @@ public static class JsonbContainment {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Builds
-  /// <c>CASE WHEN isfinite(v) THEN to_jsonb(concat(rtrim(rtrim(to_char(timezone('UTC', v),
-  /// 'YYYY-MM-DD"T"HH24:MI:SS.US'), '0'), '.'), 'Z')) ELSE to_jsonb(v) END</c>, which reproduces the
-  /// stored text exactly. Each part answers something measured rather than assumed, and
-  /// <c>PerspectiveDateFormatLockTests</c> holds every one of those measurements:
+  /// Builds the expression below, which reproduces the stored text exactly. Each part answers
+  /// something measured rather than assumed, and <c>PerspectiveDateFormatLockTests</c> holds every
+  /// one of those measurements:
   /// </para>
+  /// <code>
+  /// CASE WHEN isfinite(v) THEN to_jsonb(concat(rtrim(rtrim(to_char(timezone('UTC', v),
+  /// 'YYYY-MM-DD"T"HH24:MI:SS.US'), '0'), '.'), 'Z')) ELSE to_jsonb(v) END
+  /// </code>
   /// <para>
   /// The zone is pinned to UTC rather than left to the session, because <c>to_char</c> on a
   /// <c>timestamptz</c> renders in whatever zone the session is set to, and the stored text is always
@@ -633,8 +635,7 @@ public static class JsonbContainment {
   /// the rewrite understands. Losing an index is acceptable; changing an answer is not.
   /// </summary>
   private static SqlBinaryExpression _equality(SqlExpression left, SqlExpression right) =>
-    new SqlBinaryExpression(
-      System.Linq.Expressions.ExpressionType.Equal, left, right, typeof(bool), BoolTypeMapping.Default);
+    new(System.Linq.Expressions.ExpressionType.Equal, left, right, typeof(bool), BoolTypeMapping.Default);
 
   private static readonly bool[] _argumentsPropagateNullability = [false, false];
   private static readonly bool[] _oneArgumentKeepsNullability = [false];

@@ -468,7 +468,7 @@ public class PerspectiveDateFormatLockTests : IAsyncDisposable {
     var ordered = await query.ToListAsync(cancellationToken);
 
     await Assert.That(string.Join(",", ordered.Select(d => d.Ticks)))
-      .IsEqualTo(string.Join(",", inserted.OrderBy(d => d).Select(d => d.Ticks)))
+      .IsEqualTo(string.Join(",", inserted.Order().Select(d => d.Ticks)))
       .Because("a date orders by instant, whatever precision each row carries");
 
     // And the same rows sorted by the stored text come back in a different order, which is why that

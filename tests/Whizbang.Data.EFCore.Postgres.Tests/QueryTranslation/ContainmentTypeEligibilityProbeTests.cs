@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
@@ -35,6 +36,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 [Category("Integration")]
 [NotInParallel("EFCorePostgresTests")]
 [Category("Shard1")]
+[SuppressMessage("Readability", "RCS1118:Mark local variable as const",
+  Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
 public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   private const string TABLE = "wh_per_eligibility";
 
@@ -360,6 +363,10 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   /// </summary>
   [Test]
   [Timeout(120000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ANonUtcOffset_CannotBeAParameterAtAllAsync(CancellationToken cancellationToken) {
     await Assert.That(async () => await _scalarAsync(
         $"SELECT count(*) FROM {TABLE} WHERE data @> jsonb_build_object('Shifted', @p)",
@@ -380,11 +387,11 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
 
     var target = Environment.GetEnvironmentVariable("WHIZ_ELIGIBILITY_DUMP");
     if (!string.IsNullOrWhiteSpace(target)) {
-      await File.WriteAllTextAsync(target, document!, cancellationToken);
+      await File.WriteAllTextAsync(target, document, cancellationToken);
     }
 
     // The enumeration is the one that decides whether the largest remaining win is available.
-    await Assert.That(document!).Contains("State", StringComparison.Ordinal);
+    await Assert.That(document).Contains("State", StringComparison.Ordinal);
   }
 
   /// <summary>
@@ -716,7 +723,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
       .ToListAsync(cancellationToken);
 
     await Assert.That(string.Join(",", ordered.Select(d => d.Ticks)))
-      .IsEqualTo(string.Join(",", inserted.OrderBy(d => d).Select(d => d.Ticks)));
+      .IsEqualTo(string.Join(",", inserted.Order().Select(d => d.Ticks)));
 
     // 5. And the planner uses a btree index on the extraction for the range.
     await using var db = new NpgsqlConnection(_connectionString);
@@ -838,6 +845,10 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   /// </remarks>
   [Test]
   [Timeout(120000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
   public async Task ATimeOrderedIdentifier_SortsTheSameAsTextAndAsBytesAsync(CancellationToken cancellationToken) {
     // Generated in order, so the creation order is known independently of how they sort.
     var created = new List<Guid>();
@@ -845,7 +856,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
       created.Add(TrackedGuid.NewMedo().Value);
     }
 
-    await Assert.That(created.Select(g => g.ToString()).OrderBy(t => t, StringComparer.Ordinal).ToList())
+    await Assert.That(created.Select(g => g.ToString()).Order(StringComparer.Ordinal).ToList())
       .IsEquivalentTo(created.Select(g => g.ToString()).ToList())
       .Because("a version 7 identifier's text rendering sorts in creation order");
 

@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
@@ -6,6 +8,11 @@ namespace Whizbang.Core.Perspectives;
 /// </summary>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Flags]
+[SuppressMessage("Minor Code Smell", "S2342:Enumeration types should comply with a naming convention",
+  Justification = "Singular because a declaration names one kind at a time, which is the common case: " +
+    "[Indexed(IndexKind.Trigram)] reads as the author's intent where a plural would not. The combining " +
+    "form is the exception, and the framework offers a second spelling for it (the attribute is " +
+    "AllowMultiple). System.IO.FileAccess and System.IO.FileShare are flag enumerations named the same way.")]
 public enum IndexKind {
   /// <summary>No index. Present so that an explicit "not indexed" can be written down.</summary>
   None = 0,
@@ -93,14 +100,11 @@ public enum IndexKind {
 /// }
 /// </code>
 /// </example>
+/// <param name="kind">The kinds to create. Defaults to <see cref="IndexKind.Btree"/>.</param>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = true, Inherited = true)]
-public sealed class IndexedAttribute : Attribute {
-  /// <summary>Declares an index of the given kinds over this field's extraction.</summary>
-  /// <param name="kind">The kinds to create. Defaults to <see cref="IndexKind.Btree"/>.</param>
-  public IndexedAttribute(IndexKind kind = IndexKind.Btree) => Kind = kind;
-
+public sealed class IndexedAttribute(IndexKind kind = IndexKind.Btree) : Attribute {
   /// <summary>The kinds of index to create over this field.</summary>
-  public IndexKind Kind { get; }
+  public IndexKind Kind { get; } = kind;
 }
 
 /// <summary>
@@ -126,12 +130,9 @@ public sealed class IndexedAttribute : Attribute {
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/IndexedAttributeTests.cs</tests>
+/// <param name="kind">The kinds to create. Defaults to <see cref="IndexKind.Btree"/>.</param>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
-public sealed class IndexAllFieldsAttribute : Attribute {
-  /// <summary>Declares an index of the given kinds over every eligible field.</summary>
-  /// <param name="kind">The kinds to create. Defaults to <see cref="IndexKind.Btree"/>.</param>
-  public IndexAllFieldsAttribute(IndexKind kind = IndexKind.Btree) => Kind = kind;
-
+public sealed class IndexAllFieldsAttribute(IndexKind kind = IndexKind.Btree) : Attribute {
   /// <summary>The kinds of index to create over every eligible field.</summary>
-  public IndexKind Kind { get; }
+  public IndexKind Kind { get; } = kind;
 }

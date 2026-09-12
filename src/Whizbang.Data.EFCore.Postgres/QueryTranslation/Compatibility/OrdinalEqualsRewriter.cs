@@ -42,7 +42,7 @@ public sealed class OrdinalEqualsRewriter : ExpressionVisitor {
       return base.VisitMethodCall(node);
     }
 
-    return Expression.Equal(Visit(left)!, Visit(right)!);
+    return Expression.Equal(Visit(left), Visit(right));
   }
 
   /// <summary>
@@ -68,17 +68,28 @@ public sealed class OrdinalEqualsRewriter : ExpressionVisitor {
       return false;
     }
 
-    // Instance: a.Equals(b, comparison). Static: string.Equals(a, b, comparison).
-    var (first, second, comparison) = node.Object is not null
-      ? node.Arguments.Count == 2
-        ? (node.Object, node.Arguments[0], node.Arguments[1])
-        : (null, null, null)
-      : node.Arguments.Count == 3
-        ? (node.Arguments[0], node.Arguments[1], node.Arguments[2])
-        : (null, null, null);
+    // Instance: a.Equals(b, comparison). Static: string.Equals(a, b, comparison). An overload
+    // without a comparison argument is one Entity Framework already translates, so it is left alone.
+    Expression first;
+    Expression second;
+    Expression comparison;
 
-    if (first is null || second is null || comparison is null) {
-      return false;
+    if (node.Object is not null) {
+      if (node.Arguments.Count != 2) {
+        return false;
+      }
+
+      first = node.Object;
+      second = node.Arguments[0];
+      comparison = node.Arguments[1];
+    } else {
+      if (node.Arguments.Count != 3) {
+        return false;
+      }
+
+      first = node.Arguments[0];
+      second = node.Arguments[1];
+      comparison = node.Arguments[2];
     }
 
     if (comparison is not ConstantExpression { Value: StringComparison.Ordinal }) {

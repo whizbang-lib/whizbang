@@ -42,12 +42,9 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonbContainmentSqlMatrixTests.cs</tests>
-public sealed class JsonbContainmentRewriter : ExpressionVisitor {
-  private readonly IModel? _model;
-
-  /// <summary>Creates a rewriter for a model whose registrations decide whether it acts.</summary>
-  /// <param name="model">The model being queried, or null to stand down.</param>
-  public JsonbContainmentRewriter(IModel? model) => _model = model;
+/// <param name="model">The model being queried, or null to stand down.</param>
+public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor {
+  private readonly IModel? _model = model;
 
   private bool _enabled =>
     _model is not null
@@ -119,7 +116,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
       _predicateDepth--;
     }
 
-    return node.Update(Visit(node.Object)!, arguments);
+    return node.Update(Visit(node.Object), arguments);
   }
 
   /// <summary>
@@ -178,11 +175,6 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
   /// the same comparison as <c>==</c>, so leaving them out would cost an index for nothing but the
   /// node type.
   /// </para>
-  /// <para>
-  /// A <see cref="StringComparison"/> argument is honored rather than ignored: only
-  /// <see cref="StringComparison.Ordinal"/> is the comparison containment performs. Anything
-  /// case-insensitive or culture-aware is a different question and keeps the extraction form.
-  /// </para>
   /// </remarks>
   private bool _tryRewriteEquals(MethodCallExpression node, out Expression rewritten) {
     rewritten = Expression.Empty();
@@ -192,8 +184,33 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
       return false;
     }
 
-    Expression first;
-    Expression second;
+    if (!_operandsOf(node, out var first, out var second)) {
+      return false;
+    }
+
+    var left = _stripConverts(first);
+    var right = _stripConverts(second);
+
+    return _tryRewrite(left, right, out rewritten) || _tryRewrite(right, left, out rewritten);
+  }
+
+  /// <summary>
+  /// The two operands of an <c>Equals</c> call, when the call is one whose comparison containment
+  /// actually performs.
+  /// </summary>
+  /// <remarks>
+  /// A <see cref="StringComparison"/> argument is honored rather than ignored: only
+  /// <see cref="StringComparison.Ordinal"/> is the comparison containment performs. Anything
+  /// case-insensitive or culture-aware is a different question and keeps the extraction form.
+  /// </remarks>
+  /// <param name="node">The call being inspected.</param>
+  /// <param name="first">The first operand.</param>
+  /// <param name="second">The second operand.</param>
+  /// <returns>Whether the call is one of the shapes this understands.</returns>
+  private static bool _operandsOf(MethodCallExpression node, out Expression first, out Expression second) {
+    first = node;
+    second = node;
+
     Expression? comparison;
 
     if (node.Object is not null) {
@@ -214,14 +231,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
       comparison = node.Arguments.Count == 3 ? node.Arguments[2] : null;
     }
 
-    if (comparison is not null && comparison is not ConstantExpression { Value: StringComparison.Ordinal }) {
-      return false;
-    }
-
-    var left = _stripConverts(first);
-    var right = _stripConverts(second);
-
-    return _tryRewrite(left, right, out rewritten) || _tryRewrite(right, left, out rewritten);
+    return comparison is null or ConstantExpression { Value: StringComparison.Ordinal };
   }
 
   /// <summary>
@@ -290,7 +300,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
   /// the only depth the set-membership helper can express.
   /// </summary>
   private static bool _isTopLevel(MemberExpression member) => member.Expression switch {
-    MemberExpression inner => string.Equals(inner.Member.Name, nameof(PerspectiveRow<object>.Data), StringComparison.Ordinal),
+    MemberExpression inner => string.Equals(inner.Member.Name, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal),
     ParameterExpression => true,
     _ => false,
   };
@@ -331,24 +341,6 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
   }
 
   /// <summary>
-  /// Whether a value converter changes what this member's stored form looks like.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// This is the difference between losing an index and giving a wrong answer, so it is checked here
-  /// rather than at translation. A converted property is written in the converter's form: an
-  /// <c>int</c> configured as text lands in the document as <c>"7"</c>, not <c>7</c>. The marker's
-  /// parameter is typed by the CLR type, so the containment document would be built unconverted and
-  /// match nothing, while the extraction it replaced matches fine because the text rendering of a
-  /// JSON string and a JSON number are the same.
-  /// </para>
-  /// <para>
-  /// Standing down at translation time is too late: by then the marker has been chosen and its
-  /// parameter typed, and the only available fallback compares a text extraction with a numeric
-  /// parameter, which the database rejects outright.
-  /// </para>
-  /// </remarks>
-  /// <summary>
   /// The model the member belongs to, and the document path to it from the root outwards.
   /// </summary>
   /// <remarks>
@@ -362,7 +354,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     Type? rootModel = null;
 
     for (Expression? current = member; current is MemberExpression link; current = link.Expression) {
-      if (string.Equals(link.Member.Name, nameof(PerspectiveRow<object>.Data), StringComparison.Ordinal)
+      if (string.Equals(link.Member.Name, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal)
           && _isPerspectiveRow(link.Expression?.Type)) {
         rootModel = link.Type;
         break;
@@ -403,6 +395,24 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
         && JsonIndexRegistry.HasBtree(rootModel, names[0]);
   }
 
+  /// <summary>
+  /// Whether a value converter changes what this member's stored form looks like.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the difference between losing an index and giving a wrong answer, so it is checked here
+  /// rather than at translation. A converted property is written in the converter's form: an
+  /// <c>int</c> configured as text lands in the document as <c>"7"</c>, not <c>7</c>. The marker's
+  /// parameter is typed by the CLR type, so the containment document would be built unconverted and
+  /// match nothing, while the extraction it replaced matches fine because the text rendering of a
+  /// JSON string and a JSON number are the same.
+  /// </para>
+  /// <para>
+  /// Standing down at translation time is too late: by then the marker has been chosen and its
+  /// parameter typed, and the only available fallback compares a text extraction with a numeric
+  /// parameter, which the database rejects outright.
+  /// </para>
+  /// </remarks>
   private bool _isValueConverted(MemberExpression member) {
     if (_model is null) {
       return true;
@@ -414,7 +424,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     }
 
     var row = _model.FindEntityType(typeof(PerspectiveRow<>).MakeGenericType(rootModel));
-    var complex = row?.FindComplexProperty(nameof(PerspectiveRow<object>.Data))?.ComplexType;
+    var complex = row?.FindComplexProperty(nameof(PerspectiveRow<>.Data))?.ComplexType;
     if (complex is null) {
       return true;
     }
@@ -448,8 +458,9 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
   /// the chain passes through <c>Data</c> on a <see cref="PerspectiveRow{TModel}"/>.
   /// </para>
   /// <para>
-  /// The other projects the row away first, <c>Query.Select(r =&gt; r.Data).Where(m =&gt; m.Field ==
-  /// value)</c>, which is how most repositories are written. The predicate then reads a member of
+  /// The other projects the row away first, as in
+  /// <c>Query.Select(r =&gt; r.Data).Where(m =&gt; m.Field == value)</c>,
+  /// which is how most repositories are written. The predicate then reads a member of
   /// the model directly and there is no <c>Data</c> left in the chain, but the query still runs
   /// against the same table and the member still compiles to a path into the same JSON document. It
   /// is recognized by asking the model whether a perspective row exists for that model type, which
@@ -460,7 +471,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     for (var current = member.Expression; current is not null;) {
       switch (current) {
         case MemberExpression inner
-          when string.Equals(inner.Member.Name, nameof(PerspectiveRow<object>.Data), StringComparison.Ordinal)
+          when string.Equals(inner.Member.Name, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal)
                && _isPerspectiveRow(inner.Expression?.Type):
           return true;
 
@@ -504,7 +515,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
 
   /// <summary>Whether the subtree reads from the query's range variable, which makes it not a value.</summary>
   private static bool _referencesAQueryParameter(Expression expression) {
-    var finder = new _parameterFinder();
+    var finder = new ParameterFinder();
     finder.Visit(expression);
     return finder.Found;
   }
@@ -518,7 +529,7 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
     return current;
   }
 
-  private sealed class _parameterFinder : ExpressionVisitor {
+  private sealed class ParameterFinder : ExpressionVisitor {
     public bool Found { get; private set; }
 
     protected override Expression VisitParameter(ParameterExpression node) {

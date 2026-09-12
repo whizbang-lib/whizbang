@@ -526,7 +526,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </remarks>
   private static ImmutableArray<JsonIndexInfo> _reachableJsonIndexes(INamedTypeSymbol? modelType) =>
       PolymorphicModelDiscovery.IsPolymorphic(modelType)
-        ? ImmutableArray<JsonIndexInfo>.Empty
+        ? []
         : JsonIndexDiscovery.From(modelType);
 
   /// <summary>

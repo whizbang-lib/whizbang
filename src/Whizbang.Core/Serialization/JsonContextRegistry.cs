@@ -49,7 +49,7 @@ public static class JsonContextRegistry {
   /// later read; there is no equality, no hashing and no deconstruction, so a record's synthesized
   /// members would be unreachable by construction rather than merely untested.
   /// </remarks>
-  private sealed class _modifierEntry(Action<JsonTypeInfo> modifier, SerializationProfile? profile, long seq) {
+  private sealed class ModifierEntry(Action<JsonTypeInfo> modifier, SerializationProfile? profile, long seq) {
     public Action<JsonTypeInfo> Modifier { get; } = modifier;
     public SerializationProfile? Profile { get; } = profile;
     public long Seq { get; } = seq;
@@ -74,7 +74,7 @@ public static class JsonContextRegistry {
   /// by something else entirely. A modifier can say which properties of which type it applies to,
   /// which is the precision that requires.
   /// </remarks>
-  private static readonly ConcurrentQueue<_modifierEntry> _modifiers = new();
+  private static readonly ConcurrentQueue<ModifierEntry> _modifiers = new();
 
   private static bool _appliesTo(SerializationProfile? entryProfile, SerializationProfile requested)
     => entryProfile is null || entryProfile.Value == requested;
@@ -161,7 +161,7 @@ public static class JsonContextRegistry {
       Action<JsonTypeInfo> modifier, SerializationProfile? profile = null) {
     ArgumentNullException.ThrowIfNull(modifier);
 
-    _modifiers.Enqueue(new _modifierEntry(modifier, profile, Interlocked.Increment(ref _registrationSeq)));
+    _modifiers.Enqueue(new ModifierEntry(modifier, profile, Interlocked.Increment(ref _registrationSeq)));
   }
 
   /// <summary>

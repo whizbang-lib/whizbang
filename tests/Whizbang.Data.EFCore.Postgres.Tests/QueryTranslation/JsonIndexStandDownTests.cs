@@ -112,7 +112,7 @@ public class JsonIndexStandDownTests {
   /// </summary>
   [Test]
   public async Task ABtreeIndexedField_IsNotCompiledToContainmentAsync() {
-    using var db = _newContext();
+    await using var db = _newContext();
 
     var sql = db.Set<PerspectiveRow<StandDownModel>>()
       .Where(r => r.Data.Rank == 7)
@@ -135,7 +135,7 @@ public class JsonIndexStandDownTests {
   /// </remarks>
   [Test]
   public async Task ATrigramOnlyField_StillReachesContainmentForEqualityAsync() {
-    using var db = _newContext();
+    await using var db = _newContext();
 
     var sql = db.Set<PerspectiveRow<StandDownModel>>()
       .Where(r => r.Data.Title == "v")
@@ -162,7 +162,7 @@ public class JsonIndexStandDownTests {
   /// </remarks>
   [Test]
   public async Task ABtreeIndexedDate_IsNotCompiledToContainmentAsync() {
-    using var db = _newContext();
+    await using var db = _newContext();
     var target = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
 
     var sql = db.Set<PerspectiveRow<StandDownModel>>()
@@ -181,7 +181,7 @@ public class JsonIndexStandDownTests {
   /// <summary>An undeclared field behaves exactly as it did before any of this existed.</summary>
   [Test]
   public async Task AnUndeclaredField_IsUnaffectedAsync() {
-    using var db = _newContext();
+    await using var db = _newContext();
 
     var sql = db.Set<PerspectiveRow<StandDownModel>>()
       .Where(r => r.Data.Plain == "v")

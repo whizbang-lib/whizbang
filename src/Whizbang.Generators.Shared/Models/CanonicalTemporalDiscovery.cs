@@ -103,7 +103,7 @@ public static class CanonicalTemporalDiscovery {
   /// </remarks>
   public static ImmutableArray<CanonicalTemporalProperty> From(INamedTypeSymbol? model) {
     if (model is null) {
-      return ImmutableArray<CanonicalTemporalProperty>.Empty;
+      return [];
     }
 
     var found = new List<CanonicalTemporalProperty>();
@@ -126,7 +126,7 @@ public static class CanonicalTemporalDiscovery {
       found.Add(new CanonicalTemporalProperty(property.Name, kind, nullable));
     }
 
-    return found.Count == 0 ? ImmutableArray<CanonicalTemporalProperty>.Empty : found.ToImmutableArray();
+    return [.. found];
   }
 
   /// <summary>

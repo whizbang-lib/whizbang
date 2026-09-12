@@ -168,7 +168,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task AsyncOperator_OnJsonOnlyField_ReportsAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       public static class FakeAsyncExtensions {
         public static System.Threading.Tasks.Task<TSource?> FirstOrDefaultAsync<TSource>(
           this IQueryable<TSource> source,
@@ -262,7 +262,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Filter_OnUnindexedVectorField_ReportsAsync() {
-    var source = """
+    const string source = """
       using System;
       using System.Linq;
       using Whizbang.Core;
@@ -318,7 +318,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Filter_OnNonPerspectiveQueryable_NoDiagnosticAsync() {
-    var source = """
+    const string source = """
       using System;
       using System.Linq;
 
@@ -405,7 +405,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Filter_WithSuppressionOnAnotherProperty_StillReportsAsync() {
-    var source = """
+    const string source = """
       using System;
       using System.Linq;
       using Whizbang.Core;
@@ -619,7 +619,7 @@ public class PerspectiveFilterIndexAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Filter_OnOpaquelyStoredModel_OffersTheColumnNotTheJsonIndexAsync() {
-    var source = POLYMORPHIC_PRELUDE + """
+    const string source = POLYMORPHIC_PRELUDE + """
       public class ThingRepository {
         private readonly IQueryable<PerspectiveRow<ThingModel>> _rows = null!;
 

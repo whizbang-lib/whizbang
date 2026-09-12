@@ -162,28 +162,18 @@ public static class PolymorphicModelDiscovery {
       return true;
     }
 
-    foreach (var attr in type.GetAttributes()) {
-      if (TypeNameUtilities.IsNamed(attr.AttributeClass, JSON_POLYMORPHIC_ATTRIBUTE)) {
-        return true;
-      }
-    }
-
-    return false;
+    return type.GetAttributes()
+        .Any(attr => TypeNameUtilities.IsNamed(attr.AttributeClass, JSON_POLYMORPHIC_ATTRIBUTE));
   }
 
   /// <summary>
   /// Checks whether a property is marked as ignored by the mapped path or by serialization.
   /// </summary>
-  private static bool _isPropertyIgnored(IPropertySymbol property) {
-    foreach (var attr in property.GetAttributes()) {
-      if (TypeNameUtilities.IsNamed(attr.AttributeClass, "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute") ||
-          TypeNameUtilities.IsNamed(attr.AttributeClass, "System.Text.Json.Serialization.JsonIgnoreAttribute") ||
-          TypeNameUtilities.IsNamed(attr.AttributeClass, "Newtonsoft.Json.JsonIgnoreAttribute")) {
-        return true;
-      }
-    }
-    return false;
-  }
+  private static bool _isPropertyIgnored(IPropertySymbol property) =>
+    property.GetAttributes().Any(attr =>
+        TypeNameUtilities.IsNamed(attr.AttributeClass, "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute") ||
+        TypeNameUtilities.IsNamed(attr.AttributeClass, "System.Text.Json.Serialization.JsonIgnoreAttribute") ||
+        TypeNameUtilities.IsNamed(attr.AttributeClass, "Newtonsoft.Json.JsonIgnoreAttribute"));
 
   /// <summary>
   /// Gets the element type when the type is a collection.

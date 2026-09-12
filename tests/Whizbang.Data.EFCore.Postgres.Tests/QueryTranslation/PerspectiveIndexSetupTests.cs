@@ -104,7 +104,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   /// <summary>Every index on the table, as PostgreSQL describes it back.</summary>
   private async Task<string> _definitionsAsync() =>
     await _scalarAsync(
-      $"SELECT coalesce(string_agg(indexdef, ' | ' ORDER BY indexname), '') "
+      "SELECT coalesce(string_agg(indexdef, ' | ' ORDER BY indexname), '') "
       + $"FROM pg_indexes WHERE tablename = '{TABLE}'");
 
   /// <summary>

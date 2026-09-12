@@ -323,7 +323,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     // The property names come from the same discovery that emits the model's value conversions, so
     // the writer and the reader convert exactly the same set.
     var withTemporal = temporalModels
-        .Where(m => m is not null && m.PropertyNames.Length > 0)
+        .Where(m => m?.PropertyNames.Length > 0)
         .Select(m => m!)
         .GroupBy(m => m.ModelTypeName)
         .Select(g => g.First())

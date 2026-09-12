@@ -61,6 +61,9 @@ namespace Whizbang.Core.Perspectives;
 /// }
 /// </code>
 /// </example>
+/// <param name="reason">
+/// Why a scan is acceptable here. Empty or whitespace-only text does not suppress the advisory.
+/// </param>
 [AttributeUsage(
   AttributeTargets.Property |
   AttributeTargets.Class |
@@ -68,17 +71,9 @@ namespace Whizbang.Core.Perspectives;
   AttributeTargets.Assembly,
   AllowMultiple = false,
   Inherited = true)]
-public sealed class SuppressIndexAdvisoryAttribute : Attribute {
-  /// <summary>
-  /// Creates the opt-out with the reason the field is queried without an index.
-  /// </summary>
-  /// <param name="reason">
-  /// Why a scan is acceptable here. Empty or whitespace-only text does not suppress the advisory.
-  /// </param>
-  public SuppressIndexAdvisoryAttribute(string reason) => Reason = reason;
-
+public sealed class SuppressIndexAdvisoryAttribute(string reason) : Attribute {
   /// <summary>
   /// Why this field, model, or assembly is queried without an index.
   /// </summary>
-  public string Reason { get; }
+  public string Reason { get; } = reason;
 }

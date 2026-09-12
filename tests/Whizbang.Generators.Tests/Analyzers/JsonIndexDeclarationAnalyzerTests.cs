@@ -113,7 +113,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task AnEnumerationIsNotReportedAsync() {
-    var source = """
+    const string source = """
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;
@@ -143,7 +143,7 @@ public class JsonIndexDeclarationAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task ABlanketDeclarationIsNotReportedAsync() {
-    var source = """
+    const string source = """
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;

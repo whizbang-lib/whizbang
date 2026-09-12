@@ -28,7 +28,7 @@ internal sealed class OptionalShapesModel {
 
 /// <summary>Metadata for the optional-shapes model.</summary>
 [JsonSerializable(typeof(OptionalShapesModel))]
-internal sealed partial class OptionalShapesJsonContext : JsonSerializerContext { }
+internal sealed partial class OptionalShapesJsonContext : JsonSerializerContext;
 
 /// <summary>A model used only to prove the registry seam, so registering for it is harmless.</summary>
 internal sealed class RegistryProbeModel {
@@ -37,7 +37,7 @@ internal sealed class RegistryProbeModel {
 
 /// <summary>Metadata for the registry probe.</summary>
 [JsonSerializable(typeof(RegistryProbeModel))]
-internal sealed partial class RegistryProbeJsonContext : JsonSerializerContext { }
+internal sealed partial class RegistryProbeJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// The model's metadata, source-generated the way a perspective's is.
@@ -49,7 +49,7 @@ internal sealed partial class RegistryProbeJsonContext : JsonSerializerContext {
 /// nothing about the writer.
 /// </remarks>
 [JsonSerializable(typeof(TemporalWriterModel))]
-internal sealed partial class TemporalWriterJsonContext : JsonSerializerContext { }
+internal sealed partial class TemporalWriterJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// That the serializer writes a perspective's dates, times and durations in the canonical form.
@@ -363,7 +363,7 @@ public class CanonicalTemporalJsonConverterTests {
   [Test]
   public async Task AnExplicitNullReadsBackAsAbsentAsync() {
     var options = _optionsFor(SerializationProfile.Persistence);
-    var json = $$"""
+    var json = """
       {"OccurredAt": 0, "RecordedAt": 0, "Day": 0, "Clock": 0, "Elapsed": 0, "MaybeAt": null}
       """;
 
@@ -429,7 +429,7 @@ public class CanonicalTemporalJsonConverterTests {
     var converter = new CanonicalTemporalJsonConverters.NullableConverter<DateTime>(
       new CanonicalTemporalJsonConverters.InstantConverter());
 
-    using var buffer = new MemoryStream();
+    await using var buffer = new MemoryStream();
     await using (var writer = new Utf8JsonWriter(buffer)) {
       converter.Write(writer, null, JsonSerializerOptions.Default);
     }

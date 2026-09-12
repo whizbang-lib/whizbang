@@ -100,7 +100,7 @@ public class OrdinalEqualsRewriterTests {
   [SuppressMessage("Globalization", "CA1309:Use ordinal string comparison",
     Justification = "The spelling is the subject of the test.")]
   public async Task AnOrdinalComparisonTranslatesAsync() {
-    using var db = new OrdinalDbContext(_options);
+    await using var db = new OrdinalDbContext(_options);
 
     var sql = db.Set<PerspectiveRow<OrdinalModel>>()
       .Where(r => r.Data.Code.Equals("v", StringComparison.Ordinal))
@@ -121,7 +121,7 @@ public class OrdinalEqualsRewriterTests {
   [SuppressMessage("Globalization", "CA1309:Use ordinal string comparison",
     Justification = "The spelling is the subject of the test.")]
   public async Task AndIsThenIndexedLikeAnyOtherEqualityAsync() {
-    using var db = new OrdinalDbContext(_options);
+    await using var db = new OrdinalDbContext(_options);
 
     var sql = db.Set<PerspectiveRow<OrdinalModel>>()
       .Where(r => r.Data.Code.Equals("indexed", StringComparison.Ordinal))
@@ -144,7 +144,7 @@ public class OrdinalEqualsRewriterTests {
   [Arguments(nameof(StringComparison.CurrentCulture))]
   [Arguments(nameof(StringComparison.InvariantCultureIgnoreCase))]
   public async Task ANonOrdinalComparisonIsStillRefusedAsync(string comparison) {
-    using var db = new OrdinalDbContext(_options);
+    await using var db = new OrdinalDbContext(_options);
 
     var comparisonType = Enum.Parse<StringComparison>(comparison);
 
@@ -165,7 +165,7 @@ public class OrdinalEqualsRewriterTests {
   public async Task ItWorksWithContainmentTurnedOffAsync() {
     JsonbContainmentSwitch.SetMode(ContainmentMode.Off);
 
-    using var db = new OrdinalDbContext(_options);
+    await using var db = new OrdinalDbContext(_options);
 
     var sql = db.Set<PerspectiveRow<OrdinalModel>>()
       .Where(r => r.Data.Code.Equals("unindexed", StringComparison.Ordinal))

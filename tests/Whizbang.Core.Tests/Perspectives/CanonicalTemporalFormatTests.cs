@@ -176,7 +176,7 @@ public class CanonicalTemporalFormatTests {
       .Select(d => d.Ticks);
 
     await Assert.That(string.Join(",", byNumber))
-      .IsEqualTo(string.Join(",", instants.OrderBy(d => d).Select(d => d.Ticks)));
+      .IsEqualTo(string.Join(",", instants.Order().Select(d => d.Ticks)));
   }
 
   /// <summary>

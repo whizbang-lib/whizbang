@@ -76,7 +76,7 @@ public class JsonbContainmentTypeSetTests {
   /// <summary>Diagnostic: what the model walk sees for an enumeration inside a JSON complex property.</summary>
   [Test]
   public async Task EnumPropertyMetadata_IsRecordedAsync() {
-    using var db = new MatrixProbeContext(
+    await using var db = new MatrixProbeContext(
       new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<MatrixProbeContext>()
         .UseNpgsql("Host=localhost;Database=meta;Username=u;Password=p")
         .Options);
