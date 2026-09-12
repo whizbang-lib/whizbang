@@ -5,6 +5,7 @@ using System.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Whizbang.Generators.Shared.Utilities;
+using Whizbang.Generators.Shared.Models;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
@@ -146,11 +147,22 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
   }
 
   /// <summary>
-  /// Checks if a property should be skipped during analysis (static, indexer, write-only, or ignored).
+  /// Checks if a property should be skipped during analysis.
   /// </summary>
-  private static bool _shouldSkipProperty(IPropertySymbol member) {
-    return member.IsStatic || member.IsIndexer || member.IsWriteOnly || _isPropertyIgnored(member);
-  }
+  /// <remarks>
+  /// <para>
+  /// Asked of the shared discovery, which is the same question the generator asks when it decides
+  /// how a model is stored. A copy here would be a copy that can disagree, and this one did: without
+  /// the accessibility rule it reported the compiler-generated <c>EqualityContract</c> of every
+  /// record, whose type is the abstract <c>System.Type</c>. Info severity is why nobody noticed.
+  /// </para>
+  /// <para>
+  /// Only a public property is mapped, by the serializer and by the mapped path alike, so only a
+  /// public property can make a document polymorphic or be worth a discriminator.
+  /// </para>
+  /// </remarks>
+  private static bool _shouldSkipProperty(IPropertySymbol member) =>
+    !PolymorphicModelDiscovery.IsAnalyzableProperty(member);
 
   /// <summary>
   /// Reports a WHIZ811 diagnostic for a polymorphic property.
@@ -255,32 +267,4 @@ public sealed class PerspectiveModelPolymorphicAnalyzer : DiagnosticAnalyzer {
     return false;
   }
 
-  /// <summary>
-  /// Checks if a property is marked as ignored by EF Core or JSON serialization.
-  /// </summary>
-  private static bool _isPropertyIgnored(IPropertySymbol property) {
-    foreach (var attr in property.GetAttributes()) {
-      var attrName = attr.AttributeClass is { } attributeClass ? TypeNameUtilities.Display(attributeClass) : null;
-      if (attrName == null) {
-        continue;
-      }
-
-      // EF Core [NotMapped]
-      if (attrName == "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute") {
-        return true;
-      }
-
-      // System.Text.Json [JsonIgnore]
-      if (attrName == "System.Text.Json.Serialization.JsonIgnoreAttribute") {
-        return true;
-      }
-
-      // Newtonsoft.Json [JsonIgnore]
-      if (attrName == "Newtonsoft.Json.JsonIgnoreAttribute") {
-        return true;
-      }
-    }
-
-    return false;
-  }
 }
