@@ -16,6 +16,20 @@ internal sealed class TemporalWriterModel {
   public DateTime? MaybeAt { get; init; }
 }
 
+/// <summary>Every temporal shape, optional, plus one that is not temporal at all.</summary>
+internal sealed class OptionalShapesModel {
+  public DateTime? At { get; init; }
+  public DateTimeOffset? Offset { get; init; }
+  public DateOnly? Day { get; init; }
+  public TimeOnly? Clock { get; init; }
+  public TimeSpan? Elapsed { get; init; }
+  public string Label { get; init; } = string.Empty;
+}
+
+/// <summary>Metadata for the optional-shapes model.</summary>
+[JsonSerializable(typeof(OptionalShapesModel))]
+internal sealed partial class OptionalShapesJsonContext : JsonSerializerContext { }
+
 /// <summary>A model used only to prove the registry seam, so registering for it is harmless.</summary>
 internal sealed class RegistryProbeModel {
   public DateTime At { get; init; }
@@ -100,6 +114,19 @@ public class CanonicalTemporalJsonConverterTests {
 
     return new JsonSerializerOptions(union) {
       TypeInfoResolver = JsonContextRegistry.WithRegisteredModifiers(chain, profile),
+    };
+  }
+
+  /// <summary>Options carrying the conversion for every optional shape on the probe model.</summary>
+  private static JsonSerializerOptions _optionalShapesOptions() {
+    var union = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
+    var chain = JsonTypeInfoResolver.Combine(
+      union.TypeInfoResolver!, OptionalShapesJsonContext.Default);
+
+    return new JsonSerializerOptions(union) {
+      TypeInfoResolver = chain.WithAddedModifier(info =>
+        CanonicalTemporalJsonConverters.ApplyTo(
+          info, typeof(OptionalShapesModel), "At", "Offset", "Day", "Clock", "Elapsed", "Label")),
     };
   }
 
@@ -346,5 +373,67 @@ public class CanonicalTemporalJsonConverterTests {
     await Assert.That(restored!.MaybeAt).IsNull()
       .Because("a null has to stay absent; handed to the underlying converter it would become the "
         + "epoch, which reads back as a real date rather than as nothing");
+  }
+
+  /// <summary>
+  /// Every optional temporal shape is converted, and a property that is not temporal is not.
+  /// </summary>
+  /// <remarks>
+  /// One shape per type rather than one test per type, because the thing being checked is the lookup
+  /// that picks a converter: a shape it does not recognize falls through and the property is written
+  /// as whatever it was, which for a date is a rendering the reader cannot parse.
+  /// </remarks>
+  [Test]
+  public async Task EveryOptionalShapeIsConvertedAsync() {
+    var options = _optionalShapesOptions();
+    var model = new OptionalShapesModel {
+      At = _origin,
+      Offset = new DateTimeOffset(_origin, TimeSpan.Zero),
+      Day = new DateOnly(2026, 3, 4),
+      Clock = new TimeOnly(5, 6, 7),
+      Elapsed = TimeSpan.FromMinutes(3),
+      Label = "kept",
+    };
+
+    var written = JsonDocument.Parse(JsonSerializer.Serialize(model, options)).RootElement;
+
+    foreach (var key in new[] { "At", "Offset", "Day", "Clock", "Elapsed" }) {
+      await Assert.That(written.GetProperty(key).ValueKind).IsEqualTo(JsonValueKind.Number)
+        .Because($"'{key}' is temporal, so the lookup has to find a converter for its optional form "
+          + "as well as its bare one");
+    }
+
+    await Assert.That(written.GetProperty("Label").ValueKind).IsEqualTo(JsonValueKind.String)
+      .Because("a string is already in a form an index can reach, so converting it would be cost "
+        + "without purpose");
+
+    var restored = JsonSerializer.Deserialize<OptionalShapesModel>(
+      JsonSerializer.Serialize(model, options), options);
+    await Assert.That(restored!.Offset).IsEqualTo(new DateTimeOffset(_origin, TimeSpan.Zero));
+    await Assert.That(restored.Day).IsEqualTo(new DateOnly(2026, 3, 4));
+    await Assert.That(restored.Clock).IsEqualTo(new TimeOnly(5, 6, 7));
+    await Assert.That(restored.Elapsed).IsEqualTo(TimeSpan.FromMinutes(3));
+  }
+
+  /// <summary>
+  /// The optional wrapper writes a null as a null.
+  /// </summary>
+  /// <remarks>
+  /// Reached directly because the serializer omits a null property before a converter sees it, so
+  /// this branch cannot be exercised through a model. It still has to be right: a document written
+  /// by something that emits nulls rather than omitting them goes through here, and a wrapper that
+  /// handed the null to the underlying converter would write the epoch.
+  /// </remarks>
+  [Test]
+  public async Task TheOptionalWrapperWritesANullAsANullAsync() {
+    var converter = new CanonicalTemporalJsonConverters.NullableConverter<DateTime>(
+      new CanonicalTemporalJsonConverters.InstantConverter());
+
+    using var buffer = new MemoryStream();
+    await using (var writer = new Utf8JsonWriter(buffer)) {
+      converter.Write(writer, null, JsonSerializerOptions.Default);
+    }
+
+    await Assert.That(System.Text.Encoding.UTF8.GetString(buffer.ToArray())).IsEqualTo("null");
   }
 }

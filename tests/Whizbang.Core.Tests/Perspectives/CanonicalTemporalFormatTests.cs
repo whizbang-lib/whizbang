@@ -178,4 +178,48 @@ public class CanonicalTemporalFormatTests {
     await Assert.That(string.Join(",", byNumber))
       .IsEqualTo(string.Join(",", instants.OrderBy(d => d).Select(d => d.Ticks)));
   }
+
+  /// <summary>
+  /// A local time is converted to the instant it names, not stored as its wall clock.
+  /// </summary>
+  /// <remarks>
+  /// The stored form is an instant, so a value carrying a zone has to be reduced to one. Storing the
+  /// wall clock would make the same moment sort differently depending on which machine wrote it.
+  /// </remarks>
+  [Test]
+  public async Task ALocalTimeIsConvertedToItsInstantAsync() {
+    var local = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Local);
+
+    await Assert.That(CanonicalTemporalFormat.ToEpochMicroseconds(local))
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(local.ToUniversalTime()))
+      .Because("the stored form is an instant, so a local value is the same instant written from a "
+        + "zone and has to reduce to it");
+  }
+
+  /// <summary>
+  /// A value with no kind is assumed to be UTC rather than local.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is a decision and not an obvious one, which is why it is pinned. An unspecified
+  /// <c>DateTime</c> is what a model most often carries: parsed from text without a zone, or
+  /// defaulted. Treating it as local would make the stored instant depend on the machine that wrote
+  /// the row, so the same value would land differently in development and in production and neither
+  /// would be wrong enough to notice.
+  /// </para>
+  /// <para>
+  /// Assuming UTC is stable and matches what the rest of the framework does with an unzoned stamp.
+  /// If this assertion ever changes, every row written under the old assumption is off by an offset.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AnUnspecifiedKindIsAssumedUtcAsync() {
+    var unspecified = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Unspecified);
+    var sameAsUtc = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+
+    await Assert.That(CanonicalTemporalFormat.ToEpochMicroseconds(unspecified))
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(sameAsUtc))
+      .Because("treating an unzoned value as local would make the stored instant depend on the "
+        + "machine that wrote the row, which is a difference nothing would surface");
+  }
 }
