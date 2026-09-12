@@ -5,6 +5,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Diagnostics;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Analyzers;
@@ -66,7 +67,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor FilteredFieldHasNoIndex = new(
       id: "WHIZ302",
       title: "Filtered perspective field has no index",
-      messageFormat: "This query filters '{0}.{1}', which is stored only in the model's JSON, so the database reads every row of the perspective. Mark it [JsonIndexed] for an index over the stored value, [PhysicalField(Indexed = true)] to promote it to a column, or record the decision with [SuppressIndexAdvisory(\"reason\")].",
+      messageFormat: "This query filters '{0}.{1}', which is stored only in the model's JSON, so the database reads every row of the perspective. {2}.",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
@@ -78,7 +79,10 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
                    "constraints and foreign keys and is the only option for a type whose stored form cannot carry an index, " +
                    "a date being the case that matters. When a scan is the right answer, say so with " +
                    "[SuppressIndexAdvisory(\"reason\")]: the reason is required, a blank one does not suppress, and the same " +
-                   "attribute also stands down the runtime index advisory raised by the maintenance cycle."
+                   "attribute also stands down the runtime index advisory raised by the maintenance cycle. A model holding " +
+                   "a polymorphic member is stored as one serialized value rather than as mapped properties, so an index " +
+                   "over a field inside it cannot be reached at all; there the message offers only the column, because " +
+                   "taking the other advice would land on WHIZ304."
   );
 
   /// <inheritdoc/>
@@ -120,8 +124,30 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       FilteredFieldHasNoIndex,
       node.Name.GetLocation(),
       TypeNameUtilities.MinimallyQualified(model),
-      field.Name));
+      field.Name,
+      _adviceFor(model)));
   }
+
+  /// <summary>
+  /// The fixes that actually work for this model, which depends on how its document is stored.
+  /// </summary>
+  /// <param name="model">The perspective's model type.</param>
+  /// <returns>The sentence naming the available fixes.</returns>
+  /// <remarks>
+  /// A model holding a polymorphic member is stored as one serialized value rather than as mapped
+  /// properties, so an index over an extraction from it is unreachable and the generator skips it.
+  /// Offering <c>[JsonIndexed]</c> there would send an author who takes the advice straight into
+  /// WHIZ304 for having taken it. The two diagnostics have to agree about what is possible, so the
+  /// advice follows the storage rather than being fixed text.
+  /// </remarks>
+  private static string _adviceFor(INamedTypeSymbol model) =>
+    PolymorphicModelDiscovery.IsPolymorphic(model)
+      ? "This model holds a polymorphic member, so its document is stored as one serialized value and "
+        + "an index over a field inside it cannot be reached. Promote it with "
+        + "[PhysicalField(Indexed = true)] to get a real indexed column, or record the decision with "
+        + "[SuppressIndexAdvisory(\"reason\")]"
+      : "Mark it [JsonIndexed] for an index over the stored value, [PhysicalField(Indexed = true)] to "
+        + "promote it to a column, or record the decision with [SuppressIndexAdvisory(\"reason\")]";
 
   /// <summary>
   /// Resolves <paramref name="expression"/> as <c>PerspectiveRow&lt;TModel&gt;.Data</c> and returns

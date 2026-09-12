@@ -540,4 +540,91 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(reported).Count().IsEqualTo(1);
     await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture)).Contains("Num");
   }
+
+  // ========================================
+  // The advice matches how the model is stored
+  // ========================================
+
+  private const string POLYMORPHIC_PRELUDE = """
+      using System;
+      using System.Collections.Generic;
+      using System.Linq;
+      using Whizbang.Core;
+      using Whizbang.Core.Lenses;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public abstract class PaymentMethod {
+        public string Name { get; init; } = string.Empty;
+      }
+
+      public class ThingModel {
+        [StreamId]
+        public Guid ThingId { get; init; }
+
+        public PaymentMethod? Payment { get; init; }
+
+        public string JsonOnly { get; init; } = string.Empty;
+      }
+
+      """;
+
+  /// <summary>
+  /// On a model stored as one serialized value, the advice offers the column and not the JSON index.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Both fixes are named in the ordinary message, and on such a model one of them does not work:
+  /// the document is not mapped property by property, so an index over an extraction from it is
+  /// unreachable and the generator skips it. Offering it here would send the author to a build that
+  /// reports WHIZ304 for taking the advice.
+  /// </para>
+  /// <para>
+  /// This is the pairing that makes the family coherent. WHIZ302 says a filter scans, WHIZ304 says an
+  /// index over this model cannot be reached, and an author who follows the first must not land on
+  /// the second.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Filter_OnOpaquelyStoredModel_OffersTheColumnNotTheJsonIndexAsync() {
+    var source = POLYMORPHIC_PRELUDE + """
+      public class ThingRepository {
+        private readonly IQueryable<PerspectiveRow<ThingModel>> _rows = null!;
+
+        public object Find(Guid id) {
+          return _rows.Where(r => r.Data.JsonOnly.Contains("ab")).ToList();
+        }
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+    var message = _whiz302(diagnostics).Single().GetMessage(CultureInfo.InvariantCulture);
+
+    await Assert.That(message).Contains("PhysicalField", StringComparison.Ordinal)
+      .Because("a promoted column is a real column and stays reachable however the rest of the "
+        + "document is stored, which makes it the fix that works here");
+    await Assert.That(message).DoesNotContain("[JsonIndexed]", StringComparison.Ordinal)
+      .Because("an index over this model's document is skipped and reported by WHIZ304, so naming "
+        + "it as a fix would send the author into the other diagnostic for following the advice");
+  }
+
+  /// <summary>
+  /// On an ordinary model both fixes are still offered, since both work.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Filter_OnMappedModel_StillOffersTheJsonIndexAsync() {
+    var source = _repositoryOver("""
+            return _rows.Where(r => r.Data.JsonOnly.Contains("ab")).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+    var message = _whiz302(diagnostics).Single().GetMessage(CultureInfo.InvariantCulture);
+
+    await Assert.That(message).Contains("[JsonIndexed]", StringComparison.Ordinal)
+      .Because("it is the cheaper of the two fixes wherever it works, and narrowing the advice for "
+        + "one kind of model must not narrow it for every model");
+  }
 }
