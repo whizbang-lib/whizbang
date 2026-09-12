@@ -137,8 +137,34 @@ Three tiers, each with an honest cost, and nothing implicit.
 Bring the date and time family into Phase 0's mechanism by owning their stored form.
 
 - A converter per type, emitted by the generator rather than hand-written per property.
-- **A tolerant reader, permanently.** `ConvertFromProvider` accepts the canonical form and the legacy
-  one. Reading never breaks, which keeps rollback safe and stragglers harmless.
+- **A tolerant reader, shipped one release ahead of everything else.** This is the part that is easy
+  to get subtly wrong, and fusing it into the migration release does get it wrong. The backfill writes
+  a form only the new code understands, and the new code has to run against rows the backfill has not
+  reached, so a window where both forms exist is unavoidable and something has to read through it.
+  That much argues only for tolerance existing. What argues for it existing *first* is rollback: if
+  the release that starts writing the canonical form is also the release that learns to read it, then
+  rolling back lands on a version that cannot read what its successor wrote.
+
+  So it is plain expand and contract, in three releases:
+
+  | Release | Does | Can the rollback target read? |
+  |---------|------|-------------------------------|
+  | 1 | Reads both forms. Writes nothing differently, changes no behavior | not applicable |
+  | 2 | Writes the canonical form, backfills, then creates the index | yes, release 1 reads both |
+  | 3 | Drops the tolerance, optionally | yes, everything is canonical |
+
+  Release one is a no-op that can be deployed and forgotten; it is the thing that makes release two
+  reversible.
+
+  Worth keeping afterwards regardless, for two reasons that cost almost nothing. A backup restored
+  from before the migration, a shard added late or a batch that failed leaves rows in the old form,
+  and tolerance makes those degraded rather than broken. And with the numeric form the discriminator
+  is the JSON type itself, a number being canonical and a string being legacy, so it is one type test
+  rather than a parse attempt.
+
+  What stops it hiding an incomplete backfill is the index: PostgreSQL refuses to build one while any
+  row is still a string, so a migration that did not finish fails loudly at exactly the step that
+  depends on it.
 - **A tolerant filter while migrating.** Containment emits
   `data @> {canonical} OR data @> {legacy}`; both arms stay indexed, measured as a `BitmapOr` over two
   index scans. Behind a flag defaulting on, removable a release later. Without this a filter silently
