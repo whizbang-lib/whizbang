@@ -1,5 +1,6 @@
 using Whizbang;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.Contracts.Lenses;
 
@@ -49,5 +50,12 @@ public record ProductDto {
   /// <summary>
   /// When the product was deleted (null if not deleted - soft delete)
   /// </summary>
+  /// <remarks>
+  /// Indexed because every catalog query filters on it: a soft-delete marker is read on the way to
+  /// every other answer, so the one predicate that is always present is the one most worth an index.
+  /// A date is indexable because its stored form is a number, which casts through an immutable
+  /// expression; stored as a rendering it could not carry an index at all.
+  /// </remarks>
+  [JsonIndexed]
   public DateTime? DeletedAt { get; init; }
 }

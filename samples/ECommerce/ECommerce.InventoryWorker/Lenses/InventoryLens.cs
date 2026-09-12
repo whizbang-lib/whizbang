@@ -29,7 +29,10 @@ public class InventoryLens(ILensQuery<InventoryLevelDto> query) : IInventoryLens
   public async Task<IReadOnlyList<InventoryLevelDto>> GetLowStockAsync(int threshold = 10, CancellationToken cancellationToken = default) {
     var results = await query.DefaultScope.Query
       .AsNoTracking()
-      .Where(row => row.Data.Quantity - row.Data.Reserved <= threshold)
+      // Available is maintained as Quantity - Reserved at every apply, so this is the same
+      // predicate over one indexed field rather than arithmetic over two unindexed ones. The
+      // arithmetic form read every row; this one is a lookup.
+      .Where(row => row.Data.Available <= threshold)
       .Select(row => row.Data)
       .ToListAsync(cancellationToken);
 

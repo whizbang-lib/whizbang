@@ -47,6 +47,18 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
   private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
   private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.Perspectives.SuppressIndexAdvisoryAttribute";
+  private const string JSON_INDEXED_ATTRIBUTE = "Whizbang.Core.Perspectives.JsonIndexedAttribute";
+
+  /// <summary>JsonIndexKind.Btree.</summary>
+  private const int KIND_BTREE = 1;
+
+  /// <summary>JsonIndexKind.Trigram.</summary>
+  private const int KIND_TRIGRAM = 2;
+
+  /// <summary>The string operations a trigram index answers.</summary>
+  private static readonly HashSet<string> _substringOperators = new(StringComparer.Ordinal) {
+    "Contains", "StartsWith", "EndsWith",
+  };
   private const string ASYNC_SUFFIX = "Async";
 
   /// <summary>
@@ -116,6 +128,12 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
+    // A declared index is an index. Without this the advisory would tell an author to mark the field
+    // [JsonIndexed] and then keep reporting after they did, which is advice with no exit.
+    if (_declaredIndexServes(node, field)) {
+      return;
+    }
+
     if (_isSuppressed(field, model, context.Compilation.Assembly)) {
       return;
     }
@@ -127,6 +145,59 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       field.Name,
       _adviceFor(model)));
   }
+
+  /// <summary>
+  /// Whether a [JsonIndexed] declaration on this field covers the shape being written.
+  /// </summary>
+  /// <param name="node">The member access being analyzed.</param>
+  /// <param name="field">The property it resolves to.</param>
+  /// <returns><c>true</c> when a declared index answers this filter.</returns>
+  /// <remarks>
+  /// <para>
+  /// A btree covers what a btree serves: ranges, orderings, equality and null tests. A trigram covers
+  /// substring matching and nothing else, which is the same distinction the runtime makes when it
+  /// decides whether to stand the containment rewrite down.
+  /// </para>
+  /// <para>
+  /// Kept narrow on purpose. Treating any declaration as covering any shape would silence the
+  /// advisory on a filter that really does read every row, and a silent scan is the failure this
+  /// exists to prevent; over-reporting merely annoys.
+  /// </para>
+  /// </remarks>
+  private static bool _declaredIndexServes(MemberAccessExpressionSyntax node, IPropertySymbol field) {
+    var kind = _declaredIndexKind(field);
+    if (kind is null) {
+      return false;
+    }
+
+    if ((kind.Value & KIND_BTREE) != 0) {
+      return true;
+    }
+
+    return (kind.Value & KIND_TRIGRAM) != 0 && _isSubstringMatch(node);
+  }
+
+  /// <summary>The kinds a [JsonIndexed] declaration asks for, or null when there is none.</summary>
+  private static int? _declaredIndexKind(IPropertySymbol field) {
+    foreach (var attribute in field.GetAttributes()) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, JSON_INDEXED_ATTRIBUTE)) {
+        continue;
+      }
+
+      // The constructor defaults to Btree, so an attribute with no argument asks for one.
+      return attribute.ConstructorArguments.Length > 0
+             && attribute.ConstructorArguments[0].Value is int declared
+        ? declared
+        : KIND_BTREE;
+    }
+
+    return null;
+  }
+
+  /// <summary>Whether this member access is the receiver of a substring match.</summary>
+  private static bool _isSubstringMatch(MemberAccessExpressionSyntax node) =>
+    node.Parent is MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax } call
+    && _substringOperators.Contains(call.Name.Identifier.ValueText);
 
   /// <summary>
   /// The fixes that actually work for this model, which depends on how its document is stored.

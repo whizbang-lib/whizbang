@@ -68,6 +68,12 @@ public class PerspectiveFilterIndexAnalyzerTests {
         public TimeOnly Clock { get; init; }
 
         public TimeSpan Elapsed { get; init; }
+
+        [JsonIndexed]
+        public int DeclaredBtree { get; init; }
+
+        [JsonIndexed(JsonIndexKind.Trigram)]
+        public string DeclaredTrigram { get; init; } = string.Empty;
       }
 
       public enum Mood { Low, High }
@@ -644,5 +650,90 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(message).Contains("[JsonIndexed]", StringComparison.Ordinal)
       .Because("it is the cheaper of the two fixes wherever it works, and narrowing the advice for "
         + "one kind of model must not narrow it for every model");
+  }
+
+  // ========================================
+  // A declared index is an index
+  // ========================================
+
+  /// <summary>
+  /// A field that declares its own btree is not reported, for any shape a btree serves.
+  /// </summary>
+  /// <remarks>
+  /// The advisory tells an author to mark the field <c>[JsonIndexed]</c>. If it kept reporting after
+  /// they did, the advice would be a loop with no exit, and the only way out would be to suppress a
+  /// warning that was telling the truth before the fix and a lie after it.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("r.Data.DeclaredBtree > 1")]
+  [Arguments("r.Data.DeclaredBtree >= 1")]
+  [Arguments("r.Data.DeclaredBtree < 1")]
+  [Arguments("r.Data.DeclaredBtree != 1")]
+  public async Task ADeclaredBtree_IsNotReportedAsync(string predicate) {
+    var source = _repositoryOver($"""
+            return _rows.Where(r => {predicate}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty()
+      .Because("the field carries the index this advisory asks for, so reporting it again would "
+        + "leave the author with no way to satisfy the advice");
+  }
+
+  /// <summary>Ordering on a declared btree is not reported either, since that is what it serves.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task OrderingOnADeclaredBtree_IsNotReportedAsync() {
+    var source = _repositoryOver("""
+            return _rows.OrderBy(r => r.Data.DeclaredBtree).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty();
+  }
+
+  /// <summary>
+  /// A trigram declaration covers substring matching, which is the thing a trigram index answers.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("r.Data.DeclaredTrigram.Contains(\"ab\")")]
+  [Arguments("r.Data.DeclaredTrigram.StartsWith(\"ab\")")]
+  [Arguments("r.Data.DeclaredTrigram.EndsWith(\"ab\")")]
+  public async Task ADeclaredTrigram_IsNotReportedForSubstringMatchingAsync(string predicate) {
+    var source = _repositoryOver($"""
+            return _rows.Where(r => {predicate}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty()
+      .Because("substring matching is exactly what a trigram index answers, so the field it is "
+        + "declared on is not scanning");
+  }
+
+  /// <summary>
+  /// A trigram declaration does not cover an ordering, because a trigram index cannot serve one.
+  /// </summary>
+  /// <remarks>
+  /// The distinction matters in the direction that costs: treating any declaration as covering any
+  /// shape would silence the advisory on a filter that really does scan, which is the failure this
+  /// whole area exists to prevent.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task ADeclaredTrigram_IsStillReportedForAnOrderingAsync() {
+    var source = _repositoryOver("""
+            return _rows.OrderBy(r => r.Data.DeclaredTrigram).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsNotEmpty()
+      .Because("a trigram index answers substring matching and nothing else, so an ordering on the "
+        + "field still reads every row");
   }
 }
