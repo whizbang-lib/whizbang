@@ -41,16 +41,24 @@ public class JsonIndexDeclarationAnalyzerTests {
     diagnostics.Where(d => d.Id == "WHIZ303");
 
   /// <summary>
-  /// A date cannot carry one, because the cast out of the document is stable rather than immutable
-  /// and PostgreSQL refuses to build an index over it.
+  /// A type the framework does not store in a form any immutable cast can reach is reported.
   /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The date family used to be the whole of this list. A date was stored as a rendering, and the
+  /// cast from text to a timestamp is STABLE rather than IMMUTABLE, so PostgreSQL refused to index
+  /// it. That is no longer true: dates, times and durations are stored as numbers, and a numeric
+  /// cast is immutable. They moved to the list below.
+  /// </para>
+  /// <para>
+  /// What is left is genuinely unreachable rather than awkwardly stored: a nested object or a
+  /// collection has no single scalar to extract, so there is nothing an index could be built over.
+  /// </para>
+  /// </remarks>
   [Test]
   [RequiresAssemblyFiles]
-  [Arguments("DateTime")]
-  [Arguments("DateTimeOffset")]
-  [Arguments("DateOnly")]
-  [Arguments("TimeOnly")]
-  [Arguments("TimeSpan")]
+  [Arguments("char")]
+  [Arguments("object")]
   public async Task ATypeThatCannotCarryAnIndex_IsReportedAsync(string type) {
     var source = _model($$"""
         [JsonIndexed]
@@ -65,6 +73,11 @@ public class JsonIndexDeclarationAnalyzerTests {
   }
 
   /// <summary>Every type that can carry one is left alone.</summary>
+  /// <remarks>
+  /// The date family is here because its stored form changed, not because the index rules did.
+  /// PostgreSQL still refuses a stable expression; a number simply is not one. If any of these ever
+  /// starts being reported again, the stored form regressed rather than the analyzer.
+  /// </remarks>
   [Test]
   [RequiresAssemblyFiles]
   [Arguments("string")]
@@ -77,6 +90,12 @@ public class JsonIndexDeclarationAnalyzerTests {
   [Arguments("bool")]
   [Arguments("Guid")]
   [Arguments("int?")]
+  [Arguments("DateTime")]
+  [Arguments("DateTimeOffset")]
+  [Arguments("DateOnly")]
+  [Arguments("TimeOnly")]
+  [Arguments("TimeSpan")]
+  [Arguments("DateTime?")]
   public async Task AnIndexableType_IsNotReportedAsync(string type) {
     var source = _model($$"""
         [JsonIndexed]
@@ -136,7 +155,7 @@ public class JsonIndexDeclarationAnalyzerTests {
         [StreamId]
         public Guid OrderId { get; init; }
 
-        public DateTime OccurredAt { get; init; }
+        public object Unreachable { get; init; } = new();
       }
       """;
 
@@ -148,15 +167,14 @@ public class JsonIndexDeclarationAnalyzerTests {
   }
 
   /// <summary>
-  /// The message names the property and says what to do instead, since the useful answer for a date
-  /// is a promoted column rather than nothing.
+  /// The message names the property and says what to do instead.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles]
   public async Task TheMessageNamesThePropertyAndTheAlternativeAsync() {
     var source = _model("""
         [JsonIndexed]
-        public DateTime OccurredAt { get; init; }
+        public object OccurredAt { get; init; } = new();
       """);
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(source);

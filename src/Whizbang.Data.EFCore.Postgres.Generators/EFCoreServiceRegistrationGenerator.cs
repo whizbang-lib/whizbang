@@ -501,6 +501,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
+        TemporalProperties: CanonicalTemporalDiscovery.From(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType)
     );
   }
@@ -552,6 +553,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
+        TemporalProperties: candidate.TemporalProperties,
         CoalesceBody: candidate.CoalesceBody
     );
   }
@@ -2330,6 +2332,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var perspective in uniqueTables) {
       _appendCreateTableSql(sb, perspective, schema, quotedSchema);
+      // Before the indexes, not after: the index cannot be built while a row still holds a
+      // rendering, so an unfinished rewrite has to fail at the next statement.
+      _appendCanonicalTemporalBackfill(sb, perspective, quotedSchema);
       _appendStandardIndexes(sb, perspective, quotedSchema);
       _appendPhysicalFieldIndexes(sb, perspective, quotedSchema);
     }
@@ -2531,6 +2536,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var perspSql = new StringBuilder();
 
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
+      _appendCanonicalTemporalBackfill(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
 
       var escapedSql = perspSql.ToString()
@@ -2599,6 +2605,32 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS sys_updated_at TIMESTAMPTZ;");
     sb.AppendLine($"UPDATE {table} SET sys_created_at = created_at, sys_updated_at = updated_at");
     sb.AppendLine("  WHERE sys_created_at IS NULL OR sys_updated_at IS NULL;");
+  }
+
+  /// <summary>
+  /// Emits the rewrite of a perspective's dates, times and durations into their canonical stored
+  /// form.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Placed between the table and its indexes on purpose. PostgreSQL evaluates an index expression
+  /// for every row, so it refuses to build the index while any row still holds a rendering: in this
+  /// order a rewrite that did not finish fails at the next statement, and in the other it would
+  /// leave an index over a column about to change underneath it.
+  /// </para>
+  /// <para>
+  /// Each statement selects on the stored type being a string, so a database created by this release
+  /// has nothing to convert and a re-run is a no-op. That is what lets this live in the ordinary
+  /// schema path rather than behind a version gate.
+  /// </para>
+  /// </remarks>
+  private static void _appendCanonicalTemporalBackfill(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    foreach (var statement in CanonicalTemporalBackfillSql.Statements(
+        perspective.TemporalProperties, $"{quotedSchema}.{perspective.TableName}")) {
+      sb.AppendLine(statement);
+      sb.AppendLine();
+    }
   }
 
   private static void _generatePerspectiveIndexSql(
@@ -2800,6 +2832,7 @@ internal sealed record PerspectiveModelInfo(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<CanonicalTemporalProperty> TemporalProperties,
     string CoalesceBody);
 
 /// <summary>
@@ -2827,6 +2860,7 @@ internal sealed record PerspectiveModelCandidate(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<CanonicalTemporalProperty> TemporalProperties,
     string CoalesceBody);
 
 /// <summary>

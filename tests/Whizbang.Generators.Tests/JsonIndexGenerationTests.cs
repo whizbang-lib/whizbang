@@ -112,12 +112,20 @@ public class JsonIndexGenerationTests {
   }
 
   /// <summary>
-  /// A model asking for every field gets every eligible one, and nothing for the rest.
+  /// A model asking for every field gets every eligible one, and the date is now among them.
   /// </summary>
   /// <remarks>
-  /// The date is the interesting half. Its extraction cannot carry an index at all, because the cast
-  /// to a timestamp is not immutable and PostgreSQL refuses to build one, so a blanket declaration has
-  /// to skip it rather than emit a statement that fails at startup.
+  /// <para>
+  /// The date is the interesting half, and it changed sides. Stored as a rendering it could not
+  /// carry an index at all: the cast from text to a timestamp is stable, and PostgreSQL refuses to
+  /// build an index over a stable expression, so a blanket declaration had to skip the field rather
+  /// than emit a statement that failed at startup.
+  /// </para>
+  /// <para>
+  /// Stored as a number it casts through bigint, which is immutable, so the same extraction is
+  /// indexable and a blanket declaration covers it like anything else. Nothing about the index rules
+  /// moved; the stored form did.
+  /// </para>
   /// </remarks>
   [Test]
   public async Task IndexAllFieldsCoversTheEligibleFieldsOnlyAsync() {
@@ -156,9 +164,9 @@ public class JsonIndexGenerationTests {
 
     await Assert.That(output).Contains("((data ->> 'Count')::integer)", StringComparison.Ordinal);
     await Assert.That(output).Contains("(data ->> 'Label')", StringComparison.Ordinal);
-    await Assert.That(output).DoesNotContain("'OccurredAt'", StringComparison.Ordinal)
-      .Because("a cast to a timestamp is not immutable, so PostgreSQL would refuse the index and a "
-        + "blanket declaration must skip the field rather than emit a statement that fails");
+    await Assert.That(output).Contains("((data ->> 'OccurredAt')::bigint)", StringComparison.Ordinal)
+      .Because("a date is stored as microseconds since the epoch now, and a bigint cast is "
+        + "immutable, so the extraction PostgreSQL once refused is the one it indexes");
   }
 
   /// <summary>

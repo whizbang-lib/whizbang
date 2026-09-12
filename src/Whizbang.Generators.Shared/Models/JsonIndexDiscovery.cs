@@ -84,8 +84,38 @@ public static class JsonIndexDiscovery {
       case SpecialType.System_Double:
         return JsonIndexCast.Float8;
       default:
-        return TypeNameUtilities.IsNamed(type, "System.Guid") ? JsonIndexCast.Uuid : (JsonIndexCast?)null;
+        return _castForNamedType(type);
     }
+  }
+
+  /// <summary>
+  /// The cast for a type the special-type switch does not name.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The date family is here because it is stored as a number rather than as a rendering. That is
+  /// what makes it indexable at all: the cast from text to a timestamp or a date is STABLE, and
+  /// PostgreSQL refuses to build an index over a stable expression because a key computed from a
+  /// session setting could go stale. A cast to an integer is IMMUTABLE, so the same extraction
+  /// becomes indexable without anything about the index rules changing.
+  /// </para>
+  /// <para>
+  /// The widths follow the stored form exactly: microseconds since the epoch, the epoch day count,
+  /// microseconds since midnight, and a tick count. All but the day count need eight bytes. A cast
+  /// narrower than the stored value would silently fail to match rows at the extremes, so these
+  /// agree with <c>CanonicalTemporalFormat</c> by construction rather than by being kept in step.
+  /// </para>
+  /// </remarks>
+  private static JsonIndexCast? _castForNamedType(ITypeSymbol type) {
+    if (TypeNameUtilities.IsNamed(type, "System.Guid")) {
+      return JsonIndexCast.Uuid;
+    }
+
+    return CanonicalTemporalDiscovery.KindOf(type) switch {
+      CanonicalTemporalKind.None => null,
+      CanonicalTemporalKind.Day => JsonIndexCast.Int4,
+      _ => JsonIndexCast.Int8,
+    };
   }
 
   /// <summary>
