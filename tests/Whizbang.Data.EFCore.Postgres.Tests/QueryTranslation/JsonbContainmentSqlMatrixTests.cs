@@ -9,6 +9,7 @@ using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 
@@ -159,6 +160,34 @@ public class JsonbContainmentSqlMatrixTests {
       .UseWhizbangPhysicalFields()
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options;
+
+  /// <summary>
+  /// The same model, with the reshape registered instead of the marker translations.
+  /// </summary>
+  /// <remarks>
+  /// A separate options instance rather than a flag on the first one, and that matters for more than
+  /// tidiness: Entity Framework caches a compiled query per service provider, so one shape compiled
+  /// under one mechanism would otherwise be returned unchanged when the other mechanism was selected,
+  /// and every second case would silently assert the first mechanism's output.
+  /// </remarks>
+  private static readonly DbContextOptions<MatrixDbContext> _reshapeOptions =
+    new DbContextOptionsBuilder<MatrixDbContext>()
+      .UseNpgsql(UNUSED_CONNECTION)
+      .UseWhizbangPhysicalFields()
+      .UseWhizbangContainmentReshape()
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options;
+
+  private static MatrixDbContext _newContext(ContainmentMode mode) {
+    PhysicalFieldRegistry.Register<MatrixModel>("PhysGuid", "phys_guid");
+    PhysicalFieldRegistry.Register<MatrixModel>("PhysInt", "phys_int");
+    PhysicalFieldRegistry.Register<MatrixModel>("PhysString", "phys_string");
+
+    JsonbContainmentSwitch.SetMode(mode);
+
+    return new MatrixDbContext(
+      mode == ContainmentMode.TranslatedTree ? _reshapeOptions : _matrixOptions);
+  }
 
   private static MatrixDbContext _newContext() {
     PhysicalFieldRegistry.Register<MatrixModel>("PhysGuid", "phys_guid");
@@ -478,23 +507,86 @@ public class JsonbContainmentSqlMatrixTests {
   // The test
   // ========================================
 
-  /// <summary>Every case in the matrix, as (key, expected destination).</summary>
-  /// <returns>One tuple per case.</returns>
-  public static IEnumerable<(string CaseKey, Destination Expected)> Cases() =>
-    _matrix.OrderBy(kv => kv.Key, StringComparer.Ordinal)
-           .Select(kv => (kv.Key, kv.Value.Expected));
+  /// <summary>
+  /// Every case in the matrix, once per mechanism that can compile it.
+  /// </summary>
+  /// <returns>One tuple per case and mechanism.</returns>
+  /// <remarks>
+  /// <para>
+  /// Running the whole matrix against both mechanisms is the main thing keeping them from diverging.
+  /// The cases assert where a filter landed by reading compiled SQL, which makes them indifferent to
+  /// how it got there, so any disagreement between the two becomes a named failing case rather than
+  /// something a consumer finds.
+  /// </para>
+  /// <para>
+  /// The destinations are shared except where they are deliberately not, which
+  /// <see cref="_destinationUnder"/> decides.
+  /// </para>
+  /// </remarks>
+  public static IEnumerable<(string CaseKey, ContainmentMode Mode, Destination Expected)> Cases() =>
+    from entry in _matrix.OrderBy(kv => kv.Key, StringComparer.Ordinal)
+    from mode in new[] { ContainmentMode.ExpressionTree, ContainmentMode.TranslatedTree }
+    select (entry.Key, mode, _destinationUnder(entry.Key, entry.Value.Expected, mode));
+
+  /// <summary>
+  /// Where a case is expected to land under one mechanism, which is the same for both unless a
+  /// difference is deliberate.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Three deliberate differences, and the direction matters: one is the reshape doing less, and two
+  /// are the reshape doing better. None of them is a disagreement about which rows come back, which
+  /// is the thing the two mechanisms are not allowed to differ on.
+  /// </para>
+  /// <para>
+  /// <strong>A date does less.</strong> The tree rewrite renders the instant in SQL to match what the
+  /// serializer wrote; the reshape does not, because writing that rendering there would mean building
+  /// exactly what the canonical stored format is going to delete. So a date keeps the extraction
+  /// form under the reshape: correct rows, no index. THESE CASES SHOULD BE DELETED, not inverted,
+  /// once dates are stored as a number, at which point the two agree again.
+  /// </para>
+  /// <para>
+  /// <strong>A doubly negated comparison does better.</strong> The tree rewrite stands down at any
+  /// negation depth, including an even one where the negations cancel. By the time the reshape runs,
+  /// Entity Framework has already collapsed them, so it sees a plain equality and indexes it.
+  /// Equivalent under three-valued logic too, since a null that is negated twice is still null and
+  /// still excludes the row.
+  /// </para>
+  /// <para>
+  /// <strong>An emptiness test does better.</strong> On the tree there is no equality to see, because
+  /// the shape is still a method call. After translation it is a null test or an equality against the
+  /// empty string, and the second half of that indexes. The rows are the same: an absent key and an
+  /// explicit null are both caught by the null test either way.
+  /// </para>
+  /// </remarks>
+  private static Destination _destinationUnder(string caseKey, Destination shared, ContainmentMode mode) {
+    if (mode != ContainmentMode.TranslatedTree) {
+      return shared;
+    }
+
+    if (caseKey.StartsWith("eligible-now/datetime/", StringComparison.Ordinal)) {
+      return Destination.Extraction;
+    }
+
+    return caseKey.StartsWith("negated/double", StringComparison.Ordinal)
+        || caseKey.StartsWith("op/string/is-null-or-empty", StringComparison.Ordinal)
+      ? Destination.Containment
+      : shared;
+  }
 
   /// <summary>
   /// Compiles the case and asserts the filter landed where it was meant to.
   /// </summary>
   /// <param name="caseKey">The matrix key, which also names the test.</param>
+  /// <param name="mode">The mechanism compiling it.</param>
   /// <param name="expected">Where the filter should have gone.</param>
   [Test]
   [MethodDataSource(nameof(Cases))]
-  public async Task CompiledSql_SendsTheFilterWhereExpectedAsync(string caseKey, Destination expected) {
+  public async Task CompiledSql_SendsTheFilterWhereExpectedAsync(
+    string caseKey, ContainmentMode mode, Destination expected) {
     var (shape, _) = _matrix[caseKey];
 
-    using var db = _newContext();
+    using var db = _newContext(mode);
 
     if (expected == Destination.Untranslatable) {
       await Assert.That(() => shape(db.Set<PerspectiveRow<MatrixModel>>()).ToQueryString())
@@ -602,11 +694,19 @@ public class JsonbContainmentSqlMatrixTests {
       return;
     }
 
-    using var db = _newContext();
+    var mode = string.Equals(Environment.GetEnvironmentVariable("WHIZ_MATRIX_MODE"), "reshape",
+      StringComparison.Ordinal) ? ContainmentMode.TranslatedTree : ContainmentMode.ExpressionTree;
+    using var db = _newContext(mode);
     var sink = new System.Text.StringBuilder();
     foreach (var (key, (shape, expected)) in _matrix.OrderBy(kv => kv.Key, StringComparer.Ordinal)) {
       sink.AppendLine(CultureInfo.InvariantCulture, $"##### {key}  [{expected}]");
-      sink.AppendLine(shape(db.Set<PerspectiveRow<MatrixModel>>()).ToQueryString());
+      // A case whose destination is Untranslatable throws here by design, and the dump is a reading
+      // aid rather than an assertion, so it records the refusal and carries on.
+      try {
+        sink.AppendLine(shape(db.Set<PerspectiveRow<MatrixModel>>()).ToQueryString());
+      } catch (InvalidOperationException refused) {
+        sink.AppendLine(CultureInfo.InvariantCulture, $"REFUSED: {refused.Message.Split('\n')[0]}");
+      }
       sink.AppendLine();
     }
 
