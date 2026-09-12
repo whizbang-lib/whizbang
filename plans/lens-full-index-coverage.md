@@ -145,10 +145,33 @@ match both forms while they coexisted, and the three-release sequence those impl
 library whose consumers migrate deliberately, which is exactly the situation that sequence exists to
 avoid needing.
 
+**The blocker found on the way in, which was much larger than Phase 1.** A model declared as a
+`record` was classified as needing opaque storage, every time. The compiler generates a protected
+`EqualityContract` of type `System.Type`, `System.Type` is an abstract class, and the detector read it
+as a declared property, so the first member of every record answered the question before anything the
+author wrote was reached.
+
+That decides far more than which snippet is emitted. An opaquely stored model is one jsonb value, so
+nothing inside it is a mapped property: no extraction to index, nothing for the rewrite to recognize,
+nowhere to attach a conversion. Every record model sat outside all three, and the sample models in
+this repository are records. Detection now considers only public properties, the rule both the mapped
+path and the serializer already follow. The Postgres suite is unchanged at 5394 green, which is the
+measurement that the reclassification breaks nothing.
+
+Three diagnostics were made to agree with it, since they now describe a fork that really exists:
+WHIZ304 reports an index declared on a model whose storage puts it out of reach, the generator skips
+emitting that index rather than maintaining one nothing can scan, and WHIZ302 stops offering
+`[JsonIndexed]` on such a model, which would have sent an author into WHIZ304 for taking the advice.
+
+A genuinely polymorphic model is deliberately left in the serializer's own temporal form. It can carry
+no index either way, so converting it would be a stored-format change that buys nothing.
+
 What remains is three things.
 
 - **A converter per type, emitted by the generator** rather than written out per property, so the
-  stored form is a decision the framework makes once rather than one every model repeats.
+  stored form is a decision the framework makes once rather than one every model repeats. *Done:
+  `CanonicalTemporalDiscovery` emits them into the mapped configuration, so a fresh database writes
+  the canonical form from its first row and never migrates.*
 - **A backfill emitted per perspective, not a hand-written migration.** Which keys hold dates is
   per-model knowledge, so it belongs where the perspective's other schema is generated. It rewrites
   only what is not already converted, which makes re-running it a no-op and a restored backup
@@ -415,6 +438,11 @@ rollback never depends on code that has already been removed.
 - **`TimeOnly` is written with seven fractional digits while `DateTime` is written with six.** The
   document writer does not truncate uniformly, which is why the `DateTime` precision is locked by a
   test rather than trusted. The numeric stored form removes the discrepancy along with the question.
+- **Every `record` model was classified as needing opaque storage** and so was excluded from indexing,
+  the containment rewrite and value conversion alike, on a compiler-generated member no serializer
+  writes. Fixed here rather than filed, because Phase 1 could not proceed past it, but worth recording
+  as its own finding: it had been noted in a test comment as a trap to write around rather than as a
+  defect to fix, and writing around it is how it survived.
 
 ## The null character, and where it is refused
 
