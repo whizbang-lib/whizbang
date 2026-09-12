@@ -2,7 +2,6 @@ using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
-using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
@@ -35,32 +34,9 @@ public sealed class ContainmentPostprocessor(
       return translated;
     }
 
-    return new ContainmentSqlRewriter(_carriesItsOwnIndex).Visit(translated);
+    return new ContainmentSqlRewriter(JsonIndexRegistry.HasBtreeForTable).Visit(translated);
   }
 
-  /// <summary>
-  /// Whether the member has a btree index of its own, in which case containment must stand down.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// Rewriting such a filter would send the planner to the GIN index over the whole document and
-  /// leave the field's own index unused, which is the wasted-index problem this work exists to
-  /// correct rather than to cause.
-  /// </para>
-  /// <para>
-  /// Only a depth-one member can qualify, because a declared index is built over
-  /// <c>data -&gt;&gt; 'Key'</c> and a nested value is not reachable by that expression. The model
-  /// type comes from the column's table rather than from the expression tree, since by this stage
-  /// there is no tree left to walk.
-  /// </para>
-  /// </remarks>
-  private static bool _carriesItsOwnIndex(JsonScalarExpression member) {
-    if (member.Path.Count != 1 || member.Path[0].PropertyName is not { } key) {
-      return false;
-    }
-
-    return JsonIndexRegistry.HasAnyBtreeFor(key);
-  }
 }
 
 /// <summary>

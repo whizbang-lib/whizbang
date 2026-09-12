@@ -109,6 +109,52 @@ public static class JsonIndexRegistry {
     return false;
   }
 
+  private static readonly ConcurrentDictionary<(string TableName, string PropertyName), JsonIndexKind> _byTable =
+    new();
+
+  /// <summary>
+  /// Records the same declaration against the table the perspective is stored in.
+  /// </summary>
+  /// <param name="tableName">The perspective's table.</param>
+  /// <param name="propertyName">The property's name, which is also the document key.</param>
+  /// <param name="kind">The kinds of index declared.</param>
+  /// <remarks>
+  /// Kept alongside the model-keyed registration rather than replacing it, because the two mechanisms
+  /// have different things in hand. The rewrite that works on the expression tree knows the model
+  /// being queried; the one that reshapes translated SQL does not, because that tree is gone by then,
+  /// and what it has instead is the table the column belongs to.
+  /// </remarks>
+  public static void RegisterForTable(string tableName, string propertyName, JsonIndexKind kind) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
+
+    _byTable.AddOrUpdate((tableName, propertyName), kind, (_, existing) => existing | kind);
+  }
+
+  /// <summary>
+  /// Whether a property of a perspective stored in this table carries a btree of its own.
+  /// </summary>
+  /// <param name="tableName">The table the column belongs to.</param>
+  /// <param name="propertyName">The document key.</param>
+  /// <returns>True when that table's perspective declares a btree for it.</returns>
+  /// <remarks>
+  /// This replaced a lookup by property name alone, which was wrong in a way worth recording. Property
+  /// names repeat across perspectives constantly, so one model declaring an index on a common name
+  /// made every other model's property of that name stand down, quietly costing them the document
+  /// index. It cost no correctness, which is exactly why it would not have been noticed: every query
+  /// still returned the right rows, more slowly, on models that had declared nothing at all.
+  /// </remarks>
+  public static bool HasBtreeForTable(string tableName, string propertyName) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+    ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
+
+    return _byTable.TryGetValue((tableName, propertyName), out var kind)
+        && kind.HasFlag(JsonIndexKind.Btree);
+  }
+
   /// <summary>Forgets every registration. For tests that need a known starting point.</summary>
-  public static void Clear() => _kinds.Clear();
+  public static void Clear() {
+    _kinds.Clear();
+    _byTable.Clear();
+  }
 }

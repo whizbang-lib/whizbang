@@ -41,14 +41,23 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
     "produced, and a SelectExpression's predicate is where a filter exists at this stage. The " +
     "alternative is the LINQ tree, which cannot see a value converter's effect and was tried first.")]
 internal sealed class ContainmentSqlRewriter : ExpressionVisitor {
-  private readonly Func<JsonScalarExpression, bool> _standsDown;
+  private readonly Func<string, string, bool> _standsDown;
+
+  /// <summary>Table name per alias, for the select currently being reshaped.</summary>
+  /// <remarks>
+  /// A column carries the alias its table was given in the query, not the table's name, and the
+  /// stand-down question is about the perspective, which is identified by its table. So the map is
+  /// rebuilt per select rather than the question being asked about a name that repeats across
+  /// perspectives.
+  /// </remarks>
+  private Dictionary<string, string> _tablesByAlias = new(StringComparer.Ordinal);
 
   /// <summary>Creates a rewriter that consults the caller about members it should leave alone.</summary>
   /// <param name="standsDown">
-  /// Answers whether a member has an index of its own, in which case rewriting would send the planner
-  /// to the document index and leave that one unused.
+  /// Answers, for a table and a document key, whether that field has an index of its own, in which
+  /// case rewriting would send the planner to the document index and leave that one unused.
   /// </param>
-  internal ContainmentSqlRewriter(Func<JsonScalarExpression, bool> standsDown) => _standsDown = standsDown;
+  internal ContainmentSqlRewriter(Func<string, string, bool> standsDown) => _standsDown = standsDown;
 
   /// <inheritdoc/>
   protected override Expression VisitExtension(Expression node) {
@@ -67,8 +76,15 @@ internal sealed class ContainmentSqlRewriter : ExpressionVisitor {
     // Children first, so a nested select is reshaped before the outer one is rebuilt around it.
     var visited = (SelectExpression)base.VisitExtension(select);
 
+    // Saved and restored around this select, so a nested one does not leave its own tables in scope
+    // for the outer predicate.
+    var enclosing = _tablesByAlias;
+    _tablesByAlias = _aliasesOf(visited);
+
     var predicate = visited.Predicate is null ? null : _reshape(visited.Predicate);
     var having = visited.Having is null ? null : _reshape(visited.Having);
+
+    _tablesByAlias = enclosing;
 
     if (ReferenceEquals(predicate, visited.Predicate) && ReferenceEquals(having, visited.Having)) {
       return visited;
@@ -149,11 +165,35 @@ internal sealed class ContainmentSqlRewriter : ExpressionVisitor {
       return null;
     }
 
-    if (_standsDown(member)) {
+    // Only a depth-one member can carry a declared index, because one is built over
+    // data ->> 'Key' and a nested value is not reachable by that expression.
+    // The column carries the alias its table was given, so the table name comes from the map this
+    // select brought into scope. A member whose column is anything but a plain column cannot be
+    // matched to a perspective's table, and is left alone rather than guessed about.
+    if (member.Path.Count == 1
+        && member.Path[0].PropertyName is { } key
+        && member.Json is ColumnExpression column
+        && _tablesByAlias.TryGetValue(column.TableAlias, out var table)
+        && _standsDown(table, key)) {
       return null;
     }
 
     return JsonbContainmentSql.TryBuild(member, candidateValue);
+  }
+
+  /// <summary>The table name behind each alias this select brings into scope.</summary>
+  private static Dictionary<string, string> _aliasesOf(SelectExpression select) {
+    var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    foreach (var table in select.Tables) {
+      // Only a plain table is interesting: a perspective is stored in one, and anything else is a
+      // subquery or a join wrapper whose columns resolve through their own select.
+      if (table is TableExpression named && named.Alias is { } alias) {
+        aliases[alias] = named.Name;
+      }
+    }
+
+    return aliases;
   }
 
   /// <summary>

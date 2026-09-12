@@ -152,6 +152,27 @@ public class JsonIndexStandDownTests {
   }
 
   /// <summary>
+  /// The table-keyed registration answers about that table only, so one perspective declaring an
+  /// index on a common property name does not quietly cost every other perspective its document
+  /// index.
+  /// </summary>
+  /// <remarks>
+  /// This replaced a lookup by property name alone, and the bug it fixes is worth keeping in view.
+  /// Property names repeat across perspectives constantly, and the coarse lookup made one
+  /// declaration stand down every model's property of that name. It cost no correctness, which is
+  /// exactly why nobody would have noticed: the queries still returned the right rows, more slowly,
+  /// on models that had declared nothing.
+  /// </remarks>
+  [Test]
+  public async Task TheTableKeyedRegistrationDoesNotLeakAcrossPerspectivesAsync() {
+    JsonIndexRegistry.RegisterForTable("wh_per_one", "Rank", JsonIndexKind.Btree);
+
+    await Assert.That(JsonIndexRegistry.HasBtreeForTable("wh_per_one", "Rank")).IsTrue();
+    await Assert.That(JsonIndexRegistry.HasBtreeForTable("wh_per_two", "Rank")).IsFalse()
+      .Because("a second perspective that declared nothing must keep the document index it had");
+  }
+
+  /// <summary>
   /// A repeated declaration adds to the kinds rather than replacing them, which is what makes the
   /// attribute repeatable rather than merely tolerated.
   /// </summary>

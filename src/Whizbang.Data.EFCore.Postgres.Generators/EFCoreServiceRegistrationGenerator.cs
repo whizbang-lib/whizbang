@@ -1511,7 +1511,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         kinds.Add("Whizbang.Core.Perspectives.JsonIndexKind.Trigram");
       }
 
-      sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.Register<{model.ModelTypeName}>(\"{index.PropertyName}\", {string.Join(" | ", kinds)});");
+      var kindExpression = string.Join(" | ", kinds);
+      sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.Register<{model.ModelTypeName}>(\"{index.PropertyName}\", {kindExpression});");
+
+      // Registered against the table as well, because the mechanism that reshapes translated SQL has
+      // a column's table in hand rather than a model type: the tree that knew which model was being
+      // queried is gone by that stage.
+      sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.RegisterForTable(\"{model.TableName}\", \"{index.PropertyName}\", {kindExpression});");
     }
 
     sb.AppendLine();
