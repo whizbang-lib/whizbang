@@ -65,7 +65,7 @@ public class PerspectiveIndexAnalyzerEdgeTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task AReadThatIsNotAPropertyIsWalkedPastAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       public class EdgeRepository {
         private readonly IQueryable<PerspectiveRow<EdgeModel>> _rows = null!;
 
@@ -91,7 +91,7 @@ public class PerspectiveIndexAnalyzerEdgeTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task TheStaticOrdinalEqualsSpellingIsServedByContainmentAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       public class EdgeRepository {
         private readonly IQueryable<PerspectiveRow<EdgeModel>> _rows = null!;
 
@@ -121,7 +121,7 @@ public class PerspectiveIndexAnalyzerEdgeTests {
     Justification = "The absence of a StringComparison argument is the shape under test, inside a "
       + "source fixture the analyzer reads as text.")]
   public async Task AnEqualsWithNoComparisonIsAnOrdinaryEqualityAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       public class EdgeRepository {
         private readonly IQueryable<PerspectiveRow<EdgeModel>> _rows = null!;
 
@@ -145,7 +145,7 @@ public class PerspectiveIndexAnalyzerEdgeTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task AReadOutsideAnyOperatorIsNotAFilterAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       public class EdgeRepository {
         private readonly PerspectiveRow<EdgeModel> _row = null!;
 
@@ -173,7 +173,7 @@ public class PerspectiveIndexAnalyzerEdgeTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task ALambdaNotHandedToAnOperatorIsNotAFilterAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       public class EdgeRepository {
         public Func<PerspectiveRow<EdgeModel>, bool> Build() => r => r.Data.Code == "v";
       }
@@ -197,7 +197,7 @@ public class PerspectiveIndexAnalyzerEdgeTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task ASuppressionOnABaseTypeCoversItsFieldsAsync() {
-    var source = """
+    const string source = """
       using System;
       using System.Linq;
       using Whizbang.Core;
@@ -261,7 +261,7 @@ public class PerspectiveIndexAnalyzerEdgeTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task ABareBooleanFilterInQuerySyntaxIsReportedAsync() {
-    var source = """
+    const string source = """
       using System;
       using System.Linq;
       using Whizbang.Core;
@@ -391,7 +391,7 @@ public class PerspectiveIndexAnalyzerEdgeTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task AnIndexOnAnUnindexableTypeIsReportedAsync() {
-    var source = """
+    const string source = """
       using System;
       using Whizbang.Core;
       using Whizbang.Core.Perspectives;

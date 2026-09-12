@@ -521,11 +521,11 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     await Assert.That(callback).IsNotNull()
       .Because("a model holding a date needs the canonical form applied to it when it is written");
 
-    await Assert.That(callback!).Contains("OccurredAt", StringComparison.Ordinal)
+    await Assert.That(callback).Contains("OccurredAt", StringComparison.Ordinal)
       .Because("the converter is attached per property, so the property has to be named");
 
-    var alpaca = callback!.IndexOf("AlpacaDto", StringComparison.Ordinal);
-    var zebra = callback!.IndexOf("ZebraDto", StringComparison.Ordinal);
+    var alpaca = callback.IndexOf("AlpacaDto", StringComparison.Ordinal);
+    var zebra = callback.IndexOf("ZebraDto", StringComparison.Ordinal);
     await Assert.That(alpaca).IsGreaterThanOrEqualTo(0);
     await Assert.That(zebra).IsGreaterThan(alpaca)
       .Because("registrations are emitted in model-name order so the output is stable between builds, "

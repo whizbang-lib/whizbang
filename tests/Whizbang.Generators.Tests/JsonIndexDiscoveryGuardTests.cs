@@ -1,7 +1,14 @@
+extern alias shared;
+
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Generators.Shared.Models;
+using CanonicalTemporalDiscovery = shared::Whizbang.Generators.Shared.Models.CanonicalTemporalDiscovery;
+using CanonicalTemporalKind = shared::Whizbang.Generators.Shared.Models.CanonicalTemporalKind;
+using JsonIndexCast = shared::Whizbang.Generators.Shared.Models.JsonIndexCast;
+using JsonIndexDiscovery = shared::Whizbang.Generators.Shared.Models.JsonIndexDiscovery;
+using JsonIndexSql = shared::Whizbang.Generators.Shared.Models.JsonIndexSql;
+using PolymorphicModelDiscovery = shared::Whizbang.Generators.Shared.Models.PolymorphicModelDiscovery;
 
 namespace Whizbang.Generators.Tests;
 
@@ -68,7 +75,7 @@ public class JsonIndexDiscoveryGuardTests {
   /// </remarks>
   [Test]
   public async Task ACastWithNoSqlNameAppliesNoCastAsync() {
-    var unmapped = (JsonIndexCast)9999;
+    const JsonIndexCast unmapped = (JsonIndexCast)9999;
 
     await Assert.That(JsonIndexSql.StoreType(unmapped)).IsNull();
     await Assert.That(JsonIndexSql.Expression("data", "Rank", unmapped))
