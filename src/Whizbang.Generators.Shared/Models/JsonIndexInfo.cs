@@ -26,7 +26,8 @@ namespace Whizbang.Generators.Shared.Models;
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Generators.Tests/Models/JsonIndexInfoTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/JsonIndexGenerationTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveIndexSetupTests.cs</tests>
 [SuppressMessage("Naming", "CA1720:Identifier contains type name",
   Justification = "These are PostgreSQL's own type names, which is the point: the member has to "
     + "say which store type the index is built over, and int2, int4 and int8 are how PostgreSQL "
@@ -76,7 +77,8 @@ public enum JsonIndexCast {
 /// <param name="Btree">Whether to create a btree over the extraction.</param>
 /// <param name="Trigram">Whether to create a trigram index for substring matching.</param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Generators.Tests/Models/JsonIndexInfoTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/JsonIndexGenerationTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveIndexSetupTests.cs</tests>
 public sealed record JsonIndexInfo(
     string PropertyName,
     string JsonKey,
@@ -94,7 +96,8 @@ public sealed record JsonIndexInfo(
 /// translation is a single function.
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
-/// <tests>tests/Whizbang.Generators.Tests/Models/JsonIndexInfoTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/JsonIndexGenerationTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveIndexSetupTests.cs</tests>
 public static class JsonIndexSql {
   /// <summary>The SQL name of a cast target, or null when no cast is applied.</summary>
   public static string? StoreType(JsonIndexCast cast) => cast switch {
