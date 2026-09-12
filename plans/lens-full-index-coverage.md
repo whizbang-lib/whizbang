@@ -277,6 +277,96 @@ free. Doing Phase 1 first means teaching the current emission about canonical da
 then deleting that work; doing this first means Phase 1's converters simply work, and the date
 rendering it still needs is the only part left to build.
 
+## The hybrid, laid out
+
+The guiding rule is that each stage owns only the decisions it is uniquely able to make, and the
+shapes both stages need are stated once. Every problem this work has hit came from two places having
+to agree about the same fact, so the layout is chosen to leave as few of those as possible.
+
+### What only the expression tree can do
+
+See a shape Entity Framework refuses to translate. `Equals(value, StringComparison.Ordinal)` is the
+whole of that list today: Entity Framework throws on it, so after translation there is nothing left to
+inspect.
+
+That reframes what the tree stage is for. Today it does two unrelated jobs, working around that
+refusal and building containment. Split them and the first becomes tiny and permanent:
+
+**The tree stage normalizes an untranslatable shape into a translatable one, and nothing else.**
+`Equals(value, StringComparison.Ordinal)` becomes `==`. It does not build containment, does not know
+which types are eligible, and does not know containment exists. The downstream stage then sees an
+ordinary equality and reshapes it like any other, so the capability is preserved with no special case
+anywhere else.
+
+### What only the translated tree can do
+
+See the value converter already applied to both sides. See the cast Entity Framework actually chose.
+Know structurally, rather than by inferring from operator names, whether a comparison sits in a
+predicate. And have a type mapping on every node.
+
+**The translated stage reshapes an equality into a containment test, type-agnostically.**
+
+### Where the files go
+
+```text
+QueryTranslation/
+  Containment/
+    ContainmentMode.cs                 off | expressionTree | translatedTree
+    JsonbContainmentSwitch.cs          reads the mode (moves here)
+    JsonbContainmentSql.cs             the operator and the document shape, shared by both modes
+    ExpressionTree/
+      JsonbContainment.cs              markers and their translation; used by this mode only
+      JsonbContainmentRewriter.cs      unchanged behavior
+    TranslatedTree/
+      ContainmentPostprocessorFactory.cs
+      ContainmentPostprocessor.cs      Process: base first, then visit
+      ContainmentSqlRewriter.cs        the visitor
+  Compatibility/
+    OrdinalEqualsRewriter.cs           runs in both modes; the tree rewrite that survives the flip
+```
+
+`JsonbContainmentSql` is the important one. It owns the containment operator and the nested
+`jsonb_build_object` shape, and both modes call it, so the document being built is defined in one
+place even while two mechanisms exist. Without that, the two modes are two chances to build a
+different document and the matrix would be the only thing standing between them and a wrong answer.
+
+The folder split is deliberate rather than tidy: it should be obvious at a glance which mode a file
+belongs to, so that a change meant for one is not made to the other.
+
+### What cannot be shared, and what covers it
+
+Four stand-down rules are needed by both modes: a comparison against null, anything under a negation,
+a field that carries its own btree, and predicate position. They are expressed against different
+trees, so the code cannot literally be shared; only the rules can be. That is the one real
+duplication in this design, and it is covered by running the matrix over both modes rather than by a
+comment asking people to remember.
+
+### Dates, and the regression to accept on purpose
+
+A date works today through a SQL-side rendering of the instant. The translated stage has no per-type
+code by design, and giving it some for dates would mean writing exactly the code the canonical format
+is going to delete.
+
+So under `translatedTree` a date falls back to the extraction form: correct rows, no index, exactly as
+it behaved before this branch. Not a wrong answer, and visible rather than silent, because the matrix
+expects `Containment` for a date under `expressionTree` and `Extraction` under `translatedTree`. The
+canonical format removes the difference, at which point a date needs nothing special from either
+stage.
+
+This is the reason the default stays `expressionTree` until Phase 1 lands. Nobody loses an index in
+the meantime, and the new mode is exercised in continuous integration the whole way.
+
+### What gets deleted when the default flips
+
+The overload table and `OverloadFor`, `StoredFormIsNatural`, the planted-conversion unwrap, the
+floating-point cast, the date rendering, and the type-set pin that exists to keep the eligible list
+honest. `WHIZ302`'s type check collapses to "any type", since eligibility stops being a concept.
+Migration 152 stays: set membership still needs the helper, and reshaping `= ANY(...)` in the
+translated stage is more general than the current exact-type overload lookup, not less.
+
+None of that is deleted while both modes ship. The clean-up is a separate step after the flip, so a
+rollback never depends on code that has already been removed.
+
 ## Decisions taken
 
 1. **Opt-in per field, with a perspective-level option to index everything.** A field carries
