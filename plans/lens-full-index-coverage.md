@@ -477,3 +477,33 @@ Two fixes, and they are for two different problems:
   because the value itself has no representation, so the only improvement available is to fail where
   a developer can act on it instead of at the driver. An analyzer cannot catch it, since the value is
   only known at run time.
+
+## Quality gate: what the last pass found
+
+Reaching 100% coverage on the new code surfaced three things that are worth more than the number.
+
+- **`JsonIndexRegistry.HasAnyBtreeFor` was the superseded, known-wrong lookup**, left behind with no
+  caller anywhere, tests included. `HasBtreeForTable` replaced it because property names repeat
+  across perspectives, so one model declaring an index on a common name made every other model's
+  property of that name stand down. The file's own comment recorded that; nothing removed the method.
+  `Clear` had no caller either. Both are gone.
+- **Two guards in the tree rewriter could not be taken.** `_isValueConverted` re-tested that the
+  model was present and that the path resolved, both of which its two call sites had already
+  established through `_enabled` and `_isJsonMember`. They are assertions now, so a future caller
+  that skips either check fails in development rather than being silently absorbed. `_isTopLevel`'s
+  switch needed a third arm the language requires and nothing can reach; written as one condition it
+  needs none.
+- **A doc comment had drifted off the member it described**, leaving `_resolvePath` carrying two
+  `<summary>` tags and `_isValueConverted` carrying none.
+
+The rest is ordinary: the emission guards and the marker bodies are now asserted directly, against
+hand-built expressions, because no query a repository can write reaches them. `ColumnExpression` and
+`PathSegment` being publicly constructible in EF 10 is what makes that possible; before that these
+shapes could only be reasoned about.
+
+One test is worth keeping in mind as a pattern. `JsonbContainmentRewriterGuardTests` drives the
+rewriter directly and inspects the tree for a planted marker, rather than reading compiled SQL. For a
+shape Entity Framework refuses afterwards there is no SQL to read, and the refusal is identical
+whether a marker was planted first or not, so reading SQL cannot tell "declined" from "never asked".
+Its first case asserts that the harness does plant a marker for an ordinary filter, because without
+that every decline would pass on a rewriter that never ran.

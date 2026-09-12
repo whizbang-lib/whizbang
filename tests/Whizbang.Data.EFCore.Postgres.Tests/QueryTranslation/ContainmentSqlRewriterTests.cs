@@ -44,6 +44,17 @@ public class ContainmentSqlRewriterTests {
   public class ReshapeModel {
     public string Title { get; init; } = string.Empty;
     public int Rank { get; init; }
+
+    /// <summary>
+    /// Carries a btree of its own, which is what the reshape has to stand down for.
+    /// </summary>
+    /// <remarks>
+    /// A field of its own rather than reusing one above, because the registry is process static and
+    /// additive with no reset: registering a table index against a key another case filters on would
+    /// change that case's expected destination for the rest of the run.
+    /// </remarks>
+    [Indexed]
+    public int IndexedRank { get; init; }
     public Guid Reference { get; init; }
     public Grade Level { get; init; }
     public DateTime OccurredAt { get; init; }
@@ -59,7 +70,10 @@ public class ContainmentSqlRewriterTests {
     public string City { get; init; } = string.Empty;
   }
 
-  private sealed class ReshapeDbContext(DbContextOptions<ReshapeDbContext> options) : DbContext(options) {
+  /// <summary>
+  /// Takes the untyped options so both registration overloads can be driven through one mapping.
+  /// </summary>
+  private sealed class ReshapeDbContext(DbContextOptions options) : DbContext(options) {
     protected override void OnModelCreating(ModelBuilder modelBuilder) {
       modelBuilder.Entity<PerspectiveRow<ReshapeModel>>(entity => {
         entity.ToTable("wh_per_reshape");
@@ -231,5 +245,64 @@ public class ContainmentSqlRewriterTests {
     await Assert.That(_sql(rows => rows.Where(r => r.Data.Rank == distinctValue)))
       .DoesNotContain("@>", StringComparison.Ordinal)
       .Because("both mechanisms acting would compile one filter twice");
+  }
+
+  /// <summary>
+  /// A field with a btree of its own keeps the extraction form here too.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same decision as under the tree rewrite, reached from different information. That mechanism
+  /// knows the model being queried; by the time this one runs the tree is gone and what it has is the
+  /// column's table, so the registry is asked by table name instead. Both have to answer the same way
+  /// or switching mechanism would silently change which index a query uses.
+  /// </para>
+  /// <para>
+  /// Registered here rather than in a fixture because the registry is what the generated startup code
+  /// writes to, and registering exactly that is what makes this the real path.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task ABtreeIndexedFieldIsNotReshapedAsync() {
+    JsonIndexRegistry.RegisterForTable("wh_per_reshape", nameof(ReshapeModel.IndexedRank), IndexKind.Btree);
+
+    var sql = _sql(rows => rows.Where(r => r.Data.IndexedRank == 11));
+
+    await Assert.That(sql).DoesNotContain("@>", StringComparison.Ordinal)
+      .Because("reshaping this would send the planner to the document index and leave the field's own "
+        + "index unused, which is the situation the reshape exists to fix rather than to cause");
+    await Assert.That(sql).Contains("data ->> 'IndexedRank'", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// The reshape can be registered through the untyped options builder, which is how an application
+  /// wires it.
+  /// </summary>
+  /// <remarks>
+  /// The rest of this class configures a typed builder, because a test owns its context type. An
+  /// application calls <c>AddDbContext(options =&gt; ...)</c> and the lambda is handed the untyped one,
+  /// so that overload is the one real callers use and it has to put the reshape in force just the same.
+  /// </remarks>
+  [Test]
+  public async Task TheUntypedOverloadRegistersTheReshapeAsync() {
+    var builder = new DbContextOptionsBuilder();
+
+    var returned = builder
+      .UseNpgsql(UNUSED_CONNECTION)
+      .UseWhizbangContainmentReshape()
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+
+    await Assert.That(returned).IsSameReferenceAs(builder)
+      .Because("it returns the builder so it can sit in the middle of a configuration chain");
+
+    await using var db = new ReshapeDbContext(returned.Options);
+
+    var sql = db.Set<PerspectiveRow<ReshapeModel>>()
+      .Where(r => r.Data.Rank == 9001)
+      .ToQueryString();
+
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal)
+      .Because("registering through the untyped builder has to put the reshape in force, or the "
+        + "overload every application actually calls does nothing");
   }
 }

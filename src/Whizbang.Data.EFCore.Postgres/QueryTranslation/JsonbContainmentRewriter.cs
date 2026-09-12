@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
@@ -299,11 +300,16 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// Whether the member sits directly on the document rather than inside a nested object, which is
   /// the only depth the set-membership helper can express.
   /// </summary>
-  private static bool _isTopLevel(MemberExpression member) => member.Expression switch {
-    MemberExpression inner => string.Equals(inner.Member.Name, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal),
-    ParameterExpression => true,
-    _ => false,
-  };
+  /// <remarks>
+  /// Written as one condition rather than a switch over the node type. Only a member that
+  /// <see cref="_isJsonMember"/> has already accepted reaches here, and that leaves exactly these two
+  /// shapes: the row's <c>Data</c> immediately to the left, or the range variable of a projected
+  /// model. A third arm would be one nothing can take.
+  /// </remarks>
+  private static bool _isTopLevel(MemberExpression member) =>
+    member.Expression is ParameterExpression
+    || (member.Expression is MemberExpression inner
+        && string.Equals(inner.Member.Name, nameof(PerspectiveRow<>.Data), StringComparison.Ordinal));
 
   private bool _tryRewrite(Expression candidateMember, Expression candidateValue, out Expression rewritten) {
     rewritten = Expression.Empty();
@@ -414,14 +420,14 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
   /// </para>
   /// </remarks>
   private bool _isValueConverted(MemberExpression member) {
-    if (_model is null) {
-      return true;
-    }
-
     var (rootModel, names) = _resolvePath(member);
-    if (rootModel is null || names.Count == 0) {
-      return true;
-    }
+
+    // Both call sites ask this only after _isJsonMember has accepted the member, and _enabled has
+    // already established the model. Between them that is what makes the model, the root and a
+    // non-empty path certainties here rather than cases: asserted so a future caller that skips
+    // either check fails loudly in development, rather than restated as a branch nothing can take.
+    Debug.Assert(_model is not null, "the rewrite stands down without a model");
+    Debug.Assert(rootModel is not null && names.Count > 0, "_isJsonMember accepted a path that does not resolve");
 
     var row = _model.FindEntityType(typeof(PerspectiveRow<>).MakeGenericType(rootModel));
     var complex = row?.FindComplexProperty(nameof(PerspectiveRow<>.Data))?.ComplexType;
