@@ -1,4 +1,5 @@
 using Whizbang.Data.EFCore.Postgres.Configuration;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 
 namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 
@@ -22,28 +23,54 @@ namespace Whizbang.Data.EFCore.Postgres.QueryTranslation;
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/JsonbContainmentSwitchTests.cs</tests>
 public static class JsonbContainmentSwitch {
-  private static volatile bool _enabled = true;
+  private static volatile ContainmentMode _mode = ContainmentMode.ExpressionTree;
 
   /// <summary>
-  /// Whether the containment rewrite is currently in force. Defaults to <c>true</c>.
+  /// Which mechanism is in force. Defaults to <see cref="ContainmentMode.ExpressionTree"/>.
   /// </summary>
-  public static bool Enabled => _enabled;
+  public static ContainmentMode Mode => _mode;
+
+  /// <summary>
+  /// Whether any mechanism is in force, which is what most consult points actually ask.
+  /// </summary>
+  public static bool Enabled => _mode != ContainmentMode.Off;
+
+  /// <summary>Whether the LINQ tree rewrite is the mechanism selected.</summary>
+  /// <remarks>
+  /// Asked by the mechanism itself rather than inferred from <see cref="Enabled"/>, so that exactly
+  /// one ever acts. Both acting would compile a filter twice.
+  /// </remarks>
+  public static bool RewritesExpressionTree => _mode == ContainmentMode.ExpressionTree;
+
+  /// <summary>Whether reshaping the translated query is the mechanism selected.</summary>
+  public static bool ReshapesTranslatedTree => _mode == ContainmentMode.TranslatedTree;
 
   /// <summary>
   /// Applies operator configuration, normally once at startup.
   /// </summary>
   /// <param name="options">The bound options.</param>
+  /// <remarks>
+  /// Configuration written before a mode existed said only whether the rewrite was on, and still
+  /// means that: turning it off turns everything off, and leaving it on selects the mechanism named
+  /// by the mode, which itself defaults to the one that has shipped.
+  /// </remarks>
   public static void ApplyRuntimeConfiguration(PerspectiveQueryTranslationOptions options) {
     ArgumentNullException.ThrowIfNull(options);
-    _enabled = options.UseJsonbContainment;
+
+    _mode = options.UseJsonbContainment ? options.ContainmentMode : ContainmentMode.Off;
   }
 
   /// <summary>
   /// Sets the switch directly, for a host that has no options binding and for tests.
   /// </summary>
   /// <param name="enabled">Whether to compile equality filters into containment tests.</param>
-  public static void Set(bool enabled) => _enabled = enabled;
+  public static void Set(bool enabled) =>
+    _mode = enabled ? ContainmentMode.ExpressionTree : ContainmentMode.Off;
 
-  /// <summary>Restores the default, which is on.</summary>
-  public static void Reset() => _enabled = true;
+  /// <summary>Selects a mechanism directly, for tests that exercise one in particular.</summary>
+  /// <param name="mode">The mechanism to put in force.</param>
+  public static void SetMode(ContainmentMode mode) => _mode = mode;
+
+  /// <summary>Restores the default, which is the mechanism that has shipped.</summary>
+  public static void Reset() => _mode = ContainmentMode.ExpressionTree;
 }

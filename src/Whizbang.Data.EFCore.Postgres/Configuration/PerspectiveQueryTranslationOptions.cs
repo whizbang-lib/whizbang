@@ -1,3 +1,5 @@
+using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
+
 namespace Whizbang.Data.EFCore.Postgres.Configuration;
 
 /// <summary>
@@ -29,4 +31,15 @@ public sealed class PerspectiveQueryTranslationOptions {
   /// what the framework did before. Correctness is unaffected either way; only the plan changes.
   /// </remarks>
   public bool UseJsonbContainment { get; set; } = true;
+
+  /// <summary>
+  /// Which mechanism compiles an equality filter into a containment test. Defaults to the one that
+  /// has shipped.
+  /// </summary>
+  /// <remarks>
+  /// Ignored when <see cref="UseJsonbContainment"/> is false, so configuration written before a mode
+  /// existed keeps meaning exactly what it meant and a rollback needs no knowledge that a second
+  /// mechanism was ever added.
+  /// </remarks>
+  public ContainmentMode ContainmentMode { get; set; } = ContainmentMode.ExpressionTree;
 }

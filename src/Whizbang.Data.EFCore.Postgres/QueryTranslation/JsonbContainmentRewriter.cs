@@ -51,7 +51,9 @@ public sealed class JsonbContainmentRewriter : ExpressionVisitor {
 
   private bool _enabled =>
     _model is not null
-    && JsonbContainmentSwitch.Enabled
+    // Asks whether this mechanism in particular is selected, not merely whether some mechanism is.
+    // Both acting would compile a filter twice.
+    && JsonbContainmentSwitch.RewritesExpressionTree
     && ProviderCapabilities.ContainmentRewriteRequired
     && _model.FindDbFunction(JsonbContainment.Overloads[0]) is not null;
 
