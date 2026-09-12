@@ -143,10 +143,27 @@ Bring the date and time family into Phase 0's mechanism by owning their stored f
   `data @> {canonical} OR data @> {legacy}`; both arms stay indexed, measured as a `BitmapOr` over two
   index scans. Behind a flag defaulting on, removable a release later. Without this a filter silently
   returns only the migrated rows, which is the failure mode to avoid above all others.
-- **A backfill migration.** The format is reproducible in SQL, so it is an in-place `jsonb_set` over
-  the data column in batches. No replay, no rebuild, no .NET involvement.
-- **The expression index is created after the backfill, not with it.** A text index over mixed formats
-  sorts wrongly, because the two formats do not sort consistently against each other.
+- **A backfill migration, which is required rather than optional.** A tolerant reader makes
+  materializing a row work whichever format it holds, and that is worth having, but it settles
+  nothing about what the database can do while the rows are mixed. Measured on a table holding one
+  row of each form: an equality against the new form still finds its row, so nothing looks broken; a
+  range over the column raises an error rather than skipping the odd row; and the index cannot be
+  created at all, because building it evaluates the expression for every row. Since the index is the
+  whole point of the change, a reader that tolerates both formats does not remove the need to rewrite
+  them. `AMixedFormatColumnCannotBeIndexedOrRangeQueriedAsync` holds that measurement.
+
+  The backfill itself is small: the format is reproducible in SQL, so it is an in-place `jsonb_set`
+  over the data column in batches, with no replay, no rebuild and no .NET involvement.
+
+  This is also a second and independent argument for the numeric form. A mixed column of numbers
+  fails loudly, refusing both the index and the range; a mixed column of fixed-width text builds an
+  index happily and answers ranges with the wrong rows, because the two renderings do not sort
+  consistently against each other. Writing the canonical value to a second key instead of replacing
+  the first has the same defect: the index builds, and every range silently skips whatever has not
+  been migrated yet.
+- **The expression index is created after the backfill, not with it**, and usefully this enforces
+  itself: with the numeric form PostgreSQL refuses to build it while any row is still in the old
+  rendering, so the optimization cannot be shipped ahead of the data that supports it.
 
 Note that a row only rewrites itself when its stream sees a new event, so cold streams never migrate
 on their own. The backfill is required, not optional; the tolerant reader is the safety net around it

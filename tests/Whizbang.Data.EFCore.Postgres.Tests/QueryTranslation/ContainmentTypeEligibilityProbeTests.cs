@@ -448,6 +448,64 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
   }
 
   /// <summary>
+  /// What a column holding two date formats at once can and cannot do, which is what decides whether
+  /// a format change needs the stored rows rewritten or only the reader taught to read both.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Teaching the reader both formats makes materializing a row work regardless of which format it
+  /// holds, and that much is true and cheap. The question is whether it is sufficient, and the answer
+  /// depends on something the reader has no say in: the database still has to compare and index the
+  /// values while they are mixed.
+  /// </para>
+  /// <para>
+  /// Asserted on a table deliberately holding one row of each form, because this is the difference
+  /// between a migration being required and being optional, and that is not a thing to settle by
+  /// argument.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AMixedFormatColumnCannotBeIndexedOrRangeQueriedAsync(CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    async Task execAsync(string sql) {
+      await using var command = new NpgsqlCommand(sql, db);
+      await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // One row in the legacy rendering and one in a canonical numeric form, which is the state a
+    // deployment is in for as long as the rows are not rewritten.
+    await execAsync("""
+      CREATE TABLE mixed_format_probe (id uuid PRIMARY KEY, data jsonb NOT NULL);
+      INSERT INTO mixed_format_probe VALUES
+        (gen_random_uuid(), jsonb_build_object('When', '2026-03-04T05:06:07Z')),
+        (gen_random_uuid(), jsonb_build_object('When', 1772600767000000));
+      """);
+
+    // Equality against one form still finds the rows written in that form, which is what makes the
+    // failure below easy to miss: nothing is broken until something needs every row at once.
+    var matched = await _scalarAsync(
+      "SELECT count(*) FROM mixed_format_probe WHERE data @> jsonb_build_object('When', 1772600767000000)");
+    await Assert.That(matched).IsEqualTo("1");
+
+    // A range has to read every row, and the legacy rendering is not a number.
+    await Assert.That(async () => await _scalarAsync(
+        "SELECT count(*) FROM mixed_format_probe WHERE (data ->> 'When')::bigint > 0"))
+      .Throws<PostgresException>()
+      .Because("a range compares every row, so one row in the other format fails the whole query "
+        + "rather than being skipped");
+
+    // And the index cannot even be built, because building it evaluates the expression for every row.
+    await Assert.That(async () => await execAsync(
+        "CREATE INDEX idx_mixed_format ON mixed_format_probe (((data ->> 'When')::bigint))"))
+      .Throws<PostgresException>()
+      .Because("the index that makes a date range answerable cannot be created until every row is in "
+        + "the new format, so a reader that tolerates both does not remove the need to rewrite them");
+  }
+
+  /// <summary>
   /// Which canonical date form indexes better: fixed-width text, or the same instant as a number.
   /// </summary>
   /// <remarks>
