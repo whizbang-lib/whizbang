@@ -181,6 +181,52 @@ public async Task ProcessOrder_ValidInput_ReturnsSuccess() { }  // WRONG!
 
 ---
 
+## Pinning a limitation that justified a decision
+
+When a limitation in a dependency or in PostgreSQL is the reason a design went one way rather than
+another, assert the limitation and say in the assertion message which decision rests on it. The test
+then does two jobs: it stops the workaround being removed while it is still needed, and it tells
+whoever sees it fail that the constraint has lifted and the decision can be revisited.
+
+This matters because the usual failure is silent in the other direction. A limitation gets worked
+around, the workaround becomes permanent, and years later nobody remembers whether it is still
+necessary. A test that fails the day the limitation disappears is the only thing that reliably
+surfaces that.
+
+```csharp
+await Assert.That(async () => await create.ExecuteNonQueryAsync(cancellationToken))
+  .Throws<PostgresException>()
+  .Because($"a cast to {target} is not immutable, so no expression index can carry it. This "
+    + "refusal is the entire reason the date and time family is stored as a number rather than "
+    + "as text: a number reaches an immutable cast and a timestamp does not. IF THIS ASSERTION "
+    + "FAILS BECAUSE POSTGRESQL NOW ACCEPTS THE INDEX, that storage decision was made to work "
+    + "around a limit that no longer exists and should be revisited.");
+```
+
+Three things make one of these useful:
+
+- **Assert the limitation, not a symptom of it.** Ask the dependency to do the thing and require the
+  refusal. Asserting the workaround's output instead passes whether or not the constraint still holds.
+- **Name the decision in the message**, with enough of the reasoning that a reader who did not make it
+  can judge whether to revisit. A message that only restates the failure is no better than none.
+- **Say plainly that the failure is the signal**, in words that survive being read out of context in a
+  CI log. Upper case earns its keep here, because the reader is someone who did not expect a failure.
+
+Where a decision is already scheduled to change, the same form says so, and the test becomes a
+checklist item rather than a surprise:
+
+```csharp
+.Because("an identifier held in a value object stores byte for byte what a bare one stores, and "
+  + "still loses the index, because the converter guard is a blanket one. THIS ASSERTION IS "
+  + "EXPECTED TO FAIL when the value-object phase of plans/lens-full-index-coverage.md lands: at "
+  + "that point the destination becomes containment and this line should be inverted rather than "
+  + "deleted.");
+```
+
+Do not use this for a limitation nobody worked around, or for one that cannot change: an inherent
+property is documentation, not a tripwire. Reserve it for the case where somebody paid a cost, so that
+the cost can be recovered when the reason for it goes away.
+
 ## TUnit Assertions
 
 ### ✅ CORRECT - TUnit Fluent Assertions

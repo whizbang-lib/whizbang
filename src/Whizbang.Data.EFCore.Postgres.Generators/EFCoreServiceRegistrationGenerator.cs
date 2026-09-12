@@ -500,9 +500,34 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
+        JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
+        TemporalProperties: CanonicalTemporalDiscovery.From(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType)
     );
   }
+
+  /// <summary>
+  /// The declared indexes a query against this model could actually reach.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type.</param>
+  /// <returns>The declared indexes, or none when the model's document is stored opaquely.</returns>
+  /// <remarks>
+  /// <para>
+  /// A model holding a polymorphic member is stored as one serialized value rather than as mapped
+  /// properties, so a filter on a field inside it never compiles to the extraction an index would be
+  /// built over. Emitting the index anyway would cost a write every time and return nothing, which
+  /// is the same waste the declaration exists to remove.
+  /// </para>
+  /// <para>
+  /// Dropping them silently would be the worse half of the trade on its own, since the author would
+  /// still believe the fields are indexed. WHIZ304 reports it at build time, which is what makes
+  /// skipping here the right thing rather than a quiet loss.
+  /// </para>
+  /// </remarks>
+  private static ImmutableArray<JsonIndexInfo> _reachableJsonIndexes(INamedTypeSymbol? modelType) =>
+      PolymorphicModelDiscovery.IsPolymorphic(modelType)
+        ? []
+        : JsonIndexDiscovery.From(modelType);
 
   /// <summary>
   /// Builds final PerspectiveModelInfo from candidate by applying table name configuration.
@@ -527,6 +552,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         NamespaceHint: candidate.NamespaceHint,
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
+        JsonIndexes: candidate.JsonIndexes,
+        TemporalProperties: candidate.TemporalProperties,
         CoalesceBody: candidate.CoalesceBody
     );
   }
@@ -734,16 +761,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var propertyName = property.Name;
     var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
-    // Extract named arguments
-    bool isIndexed = false;
+    // [Indexed] is the only way to ask for an index, and a promoted field uses the same attribute a
+    // document field does: [PhysicalField] says promote, [Indexed] says index, and together they say
+    // promote and index. [PhysicalField(Indexed = true)] is gone rather than deprecated, so the
+    // named arguments below are the ones that describe the column itself.
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
+
     bool isUnique = false;
     string? columnName = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "Unique":
           isUnique = namedArg.Value.Value is true;
           break;
@@ -785,7 +813,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Extract named arguments
-    bool isIndexed = true; // Vectors are typically indexed
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0; // [Indexed] is how a vector asks for its index, like any other field
     string? columnName = null;
     GeneratorVectorDistanceMetric? distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
     GeneratorVectorIndexType? indexType = GeneratorVectorIndexType.IVFFlat; // Default
@@ -793,9 +821,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "ColumnName":
           columnName = namedArg.Value.Value as string;
           break;
@@ -1470,7 +1495,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     foreach (var model in group.Models) {
-      if (model.PhysicalFields.Length > 0) {
+      // A model may declare an index over a JSON-only field without promoting anything, so the
+      // registrations are needed whenever either kind is present.
+      if (model.PhysicalFields.Length > 0 || model.JsonIndexes.Length > 0) {
         _appendPhysicalFieldRegistrations(sb, model);
       }
     }
@@ -1493,6 +1520,29 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var isVector = field.IsVector ? "true" : "false";
       sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.PhysicalFieldRegistry.Register<{model.ModelTypeName}>(\"{field.PropertyName}\", \"{field.ColumnName}\", isVector: {isVector});");
     }
+
+    // A declared index has to be known at run time as well as created, because the containment
+    // rewrite must stand down for such a field. Rewriting its equality filter would send the planner
+    // to the GIN index over the document and leave this index unused, which is the wasted-index
+    // situation the rewrite exists to correct rather than to cause.
+    foreach (var index in model.JsonIndexes) {
+      var kinds = new System.Collections.Generic.List<string>();
+      if (index.Btree) {
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Btree");
+      }
+      if (index.Trigram) {
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Trigram");
+      }
+
+      var kindExpression = string.Join(" | ", kinds);
+      sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.Register<{model.ModelTypeName}>(\"{index.PropertyName}\", {kindExpression});");
+
+      // Registered against the table as well, because the mechanism that reshapes translated SQL has
+      // a column's table in hand rather than a model type: the tree that knew which model was being
+      // queried is gone by that stage.
+      sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.QueryTranslation.JsonIndexRegistry.RegisterForTable(\"{model.TableName}\", \"{index.PropertyName}\", {kindExpression});");
+    }
+
     sb.AppendLine();
 
     _generatePhysicalFieldHydratorRegistration(sb, model);
@@ -2280,6 +2330,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var perspective in uniqueTables) {
       _appendCreateTableSql(sb, perspective, schema, quotedSchema);
+      // Before the indexes, not after: the index cannot be built while a row still holds a
+      // rendering, so an unfinished rewrite has to fail at the next statement.
+      _appendCanonicalTemporalBackfill(sb, perspective, quotedSchema);
       _appendStandardIndexes(sb, perspective, quotedSchema);
       _appendPhysicalFieldIndexes(sb, perspective, quotedSchema);
     }
@@ -2389,11 +2442,28 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant");
     sb.AppendLine($"  ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
     sb.AppendLine();
+
+    // Declared indexes over JSON-only fields. The GIN index above answers containment and nothing
+    // else, so a field filtered by a range or used as a sort key is read by scanning until it has one
+    // of these. Emitted here so it is created once through the normal schema path.
+    foreach (var index in perspective.JsonIndexes) {
+      foreach (var statement in JsonIndexSql.CreateStatements(
+          index, $"{quotedSchema}.{perspective.TableName}", shortName)) {
+        sb.AppendLine(statement);
+      }
+
+      sb.AppendLine();
+    }
   }
 
   /// <summary>
-  /// Appends indexes for physical fields marked with Indexed = true, including vector indexes.
+  /// Appends indexes for promoted fields that declared <c>[Indexed]</c>, vector fields included.
   /// </summary>
+  /// <remarks>
+  /// A vector is no longer indexed by being a vector. It asks with <c>[Indexed]</c> like every other
+  /// field, which is the opt-in principle the rest of this surface follows, so a <c>[VectorField]</c>
+  /// that declares nothing gets a column and no index.
+  /// </remarks>
   private static void _appendPhysicalFieldIndexes(
       StringBuilder sb,
       PerspectiveModelInfo perspective,
@@ -2469,6 +2539,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var perspSql = new StringBuilder();
 
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
+      _appendCanonicalTemporalBackfill(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
 
       var escapedSql = perspSql.ToString()
@@ -2539,6 +2610,32 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("  WHERE sys_created_at IS NULL OR sys_updated_at IS NULL;");
   }
 
+  /// <summary>
+  /// Emits the rewrite of a perspective's dates, times and durations into their canonical stored
+  /// form.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Placed between the table and its indexes on purpose. PostgreSQL evaluates an index expression
+  /// for every row, so it refuses to build the index while any row still holds a rendering: in this
+  /// order a rewrite that did not finish fails at the next statement, and in the other it would
+  /// leave an index over a column about to change underneath it.
+  /// </para>
+  /// <para>
+  /// Each statement selects on the stored type being a string, so a database created by this release
+  /// has nothing to convert and a re-run is a no-op. That is what lets this live in the ordinary
+  /// schema path rather than behind a version gate.
+  /// </para>
+  /// </remarks>
+  private static void _appendCanonicalTemporalBackfill(
+      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    foreach (var statement in CanonicalTemporalBackfillSql.Statements(
+        perspective.TemporalProperties, $"{quotedSchema}.{perspective.TableName}")) {
+      sb.AppendLine(statement);
+      sb.AppendLine();
+    }
+  }
+
   private static void _generatePerspectiveIndexSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
     var shortName = perspective.TableName.Replace(PERSPECTIVE_TABLE_PREFIX, "");
@@ -2552,6 +2649,15 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // serve ->> equality; the tenant filter of lens + collective apply needs a btree). Kept in sync here so
     // the per-perspective schema-hash entries match the concatenated init SQL.
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
+
+    // See _appendStandardIndexes: a declared index is what makes a range or an ordering on a
+    // JSON-only field a lookup rather than a scan.
+    foreach (var index in perspective.JsonIndexes) {
+      foreach (var statement in JsonIndexSql.CreateStatements(
+          index, $"{quotedSchema}.{perspective.TableName}", shortName)) {
+        perspSql.AppendLine(statement);
+      }
+    }
 
     foreach (var field in perspective.PhysicalFields) {
       if (field.IsIndexed) {
@@ -2728,6 +2834,8 @@ internal sealed record PerspectiveModelInfo(
     string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
+    ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<CanonicalTemporalProperty> TemporalProperties,
     string CoalesceBody);
 
 /// <summary>
@@ -2742,6 +2850,7 @@ internal sealed record PerspectiveModelInfo(
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective</param>
 /// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
+/// <param name="JsonIndexes">JSON-only fields declaring an index over their extraction</param>
 /// <param name="CoalesceBody">Pre-rendered null-coalesce statements for the model's collection graph
 /// (WORKAROUND(dotnet/efcore#38625)); empty when the model has no coalescible collections</param>
 internal sealed record PerspectiveModelCandidate(
@@ -2753,6 +2862,8 @@ internal sealed record PerspectiveModelCandidate(
     string NamespaceHint,
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
+    ImmutableArray<JsonIndexInfo> JsonIndexes,
+    ImmutableArray<CanonicalTemporalProperty> TemporalProperties,
     string CoalesceBody);
 
 /// <summary>

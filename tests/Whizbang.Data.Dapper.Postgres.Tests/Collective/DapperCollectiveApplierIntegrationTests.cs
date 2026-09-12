@@ -263,6 +263,7 @@ public class DapperCollectiveApplierIntegrationTests : PostgresTestBase {
     SpecKind: CollectiveSpecKind.Linq,
     Invoker: static (h, e, q) => ((_crossPerspective)h).Archive((_archiveEvent)e, q));
 
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   private sealed class _statusModel {
     public string Status { get; set; } = "";
   }

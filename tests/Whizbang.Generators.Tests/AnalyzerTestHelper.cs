@@ -37,6 +37,11 @@ public static class AnalyzerTestHelper {
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    // System.Linq.Expressions and System.Linq.Queryable so IQueryable<T> and the Queryable
+    // operators resolve: a query analyzer infers the lambda parameter's type from the operator's
+    // Expression<Func<T, bool>> signature, and an unresolved operator leaves the parameter untyped.
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Threading.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Threading.Tasks.dll")));

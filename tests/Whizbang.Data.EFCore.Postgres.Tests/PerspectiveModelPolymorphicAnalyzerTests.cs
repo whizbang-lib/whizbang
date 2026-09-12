@@ -765,4 +765,88 @@ public class PerspectiveModelPolymorphicAnalyzerTests {
     // Assert
     await Assert.That(diagnostics).IsEmpty();
   }
+
+  /// <summary>
+  /// A record model is not reported for the member the compiler wrote.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A record carries a protected <c>EqualityContract</c> whose type is <c>System.Type</c>, and
+  /// <c>System.Type</c> is an abstract class. Read as a declared property it looks exactly like the
+  /// thing this diagnostic exists to find, so every record model was told to consider a discriminator
+  /// for a member its author never wrote. Info severity is why nobody noticed.
+  /// </para>
+  /// <para>
+  /// The question is now asked of the shared discovery, which considers only public properties
+  /// because that is the set both the mapped path and the serializer actually write. This was the
+  /// fourth copy of that question in the repository; the other three were unified earlier in the same
+  /// change, and this one still had the defect they had.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task ARecordModelIsNotReportedForItsCompilerGeneratedMemberAsync() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record TestModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        public string Name { get; init; } = "";
+      }
+
+      public record TestEvent(Guid Id);
+
+      public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+        public TestModel Apply(TestModel currentData, TestEvent eventData) => currentData;
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelPolymorphicAnalyzer>(source);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ811")).IsEmpty()
+      .Because("a record of a Guid and a string holds nothing polymorphic, and the only abstract "
+        + "type in sight is one the compiler wrote and no serializer writes");
+  }
+
+  /// <summary>
+  /// A record that really holds an abstract member is still reported, so the narrowing did not
+  /// answer the question away.
+  /// </summary>
+  [Test]
+  public async Task ARecordHoldingAnAbstractMemberIsStillReportedAsync() {
+    const string source = """
+      using System;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public abstract class PaymentMethod {
+        public string Name { get; init; } = "";
+      }
+
+      public record TestModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        public PaymentMethod? Payment { get; init; }
+      }
+
+      public record TestEvent(Guid Id);
+
+      public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+        public TestModel Apply(TestModel currentData, TestEvent eventData) => currentData;
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveModelPolymorphicAnalyzer>(source);
+
+    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ811")).IsNotEmpty()
+      .Because("the declared property is genuinely abstract, which is what the diagnostic is for");
+  }
 }

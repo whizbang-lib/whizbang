@@ -1,5 +1,6 @@
 using Whizbang;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.Contracts.Lenses;
 
@@ -29,6 +30,7 @@ public record InventoryLevelDto {
   /// <summary>
   /// Available quantity (computed: Quantity - Reserved)
   /// </summary>
+  [Indexed]
   public int Available { get; init; }
 
   /// <summary>

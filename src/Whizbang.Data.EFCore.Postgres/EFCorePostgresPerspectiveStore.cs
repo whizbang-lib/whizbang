@@ -83,15 +83,29 @@ public class EFCorePostgresPerspectiveStore<TModel>(
         _context, _tableName, streamId, model, _defaultMetadata, scope, forceUpdateScope, cancellationToken);
 
   /// <inheritdoc/>
-  public Task UpsertAsync(
+  public async Task UpsertAsync(
       Guid streamId,
       TModel model,
       PerspectiveScope scope,
       bool forceUpdateScope,
       PerspectiveMetadata metadata,
-      CancellationToken cancellationToken = default) =>
-    _upsertStrategy.UpsertPerspectiveRowAsync(
-        _context, _tableName, streamId, model, metadata, scope, forceUpdateScope, cancellationToken);
+      CancellationToken cancellationToken = default) {
+    try {
+      await _upsertStrategy.UpsertPerspectiveRowAsync(
+          _context, _tableName, streamId, model, metadata, scope, forceUpdateScope, cancellationToken);
+    } catch (Exception failure) {
+      // Every write funnels through here, so this is the one place a refusal can be explained in
+      // terms of the model rather than of a SQL state. Anything unrecognized is rethrown as it
+      // stands: see PerspectiveWriteErrors for why only a value with no representation at all is
+      // worth reshaping.
+      var translated = PerspectiveWriteErrors.Translate<TModel>(failure);
+      if (ReferenceEquals(translated, failure)) {
+        throw;
+      }
+
+      throw translated;
+    }
+  }
 
   /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync</tests>

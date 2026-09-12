@@ -1,0 +1,1158 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Npgsql;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.ValueObjects;
+using Whizbang.Data.EFCore.Postgres.QueryTranslation;
+using Whizbang.Testing.Containers;
+
+namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
+
+/// <summary>
+/// Which CLR types could safely join the containment set, measured rather than assumed.
+/// </summary>
+/// <remarks>
+/// <para>
+/// A containment test names a literal document, so it only means what the equality it replaces meant
+/// when the text the serializer wrote and the text PostgreSQL generates from the same value are
+/// identical. Dates, enumerations and binary floating point were excluded on the grounds that those
+/// two forms are "not guaranteed to agree", which is a reasonable prior and not a measurement.
+/// </para>
+/// <para>
+/// This writes a row through the real mapping, reads back what actually landed in the document, and
+/// asks PostgreSQL whether a containment test built the way the rewrite builds it matches. Enumerations
+/// matter most: a survey of real repositories found them filtered constantly and always by equality,
+/// so if they are safe they are the largest remaining win.
+/// </para>
+/// </remarks>
+/// <docs>fundamentals/perspectives/jsonb-containment</docs>
+[Category("Integration")]
+[NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
+[SuppressMessage("Readability", "RCS1118:Mark local variable as const",
+  Justification = "These locals are captured into an expression tree on purpose. A const local is inlined by the compiler as a literal, which turns the parameterized filter under test into a constant one: in the matrix that collapses every /param row onto its /const twin, and elsewhere it stops exercising the captured-parameter path altogether.")]
+public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
+  private const string TABLE = "wh_per_eligibility";
+
+  /// <summary>The codes PostgreSQL refuses a null character with, depending on the path in.</summary>
+  private static readonly string[] _nullCharacterRefusals = ["22021", "22P05"];
+
+  /// <summary>Fixed width, always UTC, so the text sorts in the same order as the instant.</summary>
+  private const string CANONICAL_DATE = "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'";
+
+  public enum Mood { Low = 0, High = 1 }
+
+  /// <summary>A combinable enumeration, where a stored value is a set rather than one member.</summary>
+  [Flags]
+  public enum Access { None = 0, Read = 1, Write = 2, Both = Read | Write }
+
+  /// <summary>An enumeration over a number no overload accepts.</summary>
+  public enum Tier : uint { First = 1 }
+
+  [SuppressIndexAdvisory("probe fixture; one row, read back to see what the mapping wrote")]
+  public class ProbeModel {
+    public Mood State { get; init; }
+    public double Dbl { get; init; }
+    public float Flt { get; init; }
+    public DateTime When { get; init; }
+    public DateTimeOffset WhenOffset { get; init; }
+    public decimal Money { get; init; }
+    public long Big { get; init; }
+
+    // One value proves nothing about a floating-point format, so carry the awkward ones too.
+    public double Third { get; init; }
+    public double Huge { get; init; }
+    public double Tiny { get; init; }
+    public float FloatThird { get; init; }
+
+    // A non-UTC offset is where DateTimeOffset is most likely to disagree.
+    public DateTimeOffset Shifted { get; init; }
+
+    // Configured to store as text: if a converter can change an enumeration's stored form, then a
+    // numeric containment test would silently match nothing on such a model.
+    public Mood Named { get; init; }
+
+    // An ALREADY-eligible type with a converter. If this stores as text while the rewrite builds a
+    // numeric document, then the shipped rewrite is silently wrong on such a model.
+    public int ConvertedNum { get; init; }
+
+    // The remaining date and time family, plus the two enumeration shapes the equality overloads do
+    // not obviously cover. Each is here to be read back rather than reasoned about.
+    public DateOnly Day { get; init; }
+    public TimeOnly Clock { get; init; }
+    public TimeOnly ClockFine { get; init; }
+    public TimeSpan Span { get; init; }
+    public TimeSpan SpanWithDays { get; init; }
+    public char Letter { get; init; }
+
+    /// <summary>Two flags set at once, which is the case a single-member comparison does not describe.</summary>
+    public Access Perms { get; init; }
+
+    public Tier Unsupported { get; init; }
+
+    /// <summary>
+    /// The framework's own identifier value object, mapped the only way it can be.
+    /// </summary>
+    /// <remarks>
+    /// It cannot be mapped as a complex type: it exposes the value alongside creation metadata and
+    /// keeps its constructor private, so Entity Framework cannot bind one and the model fails to
+    /// build at all rather than merely failing to filter. A converter down to the underlying
+    /// identifier is the available mapping, and what this measures is where a filter on it then
+    /// lands.
+    /// </remarks>
+    public TrackedGuid Tracked { get; init; }
+
+    /// <summary>A time-ordered identifier held as a plain Guid, which is the usual shape.</summary>
+    public Guid SortableId { get; init; }
+
+    /// <summary>
+    /// An optional string, left unassigned. A null value and a string carrying a null character are
+    /// different problems, and only the second one has no representation in a document.
+    /// </summary>
+    public string? MaybeStr { get; init; }
+
+    /// <summary>An optional number, left unassigned, for the same reason.</summary>
+    public int? MaybeNum { get; init; }
+
+    /// <summary>
+    /// A date stored in a fixed-width canonical rendering rather than the writer's default.
+    /// </summary>
+    /// <remarks>
+    /// The whole indexing plan for dates rests on what this makes possible. Fixed width means the
+    /// text sorts chronologically, and text extraction is immutable, so a btree index can carry it.
+    /// What has to be true for that to be usable is that a comparison and an ordering on the property
+    /// translate to the provider type rather than being refused.
+    /// </remarks>
+    public DateTime CanonicalWhen { get; init; }
+
+    // How much of the serialized form is stable? The fraction is what decides whether a SQL-side
+    // format string can reproduce it.
+    public DateTime WholeSecond { get; init; }
+    public DateTime Millis { get; init; }
+    public DateTime Ticks { get; init; }
+    public DateTime TrailingZeros { get; init; }
+  }
+
+  private sealed class ProbeDbContext(DbContextOptions<ProbeDbContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
+      modelBuilder.Entity<PerspectiveRow<ProbeModel>>(entity => {
+        entity.ToTable(TABLE);
+        entity.HasKey(e => e.Id);
+        entity.Property(e => e.Id).HasColumnName("id");
+        entity.ComplexProperty(e => e.Data, d => {
+          d.ToJson("data");
+          d.Property(p => p.Named).HasConversion<string>();
+          d.Property(p => p.Tracked)
+            .HasConversion(t => t.Value, g => TrackedGuid.FromExternal(g));
+          d.Property(p => p.ConvertedNum).HasConversion<string>();
+          d.Property(p => p.CanonicalWhen).HasConversion(
+            v => v.ToUniversalTime().ToString(CANONICAL_DATE, CultureInfo.InvariantCulture),
+            v => DateTime.ParseExact(v, CANONICAL_DATE, CultureInfo.InvariantCulture,
+              DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal));
+        });
+        entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
+        entity.ComplexProperty(e => e.Scope, s => {
+          s.ToJson("scope");
+          s.ComplexCollection(p => p.Extensions, ex => ex.HasJsonPropertyName("ex"));
+        });
+        entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+        entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+        entity.Property(e => e.Version).HasColumnName("version").IsRequired();
+      });
+
+      modelBuilder.UseWhizbangJsonbContainment();
+    }
+  }
+
+  private string _databaseName = null!;
+  private string _connectionString = null!;
+  private ProbeDbContext? _context;
+
+  private static readonly TrackedGuid _tracked = TrackedGuid.NewMedo();
+  private static readonly Guid _sortable = TrackedGuid.NewMedo().Value;
+  private static readonly DateTime _when = new(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+  private static readonly DateTimeOffset _whenOffset = new(2026, 3, 4, 5, 6, 7, TimeSpan.Zero);
+
+  [Before(Test)]
+  public async Task SetupAsync() {
+    await SharedPostgresContainer.InitializeAsync();
+
+    _databaseName = $"eligibility_{Guid.NewGuid():N}";
+    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
+      await admin.OpenAsync();
+      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
+      await create.ExecuteNonQueryAsync();
+    }
+
+    _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _databaseName,
+      Timezone = "UTC",
+    }.ConnectionString;
+
+    await using (var db = new NpgsqlConnection(_connectionString)) {
+      await db.OpenAsync();
+      await using var ddl = new NpgsqlCommand($"""
+        CREATE TABLE {TABLE} (
+          id uuid PRIMARY KEY,
+          created_at timestamptz NOT NULL,
+          updated_at timestamptz NOT NULL,
+          version integer NOT NULL,
+          data jsonb NOT NULL,
+          metadata jsonb NOT NULL,
+          scope jsonb NOT NULL
+        );
+        """, db);
+      await ddl.ExecuteNonQueryAsync();
+    }
+
+    _context = new ProbeDbContext(new DbContextOptionsBuilder<ProbeDbContext>()
+      .UseNpgsql(_connectionString)
+      .UseWhizbangPhysicalFields()
+      .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+      .Options);
+
+    _context.Add(new PerspectiveRow<ProbeModel> {
+      Id = Guid.NewGuid(),
+      Data = new ProbeModel {
+        State = Mood.High,
+        Dbl = 0.1d,
+        Flt = 0.1f,
+        When = _when,
+        WhenOffset = _whenOffset,
+        Money = 1.50m,
+        Big = 9007199254740993L,
+        Third = 1.0d / 3.0d,
+        Huge = 1e20d,
+        Tiny = 1e-7d,
+        FloatThird = 1f / 3f,
+        Shifted = new DateTimeOffset(2026, 3, 4, 5, 6, 7, TimeSpan.FromMinutes(330)),
+        Named = Mood.High,
+        ConvertedNum = 7,
+        WholeSecond = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc),
+        Millis = new DateTime(2026, 3, 4, 5, 6, 7, 123, DateTimeKind.Utc),
+        Ticks = new DateTime(638_700_000_001_234_567L, DateTimeKind.Utc),
+        TrailingZeros = new DateTime(2026, 3, 4, 5, 6, 7, 100, DateTimeKind.Utc),
+        Day = new DateOnly(2026, 3, 4),
+        Clock = new TimeOnly(5, 6, 7),
+        ClockFine = new TimeOnly(5, 6, 7).Add(TimeSpan.FromTicks(1_234_567)),
+        Span = new TimeSpan(5, 6, 7),
+        SpanWithDays = new TimeSpan(2, 5, 6, 7, 123),
+        Letter = 'q',
+        Perms = Access.Read | Access.Write,
+        Unsupported = Tier.First,
+        Tracked = _tracked,
+        SortableId = _sortable,
+        CanonicalWhen = _when,
+      },
+      Metadata = new PerspectiveMetadata(),
+      Scope = new PerspectiveScope(),
+      CreatedAt = DateTime.UtcNow,
+      UpdatedAt = DateTime.UtcNow,
+      Version = 1,
+    });
+
+    await _context.SaveChangesAsync();
+  }
+
+  [After(Test)]
+  public async ValueTask DisposeAsync() {
+    if (_context is not null) {
+      await _context.DisposeAsync();
+      _context = null;
+    }
+
+    try {
+      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+      await admin.OpenAsync();
+      await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
+      await drop.ExecuteNonQueryAsync();
+    } catch (NpgsqlException) {
+      // Per-test database on a shared container; a failed drop is not a test failure.
+    }
+
+    GC.SuppressFinalize(this);
+  }
+
+  private async Task<string?> _scalarAsync(string sql, params (string Name, object Value)[] parameters) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync();
+    await using var command = new NpgsqlCommand(sql, db);
+    foreach (var (name, value) in parameters) {
+      command.Parameters.AddWithValue(name, value);
+    }
+
+    var result = await command.ExecuteScalarAsync();
+    return result is null or DBNull ? null : result.ToString();
+  }
+
+  /// <summary>
+  /// The guard that stops a value converter turning a filter into silent zero rows.
+  /// </summary>
+  /// <remarks>
+  /// A converted property is stored in the converter's form, so an int written as text lands as
+  /// <c>"7"</c>. A containment document built from a raw int would be <c>{"n": 7}</c> and would match
+  /// nothing. The question this settles is whether Entity Framework applies the converter to the
+  /// parameter as well, in which case the document agrees after all. Asserted as agreement between
+  /// the rewrite being on and off rather than as a SQL shape, because the answer that matters is the
+  /// rows.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AConvertedMember_KeepsTheExtractionFormAsync(CancellationToken cancellationToken) {
+    var converted = 7;
+
+    // The baseline first: whether Entity Framework can filter a converted member of a JSON complex
+    // property at all, with the rewrite standing down. If it cannot, the rewrite has nothing to
+    // answer for and the limitation belongs upstream.
+    Exception? baselineFailure = null;
+    var withoutRewrite = -1;
+    JsonbContainmentSwitch.Set(false);
+    try {
+      withoutRewrite = await _context!.Set<PerspectiveRow<ProbeModel>>()
+        .CountAsync(r => r.Data.ConvertedNum == converted && r.Version > 0, cancellationToken);
+    } catch (Exception ex) {
+      baselineFailure = ex;
+    } finally {
+      JsonbContainmentSwitch.Reset();
+    }
+
+    if (baselineFailure is not null) {
+      // Entity Framework cannot express this filter itself. The rewrite standing down is then the
+      // correct behavior and there is nothing further to prove: it cannot be expected to improve on
+      // a translation that does not exist.
+      await Assert.That(baselineFailure).IsNotNull();
+      return;
+    }
+
+    var found = await _context!.Set<PerspectiveRow<ProbeModel>>()
+      .CountAsync(r => r.Data.ConvertedNum == converted, cancellationToken);
+
+    await Assert.That(found).IsEqualTo(withoutRewrite)
+      .Because("a converted member must answer the same with the rewrite on as with it off");
+  }
+
+  /// <summary>An unconverted member of the same type is still rewritten, so the guard is not blanket.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AnUnconvertedMember_IsStillRewrittenAsync(CancellationToken cancellationToken) {
+    var big = 9007199254740993L;
+
+    var sql = _context!.Set<PerspectiveRow<ProbeModel>>()
+      .Where(r => r.Data.Big == big)
+      .ToQueryString();
+
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal);
+
+    var found = await _context.Set<PerspectiveRow<ProbeModel>>()
+      .CountAsync(r => r.Data.Big == big, cancellationToken);
+
+    await Assert.That(found).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A DateTimeOffset carrying a non-UTC offset cannot be a query parameter at all, which is a
+  /// constraint of the driver rather than of containment: the same limit applies to an ordinary
+  /// equality comparison, so it is not a reason for or against the rewrite.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
+  public async Task ANonUtcOffset_CannotBeAParameterAtAllAsync(CancellationToken cancellationToken) {
+    await Assert.That(async () => await _scalarAsync(
+        $"SELECT count(*) FROM {TABLE} WHERE data @> jsonb_build_object('Shifted', @p)",
+        ("p", new DateTimeOffset(2026, 3, 4, 5, 6, 7, TimeSpan.FromMinutes(330)))))
+      .Throws<ArgumentException>();
+  }
+
+  /// <summary>
+  /// Records what the mapping actually wrote for each type, which is the fact every eligibility
+  /// decision rests on.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task StoredForms_AreRecordedAsync(CancellationToken cancellationToken) {
+    var document = await _scalarAsync($"SELECT data::text FROM {TABLE}");
+
+    await Assert.That(document).IsNotNull();
+
+    var target = Environment.GetEnvironmentVariable("WHIZ_ELIGIBILITY_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, document, cancellationToken);
+    }
+
+    // The enumeration is the one that decides whether the largest remaining win is available.
+    await Assert.That(document).Contains("State", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// Whether a containment test built the way the rewrite builds it matches the stored row, per type.
+  /// A type only becomes eligible if this and the extraction form agree.
+  /// </summary>
+  [Test]
+  [Timeout(120000)]
+  [Arguments("State")]
+  [Arguments("Dbl")]
+  [Arguments("Flt")]
+  [Arguments("When")]
+  [Arguments("WhenOffset")]
+  [Arguments("Money")]
+  [Arguments("Big")]
+  [Arguments("Third")]
+  [Arguments("Huge")]
+  [Arguments("Tiny")]
+  [Arguments("FloatThird")]
+  [Arguments("Named")]
+  [Arguments("ConvertedNum")]
+  public async Task ContainmentAgreementPerType_IsRecordedAsync(string field, CancellationToken cancellationToken) {
+    // Parameterized exactly as Entity Framework would: the CLR value, mapped by Npgsql.
+    object value = field switch {
+      "State" => (int)Mood.High,
+      "Dbl" => 0.1d,
+      "Flt" => 0.1f,
+      "When" => _when,
+      "WhenOffset" => _whenOffset,
+      "Money" => 1.50m,
+      "Big" => 9007199254740993L,
+      "Third" => 1.0d / 3.0d,
+      "Huge" => 1e20d,
+      "Tiny" => 1e-7d,
+      "FloatThird" => 1f / 3f,
+      "Named" => "High",
+      // Exactly what the rewrite would put in the document for an int member.
+      "ConvertedNum" => 7,
+      _ => throw new InvalidOperationException(field),
+    };
+
+    var matched = await _scalarAsync(
+      $"SELECT count(*) FROM {TABLE} WHERE data @> jsonb_build_object('{field}', @p)",
+      ("p", value));
+
+    var storedText = await _scalarAsync($"SELECT data ->> '{field}' FROM {TABLE}");
+    var generatedText = await _scalarAsync("SELECT (to_jsonb(@p)) #>> '{}'", ("p", value));
+
+    var line = string.Create(CultureInfo.InvariantCulture,
+      $"{field}: stored={storedText} generated={generatedText} containmentMatched={matched}");
+
+    var target = Environment.GetEnvironmentVariable("WHIZ_ELIGIBILITY_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.AppendAllTextAsync(target, "\n" + line, cancellationToken);
+    }
+
+    // No expectation asserted: this test exists to produce the measurement the decision needs. The
+    // eligible set is pinned by JsonbContainmentTypeSetTests, and a type only moves into it once the
+    // two text forms here are shown to agree.
+    await Assert.That(line).IsNotEmpty();
+  }
+
+  /// <summary>
+  /// What a column holding two date formats at once can and cannot do, which is what decides whether
+  /// a format change needs the stored rows rewritten or only the reader taught to read both.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Teaching the reader both formats makes materializing a row work regardless of which format it
+  /// holds, and that much is true and cheap. The question is whether it is sufficient, and the answer
+  /// depends on something the reader has no say in: the database still has to compare and index the
+  /// values while they are mixed.
+  /// </para>
+  /// <para>
+  /// Asserted on a table deliberately holding one row of each form, because this is the difference
+  /// between a migration being required and being optional, and that is not a thing to settle by
+  /// argument.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AMixedFormatColumnCannotBeIndexedOrRangeQueriedAsync(CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    async Task execAsync(string sql) {
+      await using var command = new NpgsqlCommand(sql, db);
+      await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // One row in the legacy rendering and one in a canonical numeric form, which is the state a
+    // deployment is in for as long as the rows are not rewritten.
+    await execAsync("""
+      CREATE TABLE mixed_format_probe (id uuid PRIMARY KEY, data jsonb NOT NULL);
+      INSERT INTO mixed_format_probe VALUES
+        (gen_random_uuid(), jsonb_build_object('When', '2026-03-04T05:06:07Z')),
+        (gen_random_uuid(), jsonb_build_object('When', 1772600767000000));
+      """);
+
+    // Equality against one form still finds the rows written in that form, which is what makes the
+    // failure below easy to miss: nothing is broken until something needs every row at once.
+    var matched = await _scalarAsync(
+      "SELECT count(*) FROM mixed_format_probe WHERE data @> jsonb_build_object('When', 1772600767000000)");
+    await Assert.That(matched).IsEqualTo("1");
+
+    // A range has to read every row, and the legacy rendering is not a number.
+    await Assert.That(async () => await _scalarAsync(
+        "SELECT count(*) FROM mixed_format_probe WHERE (data ->> 'When')::bigint > 0"))
+      .Throws<PostgresException>()
+      .Because("a range compares every row, so one row in the other format fails the whole query "
+        + "rather than being skipped");
+
+    // And the index cannot even be built, because building it evaluates the expression for every row.
+    await Assert.That(async () => await execAsync(
+        "CREATE INDEX idx_mixed_format ON mixed_format_probe (((data ->> 'When')::bigint))"))
+      .Throws<PostgresException>()
+      .Because("the index that makes a date range answerable cannot be created until every row is in "
+        + "the new format, so a reader that tolerates both does not remove the need to rewrite them");
+  }
+
+  /// <summary>
+  /// Which canonical date form indexes better: fixed-width text, or the same instant as a number.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Both forms are correct and both are indexable, so the choice is a performance one and is settled
+  /// by measuring rather than by preference. A text key is twenty-seven bytes and compares
+  /// byte-wise in the C collation; a microsecond epoch fits an eight-byte integer and compares as
+  /// one. What that is worth depends on the index size, since a smaller key means fewer pages to
+  /// walk, and on what the planner then estimates.
+  /// </para>
+  /// <para>
+  /// Measured on its own table rather than through the model, because the question is about the two
+  /// index shapes and not about how a row got written. Both columns hold the same instants.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ANumericDateIndexesSmallerThanATextOne_IsRecordedAsync(CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    async Task execAsync(string sql) {
+      await using var command = new NpgsqlCommand(sql, db);
+      await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    async Task<string?> scalarAsync(string sql) {
+      await using var command = new NpgsqlCommand(sql, db);
+      var value = await command.ExecuteScalarAsync(cancellationToken);
+      return value is null or DBNull ? null : value.ToString();
+    }
+
+    await execAsync("""
+      CREATE TABLE date_form_probe (id uuid PRIMARY KEY, data jsonb NOT NULL);
+      INSERT INTO date_form_probe (id, data)
+      SELECT gen_random_uuid(),
+             jsonb_build_object(
+               'AsText', to_char(timezone('UTC', t), 'YYYY-MM-DD"T"HH24:MI:SS.US') || 'Z',
+               'AsEpoch', (extract(epoch FROM t) * 1000000)::bigint)
+      FROM generate_series(
+        timestamptz '2020-01-01', timestamptz '2026-01-01', interval '80 minutes') t;
+      CREATE INDEX idx_form_text ON date_form_probe (((data ->> 'AsText') COLLATE "C"));
+      CREATE INDEX idx_form_epoch ON date_form_probe (((data ->> 'AsEpoch')::bigint));
+      ANALYZE date_form_probe;
+      """);
+
+    var rows = await scalarAsync("SELECT count(*) FROM date_form_probe");
+    var textSize = await scalarAsync("SELECT pg_relation_size('idx_form_text')");
+    var epochSize = await scalarAsync("SELECT pg_relation_size('idx_form_epoch')");
+
+    async Task<string> planAsync(string where) {
+      await using var command = new NpgsqlCommand(
+        $"EXPLAIN (FORMAT TEXT) SELECT id FROM date_form_probe WHERE {where}", db);
+      var lines = new List<string>();
+      await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        lines.Add(reader.GetString(0).Trim());
+      }
+
+      return string.Join(" | ", lines);
+    }
+
+    // The same one-month window expressed against each form.
+    var textPlan = await planAsync(
+      "(data ->> 'AsText') COLLATE \"C\" >= '2024-03-01T00:00:00.000000Z' "
+      + "AND (data ->> 'AsText') COLLATE \"C\" < '2024-04-01T00:00:00.000000Z'");
+    var epochPlan = await planAsync(
+      "(data ->> 'AsEpoch')::bigint >= 1709251200000000 "
+      + "AND (data ->> 'AsEpoch')::bigint < 1711929600000000");
+
+    var report = string.Create(CultureInfo.InvariantCulture,
+      $"rows={rows}\ntextIndexBytes={textSize}\nepochIndexBytes={epochSize}\ntext: {textPlan}\nepoch: {epochPlan}");
+
+    var target = Environment.GetEnvironmentVariable("WHIZ_FORM_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, report, cancellationToken);
+    }
+
+    // Both have to be index scans, or the comparison is meaningless.
+    await Assert.That(textPlan).Contains("idx_form_text", StringComparison.Ordinal);
+    await Assert.That(epochPlan).Contains("idx_form_epoch", StringComparison.Ordinal);
+
+    await Assert.That(long.Parse(epochSize!, CultureInfo.InvariantCulture))
+      .IsLessThan(long.Parse(textSize!, CultureInfo.InvariantCulture))
+      .Because("an eight-byte key indexes smaller than a twenty-seven byte one, which is the whole question");
+  }
+
+  /// <summary>
+  /// A null character cannot be stored in a document at all, whether it arrives in a char or inside a
+  /// string. This is the boundary the mapping has to enforce before PostgreSQL does.
+  /// </summary>
+  /// <remarks>
+  /// A default char is the null character, so a model carrying one that nobody assigned cannot be
+  /// persisted. jsonb rejects the escape outright rather than storing it, and the error surfaces as a
+  /// driver exception from the save with no indication of which property caused it. A string
+  /// containing one fails identically, which is why the fix belongs at the mapping rather than only
+  /// at the char type.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  [Arguments("a bare null character")]
+  [Arguments("a null inside a longer string")]
+  public async Task ANullCharacterCannotReachTheDocumentAsync(string shape, CancellationToken cancellationToken) {
+    var value = shape switch {
+      "a bare null character" => "\0",
+      "a null inside a longer string" => "be\0fore",
+      _ => throw new InvalidOperationException(shape),
+    };
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    await using var command = new NpgsqlCommand(
+      "SELECT jsonb_build_object('k', @p)", db);
+    command.Parameters.AddWithValue("p", value);
+
+    var failure = await Assert.That(async () => await command.ExecuteScalarAsync(cancellationToken))
+      .Throws<PostgresException>()
+      .Because("jsonb has no representation for a null character, so it is refused rather than "
+        + "stored. Two decisions follow from this: a char is stored as its code point so that an "
+        + "unassigned one is an ordinary zero, and a string carrying a null is refused by the "
+        + "framework with the property named. IF THIS ASSERTION FAILS BECAUSE THE VALUE IS NOW "
+        + "ACCEPTED, both of those become unnecessary.");
+
+    // The code depends on which path the value took in: a parameter is rejected as a character
+    // outside the repertoire, while a document written with the escape spelled out is rejected as an
+    // unsupported escape. Both are refusals of the same thing, and a caller sees neither of them as
+    // the name of the property that caused it, which is the reason to catch this earlier.
+    await Assert.That(_nullCharacterRefusals).Contains(failure!.SqlState);
+  }
+
+  /// <summary>
+  /// A canonically stored date supports equality, a range and an ordering, all from one btree index
+  /// on the extraction. This is the shape the indexing plan for every type rests on.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Four things have to hold together and each fails differently, so all four are asserted here
+  /// rather than reasoned from one another. The comparison has to translate at all, rather than being
+  /// refused because the property carries a converter. It has to be applied to the provider type, so
+  /// the parameter is rendered the same way the row was. The ordering has to come out chronological,
+  /// which is what fixed width buys and what the default trimmed rendering loses. And the planner has
+  /// to actually choose the index, which is the only claim that means anything about performance.
+  /// </para>
+  /// <para>
+  /// The collation is pinned because a text index answers a range only in its own collation order. In
+  /// C ordering the comparison is byte-wise, which for a fixed-width ASCII rendering is the same as
+  /// the chronological order; under a locale-aware collation punctuation may be weighted differently
+  /// and the guarantee is lost.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ACanonicalDate_IsIndexableForEqualityRangeAndOrderAsync(CancellationToken cancellationToken) {
+    var origin = new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc);
+
+    // Precisions that the default rendering would order wrongly, inserted out of order.
+    var inserted = new[] {
+      origin.AddTicks(1_000_000),
+      origin,
+      origin.AddTicks(1_234_560),
+      origin.AddSeconds(1),
+      origin.AddDays(30),
+    };
+
+    foreach (var value in inserted) {
+      _context!.Add(new PerspectiveRow<ProbeModel> {
+        Id = Guid.NewGuid(),
+        // Letter has to be set: a char left at its default is the null character, which
+        // Entity Framework writes as \u0000 and jsonb rejects outright.
+        Data = new ProbeModel { CanonicalWhen = value, Letter = 'q' },
+        Metadata = new PerspectiveMetadata(),
+        Scope = new PerspectiveScope(),
+        CreatedAt = DateTime.UtcNow,
+        UpdatedAt = DateTime.UtcNow,
+        Version = 1,
+      });
+    }
+
+    await _context!.SaveChangesAsync(cancellationToken);
+
+    // 1. Fixed width, so every row is the same length and sorts by instant.
+    var stored = await _scalarAsync(
+      $"SELECT string_agg(DISTINCT length(data ->> 'CanonicalWhen')::text, ',') FROM {TABLE}");
+    await Assert.That(stored).IsEqualTo("27").Because("a canonical rendering is one width for every value");
+
+    // 2. Equality translates and finds its row.
+    var equal = await _context.Set<PerspectiveRow<ProbeModel>>()
+      .CountAsync(r => r.Data.CanonicalWhen == origin, cancellationToken);
+    await Assert.That(equal).IsEqualTo(1);
+
+    // 3. A range translates, and on the provider type: the comparison has to reach SQL as text
+    // against text, or the parameter would not be rendered the way the row was.
+    var rangeSql = _context.Set<PerspectiveRow<ProbeModel>>()
+      .Where(r => r.Data.CanonicalWhen >= origin && r.Data.CanonicalWhen < origin.AddDays(1))
+      .ToQueryString();
+    var inRange = await _context.Set<PerspectiveRow<ProbeModel>>()
+      .CountAsync(r => r.Data.CanonicalWhen >= origin && r.Data.CanonicalWhen < origin.AddDays(1),
+        cancellationToken);
+
+    await Assert.That(inRange).IsEqualTo(4)
+      .Because($"four of the five seeded rows fall in the day; SQL was {rangeSql}");
+
+    // 4. The ordering is chronological, which the trimmed default rendering is not.
+    var ordered = await _context.Set<PerspectiveRow<ProbeModel>>()
+      .Where(r => r.Data.CanonicalWhen >= origin)
+      .OrderBy(r => r.Data.CanonicalWhen)
+      .Select(r => r.Data.CanonicalWhen)
+      .ToListAsync(cancellationToken);
+
+    await Assert.That(string.Join(",", ordered.Select(d => d.Ticks)))
+      .IsEqualTo(string.Join(",", inserted.Order().Select(d => d.Ticks)));
+
+    // 5. And the planner uses a btree index on the extraction for the range.
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    await using (var index = new NpgsqlCommand(
+      $"CREATE INDEX idx_canonical_when ON {TABLE} (((data ->> 'CanonicalWhen') COLLATE \"C\"))", db)) {
+      await index.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    // Enough rows for an index to be the cheaper plan, and the statistics to know it.
+    await using (var bulk = new NpgsqlCommand($"""
+      INSERT INTO {TABLE} (id, created_at, updated_at, version, data, metadata, scope)
+      SELECT gen_random_uuid(), now(), now(), 1,
+             jsonb_build_object('CanonicalWhen',
+               to_char(timezone('UTC', now() + (g || ' days')::interval),
+                       'YYYY-MM-DD"T"HH24:MI:SS.US') || 'Z'),
+             shape.metadata, shape.scope
+      FROM generate_series(1, 40000) g
+      CROSS JOIN (SELECT metadata, scope FROM {TABLE} LIMIT 1) shape
+      """, db)) {
+      await bulk.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await using (var analyze = new NpgsqlCommand($"ANALYZE {TABLE}", db)) {
+      await analyze.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    var plan = new List<string>();
+    await using (var explain = new NpgsqlCommand(
+      $"EXPLAIN SELECT id FROM {TABLE} "
+      + "WHERE (data ->> 'CanonicalWhen') COLLATE \"C\" >= '2026-06-01T12:00:00.000000Z' "
+      + "AND (data ->> 'CanonicalWhen') COLLATE \"C\" < '2026-06-02T12:00:00.000000Z'", db)) {
+      await using var reader = await explain.ExecuteReaderAsync(cancellationToken);
+      while (await reader.ReadAsync(cancellationToken)) {
+        plan.Add(reader.GetString(0));
+      }
+    }
+
+    await Assert.That(string.Join(" | ", plan)).Contains("idx_canonical_when", StringComparison.Ordinal)
+      .Because("a range over a canonically stored date has to be answerable from an index");
+  }
+
+  /// <summary>
+  /// Which extractions out of a document can carry a btree index, which is what decides whether a
+  /// range or an ordering on a JSON-only field can be indexed at all.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An expression index requires an immutable expression, because the stored key has to stay correct
+  /// for the life of the row. A cast out of text is immutable for some target types and stable for
+  /// others, and the difference is not guessable: a stable cast may depend on a session setting, so
+  /// PostgreSQL refuses to index it. That refusal is what separates the types a range filter can be
+  /// indexed for from the ones it cannot.
+  /// </para>
+  /// <para>
+  /// Asserted by asking PostgreSQL to build each index rather than by reading the catalog, because
+  /// building it is the thing that has to work. The two that fail are the reason a date held in a
+  /// document cannot be range-scanned or sorted from an index, whatever its format, until the format
+  /// itself changes to something an immutable cast can reach.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  [Arguments("text", "(data ->> 'Str')", true)]
+  [Arguments("integer", "((data ->> 'Num')::int)", true)]
+  [Arguments("bigint", "((data ->> 'Big')::bigint)", true)]
+  [Arguments("numeric", "((data ->> 'Money')::numeric)", true)]
+  [Arguments("double precision", "((data ->> 'Dbl')::float8)", true)]
+  [Arguments("boolean", "((data ->> 'Flag')::bool)", true)]
+  [Arguments("uuid", "((data ->> 'SortableId')::uuid)", true)]
+  [Arguments("timestamptz", "((data ->> 'When')::timestamptz)", false)]
+  [Arguments("date", "((data ->> 'Day')::date)", false)]
+  public async Task AnExtractionCanCarryABtreeIndexOnlyWhenItsCastIsImmutableAsync(
+    string target, string expression, bool indexable, CancellationToken cancellationToken) {
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+
+    var name = $"idx_probe_{target.Replace(' ', '_').Replace("::", "_", StringComparison.Ordinal)}";
+    await using var create = new NpgsqlCommand(
+      $"CREATE INDEX {name} ON {TABLE} ({expression})", db);
+
+    if (indexable) {
+      await create.ExecuteNonQueryAsync(cancellationToken);
+
+      var built = await _scalarAsync($"SELECT indexdef FROM pg_indexes WHERE indexname = '{name}'");
+      await Assert.That(built).IsNotNull()
+        .Because($"a range or an ordering on a {target} member can be answered from an index");
+      return;
+    }
+
+    // PostgreSQL rejects the index rather than building one that could silently go stale.
+    await Assert.That(async () => await create.ExecuteNonQueryAsync(cancellationToken))
+      .Throws<PostgresException>()
+      .Because($"a cast to {target} is not immutable, so no expression index can carry it. This "
+        + "refusal is the entire reason the date and time family is stored as a number rather than "
+        + "as text: a number reaches an immutable cast and a timestamp does not. IF THIS ASSERTION "
+        + "FAILS BECAUSE POSTGRESQL NOW ACCEPTS THE INDEX, that storage decision was made to work "
+        + "around a limit that no longer exists and should be revisited.");
+  }
+
+  /// <summary>
+  /// A time-ordered identifier sorts the same as text, as bytes, and chronologically, which is what a
+  /// date does not do.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The framework's convention is a UUIDv7 identifier, which carries its timestamp in the leading
+  /// bytes. Its stored rendering is fixed-width lowercase hexadecimal, so no trimming or variable
+  /// precision can reorder it: the text order, the <c>uuid</c> byte order and the creation order all
+  /// agree. That is the property the trimmed date rendering lacks.
+  /// </para>
+  /// <para>
+  /// It matters because it decides what can be indexed. Ordering and range filtering over a date held
+  /// in a document cannot use the stored text as a key, while over a time-ordered identifier they can,
+  /// and the <c>text</c> to <c>uuid</c> cast is immutable so an expression index is available too.
+  /// Cursor paging over a document-held identifier is therefore indexable, which is worth knowing
+  /// before reaching for a promoted column.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  [SuppressMessage("Redundancy", "RCS1163:Unused parameter",
+    Justification = "TUnit requires the cancellation token parameter alongside [Timeout] (TUnit0015) and injects it; this case has nothing long-running of its own to pass it to.")]
+  [SuppressMessage("Style", "IDE0060:Remove unused parameter",
+    Justification = "As RCS1163: required by [Timeout] and supplied by the framework.")]
+  public async Task ATimeOrderedIdentifier_SortsTheSameAsTextAndAsBytesAsync(CancellationToken cancellationToken) {
+    // Generated in order, so the creation order is known independently of how they sort.
+    var created = new List<Guid>();
+    for (var i = 0; i < 12; i++) {
+      created.Add(TrackedGuid.NewMedo().Value);
+    }
+
+    await Assert.That(created.Select(g => g.ToString()).Order(StringComparer.Ordinal).ToList())
+      .IsEquivalentTo(created.ConvertAll(g => g.ToString()))
+      .Because("a version 7 identifier's text rendering sorts in creation order");
+
+    var agrees = await _scalarAsync(
+      "SELECT bool_and((a < b) = ((a::uuid) < (b::uuid))) FROM unnest(@t) WITH ORDINALITY s(a, i) "
+      + "CROSS JOIN unnest(@t) WITH ORDINALITY t2(b, j) WHERE i <> j",
+      ("t", created.Select(g => g.ToString()).ToArray()));
+
+    await Assert.That(agrees).IsEqualTo("True")
+      .Because("the text ordering and the uuid ordering have to agree for either to serve as a key");
+  }
+
+  /// <summary>
+  /// Records what the remaining date, time and enumeration shapes land as, and whether a filter on
+  /// each currently reaches the index. The next eligibility decisions rest on this.
+  /// </summary>
+  /// <remarks>
+  /// No expectation is asserted beyond the report being produced. Two assumptions about stored forms
+  /// have already turned out wrong in this area, so the list of candidates is measured before anything
+  /// is claimed about it.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task RemainingCandidates_AreRecordedAsync(CancellationToken cancellationToken) {
+    var lines = new List<string>();
+
+    foreach (var field in new[] {
+      "Day", "Clock", "ClockFine", "Span", "SpanWithDays", "Letter", "Perms", "Unsupported",
+      "Tracked", "SortableId", "MaybeStr", "MaybeNum",
+    }) {
+      var stored = await _scalarAsync($"SELECT data -> '{field}' FROM {TABLE}");
+      var text = await _scalarAsync($"SELECT data ->> '{field}' FROM {TABLE}");
+      lines.Add($"{field}: json={stored} text={text}");
+    }
+
+    // Whether a filter on each reaches the index today, which is a separate question from whether the
+    // stored form would allow it to.
+    foreach (var (name, sql) in new[] {
+      ("Day", _context!.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Day == new DateOnly(2026, 3, 4)).ToQueryString()),
+      ("Clock", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Clock == new TimeOnly(5, 6, 7)).ToQueryString()),
+      ("Span", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Span == new TimeSpan(5, 6, 7)).ToQueryString()),
+      ("Letter", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Letter == 'q').ToQueryString()),
+      ("Perms equality", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Perms == Access.Both).ToQueryString()),
+      ("Perms bitwise", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => (r.Data.Perms & Access.Read) == Access.Read).ToQueryString()),
+      ("Unsupported", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Unsupported == Tier.First).ToQueryString()),
+      ("Tracked", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.Tracked == _tracked).ToQueryString()),
+      ("SortableId", _context.Set<PerspectiveRow<ProbeModel>>()
+        .Where(r => r.Data.SortableId == _sortable).ToQueryString()),
+    }) {
+      var form = sql.Contains("@>", StringComparison.Ordinal) ? "containment" : "extraction";
+      lines.Add($"{name}: {form} :: {sql.Split('\n')[^1].Trim()}");
+    }
+
+    var report = string.Join('\n', lines);
+    var target = Environment.GetEnvironmentVariable("WHIZ_CANDIDATES_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, report, cancellationToken);
+    }
+
+    string recorded(string label) =>
+      lines.Find(l => l.StartsWith(label + ":", StringComparison.Ordinal)
+                      && !l.Contains(" :: ", StringComparison.Ordinal))
+        ?? throw new InvalidOperationException($"nothing recorded for {label}");
+
+    string destination(string label) =>
+      lines.Find(l => l.StartsWith(label + ":", StringComparison.Ordinal)
+                      && l.Contains(" :: ", StringComparison.Ordinal))
+        ?? throw new InvalidOperationException($"no destination recorded for {label}");
+
+    // The stored form of each remaining candidate, asserted rather than printed, because the
+    // canonical-format decisions in plans/lens-full-index-coverage.md are derived from exactly these
+    // strings. A change here invalidates that plan and should say so.
+    await Assert.That(recorded("Day")).IsEqualTo("Day: json=\"2026-03-04\" text=2026-03-04")
+      .Because("a date-only value is already fixed width, which is why it is the cheapest to adopt");
+    await Assert.That(recorded("Clock"))
+      .IsEqualTo("Clock: json=\"05:06:07.0000000\" text=05:06:07.0000000");
+    await Assert.That(recorded("ClockFine"))
+      .IsEqualTo("ClockFine: json=\"05:06:07.1234567\" text=05:06:07.1234567")
+      .Because("seven fractional digits, where a DateTime is written with six. This asymmetry is why "
+        + "TimeOnly is excluded from the eligible set: a time parameter carries six digits, so the "
+        + "seventh cannot be matched. IF THIS ASSERTION FAILS BECAUSE THE WRITER NOW TRUNCATES TO "
+        + "SIX, that exclusion is obsolete and TimeOnly should be reconsidered for eligibility.");
+    await Assert.That(recorded("Span")).IsEqualTo("Span: json=\"05:06:07\" text=05:06:07");
+    await Assert.That(recorded("SpanWithDays"))
+      .IsEqualTo("SpanWithDays: json=\"2 05:06:07.123\" text=2 05:06:07.123")
+      .Because("the day part appears only when non-zero and the fraction is trimmed, which is why "
+        + "reproducing this rendering in SQL was judged not worth attempting and TimeSpan is stored "
+        + "as a tick count instead. IF THIS ASSERTION FAILS BECAUSE THE RENDERING IS NOW FIXED "
+        + "WIDTH, reproducing it becomes cheap and that decision can be revisited.");
+    await Assert.That(recorded("Letter")).IsEqualTo("Letter: json=\"q\" text=q");
+    await Assert.That(recorded("Perms")).IsEqualTo("Perms: json=3 text=3")
+      .Because("a combinable enumeration stores the combined number, so equality against a "
+        + "combination is exact numeric equality");
+    await Assert.That(recorded("MaybeStr")).IsEqualTo("MaybeStr: json=null text=")
+      .Because("an optional value stores as a JSON null, so nullability is not what makes a string "
+        + "unstorable; only a null character in its content is");
+    await Assert.That(recorded("MaybeNum")).IsEqualTo("MaybeNum: json=null text=");
+
+    // Where each filter lands today. The two that matter are the pair on either side of the
+    // converter guard: an identifier held in a value object stores exactly what a bare one stores,
+    // and still loses the index.
+    await Assert.That(destination("Perms equality")).Contains("containment", StringComparison.Ordinal);
+    await Assert.That(destination("Perms bitwise")).Contains("extraction", StringComparison.Ordinal)
+      .Because("a flag test is not equality, so it must not be compiled into containment");
+    await Assert.That(destination("SortableId")).Contains("containment", StringComparison.Ordinal);
+    await Assert.That(destination("Tracked")).Contains("extraction", StringComparison.Ordinal)
+      .Because("an identifier held in a value object stores byte for byte what a bare one stores, "
+        + "and still loses the index, because the converter guard is a blanket one. THIS ASSERTION "
+        + "IS EXPECTED TO FAIL when the value-object phase of plans/lens-full-index-coverage.md "
+        + "lands: at that point the destination becomes containment and this line should be "
+        + "inverted rather than deleted.");
+    await Assert.That(destination("Unsupported")).Contains("extraction", StringComparison.Ordinal)
+      .Because("an enumeration over an unsigned number has no overload and must stand down");
+  }
+
+  /// <summary>
+  /// Records how a binary floating-point value reaches the document, which is what decides whether
+  /// the containment form can be built for one at all.
+  /// </summary>
+  /// <remarks>
+  /// A parameter and a literal are not the same question. Npgsql sends a parameter with its own type,
+  /// so <c>jsonb_build_object('k', @p)</c> builds from a <c>double precision</c>. A literal written
+  /// into the statement has no type annotation, and PostgreSQL reads a bare decimal literal as
+  /// <c>numeric</c>, whose text form is not the shortest round-trip form the serializer wrote.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task FloatingPointLiteralForms_AreRecordedAsync(CancellationToken cancellationToken) {
+    var lines = new List<string>();
+
+    foreach (var (field, literal) in new[] {
+      ("Dbl", "0.1"), ("Flt", "0.1"), ("Third", "0.3333333333333333"), ("FloatThird", "0.33333334"),
+    }) {
+      var stored = await _scalarAsync($"SELECT data ->> '{field}' FROM {TABLE}");
+      var asNumeric = await _scalarAsync($"SELECT jsonb_build_object('{field}', {literal}) ->> '{field}'");
+      var asDouble = await _scalarAsync($"SELECT jsonb_build_object('{field}', {literal}::float8) ->> '{field}'");
+      var matchedNumeric = await _scalarAsync(
+        $"SELECT count(*) FROM {TABLE} WHERE data @> jsonb_build_object('{field}', {literal})");
+      var matchedDouble = await _scalarAsync(
+        $"SELECT count(*) FROM {TABLE} WHERE data @> jsonb_build_object('{field}', {literal}::float8)");
+
+      lines.Add(string.Create(CultureInfo.InvariantCulture,
+        $"{field}: stored={stored} numeric={asNumeric} float8={asDouble} matchNumeric={matchedNumeric} matchFloat8={matchedDouble}"));
+    }
+
+    // Whether jsonb compares numbers by value or by the text they were written as, and whether the
+    // text a cast produces is stable. Both decide if a cast can be relied on to normalize the value.
+    lines.Add($"valueNotText: {await _scalarAsync("SELECT ('{\"a\":1.0}'::jsonb @> '{\"a\":1}'::jsonb)::text")}");
+    foreach (var digits in new[] { "-1", "0", "1", "3" }) {
+      var rendered = await _scalarAsync(
+        $"SET LOCAL extra_float_digits = {digits}; SELECT jsonb_build_object('k', 0.1::float8) ->> 'k'");
+      lines.Add($"extra_float_digits={digits}: {rendered}");
+    }
+
+    foreach (var type in new[] { "double", "float", "awkward double", "awkward float" }) {
+      var (filter, rephrased) = _filtersFor(type);
+      var on = _context!.Set<PerspectiveRow<ProbeModel>>().Where(filter).ToQueryString();
+      var onRows = await _context.Set<PerspectiveRow<ProbeModel>>().CountAsync(filter, cancellationToken);
+
+      string off;
+      int offRows;
+      JsonbContainmentSwitch.Set(false);
+      try {
+        off = _context.Set<PerspectiveRow<ProbeModel>>().Where(rephrased).ToQueryString();
+        offRows = await _context.Set<PerspectiveRow<ProbeModel>>().CountAsync(rephrased, cancellationToken);
+      } finally {
+        JsonbContainmentSwitch.Reset();
+      }
+
+      lines.Add(string.Create(CultureInfo.InvariantCulture,
+        $"{type}: on={onRows} {on.Split('\n')[^1].Trim()}"));
+      lines.Add(string.Create(CultureInfo.InvariantCulture,
+        $"{type}: off={offRows} {off.Split('\n')[^1].Trim()}"));
+    }
+
+    var report = string.Join('\n', lines);
+    var target = Environment.GetEnvironmentVariable("WHIZ_ELIGIBILITY_DUMP");
+    if (!string.IsNullOrWhiteSpace(target)) {
+      await File.WriteAllTextAsync(target, report, cancellationToken);
+    }
+
+    string recorded(string label) =>
+      lines.Find(l => l.StartsWith(label, StringComparison.Ordinal))
+        ?? throw new InvalidOperationException($"nothing recorded for {label}");
+
+    // jsonb compares numbers by value rather than by the text they were written as, which is why an
+    // integer or a decimal needs no normalization and only binary floating point does.
+    await Assert.That(recorded("valueNotText")).IsEqualTo("valueNotText: true");
+
+    // The rendering a cast to the store type produces is the shortest round-trip form, and it does
+    // not move with extra_float_digits. That is what makes the cast in the emission reliable rather
+    // than a guess that happened to work on one session.
+    foreach (var digits in new[] { "-1", "0", "1", "3" }) {
+      await Assert.That(recorded($"extra_float_digits={digits}"))
+        .IsEqualTo($"extra_float_digits={digits}: 0.1")
+        .Because("the float8 to jsonb conversion is not sensitive to the output setting");
+    }
+
+    // The finding the cast exists for: a literal arrives in seventeen digits while the row holds the
+    // shortest form, so without the cast the document would be built from a different number.
+    await Assert.That(recorded("double: on")).Contains("0.10000000000000001::double precision",
+      StringComparison.Ordinal)
+      .Because("the literal is rendered long and the cast is what normalizes it back");
+    await Assert.That(recorded("double: on")).StartsWith("double: on=1", StringComparison.Ordinal);
+    await Assert.That(recorded("double: off")).StartsWith("double: off=1", StringComparison.Ordinal);
+
+    // Single precision is where the rewrite corrects the form it replaces rather than preserving it.
+    await Assert.That(recorded("float: on")).StartsWith("float: on=1", StringComparison.Ordinal);
+    await Assert.That(recorded("float: off")).StartsWith("float: off=0", StringComparison.Ordinal)
+      .Because("the extraction widens both sides to double precision and finds nothing");
+  }
+
+  /// <summary>
+  /// The filter for a newly eligible type, and the same filter with a term added that no row fails.
+  /// </summary>
+  /// <remarks>
+  /// The second spelling exists only to be a different cache key. Entity Framework caches a compiled
+  /// query by its expression tree, so running the identical filter with the rewrite switched off
+  /// would replay the plan compiled while it was on and compare a result against itself. Every row in
+  /// this fixture has a version, so the added term changes the plan without changing the answer.
+  /// </remarks>
+  private static (Expression<Func<PerspectiveRow<ProbeModel>, bool>> Filter,
+    Expression<Func<PerspectiveRow<ProbeModel>, bool>> Rephrased) _filtersFor(string type) => type switch {
+      "enumeration" => (r => r.Data.State == Mood.High, r => r.Data.State == Mood.High && r.Version > 0),
+      "double" => (r => r.Data.Dbl == 0.1d, r => r.Data.Dbl == 0.1d && r.Version > 0),
+      "float" => (r => r.Data.Flt == 0.1f, r => r.Data.Flt == 0.1f && r.Version > 0),
+      "awkward double" => (r => r.Data.Third == 1.0d / 3.0d, r => r.Data.Third == 1.0d / 3.0d && r.Version > 0),
+      "awkward float" => (r => r.Data.FloatThird == 1f / 3f, r => r.Data.FloatThird == 1f / 3f && r.Version > 0),
+      _ => throw new InvalidOperationException(type),
+    };
+
+  /// <summary>
+  /// Each type the measurements admitted is compiled to containment and finds the row that the
+  /// filter describes.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Two claims, and the second is the one that matters. The generated SQL saying <c>@&gt;</c> only
+  /// shows the rewrite fired; a containment document built in a form the row does not hold would say
+  /// exactly the same thing while matching nothing. So the rows are counted, and the count with the
+  /// rewrite switched off is pinned alongside, which is how a change in either is noticed.
+  /// </para>
+  /// <para>
+  /// An enumeration is the case that needed the work. It is stored through a value converter to its
+  /// underlying number, so the comparison reaches the overload for that number through a conversion,
+  /// and that conversion survives translation as a cast wrapped around the member. Until the
+  /// emission looked underneath it, an enumeration filter compiled back to the extraction form.
+  /// </para>
+  /// <para>
+  /// <strong>Single precision is where the two forms disagree, and containment is the correct one.</strong>
+  /// The extraction form compares <c>CAST(data -&gt;&gt; 'k' AS real)</c> with a bare decimal literal,
+  /// which PostgreSQL reads as numeric; there is no operator for that pair, so both sides widen to
+  /// double precision, and a single-precision 0.1 widened to double is 0.10000000149011612 while the
+  /// literal is 0.1. It therefore finds nothing, for any value that is not exactly representable.
+  /// Containment compares the stored value itself and finds the row. The unrewritten counts of zero
+  /// below are that defect on record: this rewrite corrects it rather than preserving it, which is a
+  /// deliberate decision and the reason the counts are asserted per case instead of as agreement.
+  /// The awkward fractions are here because one value proves nothing about a floating-point format.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  [Arguments("enumeration", 1)]
+  [Arguments("double", 1)]
+  [Arguments("awkward double", 1)]
+  [Arguments("float", 0)]
+  [Arguments("awkward float", 0)]
+  public async Task ANewlyEligibleType_ReachesTheIndexAsync(
+    string type, int unrewrittenRows, CancellationToken cancellationToken) {
+    var (filter, rephrased) = _filtersFor(type);
+
+    var sql = _context!.Set<PerspectiveRow<ProbeModel>>().Where(filter).ToQueryString();
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal)
+      .Because("the filter has to compile to containment or the index cannot answer it");
+
+    var withRewrite = await _context.Set<PerspectiveRow<ProbeModel>>().CountAsync(filter, cancellationToken);
+
+    int withoutRewrite;
+    JsonbContainmentSwitch.Set(false);
+    try {
+      withoutRewrite = await _context.Set<PerspectiveRow<ProbeModel>>().CountAsync(rephrased, cancellationToken);
+    } finally {
+      JsonbContainmentSwitch.Reset();
+    }
+
+    await Assert.That(withRewrite).IsEqualTo(1)
+      .Because("the seeded row is the row this filter describes, so containment has to find it");
+    await Assert.That(withoutRewrite).IsEqualTo(unrewrittenRows)
+      .Because("the form being replaced is pinned too, so a change in what it answers is noticed");
+  }
+}

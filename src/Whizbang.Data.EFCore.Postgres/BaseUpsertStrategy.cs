@@ -83,8 +83,16 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     // Union first (object-mode WhizbangId + all registered persistence contexts), user options as a
     // fallback for anything the union doesn't cover. User converters are intentionally NOT copied — the
     // Persistence profile deliberately omits the scalar WhizbangId converters so object-mode wins.
+    //
+    // The finished chain is re-wrapped with the registered modifiers. The union already carries them,
+    // but they were attached to the union's own resolver: a type the user's resolver is the first to
+    // answer for would be serialized unconverted, and for the canonical temporal form that is not a
+    // formatting difference but a row the reader cannot parse.
+    var chain = JsonTypeInfoResolver.Combine(union.TypeInfoResolver!, user.TypeInfoResolver);
+
     return new JsonSerializerOptions(union) {
-      TypeInfoResolver = JsonTypeInfoResolver.Combine(union.TypeInfoResolver!, user.TypeInfoResolver)
+      TypeInfoResolver = JsonContextRegistry.WithRegisteredModifiers(
+        chain, SerializationProfile.Persistence)
     };
   }
 

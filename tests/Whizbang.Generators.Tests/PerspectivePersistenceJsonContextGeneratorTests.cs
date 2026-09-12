@@ -447,4 +447,89 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     // Assert
     await Assert.That(errors).IsEmpty();
   }
+
+  /// <summary>
+  /// A perspective still open in its model type is skipped, because there is no model to read.
+  /// </summary>
+  /// <remarks>
+  /// A generic base such as <c>class Base&lt;T&gt; : IPerspectiveFor&lt;T, …&gt;</c> is a reasonable
+  /// thing to write, and its type argument is a type parameter rather than a type. Nothing can be
+  /// discovered from it: the temporal properties of <c>T</c> are whatever the closing type decides,
+  /// and that type is where the discovery belongs. Skipping is what makes the open base harmless
+  /// rather than a build failure or, worse, a converter registered for a type parameter.
+  /// </remarks>
+  [Test]
+  public async Task Generator_WithAnOpenPerspective_IsSkippedAsync() {
+    const string source = """
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public record OpenCreated : IEvent;
+
+        public class OpenBasePerspective<TModel>
+          : IPerspectiveFor<TModel, OpenCreated> {
+          public TModel Apply(TModel currentData, OpenCreated @event) => currentData;
+        }
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectivePersistenceJsonContextGenerator>(source);
+
+    var callback = GeneratorTestHelper.GetGeneratedSource(result, "PerspectivePersistenceCallbackInitializer.g.cs");
+    await Assert.That(callback).IsNull()
+      .Because("the model is a type parameter, so there is nothing to discover and nothing to register");
+  }
+
+  /// <summary>
+  /// A perspective whose model holds dates gets the canonical temporal form registered for it.
+  /// </summary>
+  /// <remarks>
+  /// This is the writer half of the stored format. Two models are declared rather than one because
+  /// the registrations are ordered by model name, and an ordering asserted on a single entry is not
+  /// an ordering: the generated output is what the serializer reads, and a set that shifts between
+  /// builds is a set the incremental pipeline cannot cache.
+  /// </remarks>
+  [Test]
+  public async Task Generator_WithTemporalModels_RegistersThemInNameOrderAsync() {
+    const string source = """
+        using System;
+        using Whizbang.Core;
+        using Whizbang.Core.Perspectives;
+
+        namespace TestApp;
+
+        public record ZebraDto(DateTime OccurredAt);
+
+        public record AlpacaDto(DateTime OccurredAt);
+
+        public record TemporalCreated : IEvent;
+
+        public class ZebraPerspective : IPerspectiveFor<ZebraDto, TemporalCreated> {
+          public ZebraDto Apply(ZebraDto currentData, TemporalCreated @event) => currentData;
+        }
+
+        public class AlpacaPerspective : IPerspectiveFor<AlpacaDto, TemporalCreated> {
+          public AlpacaDto Apply(AlpacaDto currentData, TemporalCreated @event) => currentData;
+        }
+        """;
+
+    var result = GeneratorTestHelper.RunGenerator<PerspectivePersistenceJsonContextGenerator>(source);
+
+    var callback = GeneratorTestHelper.GetGeneratedSource(result, "PerspectivePersistenceCallbackInitializer.g.cs");
+    await Assert.That(callback).IsNotNull()
+      .Because("a model holding a date needs the canonical form applied to it when it is written");
+
+    await Assert.That(callback).Contains("OccurredAt", StringComparison.Ordinal)
+      .Because("the converter is attached per property, so the property has to be named");
+
+    var alpaca = callback.IndexOf("AlpacaDto", StringComparison.Ordinal);
+    var zebra = callback.IndexOf("ZebraDto", StringComparison.Ordinal);
+    await Assert.That(alpaca).IsGreaterThanOrEqualTo(0);
+    await Assert.That(zebra).IsGreaterThan(alpaca)
+      .Because("registrations are emitted in model-name order so the output is stable between builds, "
+        + "which is what the incremental pipeline caches on");
+  }
+
 }

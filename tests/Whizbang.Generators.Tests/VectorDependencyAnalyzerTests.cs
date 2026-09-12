@@ -33,6 +33,7 @@ public class VectorDependencyAnalyzerTests {
 
             public class EmbeddingDto {
               [VectorField(1536)]
+              [Indexed]
               public float[]? ContentEmbedding { get; init; }
             }
             """;
@@ -60,9 +61,11 @@ public class VectorDependencyAnalyzerTests {
 
             public class MultiEmbeddingDto {
               [VectorField(1536)]
+              [Indexed]
               public float[]? ContentEmbedding { get; init; }
 
               [VectorField(768)]
+              [Indexed]
               public float[]? TitleEmbedding { get; init; }
             }
             """;
@@ -89,6 +92,7 @@ public class VectorDependencyAnalyzerTests {
 
             public class EmbeddingDto {
               [VectorField(1536)]
+              [Indexed]
               public float[]? MyEmbeddingProperty { get; init; }
             }
             """;
@@ -116,6 +120,7 @@ public class VectorDependencyAnalyzerTests {
 
             public class EmbeddingDto {
               [VectorField(1536)]
+              [Indexed]
               public float[]? ContentEmbedding { get; init; }
             }
             """;
@@ -143,6 +148,7 @@ public class VectorDependencyAnalyzerTests {
 
             public class EmbeddingDto {
               [VectorField(1536)]
+              [Indexed]
               public float[]? ContentEmbedding { get; init; }
             }
             """;
@@ -174,6 +180,7 @@ public class VectorDependencyAnalyzerTests {
 
             public class EmbeddingDto {
               [VectorField(1536)]
+              [Indexed]
               public float[]? ContentEmbedding { get; init; }
             }
             """;
@@ -256,6 +263,7 @@ public class VectorDependencyAnalyzerTests {
 
             public class EmbeddingDto {
               [VectorField(1536)]
+              [Indexed]
               private float[]? _embedding { get; init; }
             }
             """;
@@ -283,6 +291,7 @@ public class VectorDependencyAnalyzerTests {
             public class OuterClass {
               public class InnerEmbeddingDto {
                 [VectorField(1536)]
+                [Indexed]
                 public float[]? Embedding { get; init; }
               }
             }
@@ -310,6 +319,7 @@ public class VectorDependencyAnalyzerTests {
 
             public class EmbeddingDto {
               [VectorField(768, DistanceMetric = VectorDistanceMetric.Cosine, IndexType = VectorIndexType.HNSW)]
+              [Indexed]
               public float[]? Embedding { get; init; }
             }
             """;

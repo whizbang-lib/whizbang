@@ -203,6 +203,7 @@ public class PhysicalFieldTypeMappingTests {
               public Guid DocId { get; init; }
 
               [VectorField(768)]
+              [Indexed]
               public float[]? Embedding { get; init; }
             }
 
@@ -239,6 +240,7 @@ public class PhysicalFieldTypeMappingTests {
               public Guid DocId { get; init; }
 
               [VectorField(128)]
+              [Indexed]
               public float[]? Embedding { get; init; }
             }
 
@@ -276,6 +278,7 @@ public class PhysicalFieldTypeMappingTests {
               public Guid DocId { get; init; }
 
               [VectorField(384, IndexType = VectorIndexType.HNSW)]
+              [Indexed]
               public float[]? Embedding { get; init; }
             }
 

@@ -49,7 +49,12 @@ public class EFCoreSnippets {
       //   2. PerspectiveScope.Extensions uses List<ScopeExtension> instead of Dictionary
       //   3. Custom principal filtering translators for AllowedPrincipals queries
       //
-      entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      entity.ComplexProperty(e => e.Data, d => {
+        d.ToJson("data");
+        // Dates, times and durations store as numbers rather than renderings, so their extraction
+        // reaches an immutable cast and can carry an index. See CanonicalTemporalFormat.
+        __TEMPORAL_CONVERTER_CONFIGS__
+      });
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
       entity.ComplexProperty(e => e.Scope, s => {
         s.ToJson("scope");
@@ -68,10 +73,20 @@ public class EFCoreSnippets {
       entity.HasIndex(e => e.CreatedAt);
 
       // GIN indexes for JSONB columns are automatically created by EFCoreServiceRegistrationGenerator
-      // in the generated _generatePerspectiveTablesSchema() method. GIN indexes enable:
-      //   - Efficient containment queries (@>, <@)
-      //   - Key/value lookups on JSONB data
-      //   - Path expression queries (->, ->>)
+      // in the generated _generatePerspectiveTablesSchema() method.
+      //
+      // CAUTION (see issue #753): a GIN index with the default jsonb_ops answers the containment and
+      // existence operators (@>, <@, ?, ?|, ?&, @?, @@) and NOTHING ELSE. In particular it does NOT
+      // serve path extraction (-> and ->>), which is what every query this stack generates compiles
+      // to, because ComplexProperty().ToJson() makes a property comparison a text extraction with a
+      // cast. So these indexes are currently unreachable from the lens: they are maintained on every
+      // upsert and never scanned. PerspectiveSqlShapeTests pins both halves of that statement.
+      //
+      // The index that DOES serve a filtered field is an expression index on the extraction itself,
+      // for example (((data ->> 'TenantId')::uuid)), or promotion to a real column with
+      // [PhysicalField] plus [Indexed]. Note that text-to-timestamp casts are STABLE rather than
+      // IMMUTABLE, so date and time fields cannot be expression-indexed and need the column.
+      //
       // EF Core doesn't support HasIndex on ComplexProperty directly (GitHub #28605),
       // so we generate the indexes via SQL in the schema creation script.
 

@@ -231,16 +231,15 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
     // Extract named arguments
-    bool isIndexed = false;
+    // [Indexed] is how any field asks for an index, promoted or not, so this reads it rather than a
+    // flag on the promotion attribute.
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
     bool isUnique = false;
     int? maxLength = null;
     string? columnName = null;
 
     foreach (var namedArg in attribute.NamedArguments) {
       switch (namedArg.Key) {
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
-          break;
         case "Unique":
           isUnique = namedArg.Value.Value is true;
           break;
@@ -294,7 +293,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Extract named arguments
     var distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
     var indexType = GeneratorVectorIndexType.IVFFlat; // Default
-    bool isIndexed = true; // Default
+    bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0; // [Indexed] is how a vector asks for its index, like any other field
     int? indexLists = null;
     string? columnName = null;
 
@@ -311,9 +310,6 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
           if (typeVal != null) {
             indexType = (GeneratorVectorIndexType)System.Convert.ToInt32(typeVal, CultureInfo.InvariantCulture);
           }
-          break;
-        case "Indexed":
-          isIndexed = namedArg.Value.Value is true;
           break;
         case "IndexLists":
           var indexListsVal = namedArg.Value.Value;

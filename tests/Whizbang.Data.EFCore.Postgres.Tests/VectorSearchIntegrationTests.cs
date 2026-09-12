@@ -32,14 +32,17 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// Test model with two vector columns for column-comparison tests.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   public class VectorTestModel {
     [PhysicalField]
     public Guid Id { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? Embedding { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? ReferenceEmbedding { get; set; }
 
     public string Name { get; set; } = "";
@@ -48,11 +51,13 @@ public class VectorSearchIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// Second test model for cross-table comparison tests.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   public class SecondVectorTestModel {
     [PhysicalField]
     public Guid Id { get; set; }
 
     [VectorField(3)]
+    [Indexed]
     public float[]? TargetEmbedding { get; set; }
 
     public string Label { get; set; } = "";

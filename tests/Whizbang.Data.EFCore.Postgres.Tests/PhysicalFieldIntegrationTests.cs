@@ -42,6 +42,7 @@ public class PhysicalFieldIntegrationTests : IAsyncDisposable {
   /// <summary>
   /// Test model with physical fields for integration testing.
   /// </summary>
+  [SuppressIndexAdvisory("test fixture; its columns are configured through the DbContext rather than by attribute")]
   public class ProductSearchModel {
     public string Name { get; init; } = string.Empty;
     public decimal Price { get; init; }

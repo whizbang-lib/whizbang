@@ -1146,10 +1146,12 @@ public class EFCoreServiceRegistrationGeneratorTests {
         [StreamId]
         public Guid Id { get; init; }
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public Guid? ActivityId { get; init; }
 
-        [PhysicalField(Indexed = true)]
+        [PhysicalField]
+        [Indexed]
         public string? ActivityTreeId { get; init; }
 
         public string Name { get; init; } = "";
@@ -1514,6 +1516,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
         public Guid Id { get; init; }
 
         [VectorField(1536)]
+        [Indexed]
         public float[]? Embeddings { get; init; }
 
         public string Name { get; init; } = "";

@@ -27,10 +27,12 @@ namespace Whizbang.Core.Perspectives;
 ///   [StreamId]
 ///   public Guid ProductId { get; init; }
 ///
-///   [PhysicalField(Indexed = true)]
+///   // Promoted to a column, and indexed: [Indexed] is how any field asks for an index.
+///   [PhysicalField]
+///   [Indexed]
 ///   public Guid CategoryId { get; init; }
 ///
-///   [PhysicalField(Indexed = true, MaxLength = 100)]
+///   [PhysicalField(MaxLength = 100)]
 ///   public string Sku { get; init; }
 ///
 ///   // Non-physical property stays in JSONB only
@@ -40,11 +42,11 @@ namespace Whizbang.Core.Perspectives;
 /// </example>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
 public sealed class PhysicalFieldAttribute : Attribute {
-  /// <summary>
-  /// Whether to create a database index on this column.
-  /// Defaults to false. For composite indexes, use <see cref="CompositeIndexAttribute"/> on the model class.
-  /// </summary>
-  public bool Indexed { get; init; }
+  // This attribute promotes a property to a real column. It deliberately does not decide whether the
+  // column is indexed: [Indexed] does that, for a promoted field and a document field alike, so an
+  // author asking for an index writes the same thing either way. A column is what you need for a
+  // constraint, a foreign key or uniqueness, and those stay here because they are properties of the
+  // column rather than requests for an index.
 
   /// <summary>
   /// Whether this column should have a UNIQUE constraint.

@@ -997,8 +997,15 @@ jobs:
     needs: [changes, quality]
     permissions:
       contents: read
+    # merge_group is excluded because the queue's own run is not a merge. Its ref is
+    # refs/heads/gh-readonly-queue/<base>/pr-N-<sha>, which matches neither exclusion below, so this
+    # fired when a PR ENTERED the queue and its prospective-merge CI passed. That sounded exactly like
+    # a merge and arrived minutes before one, and the PR could still be dequeued afterwards.
+    # The actual merge is announced by notify-pr-merged.yml, on pull_request closed with merged true,
+    # which the queue sets only once the commit is really on the branch.
     if: |
       always() &&
+      github.event_name != 'merge_group' &&
       github.ref != 'refs/heads/develop' &&
       !startsWith(github.ref, 'refs/heads/release/v') &&
       (needs.quality.result == 'success' || (needs.changes.outputs.code != 'true' && github.event_name == 'pull_request')) &&
@@ -1021,10 +1028,22 @@ jobs:
 
   notify-failure:
     name: Notify Failure
-    needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
+    # Depends on the aggregate gate rather than a list of jobs, so a failure is announced wherever it
+    # happens: a pull request run and the merge queue's run alike.
+    #
+    # Enumerating jobs was the bug. The queue's run takes the fast-forward path, where the heavy jobs
+    # are SKIPPED and ff-validated does the work; a skipped need does not make failure() true, and
+    # ff-validated was not in the list, so a queue failure notified nothing at all. The queue gates
+    # were added after this list was written, which is how the two drifted apart.
+    #
+    # ci-result runs with always() and already needs every gate including queue-validated,
+    # verify-rebuild and ff-validated, so asking it one question cannot drift as jobs are added.
+    needs: [ci-result]
     permissions:
       contents: read
-    if: failure() && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
+    # merge_group is deliberately NOT excluded. A failure on the queue's run dequeues the pull
+    # request, and nothing else tells you the merge you were waiting on is not going to happen.
+    if: needs.ci-result.result == 'failure' && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: failure
@@ -1046,7 +1065,9 @@ jobs:
     needs: [build, format, unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration, azureblob-integration, quality]
     permissions:
       contents: read
-    if: cancelled() && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
+    # merge_group is excluded for a different reason than success: the queue cancels its own runs
+    # whenever it reshuffles the batch, so this was noise rather than a wrong-time notification.
+    if: cancelled() && github.event_name != 'merge_group' && github.ref != 'refs/heads/develop' && !startsWith(github.ref, 'refs/heads/release/v') && vars.PUSHOVER_ENABLED == 'true'
     uses: ./.github/workflows/notify-build-status.yml
     with:
       status: cancelled

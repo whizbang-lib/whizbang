@@ -25,10 +25,12 @@ namespace Whizbang.Core.Perspectives;
 ///
 ///   // OpenAI embeddings (1536 dimensions)
 ///   [VectorField(1536)]
+///   [Indexed]
 ///   public float[]? ContentEmbedding { get; init; }
 ///
 ///   // With custom settings
 ///   [VectorField(768, DistanceMetric = VectorDistanceMetric.Cosine, IndexType = VectorIndexType.HNSW)]
+///   [Indexed]
 ///   public float[]? TitleEmbedding { get; init; }
 /// }
 /// </code>
@@ -47,13 +49,7 @@ public sealed class VectorFieldAttribute(int dimensions) : Attribute {
   public VectorDistanceMetric DistanceMetric { get; init; } = VectorDistanceMetric.Cosine;
 
   /// <summary>
-  /// Whether to create an index on this vector column for efficient similarity search.
-  /// Defaults to true. Uses <see cref="IndexType"/> to determine the index algorithm.
-  /// </summary>
-  public bool Indexed { get; init; } = true;
-
-  /// <summary>
-  /// The index type to use when <see cref="Indexed"/> is true.
+  /// The index algorithm to use when the field is marked <c>[Indexed]</c>.
   /// Defaults to <see cref="VectorIndexType.IVFFlat"/>.
   /// </summary>
   public VectorIndexType IndexType { get; init; } = VectorIndexType.IVFFlat;

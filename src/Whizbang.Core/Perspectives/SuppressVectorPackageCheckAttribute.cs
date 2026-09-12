@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 /// without the actual pgvector packages installed.
 /// </para>
 /// </remarks>
-/// <docs>diagnostics/WHIZ070#suppression</docs>
+/// <docs>operations/diagnostics/whiz070#suppression</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorFieldPackageReferenceAnalyzerTests.cs:VectorField_WithSuppressAttribute_NoDiagnosticAsync</tests>
 /// <example>
 /// <code>

@@ -26,7 +26,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ070: Error - Vector field requires Pgvector.EntityFrameworkCore package.
   /// </summary>
-  /// <docs>diagnostics/WHIZ070</docs>
+  /// <docs>operations/diagnostics/whiz070</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorFieldPackageReferenceAnalyzerTests.cs:VectorField_MissingPgvectorEFCore_ReportsWHIZ070Async</tests>
   public static readonly DiagnosticDescriptor VectorFieldMissingPgvectorEFCorePackage = new(
       id: "WHIZ070",
@@ -42,7 +42,7 @@ internal static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ071: Error - Vector field requires Pgvector package.
   /// </summary>
-  /// <docs>diagnostics/WHIZ071</docs>
+  /// <docs>operations/diagnostics/whiz071</docs>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/VectorFieldPackageReferenceAnalyzerTests.cs:VectorField_MissingPgvector_ReportsWHIZ071Async</tests>
   public static readonly DiagnosticDescriptor VectorFieldMissingPgvectorPackage = new(
       id: "WHIZ071",

@@ -137,6 +137,7 @@ public class DapperCollectiveUnitTests {
       .Throws<NotSupportedException>();
   }
 
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   private sealed class _statusModel {
     public string Status { get; set; } = "";
   }
@@ -161,6 +162,7 @@ public class DapperCollectiveUnitTests {
   }
 
   private enum _jobStatusEnum { Draft, Approved, Published, Archived }
+  [SuppressIndexAdvisory("test fixture; the table holds a handful of rows")]
   private sealed class _enumStatusModel { public _jobStatusEnum Status { get; set; } }
   private static readonly _jobStatusEnum[] _eligibleEnum =
     [_jobStatusEnum.Draft, _jobStatusEnum.Approved, _jobStatusEnum.Published];
