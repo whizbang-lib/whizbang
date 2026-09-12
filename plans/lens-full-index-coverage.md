@@ -179,6 +179,22 @@ What remains is three things.
 - **The index, in the same script, after the rewrite.** The ordering is not merely convention: with
   the numeric form PostgreSQL refuses to build the index while any row is still a string, so a
   backfill that did not finish fails at the next step rather than leaving a silently useless index.
+  *Done, for both schema paths, which have to agree because the per-perspective entries are
+  hash-tracked against the concatenated init SQL.*
+
+**Two things the tests found that the design did not anticipate.** PostgreSQL's cast to `time`
+**rounds** a seventh fractional digit where the writer truncates it, so a time of day would have been
+rewritten one microsecond away from what the writer produces: a difference no query would surface and
+every comparison would be wrong about. The extra digits are dropped from the text before the cast.
+And a duration cannot be parsed by PostgreSQL at all, because the rendering separates days from the
+clock with a period where an interval wants a space and carries a digit an interval could not hold;
+its components are matched and the ticks computed, with the sign multiplied through rather than
+applied to the day count, which would be right only for a whole number of days.
+
+**The date rendering is not deleted yet, and that is deliberate.** It reads like Phase 1 work and it
+is not: see *What gets deleted when the default flips*. While both modes ship, a rollback must not
+depend on code that has already been removed. The rendering is now unreachable from any generated
+model, since every mapped model gets a conversion, so what it still covers is a hand-written context.
 
 The measurement behind requiring the rewrite at all is still worth keeping, because it is what rules
 out the cheaper options. On a column holding one row of each form, an equality against the new form
