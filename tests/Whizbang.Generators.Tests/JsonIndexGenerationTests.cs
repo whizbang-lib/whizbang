@@ -160,4 +160,84 @@ public class JsonIndexGenerationTests {
       .Because("a cast to a timestamp is not immutable, so PostgreSQL would refuse the index and a "
         + "blanket declaration must skip the field rather than emit a statement that fails");
   }
+
+  /// <summary>
+  /// A model whose document has to be stored opaquely gets no index over that document, because no
+  /// query against it would ever reach one.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A model holding an abstract member cannot be mapped property by property, so it is stored as a
+  /// single serialized value. A filter on a field inside that value never compiles to the extraction
+  /// an index would be built over, which makes the index pure cost: rebuilt on every write, scanned
+  /// by nothing.
+  /// </para>
+  /// <para>
+  /// Skipping it is only safe because WHIZ304 says so out loud at build time. Silence here would
+  /// leave the author believing the field is indexed, which is the failure this whole family of
+  /// checks exists to prevent.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AnOpaquelyStoredModelGetsNoIndexOverItsDocumentAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Reported : IEvent;
+
+      public abstract class PaymentMethod {
+        public string Name { get; init; } = string.Empty;
+      }
+
+      public record ReportModel {
+        [StreamId]
+        public Guid ReportId { get; init; }
+
+        public PaymentMethod? Payment { get; init; }
+
+        [JsonIndexed]
+        public int Count { get; init; }
+      }
+
+      public class ReportPerspective : IPerspectiveFor<ReportModel, Reported> {
+        public ReportModel Apply(ReportModel currentData, Reported eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ReportDbContext : DbContext {
+        public ReportDbContext(DbContextOptions<ReportDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).DoesNotContain("'Count'", StringComparison.Ordinal)
+      .Because("the document is stored as one serialized value, so an index over an extraction from "
+        + "it would be maintained on every write and could never be scanned");
+  }
+
+  /// <summary>
+  /// An ordinary record still gets its index, which is the case the skip must not swallow.
+  /// </summary>
+  /// <remarks>
+  /// A record was classified as opaquely stored on every occasion until the detection was narrowed
+  /// to public properties, because the compiler generates a protected <c>EqualityContract</c> of the
+  /// abstract type <c>System.Type</c>. A skip added on top of that behavior would have silently
+  /// dropped the index for nearly every model. This is the test that would have caught it.
+  /// </remarks>
+  [Test]
+  public async Task AnOrdinaryRecordStillGetsItsIndexAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(MODEL);
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).Contains("((data ->> 'Rank')::integer)", StringComparison.Ordinal)
+      .Because("a record of an int and a string is mapped property by property like any other "
+        + "model, so its extraction is exactly what a query produces");
+  }
 }

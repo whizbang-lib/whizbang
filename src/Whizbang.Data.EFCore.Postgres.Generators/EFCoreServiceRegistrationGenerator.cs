@@ -500,10 +500,33 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         NamespaceHint: TypeNameUtilities.Display(symbol.ContainingNamespace),
         Keys: keys,
         PhysicalFields: physicalFields,
-        JsonIndexes: JsonIndexDiscovery.From(modelType as INamedTypeSymbol),
+        JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType)
     );
   }
+
+  /// <summary>
+  /// The declared indexes a query against this model could actually reach.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type.</param>
+  /// <returns>The declared indexes, or none when the model's document is stored opaquely.</returns>
+  /// <remarks>
+  /// <para>
+  /// A model holding a polymorphic member is stored as one serialized value rather than as mapped
+  /// properties, so a filter on a field inside it never compiles to the extraction an index would be
+  /// built over. Emitting the index anyway would cost a write every time and return nothing, which
+  /// is the same waste the declaration exists to remove.
+  /// </para>
+  /// <para>
+  /// Dropping them silently would be the worse half of the trade on its own, since the author would
+  /// still believe the fields are indexed. WHIZ304 reports it at build time, which is what makes
+  /// skipping here the right thing rather than a quiet loss.
+  /// </para>
+  /// </remarks>
+  private static ImmutableArray<JsonIndexInfo> _reachableJsonIndexes(INamedTypeSymbol? modelType) =>
+      PolymorphicModelDiscovery.IsPolymorphic(modelType)
+        ? ImmutableArray<JsonIndexInfo>.Empty
+        : JsonIndexDiscovery.From(modelType);
 
   /// <summary>
   /// Builds final PerspectiveModelInfo from candidate by applying table name configuration.
