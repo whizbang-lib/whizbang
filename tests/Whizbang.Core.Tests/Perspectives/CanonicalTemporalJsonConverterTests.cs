@@ -436,4 +436,46 @@ public class CanonicalTemporalJsonConverterTests {
 
     await Assert.That(System.Text.Encoding.UTF8.GetString(buffer.ToArray())).IsEqualTo("null");
   }
+
+  /// <summary>
+  /// A temporal property the conversion was not told about is left alone.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the guarantee the per-property shape exists for. Applied per type, the conversion
+  /// reached every date everywhere and made framework documents unreadable; applied per property, it
+  /// has to touch the names it was given and nothing else, <em>including</em> other temporal
+  /// properties on the very same model.
+  /// </para>
+  /// <para>
+  /// That case is not hypothetical. A model can hold a date the generator deliberately did not
+  /// convert, a nested one being the example, and converting it anyway would store a number where
+  /// the reader expects a rendering.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task ATemporalPropertyNotNamedIsLeftAloneAsync() {
+    var union = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
+    var options = _partiallyNamedOptions(union);
+
+    var model = new OptionalShapesModel { At = _origin, Offset = new DateTimeOffset(_origin, TimeSpan.Zero) };
+    var written = JsonDocument.Parse(JsonSerializer.Serialize(model, options)).RootElement;
+
+    await Assert.That(written.GetProperty("At").ValueKind).IsEqualTo(JsonValueKind.Number)
+      .Because("'At' was named, so it is converted");
+    await Assert.That(written.GetProperty("Offset").ValueKind).IsEqualTo(JsonValueKind.String)
+      .Because("'Offset' is temporal and was NOT named, so it keeps the form the serializer would "
+        + "have given it; converting it anyway is the per-type mistake in miniature");
+  }
+
+  /// <summary>Options naming only one of the model's temporal properties.</summary>
+  private static JsonSerializerOptions _partiallyNamedOptions(JsonSerializerOptions union) {
+    var chain = JsonTypeInfoResolver.Combine(
+      union.TypeInfoResolver!, OptionalShapesJsonContext.Default);
+
+    return new JsonSerializerOptions(union) {
+      TypeInfoResolver = chain.WithAddedModifier(info =>
+        CanonicalTemporalJsonConverters.ApplyTo(info, typeof(OptionalShapesModel), "At")),
+    };
+  }
 }

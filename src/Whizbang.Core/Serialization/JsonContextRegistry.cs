@@ -44,7 +44,16 @@ public static class JsonContextRegistry {
   private static readonly ConcurrentQueue<_resolverEntry> _resolvers = new();
 
   /// <summary>A per-type metadata customization and the profile it applies to.</summary>
-  private sealed record _modifierEntry(Action<JsonTypeInfo> Modifier, SerializationProfile? Profile, long Seq);
+  /// <remarks>
+  /// A plain class rather than a record because nothing ever compares one. An entry is enqueued and
+  /// later read; there is no equality, no hashing and no deconstruction, so a record's synthesized
+  /// members would be unreachable by construction rather than merely untested.
+  /// </remarks>
+  private sealed class _modifierEntry(Action<JsonTypeInfo> modifier, SerializationProfile? profile, long seq) {
+    public Action<JsonTypeInfo> Modifier { get; } = modifier;
+    public SerializationProfile? Profile { get; } = profile;
+    public long Seq { get; } = seq;
+  }
 
   /// <summary>
   /// Thread-safe collection of converter instances to add to JsonSerializerOptions.
