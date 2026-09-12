@@ -445,13 +445,11 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     return false;
   }
 
-  private static bool? _namedFlag(AttributeData attribute, string key) {
-    foreach (var named in attribute.NamedArguments.Where(n => string.Equals(n.Key, key, StringComparison.Ordinal))) {
-      return named.Value.Value as bool?;
-    }
-
-    return null;
-  }
+  private static bool? _namedFlag(AttributeData attribute, string key) =>
+    attribute.NamedArguments
+        .Where(n => string.Equals(n.Key, key, StringComparison.Ordinal))
+        .Select(n => n.Value.Value as bool?)
+        .FirstOrDefault();
 
   /// <summary>
   /// Whether the field, its model or any of the model's bases, the type that declares the field,

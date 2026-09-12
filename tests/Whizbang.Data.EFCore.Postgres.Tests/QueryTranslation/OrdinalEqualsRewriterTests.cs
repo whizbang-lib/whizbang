@@ -157,6 +157,54 @@ public class OrdinalEqualsRewriterTests {
   }
 
   /// <summary>
+  /// The static spelling translates too, since which operand holds the member is incidental.
+  /// </summary>
+  /// <remarks>
+  /// <c>string.Equals(a, b, comparison)</c> is the same comparison as the instance form and arrives
+  /// as a different shape: three arguments and no receiver. Both are recognized, and a test for only
+  /// one of them would leave half the recognition unexercised.
+  /// </remarks>
+  [Test]
+  public async Task TheStaticSpellingAlsoTranslatesAsync() {
+    await using var db = new OrdinalDbContext(_options);
+
+    var sql = db.Set<PerspectiveRow<OrdinalModel>>()
+      .Where(r => string.Equals(r.Data.Code, "static", StringComparison.Ordinal))
+      .ToQueryString();
+
+    await Assert.That(sql).Contains("@>", StringComparison.Ordinal)
+      .Because("the static overload is the same comparison, so it has to reach the same index");
+  }
+
+  /// <summary>
+  /// An <c>Equals</c> with no comparison argument is left alone, because nothing needs doing to it.
+  /// </summary>
+  /// <remarks>
+  /// Entity Framework already translates both of these. The pass exists only for the overload it
+  /// refuses, so recognizing these would be work for nothing and a chance to get an operand wrong.
+  /// The query still has to compile, which is what this asserts.
+  /// </remarks>
+  [Test]
+  [Arguments("instance")]
+  [Arguments("static")]
+  [SuppressMessage("Globalization", "CA1309:Use ordinal string comparison",
+    Justification = "The absence of a StringComparison argument is the shape under test.")]
+  public async Task AnEqualsWithoutAComparisonIsLeftAloneAsync(string spelling) {
+    await using var db = new OrdinalDbContext(_options);
+    var rows = db.Set<PerspectiveRow<OrdinalModel>>();
+
+    var sql = spelling switch {
+      "instance" => rows.Where(r => r.Data.Code.Equals("plain")).ToQueryString(),
+      "static" => rows.Where(r => string.Equals(r.Data.Code, "plain")).ToQueryString(),
+      _ => throw new InvalidOperationException(spelling),
+    };
+
+    await Assert.That(sql).Contains("data", StringComparison.Ordinal)
+      .Because("Entity Framework translates these on its own, so the pass has to leave them "
+        + "untouched rather than reshape an overload it was not written for");
+  }
+
+  /// <summary>
   /// It works with no containment mechanism in force, because it is not part of either.
   /// </summary>
   [Test]

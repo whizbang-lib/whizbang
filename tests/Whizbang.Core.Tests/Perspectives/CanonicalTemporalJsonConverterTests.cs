@@ -363,7 +363,7 @@ public class CanonicalTemporalJsonConverterTests {
   [Test]
   public async Task AnExplicitNullReadsBackAsAbsentAsync() {
     var options = _optionsFor(SerializationProfile.Persistence);
-    var json = """
+    const string json = """
       {"OccurredAt": 0, "RecordedAt": 0, "Day": 0, "Clock": 0, "Elapsed": 0, "MaybeAt": null}
       """;
 

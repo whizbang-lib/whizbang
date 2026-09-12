@@ -193,6 +193,51 @@ public class JsonbContainmentRewriterGuardTests {
   }
 
   /// <summary>
+  /// An asynchronous filtering operator is a filtering operator.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The operator names are matched after an <c>Async</c> suffix is stripped, because the same
+  /// predicates arrive from <c>Queryable</c>, from <c>Enumerable</c> and from Entity Framework's
+  /// asynchronous extensions. A repository writes <c>AnyAsync</c> far more often than <c>Any</c>, so
+  /// this is the common path rather than an edge of one: without the strip, the name would not match
+  /// and every filter written asynchronously would quietly keep the extraction form.
+  /// </para>
+  /// <para>
+  /// The call is built rather than written, because <c>AnyAsync</c> executes against a provider and
+  /// what is needed here is only its tree. The method comes from a delegate over a statically
+  /// referenced method, so nothing is looked up by name.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AnAsynchronousOperatorIsStillAPredicateAsync() {
+    using var db = _newContext();
+
+    var source = Enumerable.Empty<PerspectiveRow<GuardModel>>().AsQueryable();
+    Expression<Func<PerspectiveRow<GuardModel>, bool>> predicate = r => r.Data.Code == "v";
+
+    var anyAsync = ((Func<IQueryable<PerspectiveRow<GuardModel>>,
+                          Expression<Func<PerspectiveRow<GuardModel>, bool>>,
+                          CancellationToken,
+                          Task<bool>>)EntityFrameworkQueryableExtensions.AnyAsync).Method;
+
+    var call = Expression.Call(
+      anyAsync,
+      source.Expression,
+      Expression.Quote(predicate),
+      Expression.Constant(CancellationToken.None));
+
+    var rewritten = new JsonbContainmentRewriter(db.Model).Visit(call);
+
+    var finder = new MarkerFinder();
+    finder.Visit(rewritten);
+
+    await Assert.That(finder.Found).IsTrue()
+      .Because("AnyAsync is Any, and a filter written asynchronously must reach the index the "
+        + "synchronous spelling reaches");
+  }
+
+  /// <summary>
   /// An ordinary filter is rewritten, so every decline below is a decline and not a dead harness.
   /// </summary>
   /// <remarks>
@@ -218,7 +263,7 @@ public class JsonbContainmentRewriterGuardTests {
   public async Task AnEqualsOfAnUnexpectedArityIsDeclinedAsync(string shape) {
     var plants = shape switch {
       "three-argument instance" => _plantsAMarkerFor<GuardModel>(r => r.Data.Odd.Equals(1, 1, 1)),
-      "one-argument static" => _plantsAMarkerFor<GuardModel>(r => Oddity.Equals(0)),
+      "one-argument static" => _plantsAMarkerFor<GuardModel>(_ => Oddity.Equals(0)),
       _ => throw new InvalidOperationException(shape),
     };
 
@@ -264,7 +309,7 @@ public class JsonbContainmentRewriterGuardTests {
   /// </remarks>
   [Test]
   public async Task AStaticMemberIsDeclinedAsync() =>
-    await Assert.That(_plantsAMarkerFor<GuardModel>(r => Elsewhere == "x")).IsFalse()
+    await Assert.That(_plantsAMarkerFor<GuardModel>(_ => Elsewhere == "x")).IsFalse()
       .Because("nothing about a static read is a path into a document");
 
   /// <summary>

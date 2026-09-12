@@ -113,8 +113,16 @@ public class JsonbContainmentAuthoringTests {
     }
   }
 
+  // Three ways to reach the same value, because the rewrite has to read the member out of each of
+  // them. A const would be inlined by the compiler as a literal, which is a different case that the
+  // literal rows already cover, so these stay fields and a method.
   private readonly string _instanceField = "v";
+
+  [SuppressMessage("Readability", "RCS1187:Use constant instead of field",
+    Justification = "A const is inlined into the expression tree as a literal, so making this one "
+      + "would turn the static-field case into the literal case and stop testing a field read.")]
   private static readonly string _staticField = "v";
+
   private static string _method() => "v";
 
   // ========================================

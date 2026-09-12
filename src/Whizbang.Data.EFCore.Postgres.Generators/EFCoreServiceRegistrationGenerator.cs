@@ -761,12 +761,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var propertyName = property.Name;
     var typeName = TypeNameUtilities.FullyQualified(property.Type);
 
-    // Extract named arguments
+    // [Indexed] is the only way to ask for an index, and a promoted field uses the same attribute a
+    // document field does: [PhysicalField] says promote, [Indexed] says index, and together they say
+    // promote and index. [PhysicalField(Indexed = true)] is gone rather than deprecated, so the
+    // named arguments below are the ones that describe the column itself.
     bool isIndexed = JsonIndexDiscovery.DeclaredKind(property) is > 0;
-    // [Indexed] is the universal way to ask for an index, so a promoted field uses the same attribute
-    // a document field does: [PhysicalField] says promote, [Indexed] says index, and together they
-    // say promote and index. PhysicalField's own Indexed flag still works for code written before
-    // that, so either spelling is honored and neither turns the other off.
 
     bool isUnique = false;
     string? columnName = null;
@@ -2458,8 +2457,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Appends indexes for physical fields marked with Indexed = true, including vector indexes.
+  /// Appends indexes for promoted fields that declared <c>[Indexed]</c>, vector fields included.
   /// </summary>
+  /// <remarks>
+  /// A vector is no longer indexed by being a vector. It asks with <c>[Indexed]</c> like every other
+  /// field, which is the opt-in principle the rest of this surface follows, so a <c>[VectorField]</c>
+  /// that declares nothing gets a column and no index.
+  /// </remarks>
   private static void _appendPhysicalFieldIndexes(
       StringBuilder sb,
       PerspectiveModelInfo perspective,

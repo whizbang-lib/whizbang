@@ -857,7 +857,7 @@ public class ContainmentTypeEligibilityProbeTests : IAsyncDisposable {
     }
 
     await Assert.That(created.Select(g => g.ToString()).Order(StringComparer.Ordinal).ToList())
-      .IsEquivalentTo(created.Select(g => g.ToString()).ToList())
+      .IsEquivalentTo(created.ConvertAll(g => g.ToString()))
       .Because("a version 7 identifier's text rendering sorts in creation order");
 
     var agrees = await _scalarAsync(
