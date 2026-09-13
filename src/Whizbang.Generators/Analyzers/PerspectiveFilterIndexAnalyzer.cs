@@ -48,6 +48,20 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
   private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.Perspectives.SuppressIndexAdvisoryAttribute";
 
+  /// <summary>Which expression a comparison is over, of the ones an index can be built on.</summary>
+  private enum Fold {
+    /// <summary>The stored value, compared as it is stored.</summary>
+    Respects,
+
+    /// <summary>The value folded down, which is the fold a declaration can ask for.</summary>
+    Lower,
+
+    /// <summary>The value folded up, which no declaration builds an index over.</summary>
+    Upper,
+  }
+
+  private const string ASYNC_SUFFIX = "Async";
+
   /// <summary>The string operations a trigram index answers.</summary>
   private static readonly HashSet<string> _substringOperators = new(StringComparer.Ordinal) {
     "Contains", "StartsWith", "EndsWith",
@@ -71,19 +85,6 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
     ["ToLower"] = Fold.Lower,
     ["ToUpper"] = Fold.Upper,
   };
-
-  /// <summary>Which expression a comparison is over, of the ones an index can be built on.</summary>
-  private enum Fold {
-    /// <summary>The stored value, compared as it is stored.</summary>
-    Respects,
-
-    /// <summary>The value folded down, which is the fold a declaration can ask for.</summary>
-    Lower,
-
-    /// <summary>The value folded up, which no declaration builds an index over.</summary>
-    Upper,
-  }
-  private const string ASYNC_SUFFIX = "Async";
 
   /// <summary>
   /// The operators whose lambda decides which rows the database has to look at. Projection and
@@ -115,7 +116,10 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
                    "constraints and foreign keys and is the only option for a type whose stored form cannot carry an index, " +
                    "a date being the case that matters. When a scan is the right answer, say so with " +
                    "[SuppressIndexAdvisory(\"reason\")]: the reason is required, a blank one does not suppress, and the same " +
-                   "attribute also stands down the runtime index advisory raised by the maintenance cycle. A model holding " +
+                   "attribute also stands down the runtime index advisory raised by the maintenance cycle. A declaration " +
+                   "counts for the comparison it matches rather than for every query on the field: the capability has to " +
+                   "answer the shape, and the index has to be built over the expression the comparison produces, so a " +
+                   "comparison folding case with ToLower() is answered only by [Indexed(caseInsensitive: true)]. A model holding " +
                    "a polymorphic member is stored as one serialized value rather than as mapped properties, so an index " +
                    "over a field inside it cannot be reached at all; there the message offers only the column, because " +
                    "taking the other advice would land on WHIZ304."
