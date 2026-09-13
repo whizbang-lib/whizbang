@@ -21,7 +21,11 @@
     <!-- Suppress code analysis rules for source generator helper library -->
     <!-- CA1716: "Shared" is VB.NET keyword but this is C#-only project, no interop concerns -->
     <!-- CA1707: MSBuild property constants use ALL_CAPS with underscores per .editorconfig convention -->
-    <NoWarn>$(NoWarn);CA1716;CA1707</NoWarn>
+    <!-- RS2008: this project holds a diagnostic descriptor shared by the integration analyzers,
+         so that two of them reporting one condition cannot describe it two ways. Release
+         tracking is not used anywhere in this repository; Whizbang.Generators suppresses the
+         same rule for the same reason. -->
+    <NoWarn>$(NoWarn);CA1716;CA1707;RS2008</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
