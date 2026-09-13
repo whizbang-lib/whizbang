@@ -141,6 +141,10 @@ public static class GeneratorTestHelpers {
       MetadataReference.CreateFromFile(typeof(Core.IEvent).GetTypeInfo().Assembly.Location), // Whizbang.Core
       MetadataReference.CreateFromFile(typeof(DbContext).GetTypeInfo().Assembly.Location), // EF Core
       MetadataReference.CreateFromFile(typeof(WhizbangDbContextAttribute).GetTypeInfo().Assembly.Location), // Whizbang.Data.EFCore.Custom
+      // [NotMapped] lives here. Without it the attribute does not bind, and a test about a
+      // property being excluded would silently be reporting the reference list instead.
+      MetadataReference.CreateFromFile(
+        typeof(System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute).GetTypeInfo().Assembly.Location),
     };
 
     return CSharpCompilation.Create(
