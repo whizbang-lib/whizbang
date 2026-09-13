@@ -129,10 +129,20 @@ public class PerspectiveWorkerDedupTests {
 
     var (worker, harness) = _createWorker(coordinator, registry);
 
-    // Act — wait for runner to be called twice (once per cycle)
+    // Act — drive the two cycles from the test rather than from a fire-and-forget pump loop.
+    //
+    // This test needs exactly two cycles, and a background loop adds a thread-pool task that has to
+    // be scheduled repeatedly, plus a 20ms delay between cycles, under whatever load the rest of the
+    // suite is generating. That is what the signal backstop in this file was raised from 5s to 60s
+    // for, and it tripped again at 60s in CI while the invariant below held: a starved pump reports
+    // "the worker did not process the work" for what was really "nothing ran the pump". Pumping each
+    // cycle here removes the dependency instead of postponing it, and the wait after each cycle is
+    // still a completion signal the worker satisfies immediately when healthy.
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    _ = coordinator.RunPumpLoopAsync(harness, cts.Token);
+    await coordinator.PumpCycleAsync(harness, cts.Token);
+    await runner.WaitForRunCallsAsync(1, _signalTimeout);
+    await coordinator.PumpCycleAsync(harness, cts.Token);
     await runner.WaitForRunCallsAsync(2, _signalTimeout);
     await cts.CancelAsync();
     // Barrier is the worker BODY, not StartAsync's task -- see the first test in this file.

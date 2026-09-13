@@ -38,6 +38,11 @@ public static class GeneratorTestHelper {
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    // IQueryable lives in these two, not in System.Linq. Without them a source using it still parses,
+    // so a generator test over a queryable-returning surface finds no symbol and reports nothing
+    // generated, which reads exactly like a generator that declined to emit.
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
 
     // Add reference to System.Text.Json (for [JsonPolymorphic], [JsonDerivedType], etc.)
@@ -213,6 +218,11 @@ public static class GeneratorTestHelper {
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    // IQueryable lives in these two, not in System.Linq. Without them a source using it still parses,
+    // so a generator test over a queryable-returning surface finds no symbol and reports nothing
+    // generated, which reads exactly like a generator that declined to emit.
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Expressions.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.Queryable.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
 
     // Add reference to System.Text.Json (for [JsonPolymorphic], [JsonDerivedType], etc.)

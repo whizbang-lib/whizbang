@@ -37,6 +37,12 @@ namespace Whizbang.Sagas.Generated;
 // pair of registrations is needed for publish + transport-consume.
 [JsonSerializable(typeof(SagaCompletionAbandonedEvent))]
 [JsonSerializable(typeof(MessageEnvelope<SagaCompletionAbandonedEvent>))]
+// SagaContinuationRequestedEvent — bare + envelope. Emitted by
+// BaseSagaService.CompleteSagaAsync for each declared continuation whose trigger
+// matches the final status. The request crosses the transport like any other
+// framework-published saga event, so it needs the same pair.
+[JsonSerializable(typeof(SagaContinuationRequestedEvent))]
+[JsonSerializable(typeof(MessageEnvelope<SagaContinuationRequestedEvent>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class SagasJsonContext : JsonSerializerContext;

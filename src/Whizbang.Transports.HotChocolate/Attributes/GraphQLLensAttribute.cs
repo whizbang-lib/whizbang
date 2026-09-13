@@ -34,6 +34,10 @@ namespace Whizbang.Transports.HotChocolate;
 ///     MaxPageSize = 100)]
 /// public interface IRecentOrderLens : ILensQuery&lt;OrderReadModel&gt; { }
 /// </example>
+// Sorting and filtering here are composed from the request, so the build cannot see which
+// fields reach an ORDER BY. The marker says so once; EnableSorting and EnableFiltering below
+// narrow it when a surface turns one off.
+[global::Whizbang.Core.Perspectives.ComposesQueryFromRequest]
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Interface, AllowMultiple = false, Inherited = false)]
 public sealed class GraphQLLensAttribute : Attribute {
   /// <summary>

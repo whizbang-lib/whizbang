@@ -13,18 +13,19 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 public static class AnalyzerTestHelper {
   /// <summary>
-  /// Runs an analyzer against the provided source code (and optional AdditionalFiles) and returns diagnostics.
+  /// A compilation over the source with the framework references the analyzers need.
   /// </summary>
-  /// <typeparam name="TAnalyzer">The type of analyzer to run</typeparam>
-  /// <param name="source">The C# source code to compile</param>
-  /// <param name="additionalFiles">Optional (path, content) pairs surfaced to the analyzer as AdditionalFiles
-  /// (e.g. a pinned-type-ledger.json). Null/empty means no AdditionalFiles.</param>
-  /// <returns>The diagnostics reported by the analyzer</returns>
+  /// <param name="source">The source to compile.</param>
+  /// <returns>The compilation, whose diagnostics say whether the framework attributes bound.</returns>
+  /// <remarks>
+  /// Shared with <see cref="GetDiagnosticsAsync"/> rather than copied, because a test that asks a
+  /// question about symbols has to compile against the same references the analyzer will see. A
+  /// separate reference list drifts, and the failure is quiet: an attribute that does not bind looks
+  /// exactly like an attribute nobody wrote, so a test measures the reference list and reads as a
+  /// statement about behavior.
+  /// </remarks>
   [RequiresAssemblyFiles()]
-  public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
-      string source, (string path, string content)[]? additionalFiles = null)
-      where TAnalyzer : DiagnosticAnalyzer, new() {
-
+  public static Compilation CreateCompilationWithFrameworkReferences(string source) {
     // Parse the source code
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
@@ -73,16 +74,39 @@ public static class AnalyzerTestHelper {
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
 
+    return compilation;
+  }
+
+  /// <summary>
+  /// Runs an analyzer against the provided source code (and optional AdditionalFiles) and returns diagnostics.
+  /// </summary>
+  /// <typeparam name="TAnalyzer">The type of analyzer to run</typeparam>
+  /// <param name="source">The C# source code to compile</param>
+  /// <param name="additionalFiles">Optional (path, content) pairs surfaced to the analyzer as AdditionalFiles
+  /// (e.g. a pinned-type-ledger.json). Null/empty means no AdditionalFiles.</param>
+  /// <returns>The diagnostics reported by the analyzer</returns>
+  [RequiresAssemblyFiles()]
+  public static async Task<ImmutableArray<Diagnostic>> GetDiagnosticsAsync<TAnalyzer>(
+      string source,
+      (string path, string content)[]? additionalFiles = null,
+      Dictionary<string, string>? globalOptions = null)
+      where TAnalyzer : DiagnosticAnalyzer, new() {
+
+    var compilation = CreateCompilationWithFrameworkReferences(source);
+
     // Create analyzer instance
     var analyzer = new TAnalyzer();
 
-    // Surface any AdditionalFiles (e.g. the pinned-type ledger) to the analyzer.
+    // Surface any AdditionalFiles (e.g. the pinned-type ledger) and any build properties an analyzer
+    // reads through AnalyzerConfigOptions. Both have to be supplied here or the analyzer sees an
+    // empty configuration and a test about a configured option would pass for the wrong reason.
     AnalyzerOptions? analyzerOptions = null;
-    if (additionalFiles is { Length: > 0 }) {
-      var texts = additionalFiles
+    if (additionalFiles is { Length: > 0 } || globalOptions is { Count: > 0 }) {
+      var texts = (additionalFiles ?? [])
         .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
         .ToImmutableArray();
-      analyzerOptions = new AnalyzerOptions(texts);
+      analyzerOptions = new AnalyzerOptions(
+        texts, new TestAnalyzerConfigOptionsProvider(globalOptions ?? []));
     }
 
     // Create compilation with analyzers
@@ -92,6 +116,30 @@ public static class AnalyzerTestHelper {
     var diagnostics = await compilationWithAnalyzers.GetAnalyzerDiagnosticsAsync();
 
     return diagnostics;
+  }
+
+  /// <summary>
+  /// Supplies build properties to an analyzer that reads <c>AnalyzerConfigOptions</c>.
+  /// </summary>
+  /// <remarks>
+  /// Only the global options are populated. A per-tree lookup would need a real editorconfig, and no
+  /// analyzer here reads one; returning the same empty set for every tree keeps the harness honest
+  /// about what it actually provides.
+  /// </remarks>
+  private sealed class TestAnalyzerConfigOptionsProvider(Dictionary<string, string> globalOptions)
+    : AnalyzerConfigOptionsProvider {
+    public override AnalyzerConfigOptions GlobalOptions { get; } = new TestAnalyzerConfigOptions(globalOptions);
+
+    public override AnalyzerConfigOptions GetOptions(SyntaxTree tree) =>
+      new TestAnalyzerConfigOptions([]);
+
+    public override AnalyzerConfigOptions GetOptions(AdditionalText textFile) =>
+      new TestAnalyzerConfigOptions([]);
+  }
+
+  private sealed class TestAnalyzerConfigOptions(Dictionary<string, string> options) : AnalyzerConfigOptions {
+    public override bool TryGetValue(string key, out string value) =>
+      options.TryGetValue(key, out value!);
   }
 
   /// <summary>Minimal in-memory <see cref="AdditionalText"/> for supplying AdditionalFiles content in tests.</summary>

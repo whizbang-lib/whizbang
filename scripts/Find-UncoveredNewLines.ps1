@@ -66,8 +66,14 @@ function Get-RelativeSourcePath([string]$fileName, [string[]]$sources) {
     $prefix = (($s -replace '\\', '/').TrimEnd('/')) + '/'
     if ($fn.StartsWith($prefix)) { $fn = $fn.Substring($prefix.Length) }
   }
-  $i = $fn.IndexOf('src/')
-  if ($i -gt 0) { $fn = $fn.Substring($i) }
+  # Anchor on the LAST '/src/', not the first 'src/'. A checkout living under a path that itself
+  # contains a 'src' segment (a developer's ~/src/<repo>, which is an ordinary layout) normalized to
+  # 'src/<user-dirs>/.../src/Whizbang.Core/X.cs', which matches no path git diff reports. The gate
+  # then found zero changed files with coverage and printed a clean result, so running it locally
+  # said "nothing uncovered" no matter what the branch actually did. CI was unaffected only because
+  # its checkout path happens to contain 'src' exactly once.
+  $i = $fn.LastIndexOf('/src/')
+  if ($i -ge 0) { $fn = $fn.Substring($i + 1) }
   return $fn
 }
 
