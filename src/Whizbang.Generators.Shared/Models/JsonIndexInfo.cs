@@ -139,24 +139,15 @@ public static class JsonIndexSql {
   /// would build an index the planner cannot use for exactly the queries it exists to serve.
   /// </para>
   /// </remarks>
-  public static string Expression(string column, string jsonKey, JsonIndexCast cast) =>
-    Expression(column, jsonKey, cast, caseInsensitive: false);
-
-  /// <summary>
-  /// The index element for a field, folded when the comparison it serves folds case.
-  /// </summary>
-  /// <param name="column">The document column, ordinarily <c>data</c>.</param>
-  /// <param name="jsonKey">The key the field is stored under.</param>
-  /// <param name="cast">The store type to cast the extraction to.</param>
-  /// <param name="caseInsensitive">Whether to build over the folded value.</param>
-  /// <returns>One index element, parenthesized.</returns>
-  /// <remarks>
-  /// The fold wraps the extraction rather than the cast, because it is only ever applied to text and
-  /// text takes no cast. An index folded this way is the only one a predicate over
-  /// <c>lower(…)</c> can use, and it is no use at all to a comparison that respects case, which is
-  /// why the two are separate declarations rather than one index serving both.
-  /// </remarks>
-  public static string Expression(string column, string jsonKey, JsonIndexCast cast, bool caseInsensitive) {
+  /// <param name="caseInsensitive">
+  /// Whether to build over the folded value. The fold wraps the extraction rather than the cast,
+  /// because it is only ever applied to text and text takes no cast. An index folded this way is the
+  /// only one a predicate over <c>lower(…)</c> can use, and it is no use at all to a comparison that
+  /// respects case, which is why the two are separate declarations rather than one index serving
+  /// both.
+  /// </param>
+  public static string Expression(
+      string column, string jsonKey, JsonIndexCast cast, bool caseInsensitive = false) {
     var extraction = $"({column} ->> '{jsonKey}')";
 
     if (caseInsensitive) {
