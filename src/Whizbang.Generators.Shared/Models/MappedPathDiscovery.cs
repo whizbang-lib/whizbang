@@ -202,10 +202,11 @@ public static class MappedPathDiscovery {
       return true;
     }
 
-    var containing = type.ContainingNamespace is { } ns ? TypeNameUtilities.Display(ns) : null;
+    // Empty rather than null for a type with no containing namespace: it answers both checks
+    // correctly and leaves no null for one analyzer to want guarded and another to want conditional.
+    var containing = type.ContainingNamespace is { } ns ? TypeNameUtilities.Display(ns) : string.Empty;
 
-    return containing is not null
-      && containing.StartsWith("System", System.StringComparison.Ordinal)
+    return containing.StartsWith("System", System.StringComparison.Ordinal)
       && !containing.StartsWith("System.Collections", System.StringComparison.Ordinal);
   }
 }

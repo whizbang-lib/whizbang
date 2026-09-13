@@ -1106,9 +1106,9 @@ public class PerspectiveFilterIndexAnalyzerTests {
 
     await Assert.That(message).IsNotNull()
       .Because("an ordering on a field inside an opaque document still reads every row");
-    await Assert.That(message!).Contains("Messages", StringComparison.Ordinal)
+    await Assert.That(message).Contains("Messages", StringComparison.Ordinal)
       .Because("the member the mapped path cannot construct is the thing to change, so it is named");
-    await Assert.That(message!).DoesNotContain("polymorphic", StringComparison.Ordinal)
+    await Assert.That(message).DoesNotContain("polymorphic", StringComparison.Ordinal)
       .Because("there is no polymorphic member here, and saying there is sends the reader hunting "
         + "for an abstract type that does not exist");
   }
