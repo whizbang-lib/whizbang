@@ -41,13 +41,13 @@ public class SagaContinuationTests {
   [Test]
   public async Task ADeclaredContinuationIsReturnedAsync() {
     SagaContinuationRegistry.Register(
-      "ContinuationTestsReturned", new SagaContinuation(CHILD, SagaContinuationTrigger.RanToTheEnd));
+      "ContinuationTestsReturned", new SagaContinuation(CHILD, SagaContinuationTriggers.RanToTheEnd));
 
     var continuations = SagaContinuationRegistry.For("ContinuationTestsReturned");
 
     await Assert.That(continuations.Count).IsEqualTo(1);
     await Assert.That(continuations[0].SagaName).IsEqualTo(CHILD);
-    await Assert.That(continuations[0].Trigger).IsEqualTo(SagaContinuationTrigger.RanToTheEnd);
+    await Assert.That(continuations[0].Trigger).IsEqualTo(SagaContinuationTriggers.RanToTheEnd);
   }
 
   /// <summary>
@@ -80,7 +80,7 @@ public class SagaContinuationTests {
   public async Task TheDefaultTriggerIsRanToTheEndAsync() {
     var continuation = new SagaContinuation(CHILD);
 
-    await Assert.That(continuation.Trigger).IsEqualTo(SagaContinuationTrigger.RanToTheEnd);
+    await Assert.That(continuation.Trigger).IsEqualTo(SagaContinuationTriggers.RanToTheEnd);
     await Assert.That(continuation.StartsAfter(SagaStatus.Completed)).IsTrue();
     await Assert.That(continuation.StartsAfter(SagaStatus.CompletedWithFailures)).IsTrue()
       .Because("a partial run still produced work for the follow-on to do");
@@ -91,7 +91,7 @@ public class SagaContinuationTests {
   /// <summary>A narrower trigger excludes what it does not name.</summary>
   [Test]
   public async Task ANarrowTriggerOnlyStartsOnWhatItNamesAsync() {
-    var continuation = new SagaContinuation(CHILD, SagaContinuationTrigger.Completed);
+    var continuation = new SagaContinuation(CHILD, SagaContinuationTriggers.Completed);
 
     await Assert.That(continuation.StartsAfter(SagaStatus.Completed)).IsTrue();
     await Assert.That(continuation.StartsAfter(SagaStatus.CompletedWithFailures)).IsFalse();
@@ -100,7 +100,7 @@ public class SagaContinuationTests {
   /// <summary>A trigger can name the aborted case, for cleanup that only runs on failure.</summary>
   [Test]
   public async Task AFailureTriggerStartsOnAbortAsync() {
-    var continuation = new SagaContinuation(CHILD, SagaContinuationTrigger.Failed);
+    var continuation = new SagaContinuation(CHILD, SagaContinuationTriggers.Failed);
 
     await Assert.That(continuation.StartsAfter(SagaStatus.Failed)).IsTrue();
     await Assert.That(continuation.StartsAfter(SagaStatus.Completed)).IsFalse();
@@ -118,9 +118,9 @@ public class SagaContinuationTests {
   public async Task ANonTerminalStatusNeverStartsAContinuationAsync(SagaStatus status) {
     var everything = new SagaContinuation(
       CHILD,
-      SagaContinuationTrigger.Completed
-        | SagaContinuationTrigger.CompletedWithFailures
-        | SagaContinuationTrigger.Failed);
+      SagaContinuationTriggers.Completed
+        | SagaContinuationTriggers.CompletedWithFailures
+        | SagaContinuationTriggers.Failed);
 
     await Assert.That(everything.StartsAfter(status)).IsFalse();
   }
@@ -135,6 +135,28 @@ public class SagaContinuationTests {
     await Assert.That(() => SagaContinuationRegistry.Register(PARENT, null!))
       .Throws<ArgumentNullException>();
     await Assert.That(() => SagaContinuationRegistry.For("")).Throws<ArgumentException>();
+  }
+
+  /// <summary>
+  /// The attribute carries what was written on it, including its default.
+  /// </summary>
+  /// <remarks>
+  /// The generator reads this through Roslyn symbols, so the build path never constructs it. The
+  /// default is worth pinning anyway: it is what every <c>[ContinuesWith("X")]</c> with no trigger
+  /// means, and changing it would silently rewire every such declaration at once.
+  /// </remarks>
+  [Test]
+  public async Task TheAttributeCarriesWhatWasWrittenAsync() {
+    var declared = new ContinuesWithAttribute(CHILD);
+
+    await Assert.That(declared.SagaName).IsEqualTo(CHILD);
+    await Assert.That(declared.Trigger).IsEqualTo(SagaContinuationTriggers.RanToTheEnd)
+      .Because("a partially failed run still produced state the follow-on applies to");
+
+    var narrowed = new ContinuesWithAttribute("Cleanup", SagaContinuationTriggers.Failed);
+
+    await Assert.That(narrowed.SagaName).IsEqualTo("Cleanup");
+    await Assert.That(narrowed.Trigger).IsEqualTo(SagaContinuationTriggers.Failed);
   }
 
   /// <summary>
@@ -207,7 +229,7 @@ public class SagaContinuationTests {
   public async Task AStatusTheTriggerExcludesRequestsNothingAsync() {
     const string PARENT_NAME = "ContinuationTestsExcluded";
     SagaContinuationRegistry.Register(
-      PARENT_NAME, new SagaContinuation(CHILD, SagaContinuationTrigger.Completed));
+      PARENT_NAME, new SagaContinuation(CHILD, SagaContinuationTriggers.Completed));
 
     var emitter = new RecordingEmitter();
     var service = new ChainTestSagaService(PARENT_NAME, emitter);

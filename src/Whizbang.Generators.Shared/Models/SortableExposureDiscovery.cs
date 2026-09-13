@@ -145,6 +145,24 @@ public static class SortableExposureDiscovery {
     return declared;
   }
 
+  /// <summary>The model a surface exposes, whatever shape the surface is.</summary>
+  /// <param name="symbol">The type or member carrying a query-composing attribute.</param>
+  /// <returns>The model, or null when the symbol exposes none.</returns>
+  /// <remarks>
+  /// A lens states its model by implementing <c>ILensQuery</c> of it; a resolver states it by handing
+  /// back a queryable of it. Both reach the same place, so the dispatch lives here rather than being
+  /// written once per caller: two copies of it would be two chances to teach one of them about a new
+  /// surface shape and forget the other. A lens over several models answers with the first, which is
+  /// what a caller wanting one model means; callers that report on all of them use
+  /// <see cref="ModelsOfLens"/> directly.
+  /// </remarks>
+  public static INamedTypeSymbol? ModelExposedBy(ISymbol? symbol) => symbol switch {
+    INamedTypeSymbol type => ModelsOfLens(type).FirstOrDefault(),
+    IMethodSymbol method => ModelOfQueryable(method.ReturnType),
+    IPropertySymbol property => ModelOfQueryable(property.Type),
+    _ => null,
+  };
+
   /// <summary>The models a lens declaration exposes.</summary>
   /// <param name="lens">The interface or class carrying the surface's attribute.</param>
   /// <returns>Each model the lens queries, empty when the type is not a lens.</returns>
@@ -241,13 +259,13 @@ public static class SortableExposureDiscovery {
       : named;
   }
 
-  /// <summary>QueryExposure.Filtering, as the enumeration spells it.</summary>
+  /// <summary>QueryExposures.Filtering, as the enumeration spells it.</summary>
   private const int EXPOSURE_FILTERING = 1;
 
-  /// <summary>QueryExposure.Ordering.</summary>
+  /// <summary>QueryExposures.Ordering.</summary>
   private const int EXPOSURE_ORDERING = 2;
 
-  /// <summary>QueryExposure.Expression.</summary>
+  /// <summary>QueryExposures.Expression.</summary>
   private const int EXPOSURE_EXPRESSION = 4;
 
   /// <summary>Whether an exposure lets a request choose the order, which is the expensive case.</summary>

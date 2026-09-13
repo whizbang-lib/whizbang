@@ -15,7 +15,7 @@ namespace Whizbang.Core.Perspectives;
 /// </remarks>
 /// <docs>operations/diagnostics/whiz306</docs>
 [Flags]
-public enum QueryExposure {
+public enum QueryExposures {
   /// <summary>Not reachable from a request-composed query.</summary>
   None = 0,
 
@@ -54,7 +54,7 @@ public enum QueryExposure {
 /// <docs>operations/diagnostics/whiz306</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/QueryExposureRegistryTests.cs</tests>
 public static class QueryExposureRegistry {
-  private static readonly ConcurrentDictionary<Type, QueryExposure> _exposures = new();
+  private static readonly ConcurrentDictionary<Type, QueryExposures> _exposures = new();
   private static readonly ConcurrentDictionary<Type, ImmutableArray<string>> _unindexedFields = new();
 
   /// <summary>
@@ -62,7 +62,7 @@ public static class QueryExposureRegistry {
   /// </summary>
   /// <typeparam name="TModel">The perspective's model type.</typeparam>
   /// <param name="exposure">The ways a request can shape the query.</param>
-  public static void Register<TModel>(QueryExposure exposure) => Register(typeof(TModel), exposure);
+  public static void Register<TModel>(QueryExposures exposure) => Register(typeof(TModel), exposure);
 
   /// <summary>
   /// Records that a model is reachable by a request-composed query, and which of its fields had no
@@ -75,7 +75,7 @@ public static class QueryExposureRegistry {
   /// answer, when the model asked to index all of them, when the author recorded a decision, or when
   /// the model is stored opaquely and has no per-field extraction to index.
   /// </param>
-  public static void Register<TModel>(QueryExposure exposure, params string[] unindexedFields) =>
+  public static void Register<TModel>(QueryExposures exposure, params string[] unindexedFields) =>
     Register(typeof(TModel), exposure, unindexedFields);
 
   /// <summary>
@@ -101,10 +101,10 @@ public static class QueryExposureRegistry {
   /// </para>
   /// </remarks>
   public static void Register(
-      Type modelType, QueryExposure exposure, IReadOnlyList<string>? unindexedFields = null) {
+      Type modelType, QueryExposures exposure, IReadOnlyList<string>? unindexedFields = null) {
     ArgumentNullException.ThrowIfNull(modelType);
 
-    if (exposure == QueryExposure.None) {
+    if (exposure == QueryExposures.None) {
       return;
     }
 
@@ -138,11 +138,11 @@ public static class QueryExposureRegistry {
   /// How a request can shape queries over this model, across every surface that registered it.
   /// </summary>
   /// <param name="modelType">The perspective's model type.</param>
-  /// <returns>The combined exposure, or <see cref="QueryExposure.None"/> when nothing registered it.</returns>
-  public static QueryExposure Of(Type modelType) {
+  /// <returns>The combined exposure, or <see cref="QueryExposures.None"/> when nothing registered it.</returns>
+  public static QueryExposures Of(Type modelType) {
     ArgumentNullException.ThrowIfNull(modelType);
 
-    return _exposures.TryGetValue(modelType, out var exposure) ? exposure : QueryExposure.None;
+    return _exposures.TryGetValue(modelType, out var exposure) ? exposure : QueryExposures.None;
   }
 
   /// <summary>
@@ -156,10 +156,10 @@ public static class QueryExposureRegistry {
   /// index built for it. Filtering alone may still be answered by containment.
   /// </remarks>
   public static bool CanBeOrdered(Type modelType) =>
-    (Of(modelType) & (QueryExposure.Ordering | QueryExposure.Expression)) != QueryExposure.None;
+    (Of(modelType) & (QueryExposures.Ordering | QueryExposures.Expression)) != QueryExposures.None;
 
   /// <summary>Every model a surface has registered, for the maintenance cycle to report on.</summary>
   /// <returns>The registered models and their combined exposure.</returns>
-  public static IReadOnlyDictionary<Type, QueryExposure> All() =>
-    new Dictionary<Type, QueryExposure>(_exposures);
+  public static IReadOnlyDictionary<Type, QueryExposures> All() =>
+    new Dictionary<Type, QueryExposures>(_exposures);
 }

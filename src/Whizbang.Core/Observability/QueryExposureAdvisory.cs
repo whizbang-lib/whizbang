@@ -98,7 +98,7 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
       if (_claim(model)) {
         LogExposedPerspectiveIsLarge(
           _logger, model.Name, table, bytes / (1024 * 1024), exposure.ToString(),
-          unindexed.Count, string.Join(", ", unindexed), null);
+          unindexed.Count, string.Join(", ", unindexed));
         reported++;
       }
     }
@@ -147,5 +147,5 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
         + "[SuppressIndexAdvisory(\"reason\")]. Reported once per process.")]
   static partial void LogExposedPerspectiveIsLarge(
     ILogger logger, string ModelName, string TableName, long SizeMegabytes, string Exposure,
-    int UnindexedCount, string UnindexedFields, Exception? exception);
+    int UnindexedCount, string UnindexedFields);
 }

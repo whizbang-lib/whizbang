@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
+using System.Linq;
 
 namespace Whizbang.Sagas;
 
@@ -56,25 +57,12 @@ public static class SagaContinuationRegistry {
     return _byParent.TryGetValue(parentSagaName, out var held) ? held : [];
   }
 
-  /// <summary>Every declared chain, for diagnostics and for tooling that draws them.</summary>
-  /// <returns>Parent saga name to its continuations.</returns>
-  public static IReadOnlyDictionary<string, IReadOnlyList<SagaContinuation>> All() =>
-    _byParent.ToDictionary(
-      static entry => entry.Key,
-      static entry => (IReadOnlyList<SagaContinuation>)entry.Value,
-      StringComparer.Ordinal);
-
   /// <summary>
   /// The set plus the continuation, or the set unchanged when it already names that saga.
   /// </summary>
   private static ImmutableArray<SagaContinuation> _appended(
-      ImmutableArray<SagaContinuation> held, SagaContinuation continuation) {
-    foreach (var existing in held) {
-      if (string.Equals(existing.SagaName, continuation.SagaName, StringComparison.Ordinal)) {
-        return held;
-      }
-    }
-
-    return held.Add(continuation);
-  }
+      ImmutableArray<SagaContinuation> held, SagaContinuation continuation) =>
+    held.Any(existing => string.Equals(existing.SagaName, continuation.SagaName, StringComparison.Ordinal))
+      ? held
+      : held.Add(continuation);
 }

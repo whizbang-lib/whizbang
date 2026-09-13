@@ -35,19 +35,19 @@ namespace Whizbang.Core.Perspectives;
 /// <example>
 /// <code>
 /// // A domain language that turns a request string into a LINQ expression over any queryable.
-/// [ComposesQueryFromRequest(QueryExposure.Expression)]
+/// [ComposesQueryFromRequest(QueryExposures.Expression)]
 /// [AttributeUsage(AttributeTargets.Method)]
 /// public sealed class UseExpressionAttribute : Attribute { }
 /// </code>
 /// </example>
 /// <param name="exposure">
 /// What a request can shape. Defaults to ordering and filtering together, which is what a sorting
-/// or filtering middleware offers; say <see cref="QueryExposure.Expression"/> for a surface that
+/// or filtering middleware offers; say <see cref="QueryExposures.Expression"/> for a surface that
 /// builds arbitrary predicates.
 /// </param>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = true)]
 public sealed class ComposesQueryFromRequestAttribute(
-    QueryExposure exposure = QueryExposure.Ordering | QueryExposure.Filtering) : Attribute {
+    QueryExposures exposure = QueryExposures.Ordering | QueryExposures.Filtering) : Attribute {
   /// <summary>What a request can shape through the marked attribute.</summary>
-  public QueryExposure Exposure { get; } = exposure;
+  public QueryExposures Exposure { get; } = exposure;
 }

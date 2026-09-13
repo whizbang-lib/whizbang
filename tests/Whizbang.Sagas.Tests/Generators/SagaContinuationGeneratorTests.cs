@@ -42,7 +42,7 @@ public class SagaContinuationGeneratorTests {
     var continuation = SagaContinuationRegistry.For("GeneratorTestChained")
       .Single(c => c.SagaName == "GeneratorTestFollowOn");
 
-    await Assert.That(continuation.Trigger).IsEqualTo(SagaContinuationTrigger.RanToTheEnd);
+    await Assert.That(continuation.Trigger).IsEqualTo(SagaContinuationTriggers.RanToTheEnd);
     await Assert.That(continuation.StartsAfter(SagaStatus.CompletedWithFailures)).IsTrue();
   }
 
@@ -56,7 +56,7 @@ public class SagaContinuationGeneratorTests {
     var continuation = SagaContinuationRegistry.For("GeneratorTestChained")
       .Single(c => c.SagaName == "GeneratorTestCleanup");
 
-    await Assert.That(continuation.Trigger).IsEqualTo(SagaContinuationTrigger.Failed);
+    await Assert.That(continuation.Trigger).IsEqualTo(SagaContinuationTriggers.Failed);
     await Assert.That(continuation.StartsAfter(SagaStatus.Completed)).IsFalse()
       .Because("a cleanup declared for the abandoned case must not run after a successful one");
   }
@@ -83,5 +83,5 @@ public class SagaContinuationGeneratorTests {
 /// <summary>A saga followed by enrichment over what it wrote, and by cleanup if it was abandoned.</summary>
 [Saga("GeneratorTestChained")]
 [ContinuesWith("GeneratorTestFollowOn")]
-[ContinuesWith("GeneratorTestCleanup", SagaContinuationTrigger.Failed)]
+[ContinuesWith("GeneratorTestCleanup", SagaContinuationTriggers.Failed)]
 public partial class GeneratorTestChainedSaga;

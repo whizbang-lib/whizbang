@@ -18,7 +18,7 @@ namespace Whizbang.Sagas;
 /// <docs>fundamentals/sagas/continuations</docs>
 /// <tests>tests/Whizbang.Sagas.Tests/SagaContinuationTests.cs</tests>
 [Flags]
-public enum SagaContinuationTrigger {
+public enum SagaContinuationTriggers {
   /// <summary>Never start the continuation. A declaration nobody wants active.</summary>
   None = 0,
 

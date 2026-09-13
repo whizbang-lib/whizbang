@@ -24,6 +24,7 @@ namespace Whizbang.Generators.Tests;
 public class QueryExposureRegistrationGeneratorTests {
   private const string PREAMBLE = """
     using System;
+    using System.Linq;
     using Whizbang.Core;
     using Whizbang.Core.Lenses;
     using Whizbang.Core.Perspectives;
@@ -36,11 +37,11 @@ public class QueryExposureRegistrationGeneratorTests {
       public bool EnableSorting { get; set; } = true;
     }
 
-    [ComposesQueryFromRequest(QueryExposure.Filtering)]
+    [ComposesQueryFromRequest(QueryExposures.Filtering)]
     [AttributeUsage(AttributeTargets.Class)]
     public sealed class FilterOnlyAttribute : Attribute { }
 
-    [ComposesQueryFromRequest(QueryExposure.Expression)]
+    [ComposesQueryFromRequest(QueryExposures.Expression)]
     [AttributeUsage(AttributeTargets.Class)]
     public sealed class ExpressiveAttribute : Attribute { }
 
@@ -74,7 +75,7 @@ public class QueryExposureRegistrationGeneratorTests {
       """);
 
     await Assert.That(generated).Contains("QueryExposureRegistry.Register<global::TestApp.JobModel>");
-    await Assert.That(generated).Contains("QueryExposure.Ordering");
+    await Assert.That(generated).Contains("QueryExposures.Ordering");
     await Assert.That(generated).Contains("ModuleInitializer")
       .Because("the registration must run at assembly load, without the host calling anything");
     await Assert.That(generated).Contains("\"JobName\"")
@@ -101,7 +102,44 @@ public class QueryExposureRegistrationGeneratorTests {
       .Because("the author recorded a decision, so there is nothing for the runtime to advise about");
   }
 
-  /// <summary>An assembly that exposes nothing emits no file.</summary>
+  /// <summary>Every surface shape the predicate accepts reaches the registry.</summary>
+  /// <remarks>
+  /// A lens can be declared as a record, and a resolver can be a method or a property. Each is a
+  /// separate arm of the syntactic predicate, so each is a separate way for the registration to be
+  /// silently absent while the build warning still fires.
+  /// </remarks>
+  [Test]
+  [Arguments("[Sortable] public record RecordLens : ILensQuery<JobModel>;")]
+  [Arguments("public class M { [Sortable] public IQueryable<JobModel> Q() => throw new NotImplementedException(); }")]
+  [Arguments("public class P { [Sortable] public IQueryable<JobModel> Q => throw new NotImplementedException(); }")]
+  public async Task EverySurfaceShapeIsRegisteredAsync(string surface) {
+    var generated = _generate(surface);
+
+    await Assert.That(generated).Contains("Register<global::TestApp.JobModel>");
+  }
+
+  /// <summary>
+  /// A marked surface that exposes no model registers nothing.
+  /// </summary>
+  /// <remarks>
+  /// An attribute can be marked and applied to something that is not a query at all. Registering it
+  /// would need a model to register against, and inventing one is worse than saying nothing.
+  /// </remarks>
+  [Test]
+  public async Task AMarkedSurfaceWithNoModelRegistersNothingAsync() {
+    var generated = _generate("""
+      [Sortable]
+      public class NotAQuery {
+        public string Name { get; init; } = string.Empty;
+      }
+      """);
+
+    await Assert.That(generated).IsEmpty()
+      .Because("the attribute says a request shapes the query, but there is no query and no model "
+        + "behind it");
+  }
+
+  /// <summary>An assembly that exposes nothing emits no file.</summary>  /// <summary>An assembly that exposes nothing emits no file.</summary>
   /// <remarks>
   /// Most assemblies expose nothing, and an empty initializer in every one of them is cost with no
   /// content.
@@ -135,7 +173,7 @@ public class QueryExposureRegistrationGeneratorTests {
     var registrations = generated.Split("QueryExposureRegistry.Register<").Length - 1;
 
     await Assert.That(registrations).IsEqualTo(1);
-    await Assert.That(generated).Contains("QueryExposure.Filtering | global::Whizbang.Core.Perspectives.QueryExposure.Ordering");
+    await Assert.That(generated).Contains("QueryExposures.Filtering | global::Whizbang.Core.Perspectives.QueryExposures.Ordering");
   }
 
   /// <summary>Filtering-only exposure is registered as filtering, not widened.</summary>
@@ -146,8 +184,8 @@ public class QueryExposureRegistrationGeneratorTests {
       public interface IFilterLens : ILensQuery<JobModel>;
       """);
 
-    await Assert.That(generated).Contains("QueryExposure.Filtering");
-    await Assert.That(generated).DoesNotContain("QueryExposure.Ordering")
+    await Assert.That(generated).Contains("QueryExposures.Filtering");
+    await Assert.That(generated).DoesNotContain("QueryExposures.Ordering")
       .Because("registering more than the surface offers would make the runtime view wrong in the "
         + "direction that raises false advisories");
   }
@@ -160,7 +198,7 @@ public class QueryExposureRegistrationGeneratorTests {
       public interface IExpressiveLens : ILensQuery<JobModel>;
       """);
 
-    await Assert.That(generated).Contains("QueryExposure.Expression");
+    await Assert.That(generated).Contains("QueryExposures.Expression");
   }
 
   /// <summary>A surface with sorting switched off narrows what is registered.</summary>
@@ -171,7 +209,7 @@ public class QueryExposureRegistrationGeneratorTests {
       public interface INoSortLens : ILensQuery<JobModel>;
       """);
 
-    await Assert.That(generated).Contains("QueryExposure.Filtering");
-    await Assert.That(generated).DoesNotContain("QueryExposure.Ordering");
+    await Assert.That(generated).Contains("QueryExposures.Filtering");
+    await Assert.That(generated).DoesNotContain("QueryExposures.Ordering");
   }
 }

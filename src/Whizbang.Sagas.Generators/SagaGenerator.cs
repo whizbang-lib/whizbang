@@ -105,9 +105,7 @@ public sealed class SagaGenerator : IIncrementalGenerator {
       className: typeSymbol.Name,
       sagaName: sagaName!,
       eventBaseFullName: eventBaseFullName,
-      includeHooks: includeHooks,
-      generateService: generateService,
-      isPartial: isPartial,
+      options: new SagaEmitOptions(includeHooks, generateService, isPartial),
       location: classDecl.Identifier.GetLocation(),
       continuations: _readContinuations(typeSymbol));
   }
@@ -425,7 +423,7 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     if ((trigger & 4) != 0) { names.Add("Failed"); }
     if (names.Count == 0) { names.Add("None"); }
 
-    return string.Join(" | ", names.Select(static n => "global::Whizbang.Sagas.SagaContinuationTrigger." + n));
+    return string.Join(" | ", names.Select(static n => "global::Whizbang.Sagas.SagaContinuationTriggers." + n));
   }
 
   private static void _emitServiceCollectionExtension(StringBuilder sb, SagaInfo info) {
@@ -442,26 +440,36 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     public int Trigger { get; } = trigger;
   }
 
-  private sealed class SagaInfo {
-    public SagaInfo(string? @namespace, string className, string sagaName, string eventBaseFullName, bool includeHooks, bool generateService, bool isPartial, Location location, ImmutableArray<ContinuationDeclaration> continuations) {
-      Namespace = @namespace;
-      ClassName = className;
-      SagaName = sagaName;
-      EventBaseFullName = eventBaseFullName;
-      IncludeHooks = includeHooks;
-      GenerateService = generateService;
-      IsPartial = isPartial;
-      Location = location;
-      Continuations = continuations;
-    }
-    public ImmutableArray<ContinuationDeclaration> Continuations { get; }
-    public string? Namespace { get; }
-    public string ClassName { get; }
-    public string SagaName { get; }
-    public string EventBaseFullName { get; }
-    public bool IncludeHooks { get; }
-    public bool GenerateService { get; }
-    public bool IsPartial { get; }
-    public Location Location { get; }
+  /// <summary>
+  /// What the generator was asked to emit, as opposed to what the saga is called.
+  /// </summary>
+  /// <remarks>
+  /// Grouped rather than passed alongside the names because they answer a different question, and
+  /// because a constructor that keeps growing one flag at a time is how a parameter list reaches the
+  /// point where call sites stop being readable.
+  /// </remarks>
+  private readonly struct SagaEmitOptions(bool includeHooks, bool generateService, bool isPartial) {
+    public bool IncludeHooks { get; } = includeHooks;
+    public bool GenerateService { get; } = generateService;
+    public bool IsPartial { get; } = isPartial;
+  }
+
+  private sealed class SagaInfo(
+      string? @namespace,
+      string className,
+      string sagaName,
+      string eventBaseFullName,
+      SagaEmitOptions options,
+      Location location,
+      ImmutableArray<ContinuationDeclaration> continuations) {
+    public ImmutableArray<ContinuationDeclaration> Continuations { get; } = continuations;
+    public string? Namespace { get; } = @namespace;
+    public string ClassName { get; } = className;
+    public string SagaName { get; } = sagaName;
+    public string EventBaseFullName { get; } = eventBaseFullName;
+    public bool IncludeHooks => options.IncludeHooks;
+    public bool GenerateService => options.GenerateService;
+    public bool IsPartial => options.IsPartial;
+    public Location Location { get; } = location;
   }
 }

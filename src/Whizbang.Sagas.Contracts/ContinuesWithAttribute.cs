@@ -21,22 +21,22 @@ namespace Whizbang.Sagas;
 /// // Enrichment over what the import wrote, which has no reason to run while the import is running.
 /// [Saga("BulkImport")]
 /// [ContinuesWith("DerivedEnrichment")]
-/// [ContinuesWith("ImportCleanup", SagaContinuationTrigger.Failed)]
+/// [ContinuesWith("ImportCleanup", SagaContinuationTriggers.Failed)]
 /// public partial class BulkImportSaga;
 /// </code>
 /// </example>
 /// <param name="sagaName">The name of the saga to start, as passed to its <c>[Saga("Name")]</c>.</param>
 /// <param name="trigger">
-/// Which terminal statuses start it. Defaults to <see cref="SagaContinuationTrigger.RanToTheEnd"/>,
+/// Which terminal statuses start it. Defaults to <see cref="SagaContinuationTriggers.RanToTheEnd"/>,
 /// because a partially failed run still produced state worth acting on.
 /// </param>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
 public sealed class ContinuesWithAttribute(
     string sagaName,
-    SagaContinuationTrigger trigger = SagaContinuationTrigger.RanToTheEnd) : Attribute {
+    SagaContinuationTriggers trigger = SagaContinuationTriggers.RanToTheEnd) : Attribute {
   /// <summary>The name of the saga to start.</summary>
   public string SagaName { get; } = sagaName;
 
   /// <summary>Which terminal statuses of the declaring saga start it.</summary>
-  public SagaContinuationTrigger Trigger { get; } = trigger;
+  public SagaContinuationTriggers Trigger { get; } = trigger;
 }

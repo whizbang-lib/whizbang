@@ -38,7 +38,7 @@ public class QueryExposureIndexAnalyzerTests {
       public bool EnableFiltering { get; set; } = true;
     }
 
-    [ComposesQueryFromRequest(QueryExposure.Filtering)]
+    [ComposesQueryFromRequest(QueryExposures.Filtering)]
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
     public sealed class FilterOnlyAttribute : Attribute { }
 
@@ -60,9 +60,10 @@ public class QueryExposureIndexAnalyzerTests {
     }
     """;
 
-  private static async Task<string[]> _whiz306Async(string source) {
+  private static async Task<string[]> _whiz306Async(
+      string source, Dictionary<string, string>? globalOptions = null) {
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<QueryExposureIndexAnalyzer>(
-      PREAMBLE + Environment.NewLine + source);
+      PREAMBLE + Environment.NewLine + source, additionalFiles: null, globalOptions: globalOptions);
 
     return [.. diagnostics
       .Where(d => d.Id == "WHIZ306")
@@ -205,6 +206,71 @@ public class QueryExposureIndexAnalyzerTests {
       .Because("both models are exposed, but only the one with unaccounted fields has anything to "
         + "report");
     await Assert.That(messages[0]).Contains("WideModel");
+  }
+
+  /// <summary>
+  /// A consumer can name an attribute the framework cannot reach, and it is then reported.
+  /// </summary>
+  /// <remarks>
+  /// The third of the three ways in, for a third party's attribute that neither the marker nor the
+  /// built-in list covers. Matching is by fully qualified name, which is why this test can declare
+  /// the attribute itself rather than referencing a package.
+  /// </remarks>
+  [Test]
+  public async Task AConfiguredAttributeNameIsReportedAsync() {
+    // Declared in the preamble's namespace on purpose: the preamble is file-scoped, so a block
+    // namespace appended after it does not compile, and a test whose source does not compile finds
+    // no diagnostics and passes for the wrong reason.
+    const string SOURCE = """
+      [AttributeUsage(AttributeTargets.Class)]
+      public sealed class VendorSortableAttribute : Attribute { }
+
+      [VendorSortable]
+      public interface IVendorLens : ILensQuery<WideModel>;
+      """;
+
+    await Assert.That(await _whiz306Async(SOURCE)).IsEmpty()
+      .Because("nothing in source says this attribute composes a query");
+
+    var configured = await _whiz306Async(SOURCE, new Dictionary<string, string> {
+      ["build_property.WhizbangQueryComposingAttributes"] = " TestApp.VendorSortableAttribute , ",
+    });
+
+    await Assert.That(configured.Length).IsEqualTo(1)
+      .Because("configuration is the way in for an attribute neither the framework nor its author "
+        + "can mark, and the list tolerates the spacing a hand-edited property arrives with");
+    await Assert.That(configured[0]).Contains("WideModel");
+  }
+
+  /// <summary>A blank configuration is the same as none.</summary>
+  [Test]
+  public async Task ABlankConfigurationReportsNothingAsync() {
+    var messages = await _whiz306Async("""
+      [Sortable]
+      public interface IWideLens : ILensQuery<IndexedModel>;
+      """, new Dictionary<string, string> {
+      ["build_property.WhizbangQueryComposingAttributes"] = "   ",
+    });
+
+    await Assert.That(messages).IsEmpty();
+  }
+
+  /// <summary>A record model is read the same way a class model is.</summary>
+  [Test]
+  public async Task ARecordModelIsReportedAsync() {
+    var messages = await _whiz306Async("""
+      public record JobRecord {
+        [StreamId]
+        public Guid Id { get; init; }
+        public string JobName { get; init; } = string.Empty;
+      }
+
+      [Sortable]
+      public interface IRecordLens : ILensQuery<JobRecord>;
+      """);
+
+    await Assert.That(messages.Length).IsEqualTo(1);
+    await Assert.That(messages[0]).Contains("JobRecord");
   }
 
   /// <summary>Two surfaces over one model report once each, on each surface.</summary>

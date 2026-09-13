@@ -63,24 +63,17 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
   };
 
   private static ExposedModel? _extract(GeneratorSyntaxContext context, CancellationToken ct) {
+    // Null-tolerant rather than guarded: every node shape the predicate yields is a declaration, so
+    // a null symbol is not a case this has seen, and a guard for it would be a line no test could
+    // honestly cover. An empty attribute list reaches the same answer by the same path.
     var symbol = context.SemanticModel.GetDeclaredSymbol(context.Node, ct);
-    if (symbol is null) {
-      return null;
-    }
 
-    var exposure = SortableExposureDiscovery.ExposureOf(symbol.GetAttributes(), []);
+    var exposure = SortableExposureDiscovery.ExposureOf(symbol?.GetAttributes() ?? [], []);
     if (exposure == 0) {
       return null;
     }
 
-    var model = symbol switch {
-      INamedTypeSymbol type => SortableExposureDiscovery.ModelsOfLens(type).FirstOrDefault(),
-      IMethodSymbol method => SortableExposureDiscovery.ModelOfQueryable(method.ReturnType),
-      IPropertySymbol property => SortableExposureDiscovery.ModelOfQueryable(property.Type),
-      _ => null,
-    };
-
-    if (model is null) {
+    if (SortableExposureDiscovery.ModelExposedBy(symbol) is not { } model) {
       return null;
     }
 
@@ -156,12 +149,12 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
     if ((exposure & 4) != 0) { names.Add("Expression"); }
     if (names.Count == 0) { names.Add("None"); }
 
-    return string.Join(" | ", names.Select(static n => "global::Whizbang.Core.Perspectives.QueryExposure." + n));
+    return string.Join(" | ", names.Select(static n => "global::Whizbang.Core.Perspectives.QueryExposures." + n));
   }
 
   /// <summary>One model and what a request can shape about it, as a value for the generator cache.</summary>
   /// <param name="ModelTypeName">The model's fully qualified name.</param>
-  /// <param name="Exposure">The <c>QueryExposure</c> flags, as an integer.</param>
+  /// <param name="Exposure">The <c>QueryExposures</c> flags, as an integer.</param>
   /// <param name="UnindexedFields">
   /// The unaccounted field names, joined by a unit separator. A single string rather than an array
   /// because the generator cache compares by value and an array compares by reference, which would

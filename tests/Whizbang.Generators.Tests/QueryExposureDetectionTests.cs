@@ -60,7 +60,7 @@ public class QueryExposureDetectionTests {
       .Where(d => d.Severity == DiagnosticSeverity.Error)
       .Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
       .Where(m => m.Contains("ComposesQueryFromRequest", StringComparison.Ordinal)
-        || m.Contains("QueryExposure", StringComparison.Ordinal)
+        || m.Contains("QueryExposures", StringComparison.Ordinal)
         || m.Contains("ILensQuery", StringComparison.Ordinal)
         || m.Contains("PerspectiveRow", StringComparison.Ordinal))
       .ToList();
@@ -132,7 +132,7 @@ public class QueryExposureDetectionTests {
 
       namespace TestApp;
 
-      [ComposesQueryFromRequest(QueryExposure.Expression)]
+      [ComposesQueryFromRequest(QueryExposures.Expression)]
       [AttributeUsage(AttributeTargets.Class)]
       public sealed class UseExpressionAttribute : Attribute { }
 
@@ -273,11 +273,11 @@ public class QueryExposureDetectionTests {
 
       namespace TestApp;
 
-      [ComposesQueryFromRequest(QueryExposure.Ordering)]
+      [ComposesQueryFromRequest(QueryExposures.Ordering)]
       [AttributeUsage(AttributeTargets.Method)]
       public sealed class SortsAttribute : Attribute { }
 
-      [ComposesQueryFromRequest(QueryExposure.Filtering)]
+      [ComposesQueryFromRequest(QueryExposures.Filtering)]
       [AttributeUsage(AttributeTargets.Method)]
       public sealed class FiltersAttribute : Attribute { }
 
@@ -404,7 +404,85 @@ public class QueryExposureDetectionTests {
     await Assert.That(models.Select(m => m.Name)).IsEquivalentTo(["Left", "Right"]);
   }
 
-  /// <summary>A type that queries nothing has no model, and is not a mistake to be reported.</summary>
+  /// <summary>A queryable of something that is not a named type exposes no model.</summary>
+  /// <remarks>
+  /// An array element is the reachable case: a surface handing back a queryable of arrays is not a
+  /// perspective query, and reading its element as a model would invent one.
+  /// </remarks>
+  [Test]
+  public async Task AQueryableOfANonNamedTypeHasNoModelAsync() {
+    var compilation = _compile("""
+      using System.Linq;
+
+      namespace TestApp;
+
+      public class Surface {
+        public IQueryable<string[]> Query() => throw new System.NotImplementedException();
+      }
+      """);
+
+    var method = compilation.GetTypeByMetadataName("TestApp.Surface")!
+      .GetMembers("Query").OfType<IMethodSymbol>().Single();
+
+    await Assert.That(SortableExposureDiscovery.ModelOfQueryable(method.ReturnType)).IsNull();
+  }
+
+  /// <summary>
+  /// A symbol kind that is not a surface exposes no model, rather than being guessed at.
+  /// </summary>
+  /// <remarks>
+  /// The shared dispatch answers for a lens type, a method and a property. A field is none of those,
+  /// and the arm that says so is what lets both callers pass whatever they hold without each of them
+  /// repeating the check.
+  /// </remarks>
+  [Test]
+  public async Task ASymbolThatIsNotASurfaceHasNoModelAsync() {
+    var compilation = _compile("""
+      namespace TestApp;
+
+      public class Surface {
+        public int Field;
+      }
+      """);
+
+    var field = compilation.GetTypeByMetadataName("TestApp.Surface")!
+      .GetMembers("Field").OfType<IFieldSymbol>().Single();
+
+    await Assert.That(SortableExposureDiscovery.ModelExposedBy(field)).IsNull();
+    await Assert.That(SortableExposureDiscovery.ModelExposedBy(null)).IsNull();
+  }
+
+  /// <summary>The shared dispatch reads each surface shape the same way its callers do.</summary>
+  [Test]
+  public async Task TheSharedDispatchReadsEverySurfaceShapeAsync() {
+    var compilation = _compile("""
+      using System.Linq;
+      using Whizbang.Core.Lenses;
+
+      namespace TestApp;
+
+      public class Model { public string Name { get; set; } = string.Empty; }
+
+      public interface IModelLens : ILensQuery<Model>;
+
+      public class Surface {
+        public IQueryable<Model> Query() => throw new System.NotImplementedException();
+        public IQueryable<Model> Queryable => throw new System.NotImplementedException();
+      }
+      """);
+
+    _rejectUnboundAttributes(compilation);
+    var surface = compilation.GetTypeByMetadataName("TestApp.Surface")!;
+
+    await Assert.That(SortableExposureDiscovery.ModelExposedBy(
+      compilation.GetTypeByMetadataName("TestApp.IModelLens"))?.Name).IsEqualTo("Model");
+    await Assert.That(SortableExposureDiscovery.ModelExposedBy(
+      surface.GetMembers("Query").OfType<IMethodSymbol>().Single())?.Name).IsEqualTo("Model");
+    await Assert.That(SortableExposureDiscovery.ModelExposedBy(
+      surface.GetMembers("Queryable").OfType<IPropertySymbol>().Single())?.Name).IsEqualTo("Model");
+  }
+
+  /// <summary>A type that queries nothing has no model, and is not a mistake to be reported.</summary>  /// <summary>A type that queries nothing has no model, and is not a mistake to be reported.</summary>
   [Test]
   public async Task ATypeThatIsNotALensHasNoModelAsync() {
     var compilation = _compile("""

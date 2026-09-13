@@ -56,7 +56,8 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
     context.EnableConcurrentExecution();
 
     context.RegisterSymbolAction(_analyzeLens, SymbolKind.NamedType);
-    context.RegisterSymbolAction(_analyzeQueryMember, SymbolKind.Method, SymbolKind.Property);
+    context.RegisterSymbolAction(_analyzeMethod, SymbolKind.Method);
+    context.RegisterSymbolAction(_analyzeProperty, SymbolKind.Property);
   }
 
   /// <summary>A lens declaration: the attribute is on the type, the model is in its interface.</summary>
@@ -72,21 +73,26 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
     }
   }
 
-  /// <summary>A resolver: the attribute is on the member, the model is under what it hands back.</summary>
+  /// <summary>A resolver method: the model is under what it hands back.</summary>
+  private static void _analyzeMethod(SymbolAnalysisContext context) =>
+    _analyzeQueryMember(context, ((IMethodSymbol)context.Symbol).ReturnType);
+
+  /// <summary>
+  /// A resolver written as a property, which the middleware attaches to the same way.
+  /// </summary>
+  private static void _analyzeProperty(SymbolAnalysisContext context) =>
+    _analyzeQueryMember(context, ((IPropertySymbol)context.Symbol).Type);
+
+  /// <summary>The shape both member kinds share, once the declared type is in hand.</summary>
   /// <remarks>
-  /// Properties as well as methods, because a query surface is commonly an expression-bodied property
-  /// and the middleware attaches to either the same way.
+  /// Registered per symbol kind and cast at the entry point rather than switched on here, so there is
+  /// no arm for a kind this analyzer never asks for. An unreachable arm is a line no test can honestly
+  /// cover and a claim that the code handles a case it has never seen.
   /// </remarks>
-  private static void _analyzeQueryMember(SymbolAnalysisContext context) {
+  private static void _analyzeQueryMember(SymbolAnalysisContext context, ITypeSymbol returned) {
     if (!SortableExposureDiscovery.AllowsOrdering(_exposureOf(context.Symbol, context))) {
       return;
     }
-
-    var returned = context.Symbol switch {
-      IMethodSymbol method => method.ReturnType,
-      IPropertySymbol property => property.Type,
-      _ => null,
-    };
 
     if (SortableExposureDiscovery.ModelOfQueryable(returned) is { } model) {
       _report(context, context.Symbol, model);
@@ -125,14 +131,12 @@ public class QueryExposureIndexAnalyzer : DiagnosticAnalyzer {
       return;
     }
 
-    var location = surface.Locations.FirstOrDefault(static l => l.IsInSource);
-    if (location is null) {
-      return;   // the surface is in metadata, so there is nothing here for an author to act on
-    }
-
+    // A symbol action only fires for symbols this compilation declares, so a source location is
+    // always there; the fallback exists so a surprise cannot throw inside an analyzer, where the
+    // failure would surface as AD0001 rather than as anything an author could read.
     context.ReportDiagnostic(Diagnostic.Create(
       SortableExposureDiscovery.SortableFieldsHaveNoIndex,
-      location,
+      surface.Locations.FirstOrDefault() ?? Location.None,
       model.Name,
       unattributed.Length,
       string.Join(", ", unattributed)));

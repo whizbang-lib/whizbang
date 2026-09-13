@@ -34,26 +34,26 @@ public class QueryExposureRegistryTests {
   [Test]
   public async Task AnUnregisteredModelHasNoExposureAsync() {
     await Assert.That(QueryExposureRegistry.Of(typeof(UnregisteredModel)))
-      .IsEqualTo(QueryExposure.None);
+      .IsEqualTo(QueryExposures.None);
     await Assert.That(QueryExposureRegistry.CanBeOrdered(typeof(UnregisteredModel))).IsFalse();
   }
 
   /// <summary>What was registered is what comes back.</summary>
   [Test]
   public async Task ARegisteredExposureIsReturnedAsync() {
-    QueryExposureRegistry.Register<OrderedModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<OrderedModel>(QueryExposures.Ordering);
 
     await Assert.That(QueryExposureRegistry.Of(typeof(OrderedModel)))
-      .IsEqualTo(QueryExposure.Ordering);
+      .IsEqualTo(QueryExposures.Ordering);
   }
 
   /// <summary>The generic overload is the one generated code calls.</summary>
   [Test]
   public async Task TheGenericOverloadRegistersTheSameWayAsync() {
-    QueryExposureRegistry.Register<GenericallyRegisteredModel>(QueryExposure.Filtering);
+    QueryExposureRegistry.Register<GenericallyRegisteredModel>(QueryExposures.Filtering);
 
     await Assert.That(QueryExposureRegistry.Of(typeof(GenericallyRegisteredModel)))
-      .IsEqualTo(QueryExposure.Filtering);
+      .IsEqualTo(QueryExposures.Filtering);
   }
 
   /// <summary>
@@ -65,18 +65,18 @@ public class QueryExposureRegistryTests {
   /// </remarks>
   [Test]
   public async Task SeveralRegistrationsCombineAsync() {
-    QueryExposureRegistry.Register<CombinedModel>(QueryExposure.Filtering);
-    QueryExposureRegistry.Register<CombinedModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<CombinedModel>(QueryExposures.Filtering);
+    QueryExposureRegistry.Register<CombinedModel>(QueryExposures.Ordering);
 
     await Assert.That(QueryExposureRegistry.Of(typeof(CombinedModel)))
-      .IsEqualTo(QueryExposure.Filtering | QueryExposure.Ordering)
+      .IsEqualTo(QueryExposures.Filtering | QueryExposures.Ordering)
       .Because("each surface registers only what it offers and the model is exposed to both");
   }
 
   /// <summary>Registering nothing records nothing, rather than an empty entry.</summary>
   [Test]
   public async Task RegisteringNoExposureRecordsNothingAsync() {
-    QueryExposureRegistry.Register<NoneModel>(QueryExposure.None);
+    QueryExposureRegistry.Register<NoneModel>(QueryExposures.None);
 
     await Assert.That(QueryExposureRegistry.All().ContainsKey(typeof(NoneModel))).IsFalse()
       .Because("a surface offering neither ordering nor filtering is not an exposure to report on");
@@ -89,7 +89,7 @@ public class QueryExposureRegistryTests {
   /// </remarks>
   [Test]
   public async Task FilteringAloneIsNotOrderableAsync() {
-    QueryExposureRegistry.Register<FilteredModel>(QueryExposure.Filtering);
+    QueryExposureRegistry.Register<FilteredModel>(QueryExposures.Filtering);
 
     await Assert.That(QueryExposureRegistry.CanBeOrdered(typeof(FilteredModel))).IsFalse();
   }
@@ -97,8 +97,8 @@ public class QueryExposureRegistryTests {
   /// <summary>Ordering and an arbitrary expression both reach a sort.</summary>
   [Test]
   public async Task OrderingAndExpressionAreBothOrderableAsync() {
-    QueryExposureRegistry.Register<OrderedModel>(QueryExposure.Ordering);
-    QueryExposureRegistry.Register<ExpressionModel>(QueryExposure.Expression);
+    QueryExposureRegistry.Register<OrderedModel>(QueryExposures.Ordering);
+    QueryExposureRegistry.Register<ExpressionModel>(QueryExposures.Expression);
 
     await Assert.That(QueryExposureRegistry.CanBeOrdered(typeof(OrderedModel))).IsTrue();
     await Assert.That(QueryExposureRegistry.CanBeOrdered(typeof(ExpressionModel))).IsTrue()
@@ -108,12 +108,12 @@ public class QueryExposureRegistryTests {
   /// <summary>The maintenance cycle reads the whole set, so it has to be enumerable.</summary>
   [Test]
   public async Task EveryRegisteredModelIsListedAsync() {
-    QueryExposureRegistry.Register<ListedModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<ListedModel>(QueryExposures.Ordering);
 
     var all = QueryExposureRegistry.All();
 
     await Assert.That(all.ContainsKey(typeof(ListedModel))).IsTrue();
-    await Assert.That(all[typeof(ListedModel)]).IsEqualTo(QueryExposure.Ordering);
+    await Assert.That(all[typeof(ListedModel)]).IsEqualTo(QueryExposures.Ordering);
   }
 
   /// <summary>
@@ -128,7 +128,7 @@ public class QueryExposureRegistryTests {
     var before = QueryExposureRegistry.All();
     var countBefore = before.Count;
 
-    QueryExposureRegistry.Register<SnapshotProbe>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<SnapshotProbe>(QueryExposures.Ordering);
 
     await Assert.That(before.Count).IsEqualTo(countBefore)
       .Because("the returned dictionary is a copy taken when it was asked for");
@@ -140,7 +140,7 @@ public class QueryExposureRegistryTests {
   /// <summary>A missing type is a programming error, not an empty answer.</summary>
   [Test]
   public async Task ANullTypeIsRejectedAsync() {
-    await Assert.That(() => QueryExposureRegistry.Register(null!, QueryExposure.Ordering))
+    await Assert.That(() => QueryExposureRegistry.Register(null!, QueryExposures.Ordering))
       .Throws<ArgumentNullException>();
     await Assert.That(() => QueryExposureRegistry.Of(null!)).Throws<ArgumentNullException>();
     await Assert.That(() => QueryExposureRegistry.CanBeOrdered(null!))

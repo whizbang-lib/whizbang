@@ -34,11 +34,11 @@ public sealed class SagaContinuation {
   /// </param>
   /// <param name="trigger">
   /// Which terminal statuses start it. Defaults to
-  /// <see cref="SagaContinuationTrigger.RanToTheEnd"/>.
+  /// <see cref="SagaContinuationTriggers.RanToTheEnd"/>.
   /// </param>
   /// <exception cref="ArgumentException"><paramref name="sagaName"/> is blank.</exception>
   public SagaContinuation(
-      string sagaName, SagaContinuationTrigger trigger = SagaContinuationTrigger.RanToTheEnd) {
+      string sagaName, SagaContinuationTriggers trigger = SagaContinuationTriggers.RanToTheEnd) {
     ArgumentException.ThrowIfNullOrWhiteSpace(sagaName);
 
     SagaName = sagaName;
@@ -49,7 +49,7 @@ public sealed class SagaContinuation {
   public string SagaName { get; }
 
   /// <summary>Which terminal statuses of the declaring saga start this one.</summary>
-  public SagaContinuationTrigger Trigger { get; }
+  public SagaContinuationTriggers Trigger { get; }
 
   /// <summary>Whether this continuation starts after a saga that ended in the given status.</summary>
   /// <param name="finalStatus">The declaring saga's final status.</param>
@@ -62,10 +62,10 @@ public sealed class SagaContinuation {
   public bool StartsAfter(SagaStatus finalStatus) => (Trigger & _triggerFor(finalStatus)) != 0;
 
   /// <summary>The trigger a final status corresponds to; none when the status is not terminal.</summary>
-  private static SagaContinuationTrigger _triggerFor(SagaStatus finalStatus) => finalStatus switch {
-    SagaStatus.Completed => SagaContinuationTrigger.Completed,
-    SagaStatus.CompletedWithFailures => SagaContinuationTrigger.CompletedWithFailures,
-    SagaStatus.Failed => SagaContinuationTrigger.Failed,
-    _ => SagaContinuationTrigger.None,
+  private static SagaContinuationTriggers _triggerFor(SagaStatus finalStatus) => finalStatus switch {
+    SagaStatus.Completed => SagaContinuationTriggers.Completed,
+    SagaStatus.CompletedWithFailures => SagaContinuationTriggers.CompletedWithFailures,
+    SagaStatus.Failed => SagaContinuationTriggers.Failed,
+    _ => SagaContinuationTriggers.None,
   };
 }
