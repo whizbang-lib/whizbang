@@ -28,6 +28,21 @@ is worse than having no option at all because the cost is paid and the benefit i
 Measured in a consumer: 36 of 180 index advisories on one codebase are case-folded text, across
 seven properties. Case-insensitive search is the common case for anything a person types.
 
+## What is not the gap
+
+Substring matching itself is already served. A trigram GIN index answers `LIKE` with any pattern, so
+`Contains`, `StartsWith` and `EndsWith` are all covered by `[Indexed(IndexKinds.Trigram)]`, and
+`_declaredIndexServes` already recognizes that. It is worth stating because the btree story invites
+the wrong conclusion: a btree serves `StartsWith` only under `text_pattern_ops` or the C collation
+and never serves `EndsWith`, which is true and beside the point, because the answer for a substring
+match was never the btree.
+
+So the missing piece is the case folding alone, not the pattern shape. A predicate over
+`lower((data ->> 'X'))` cannot use an index over `(data ->> 'X')` whatever the operator class. The
+same is true of any other function wrapped around the extraction, `Trim()` being the one that also
+turns up in practice, which is why the option belongs to the indexed expression rather than to a
+kind.
+
 ## Shape
 
 An optional second constructor parameter rather than a new member of `IndexKinds`:
