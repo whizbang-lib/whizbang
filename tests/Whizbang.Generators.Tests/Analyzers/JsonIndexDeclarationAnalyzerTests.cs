@@ -369,4 +369,54 @@ public class JsonIndexDeclarationAnalyzerTests {
       .Because("naming a capability to change would suggest an edit that leaves the field still "
         + "unindexable");
   }
+
+  /// <summary>
+  /// WHIZ304 names an unconstructible member rather than claiming the model is polymorphic.
+  /// </summary>
+  /// <remarks>
+  /// Two unrelated reasons put a document in the opaque form, and the index declared on it is
+  /// unreachable either way. Which reason applies is what the author has to act on: told it holds a
+  /// polymorphic member, they go looking for an abstract type that is not there, while the
+  /// collection that actually caused it goes unmentioned.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task WHIZ304NamesAnUnconstructibleMemberRatherThanPolymorphismAsync() {
+    const string SOURCE = """
+      using System;
+      using System.Collections.Generic;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record AttachedFileRef(Guid UploadId, string FileName);
+
+      public record TurnMessage(
+        Guid MessageId, string Content, IReadOnlyList<AttachedFileRef>? AttachedFiles);
+
+      public record ConversationModel {
+        [StreamId]
+        public Guid ConversationId { get; init; }
+
+        [Indexed]
+        public string Title { get; init; } = string.Empty;
+
+        public List<TurnMessage> Messages { get; init; } = new();
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(SOURCE);
+    var reported = diagnostics.Where(d => d.Id == "WHIZ304").ToList();
+
+    await Assert.That(reported).IsNotEmpty()
+      .Because("an index declared on an opaquely stored document cannot be reached, whichever "
+        + "reason put it in that form");
+
+    var message = reported[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+    await Assert.That(message).Contains("Messages", StringComparison.Ordinal)
+      .Because("the member the mapped path cannot construct is the thing to change");
+    await Assert.That(message).DoesNotContain("polymorphic", StringComparison.Ordinal)
+      .Because("there is no polymorphic member here");
+  }
 }

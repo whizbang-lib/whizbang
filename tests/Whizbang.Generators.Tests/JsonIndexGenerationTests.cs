@@ -518,4 +518,65 @@ public class JsonIndexGenerationTests {
       .Because("there is nothing to fold on a number, and folding the extraction before the cast "
         + "would index a different value than any query produces");
   }
+
+  /// <summary>
+  /// A model the mapped path cannot materialize is stored opaquely instead of failing at startup.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The end of the chain the discovery starts: a nested positional record whose constructor takes a
+  /// collection cannot be constructed by Entity Framework, so the document takes the opaque form,
+  /// where the serializer handles it and Entity Framework never looks inside.
+  /// </para>
+  /// <para>
+  /// Asserted on the emitted configuration rather than on the discovery, because the discovery
+  /// answering correctly and the generator acting on it are two different things, and the failure
+  /// this prevents is a service that will not start.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AModelTheMappedPathCannotMaterializeIsStoredOpaquelyAsync() {
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync("""
+      using System;
+      using System.Collections.Generic;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Spoke : IEvent;
+
+      public record AttachedFileRef(Guid UploadId, string FileName);
+
+      public record TurnMessage(
+        Guid MessageId, string Content, IReadOnlyList<AttachedFileRef>? AttachedFiles = null);
+
+      public class ConversationModel {
+        [StreamId]
+        public Guid ConversationId { get; init; }
+
+        public List<TurnMessage> Messages { get; init; } = [];
+      }
+
+      public class ConversationPerspective : IPerspectiveFor<ConversationModel, Spoke> {
+        public ConversationModel Apply(ConversationModel currentData, Spoke eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ConversationDbContext : DbContext {
+        public ConversationDbContext(DbContextOptions<ConversationDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).Contains("HasColumnType(\"jsonb\")", StringComparison.Ordinal)
+      .Because("the opaque form stores the document as one value the serializer owns, which is the "
+        + "only form that can round-trip this shape");
+    await Assert.That(output).DoesNotContain("ComplexProperty(e => e.Data", StringComparison.Ordinal)
+      .Because("the mapped form is what fails model validation for this shape, so it must not be "
+        + "the one emitted");
+  }
 }

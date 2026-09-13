@@ -1055,4 +1055,61 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(_whiz302(diagnostics)).IsEmpty()
       .Because("these are exactly what an ordered index answers, so the declaration serves them");
   }
+
+  /// <summary>
+  /// The advice names why the document is opaque, because the two reasons send you looking in
+  /// different places.
+  /// </summary>
+  /// <remarks>
+  /// A model stored opaquely because the mapped path cannot construct one of its types used to be
+  /// told it held a polymorphic member. An author acting on that goes hunting for an abstract type
+  /// that is not there, while the collection that actually caused it goes unmentioned.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Filter_OnAModelTheMappedPathCannotConstruct_NamesThatReasonAsync() {
+    const string SOURCE = """
+      using System;
+      using System.Collections.Generic;
+      using System.Linq;
+      using Whizbang.Core;
+      using Whizbang.Core.Lenses;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record AttachedFileRef(Guid UploadId, string FileName);
+
+      public record TurnMessage(
+        Guid MessageId, string Content, IReadOnlyList<AttachedFileRef>? AttachedFiles = null);
+
+      public class ConversationModel {
+        [StreamId]
+        public Guid ConversationId { get; init; }
+
+        public string Title { get; init; } = string.Empty;
+
+        public List<TurnMessage> Messages { get; init; } = new();
+      }
+
+      public class ConversationRepository {
+        private readonly IQueryable<PerspectiveRow<ConversationModel>> _rows = null!;
+
+        public object Find(Guid id) {
+          return _rows.Where(r => r.Data.Title.CompareTo("m") > 0).ToList();
+        }
+      }
+      """;
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(SOURCE);
+    var message = _whiz302(diagnostics).Select(d => d.GetMessage(CultureInfo.InvariantCulture)).FirstOrDefault();
+
+    await Assert.That(message).IsNotNull()
+      .Because("an ordering on a field inside an opaque document still reads every row");
+    await Assert.That(message).Contains("Messages", StringComparison.Ordinal)
+      .Because("the member the mapped path cannot construct is the thing to change, so it is named");
+    await Assert.That(message).DoesNotContain("polymorphic", StringComparison.Ordinal)
+      .Because("there is no polymorphic member here, and saying there is sends the reader hunting "
+        + "for an abstract type that does not exist");
+  }
 }
