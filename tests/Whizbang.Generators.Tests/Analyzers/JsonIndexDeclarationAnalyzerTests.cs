@@ -40,6 +40,9 @@ public class JsonIndexDeclarationAnalyzerTests {
   private static IEnumerable<Diagnostic> _whiz303(IEnumerable<Diagnostic> diagnostics) =>
     diagnostics.Where(d => d.Id == "WHIZ303");
 
+  private static IEnumerable<Diagnostic> _whiz305(IEnumerable<Diagnostic> diagnostics) =>
+    diagnostics.Where(d => d.Id == "WHIZ305");
+
   /// <summary>
   /// A type the framework does not store in a form any immutable cast can reach is reported.
   /// </summary>
@@ -268,5 +271,102 @@ public class JsonIndexDeclarationAnalyzerTests {
       .IsNull()
       .Because("null is silence rather than an opt-out, so a caller with no symbol must not be told "
         + "the field declined an index");
+  }
+
+  /// <summary>
+  /// A capability that only applies to text, asked for on something else, is reported and named.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Both of these are properties of text. Substring matching needs an index built for pattern
+  /// matching rather than ordering, and case folding changes the expression the index is built over;
+  /// neither means anything for a number or a date. The discovery drops them for such a field, which
+  /// is the right thing to build and the wrong thing to do in silence.
+  /// </para>
+  /// <para>
+  /// Worth a diagnostic because the declaration reads as a claim either way, and because a field
+  /// asking only for substring matching used to get no index at all: the author asked for one thing
+  /// and the answer was nothing, with the attribute still sitting there.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("[Indexed(IndexKinds.Substring)]", "int Count", "substring matching")]
+  [Arguments("[Indexed(caseInsensitive: true)]", "int Count", "case folding")]
+  [Arguments("[Indexed(IndexKinds.Substring, caseInsensitive: true)]", "int Count",
+    "substring matching and case folding")]
+  [Arguments("[Indexed(IndexKinds.Substring)]", "DateTime OccurredAt", "substring matching")]
+  [Arguments("[Indexed(caseInsensitive: true)]", "Guid Reference", "case folding")]
+  public async Task ACapabilityThatOnlyAppliesToText_IsReportedAsync(
+    string declaration, string property, string expected) {
+    var source = _model($$"""
+        {{declaration}}
+        public {{property}} { get; init; }
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(source);
+    var reported = _whiz305(diagnostics).ToList();
+
+    await Assert.That(reported).HasSingleItem()
+      .Because("one field asked for one thing it cannot have, so it gets one message");
+    await Assert.That(reported[0].GetMessage(System.Globalization.CultureInfo.InvariantCulture))
+      .Contains(expected, StringComparison.Ordinal)
+      .Because("the fix is a one-word edit, so the message has to name which word");
+  }
+
+  /// <summary>
+  /// The same capabilities on a text field are silent, because text is exactly what they apply to.
+  /// </summary>
+  /// <remarks>
+  /// The other half of this pair lives in
+  /// <c>JsonIndexGenerationTests.ATrigramIndexUsesGinWithTheTrigramOperatorClassAsync</c> and
+  /// <c>AFieldComparedBothWaysGetsAnIndexForEachAsync</c>, which assert the statements are actually
+  /// emitted for text. Silence here and emission there are what pin the behavior between them: on
+  /// its own, silence would also be satisfied by a discovery that had quietly stopped building
+  /// either index.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("[Indexed(IndexKinds.Substring)]", "string Label")]
+  [Arguments("[Indexed(caseInsensitive: true)]", "string Label")]
+  [Arguments("[Indexed(IndexKinds.Substring, caseInsensitive: true)]", "string Label")]
+  [Arguments("[Indexed]", "int Count")]
+  [Arguments("[Indexed(IndexKinds.Ordered)]", "DateTime OccurredAt")]
+  public async Task ACapabilityThatApplies_IsNotReportedAsync(string declaration, string property) {
+    var source = _model($$"""
+        {{declaration}}
+        public {{property}} { get; init; }
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(source);
+
+    await Assert.That(_whiz305(diagnostics)).IsEmpty()
+      .Because("the capability is buildable for this field, so there is nothing to report and a "
+        + "message here would be noise on correct code");
+  }
+
+  /// <summary>
+  /// A field whose type can carry no index at all is reported once, for that, rather than twice.
+  /// </summary>
+  /// <remarks>
+  /// The two findings have different fixes. WHIZ303 says to promote the field or drop the
+  /// declaration; WHIZ305 says to change one word. Reporting both would offer a choice between them
+  /// where only the first is available, so the larger problem is the one that speaks.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task AFieldThatCanCarryNoIndexIsNotAlsoToldAboutTheCapabilityAsync() {
+    var source = _model("""
+        [Indexed(IndexKinds.Substring, caseInsensitive: true)]
+        public char Initial { get; init; }
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<JsonIndexDeclarationAnalyzer>(source);
+
+    await Assert.That(_whiz303(diagnostics)).HasSingleItem()
+      .Because("no immutable cast reaches this field, which is the finding that decides what to do");
+    await Assert.That(_whiz305(diagnostics)).IsEmpty()
+      .Because("naming a capability to change would suggest an edit that leaves the field still "
+        + "unindexable");
   }
 }

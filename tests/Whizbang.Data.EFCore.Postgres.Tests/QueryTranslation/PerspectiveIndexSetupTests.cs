@@ -94,10 +94,16 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
     return (await command.ExecuteScalarAsync())?.ToString() ?? "<null>";
   }
 
-  /// <summary>Runs exactly the statements the generator emits for one declaration.</summary>
-  private async Task _createDeclaredAsync(JsonIndexInfo index) {
-    foreach (var statement in JsonIndexSql.CreateStatements(index, TABLE, "setup")) {
-      await _executeAsync(statement);
+  /// <summary>Runs exactly the statements the generator emits for these declarations.</summary>
+  /// <remarks>
+  /// Takes more than one because a field compared both ways carries a declaration each, and what
+  /// matters there is that running both leaves both indexes rather than one.
+  /// </remarks>
+  private async Task _createDeclaredAsync(params JsonIndexInfo[] indexes) {
+    foreach (var index in indexes) {
+      foreach (var statement in JsonIndexSql.CreateStatements(index, TABLE, "setup")) {
+        await _executeAsync(statement);
+      }
     }
   }
 
@@ -127,7 +133,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   [Arguments(JsonIndexCast.Uuid, "Owner", "::uuid")]
   public async Task ADeclaredIndexBuildsWithTheCastItAskedForAsync(
     JsonIndexCast cast, string key, string expected) {
-    await _createDeclaredAsync(new JsonIndexInfo(key, key, cast, Btree: true, Trigram: false));
+    await _createDeclaredAsync(new JsonIndexInfo(key, key, cast, Ordered: true, Substring: false, CaseInsensitive: false));
 
     var definitions = await _definitionsAsync();
 
@@ -150,7 +156,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   [Arguments("Clock", JsonIndexCast.Int8)]
   [Arguments("Elapsed", JsonIndexCast.Int8)]
   public async Task ATemporalFieldBuildsItsIndexAsync(string key, JsonIndexCast cast) {
-    await _createDeclaredAsync(new JsonIndexInfo(key, key, cast, Btree: true, Trigram: false));
+    await _createDeclaredAsync(new JsonIndexInfo(key, key, cast, Ordered: true, Substring: false, CaseInsensitive: false));
 
     await Assert.That(await _definitionsAsync()).Contains($"'{key}'", StringComparison.Ordinal)
       .Because("stored as a number the extraction casts through an immutable expression, which is "
@@ -163,7 +169,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   [Test]
   public async Task ATrigramDeclarationBuildsAGinIndexAsync() {
     await _createDeclaredAsync(
-      new JsonIndexInfo("Title", "Title", JsonIndexCast.None, Btree: false, Trigram: true));
+      new JsonIndexInfo("Title", "Title", JsonIndexCast.None, Ordered: false, Substring: true, CaseInsensitive: false));
 
     var definitions = await _definitionsAsync();
 
@@ -183,7 +189,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   [Test]
   public async Task BothKindsBuildBothIndexesAsync() {
     await _createDeclaredAsync(
-      new JsonIndexInfo("Title", "Title", JsonIndexCast.None, Btree: true, Trigram: true));
+      new JsonIndexInfo("Title", "Title", JsonIndexCast.None, Ordered: true, Substring: true, CaseInsensitive: false));
 
     var count = await _scalarAsync(
       $"SELECT count(*) FROM pg_indexes WHERE tablename = '{TABLE}' AND indexname LIKE 'idx_setup%'");
@@ -203,7 +209,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   /// </remarks>
   [Test]
   public async Task RunningTheSchemaPassTwiceChangesNothingAsync() {
-    var index = new JsonIndexInfo("Count", "Count", JsonIndexCast.Int4, Btree: true, Trigram: false);
+    var index = new JsonIndexInfo("Count", "Count", JsonIndexCast.Int4, Ordered: true, Substring: false, CaseInsensitive: false);
 
     await _createDeclaredAsync(index);
     var first = await _definitionsAsync();
@@ -243,7 +249,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
     }.ToImmutableArray();
 
     var index = new JsonIndexInfo(
-      "OccurredAt", "OccurredAt", JsonIndexCast.Int8, Btree: true, Trigram: false);
+      "OccurredAt", "OccurredAt", JsonIndexCast.Int8, Ordered: true, Substring: false, CaseInsensitive: false);
 
     // Indexing a column that still holds a rendering on any row is refused, which is the reason the
     // generator emits the rewrite first.
@@ -297,4 +303,63 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
       .Because("only the primary key, because every index is write amplification and this surface "
         + "is opt-in");
   }
+
+  /// <summary>
+  /// A case-insensitive declaration builds over the folded value, which is the only expression a
+  /// folded comparison can use.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The reason this needs a real database rather than a string assertion: an index over
+  /// <c>(data -&gt;&gt; 'X')</c> and one over <c>lower((data -&gt;&gt; 'X'))</c> are both valid DDL and
+  /// both build without complaint. The difference only shows in what the planner will use them for,
+  /// so the catalog is read back and the folded expression is what is asserted.
+  /// </para>
+  /// <para>
+  /// Both kinds fold, because the fold decides the expression and not the structure.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Arguments(true, false, "a folded ordered index")]
+  [Arguments(false, true, "a folded substring index")]
+  public async Task ACaseInsensitiveDeclarationBuildsOverTheFoldedValueAsync(
+      bool ordered, bool substring, string what) {
+    await _createDeclaredAsync(new JsonIndexInfo(
+      "Label", "Label", JsonIndexCast.None, Ordered: ordered, Substring: substring,
+      CaseInsensitive: true));
+
+    var definitions = await _definitionsAsync();
+
+    await Assert.That(definitions).Contains("lower(", StringComparison.Ordinal)
+      .Because($"{what} is only a candidate for a predicate over lower(...), so the index has to be "
+        + "built over that expression rather than over the bare extraction");
+    await Assert.That(definitions).Contains("_ci_", StringComparison.Ordinal)
+      .Because("the folded index needs a name of its own, or a field compared both ways would have "
+        + "its second CREATE INDEX IF NOT EXISTS quietly do nothing");
+  }
+
+  /// <summary>
+  /// A field compared both ways carries both indexes, and neither name collides with the other.
+  /// </summary>
+  /// <remarks>
+  /// This is the case the naming exists for. Both declarations are idempotent statements over the
+  /// same table and key, so a shared name would mean the second one silently did nothing and the
+  /// query it was declared for kept scanning.
+  /// </remarks>
+  [Test]
+  public async Task AFieldComparedBothWaysGetsBothIndexesAsync() {
+    await _createDeclaredAsync(
+      new JsonIndexInfo("Label", "Label", JsonIndexCast.None, Ordered: true, Substring: false,
+        CaseInsensitive: false),
+      new JsonIndexInfo("Label", "Label", JsonIndexCast.None, Ordered: true, Substring: false,
+        CaseInsensitive: true));
+
+    var definitions = await _definitionsAsync();
+
+    await Assert.That(definitions).Contains("lower(", StringComparison.Ordinal);
+    await Assert.That(definitions.Split("CREATE INDEX").Length - 1).IsGreaterThanOrEqualTo(2)
+      .Because("the folded and unfolded comparisons need one index each, and the planner uses "
+        + "neither for the other");
+  }
+
 }

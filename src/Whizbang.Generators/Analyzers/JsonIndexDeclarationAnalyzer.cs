@@ -93,9 +93,31 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
           + "promoted column is a real column and stays reachable whatever the rest of the document does."
   );
 
+  /// <summary>
+  /// WHIZ305: Warning - a field declares a capability its type cannot provide.
+  /// </summary>
+  public static readonly DiagnosticDescriptor DeclaredCapabilityDoesNotApply = new(
+      id: "WHIZ305",
+      title: "Declared index capability does not apply to this field's type",
+      messageFormat: "'{0}' asks for {1}, which only applies to text, and {0} is a {2}. That part of the "
+          + "declaration is dropped, so the index is not the one asked for. Use [Indexed] on its own for "
+          + "equality, ranges, ordering and null tests, which is what this type can be indexed for.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Substring matching and case folding are both properties of text. Substring matching needs an "
+          + "index built for pattern matching rather than for ordering, and case folding changes the expression the "
+          + "index is built over; neither means anything for a number, a boolean, an identifier or a date. Asked for "
+          + "elsewhere, the request used to be dropped in silence, and a declaration naming only that capability "
+          + "produced no index at all: the author asked for something and the answer was nothing. Reported because "
+          + "the declaration reads as a claim either way, and the fix is a one-word edit. Distinct from WHIZ303, "
+          + "where no index of any kind can be built and the fix is to promote the field or remove the declaration; "
+          + "here an index can be built and the capability named is the wrong one."
+  );
+
   /// <inheritdoc/>
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
-    [DeclaredIndexCannotBeBuilt, DeclaredIndexCannotBeReached];
+    [DeclaredIndexCannotBeBuilt, DeclaredIndexCannotBeReached, DeclaredCapabilityDoesNotApply];
 
   /// <inheritdoc/>
   public override void Initialize(AnalysisContext context) {
@@ -141,14 +163,69 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
 
     // The one question that matters, answered by the same code the generator uses to decide what to
     // emit. Asking it twice in two places is how the two would come to disagree.
-    if (JsonIndexDiscovery.CastFor(property.Type) is not null) {
+    var cast = JsonIndexDiscovery.CastFor(property.Type);
+    if (cast is null) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DeclaredIndexCannotBeBuilt,
+          declaration.Identifier.GetLocation(),
+          property.Name,
+          TypeNameUtilities.Display(property.Type)));
       return;
     }
 
+    // An index can be built; the question left is whether the capability named applies. Asked after
+    // the cast, because a type that can carry no index at all is the larger problem and reporting
+    // both would give one field two messages with different fixes.
+    _reportCapabilityMismatch(context, declaration, property, declared.Value, cast.Value);
+  }
+
+  /// <summary>
+  /// Reports a capability that only applies to text, asked for on something else.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Substring matching needs an index built for pattern matching rather than ordering, and case
+  /// folding changes the expression the index is built over. Neither means anything for a number, a
+  /// boolean, an identifier or a date, and the discovery drops both for such a field.
+  /// </para>
+  /// <para>
+  /// Dropping them silently is what makes this worth a diagnostic. A field asking only for substring
+  /// matching had every capability dropped and produced no index at all, so the author asked for
+  /// something and got nothing, with the attribute still sitting there reading like a claim.
+  /// </para>
+  /// <para>
+  /// One message names both when both are asked for, since the fix is the same edit.
+  /// </para>
+  /// </remarks>
+  private static void _reportCapabilityMismatch(
+      SyntaxNodeAnalysisContext context,
+      PropertyDeclarationSyntax declaration,
+      IPropertySymbol property,
+      int declared,
+      JsonIndexCast cast) {
+    if (cast == JsonIndexCast.None) {
+      // Text, so both capabilities apply.
+      return;
+    }
+
+    var wantsSubstring = JsonIndexDiscovery.IncludesSubstring(declared);
+    var wantsFolding = JsonIndexDiscovery.DeclaresCaseInsensitive(property);
+
+    if (!wantsSubstring && !wantsFolding) {
+      return;
+    }
+
+    var asked = (wantsSubstring, wantsFolding) switch {
+      (true, true) => "substring matching and case folding",
+      (true, false) => "substring matching",
+      _ => "case folding",
+    };
+
     context.ReportDiagnostic(Diagnostic.Create(
-        DeclaredIndexCannotBeBuilt,
+        DeclaredCapabilityDoesNotApply,
         declaration.Identifier.GetLocation(),
         property.Name,
+        asked,
         TypeNameUtilities.Display(property.Type)));
   }
 

@@ -34,7 +34,7 @@ public sealed class ContainmentPostprocessor(
       return translated;
     }
 
-    return new ContainmentSqlRewriter(JsonIndexRegistry.HasBtreeForTable).Visit(translated);
+    return new ContainmentSqlRewriter(JsonIndexRegistry.HasOrderedForTable).Visit(translated);
   }
 
 }

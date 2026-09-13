@@ -74,8 +74,12 @@ public enum JsonIndexCast {
 /// <param name="PropertyName">The property's name on the model.</param>
 /// <param name="JsonKey">The key the value is stored under in the document.</param>
 /// <param name="Cast">The store type the extraction is cast to, or none for text.</param>
-/// <param name="Btree">Whether to create a btree over the extraction.</param>
-/// <param name="Trigram">Whether to create a trigram index for substring matching.</param>
+/// <param name="Ordered">Whether the field needs equality, ranges, ordering and null tests answered.</param>
+/// <param name="Substring">Whether the field needs substring matching answered.</param>
+/// <param name="CaseInsensitive">
+/// Whether the comparison folds case, which decides the expression the index is built over rather
+/// than which index is built. Both capabilities can be built over either expression.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/JsonIndexGenerationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveIndexSetupTests.cs</tests>
@@ -83,8 +87,9 @@ public sealed record JsonIndexInfo(
     string PropertyName,
     string JsonKey,
     JsonIndexCast Cast,
-    bool Btree,
-    bool Trigram
+    bool Ordered,
+    bool Substring,
+    bool CaseInsensitive
 );
 
 /// <summary>
@@ -134,8 +139,21 @@ public static class JsonIndexSql {
   /// would build an index the planner cannot use for exactly the queries it exists to serve.
   /// </para>
   /// </remarks>
-  public static string Expression(string column, string jsonKey, JsonIndexCast cast) {
+  /// <param name="caseInsensitive">
+  /// Whether to build over the folded value. The fold wraps the extraction rather than the cast,
+  /// because it is only ever applied to text and text takes no cast. An index folded this way is the
+  /// only one a predicate over <c>lower(…)</c> can use, and it is no use at all to a comparison that
+  /// respects case, which is why the two are separate declarations rather than one index serving
+  /// both.
+  /// </param>
+  public static string Expression(
+      string column, string jsonKey, JsonIndexCast cast, bool caseInsensitive = false) {
     var extraction = $"({column} ->> '{jsonKey}')";
+
+    if (caseInsensitive) {
+      return $"(lower{extraction})";
+    }
+
     var storeType = StoreType(cast);
 
     return storeType is null ? extraction : $"({extraction}::{storeType})";
@@ -160,19 +178,24 @@ public static class JsonIndexSql {
       yield break;
     }
 
-    var element = Expression("data", index.JsonKey, index.Cast);
+    var element = Expression("data", index.JsonKey, index.Cast, index.CaseInsensitive);
     var suffix = index.JsonKey.ToLowerInvariant();
 
-    if (index.Btree) {
-      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}_json "
+    // The folded index is a different index over a different expression, so it needs a name of its
+    // own: a field compared both ways carries one of each, and one name would have the second
+    // CREATE INDEX IF NOT EXISTS quietly do nothing.
+    var fold = index.CaseInsensitive ? "_ci" : string.Empty;
+
+    if (index.Ordered) {
+      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}{fold}_json "
           + $"ON {qualifiedTable} ({element});";
     }
 
-    if (index.Trigram) {
-      // Requires pg_trgm. Created alongside rather than assumed, so a consumer who declares a
-      // trigram index does not have to know that.
+    if (index.Substring) {
+      // Requires pg_trgm. Created alongside rather than assumed, so a consumer who declares
+      // substring matching does not have to know that.
       yield return "CREATE EXTENSION IF NOT EXISTS pg_trgm;";
-      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}_trgm "
+      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}{fold}_trgm "
           + $"ON {qualifiedTable} USING gin ({element} gin_trgm_ops);";
     }
   }
