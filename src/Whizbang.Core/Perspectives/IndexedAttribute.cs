@@ -1,13 +1,28 @@
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
-/// The kinds of index a JSON-only field can carry. Combinable, because a field filtered by a range
-/// and by a substring wants both.
+/// What a field needs an index to answer. Combinable, because a field filtered by a range and by a
+/// substring needs both.
 /// </summary>
 /// <remarks>
-/// Plural, as a combinable enumeration is named. A single kind is the common case and reads fine that
-/// way, <c>[Indexed(IndexKinds.Trigram)]</c>, and the name stays honest for the combination it exists
-/// to allow.
+/// <para>
+/// These name the question a query asks, not the index a database builds to answer it. That is the
+/// difference between a portable declaration and one that only means something on one engine: a
+/// model is ordinary code and the same model is stored in PostgreSQL in production and in SQLite
+/// under test, so what the author writes has to survive the move. Which structure gets built is the
+/// driver's answer, and the drivers do not agree: an ordered lookup is a btree on PostgreSQL, SQLite
+/// and MySQL, a nonclustered index on SQL Server; substring matching is a trigram GIN index on
+/// PostgreSQL, a full-text index on SQL Server and MySQL, and on SQLite it is not an index on the
+/// table at all.
+/// </para>
+/// <para>
+/// A driver that cannot provide a capability says so at build time. Silently building nothing is
+/// the one outcome worth ruling out, because the declaration reads as a claim either way.
+/// </para>
+/// <para>
+/// Plural, as a combinable enumeration is named. A single capability is the common case and reads
+/// fine that way, <c>[Indexed(IndexKinds.Substring)]</c>.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 [Flags]
@@ -16,24 +31,23 @@ public enum IndexKinds {
   None = 0,
 
   /// <summary>
-  /// A btree over the extracted value, which answers equality, ranges, ordering and null tests.
+  /// Answers equality, ranges, ordering and null tests over the stored value.
   /// </summary>
   /// <remarks>
-  /// This is what the GIN index on the document cannot do. Containment answers "is this value
+  /// This is what the index over the whole document cannot do. Containment answers "is this value
   /// present" and has no ordered answer space, so a range or a sort key is read by scanning however
-  /// the document is indexed. A btree on the extraction answers all of it.
+  /// the document is indexed. An ordered index over the extracted value answers all of it.
   /// </remarks>
-  Btree = 1,
+  Ordered = 1,
 
   /// <summary>
-  /// A trigram index, which answers substring matching: <c>Contains</c>, <c>StartsWith</c> and
-  /// <c>EndsWith</c>.
+  /// Answers substring matching: <c>Contains</c>, <c>StartsWith</c> and <c>EndsWith</c>.
   /// </summary>
   /// <remarks>
-  /// Requires the <c>pg_trgm</c> extension. Only meaningful for a string field, and reported as a
-  /// diagnostic rather than silently ignored when asked for on anything else.
+  /// Only meaningful for a text field, and reported rather than silently ignored when asked for on
+  /// anything else. Not every driver can provide it, and a driver that cannot reports that too.
   /// </remarks>
-  Trigram = 2,
+  Substring = 2,
 }
 
 /// <summary>
@@ -93,16 +107,66 @@ public enum IndexKinds {
 ///   public int Rank { get; init; }
 ///
 ///   // Filtered both by range and by substring.
-///   [Indexed(IndexKinds.Btree | IndexKinds.Trigram)]
+///   [Indexed(IndexKinds.Ordered | IndexKinds.Substring)]
 ///   public string Title { get; init; }
 /// }
 /// </code>
 /// </example>
-/// <param name="kind">The kinds to create. Defaults to <see cref="IndexKinds.Btree"/>.</param>
+/// <param name="kind">What the index has to answer. Defaults to <see cref="IndexKinds.Ordered"/>.</param>
+/// <param name="caseInsensitive">
+/// Whether the comparison this serves folds case. See <see cref="IndexedAttribute.CaseInsensitive"/>.
+/// </param>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = true, Inherited = true)]
-public sealed class IndexedAttribute(IndexKinds kind = IndexKinds.Btree) : Attribute {
-  /// <summary>The kinds of index to create over this field.</summary>
+public sealed class IndexedAttribute(IndexKinds kind = IndexKinds.Ordered, bool caseInsensitive = false)
+    : Attribute {
+  /// <summary>What the index over this field has to answer.</summary>
   public IndexKinds Kind { get; } = kind;
+
+  /// <summary>
+  /// Whether the comparison this index serves folds case, as <c>Name.ToLower() == …</c> does.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// It has to be declared rather than inferred, because an index is only used for the expression it
+  /// was built over. A case-folded comparison is a predicate over the folded value, so an index over
+  /// the unfolded one is not a candidate for it however it is built: the declaration would be paid
+  /// for on every write and answer nothing.
+  /// </para>
+  /// <para>
+  /// Costs an index that a comparison respecting case cannot use, which is why it is a separate
+  /// declaration rather than a default. A field compared both ways needs one of each.
+  /// </para>
+  /// <para>
+  /// <strong>Write the comparison as <c>ToLower()</c>, with no argument.</strong> That is the one
+  /// form the query translation maps, to the database's own downward fold, and it is what this index
+  /// is built over. <c>ToLowerInvariant()</c> and the overloads taking a culture have no translation
+  /// at all, so a query using them fails rather than running slowly. <c>ToUpper()</c> does translate,
+  /// to the upward fold, which no declaration builds an index over; the index advisory reports that
+  /// and names the fold to use instead.
+  /// </para>
+  /// <para>
+  /// The fold happens in the database, under the column's collation, so no CLR culture is involved
+  /// and none can be expressed. Analyzers that ask for a culture or for a
+  /// <c>StringComparison</c> on such a comparison are answering a question about in-process string
+  /// handling; inside a query expression the comparison becomes SQL, and those overloads are exactly
+  /// the ones with no translation. Suppress them on the query rather than taking their advice.
+  /// </para>
+  /// <para>
+  /// Only meaningful for a text field, and reported rather than ignored when asked for elsewhere.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// // Declared both ways, because both comparisons are made.
+  /// [Indexed]
+  /// [Indexed(caseInsensitive: true)]
+  /// public string Label { get; init; }
+  ///
+  /// // The folded comparison. ToLower() with no argument is the form that translates.
+  /// rows.Where(r =&gt; r.Data.Label.ToLower() == term.ToLower())
+  /// </code>
+  /// </example>
+  public bool CaseInsensitive { get; } = caseInsensitive;
 }
 
 /// <summary>
@@ -128,9 +192,9 @@ public sealed class IndexedAttribute(IndexKinds kind = IndexKinds.Btree) : Attri
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/IndexedAttributeTests.cs</tests>
-/// <param name="kind">The kinds to create. Defaults to <see cref="IndexKinds.Btree"/>.</param>
+/// <param name="kind">What each index has to answer. Defaults to <see cref="IndexKinds.Ordered"/>.</param>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
-public sealed class IndexAllFieldsAttribute(IndexKinds kind = IndexKinds.Btree) : Attribute {
-  /// <summary>The kinds of index to create over every eligible field.</summary>
+public sealed class IndexAllFieldsAttribute(IndexKinds kind = IndexKinds.Ordered) : Attribute {
+  /// <summary>What the index over every eligible field has to answer.</summary>
   public IndexKinds Kind { get; } = kind;
 }

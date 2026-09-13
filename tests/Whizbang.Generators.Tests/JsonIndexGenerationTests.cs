@@ -40,7 +40,7 @@ public class JsonIndexGenerationTests {
       [Indexed]
       public int Rank { get; init; }
 
-      [Indexed(IndexKinds.Btree | IndexKinds.Trigram)]
+      [Indexed(IndexKinds.Ordered | IndexKinds.Substring)]
       public string Title { get; init; } = string.Empty;
 
       public string Plain { get; init; } = string.Empty;
@@ -409,5 +409,113 @@ public class JsonIndexGenerationTests {
     await Assert.That(output).DoesNotContain("(not_filtered)", StringComparison.Ordinal)
       .Because("every index is write amplification, so a promoted column nobody filters pays for "
         + "nothing");
+  }
+
+  /// <summary>
+  /// A field compared both with and without regard to case gets an index for each comparison.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The fold is part of the indexed expression, so the two are different indexes and neither answers
+  /// the other's query. A field filtered both ways therefore needs both, and the attribute repeating
+  /// is how that is asked for.
+  /// </para>
+  /// <para>
+  /// Asserted through the generator rather than over hand-built declarations, because the failure this
+  /// catches is in the discovery that builds them: one declaration per field collapses the pair, emits
+  /// only the folded index, and leaves every case-sensitive query on the field scanning while the
+  /// author can see an index on it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AFieldComparedBothWaysGetsAnIndexForEachAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Reported : IEvent;
+
+      public record ReportModel {
+        [StreamId]
+        public Guid ReportId { get; init; }
+
+        [Indexed]
+        [Indexed(caseInsensitive: true)]
+        public string Label { get; init; } = string.Empty;
+      }
+
+      public class ReportPerspective : IPerspectiveFor<ReportModel, Reported> {
+        public ReportModel Apply(ReportModel currentData, Reported eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ReportDbContext : DbContext {
+        public ReportDbContext(DbContextOptions<ReportDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).Contains("(lower(data ->> 'Label'))", StringComparison.Ordinal)
+      .Because("a comparison that folds case is answered only by an index over the folded value");
+    await Assert.That(output).Contains("_label_json ", StringComparison.Ordinal)
+      .Because("the unfolded declaration still has to produce its own index, or every "
+        + "case-sensitive query on the field scans");
+    await Assert.That(output).Contains("_label_ci_json ", StringComparison.Ordinal)
+      .Because("the folded index needs a name of its own, or the second CREATE INDEX IF NOT EXISTS "
+        + "quietly does nothing");
+  }
+
+  /// <summary>
+  /// Case folding asked for on a field that is not text is dropped, leaving the index it can carry.
+  /// </summary>
+  /// <remarks>
+  /// Folding is a property of text, so there is nothing to fold on a number and no expression to
+  /// build. Dropped rather than emitted, since <c>lower()</c> over a numeric extraction is a different
+  /// value again, and reported instead by WHIZ305 so the author hears about it.
+  /// </remarks>
+  [Test]
+  public async Task CaseFoldingIsDroppedForAFieldThatIsNotTextAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Reported : IEvent;
+
+      public record ReportModel {
+        [StreamId]
+        public Guid ReportId { get; init; }
+
+        [Indexed(caseInsensitive: true)]
+        public int Count { get; init; }
+      }
+
+      public class ReportPerspective : IPerspectiveFor<ReportModel, Reported> {
+        public ReportModel Apply(ReportModel currentData, Reported eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ReportDbContext : DbContext {
+        public ReportDbContext(DbContextOptions<ReportDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).Contains("((data ->> 'Count')::integer)", StringComparison.Ordinal)
+      .Because("the index the field can carry is still the one asked for, so it is still built");
+    await Assert.That(output).DoesNotContain("lower(", StringComparison.Ordinal)
+      .Because("there is nothing to fold on a number, and folding the extraction before the cast "
+        + "would index a different value than any query produces");
   }
 }

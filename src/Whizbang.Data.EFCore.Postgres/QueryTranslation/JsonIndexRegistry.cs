@@ -75,8 +75,8 @@ public static class JsonIndexRegistry {
   /// equality, so an equality filter on such a field is still better off reaching the document index
   /// than scanning, and standing down for it would cost an index rather than save one.
   /// </remarks>
-  public static bool HasBtree(Type modelType, string propertyName) =>
-    Kinds(modelType, propertyName).HasFlag(IndexKinds.Btree);
+  public static bool HasOrdered(Type modelType, string propertyName) =>
+    Kinds(modelType, propertyName).HasFlag(IndexKinds.Ordered);
 
   private static readonly ConcurrentDictionary<(string TableName, string PropertyName), IndexKinds> _byTable =
     new();
@@ -113,11 +113,11 @@ public static class JsonIndexRegistry {
   /// index. It cost no correctness, which is exactly why it would not have been noticed: every query
   /// still returned the right rows, more slowly, on models that had declared nothing at all.
   /// </remarks>
-  public static bool HasBtreeForTable(string tableName, string propertyName) {
+  public static bool HasOrderedForTable(string tableName, string propertyName) {
     ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
     ArgumentException.ThrowIfNullOrWhiteSpace(propertyName);
 
     return _byTable.TryGetValue((tableName, propertyName), out var kind)
-        && kind.HasFlag(IndexKinds.Btree);
+        && kind.HasFlag(IndexKinds.Ordered);
   }
 }

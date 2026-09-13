@@ -23,16 +23,16 @@ public class IndexedAttributeTests {
   public async Task DefaultKind_IsBtreeAsync() {
     var attribute = new IndexedAttribute();
 
-    await Assert.That(attribute.Kind).IsEqualTo(IndexKinds.Btree);
+    await Assert.That(attribute.Kind).IsEqualTo(IndexKinds.Ordered);
   }
 
   /// <summary>The kinds combine, because a field can be filtered by range and by substring both.</summary>
   [Test]
   public async Task KindsCombineAsync() {
-    var attribute = new IndexedAttribute(IndexKinds.Btree | IndexKinds.Trigram);
+    var attribute = new IndexedAttribute(IndexKinds.Ordered | IndexKinds.Substring);
 
-    await Assert.That(attribute.Kind.HasFlag(IndexKinds.Btree)).IsTrue();
-    await Assert.That(attribute.Kind.HasFlag(IndexKinds.Trigram)).IsTrue();
+    await Assert.That(attribute.Kind.HasFlag(IndexKinds.Ordered)).IsTrue();
+    await Assert.That(attribute.Kind.HasFlag(IndexKinds.Substring)).IsTrue();
   }
 
   /// <summary>
@@ -56,7 +56,7 @@ public class IndexedAttributeTests {
   [Test]
   public async Task NoneIsNotAnIndexAsync() {
     await Assert.That(new IndexedAttribute(IndexKinds.None).Kind).IsEqualTo(IndexKinds.None);
-    await Assert.That(IndexKinds.None.HasFlag(IndexKinds.Btree)).IsFalse();
+    await Assert.That(IndexKinds.None.HasFlag(IndexKinds.Ordered)).IsFalse();
   }
 
   /// <summary>
@@ -67,7 +67,7 @@ public class IndexedAttributeTests {
   public async Task IndexAllFields_AppliesToAModelAndCarriesAKindAsync() {
     var attribute = new IndexAllFieldsAttribute();
 
-    await Assert.That(attribute.Kind).IsEqualTo(IndexKinds.Btree);
+    await Assert.That(attribute.Kind).IsEqualTo(IndexKinds.Ordered);
 
     var usage = typeof(IndexAllFieldsAttribute)
       .GetCustomAttributes(typeof(AttributeUsageAttribute), inherit: false)

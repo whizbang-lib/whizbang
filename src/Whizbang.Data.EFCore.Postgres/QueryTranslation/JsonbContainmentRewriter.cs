@@ -398,7 +398,7 @@ public sealed class JsonbContainmentRewriter(IModel? model) : ExpressionVisitor 
 
     return rootModel is not null
         && names.Count == 1
-        && JsonIndexRegistry.HasBtree(rootModel, names[0]);
+        && JsonIndexRegistry.HasOrdered(rootModel, names[0]);
   }
 
   /// <summary>

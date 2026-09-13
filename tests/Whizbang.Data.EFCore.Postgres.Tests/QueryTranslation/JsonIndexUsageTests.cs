@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
@@ -264,16 +265,92 @@ public class JsonIndexUsageTests : IAsyncDisposable {
         .Because($"the index was built over {expression}, so the query has to produce the same cast");
     }
 
+    await Assert.That(await _planForAsync(db, sql, cancellationToken)).Contains(indexName, StringComparison.Ordinal)
+      .Because($"a range over a {type} field has to be answered from the index the generator builds");
+  }
+
+  /// <summary>The plan PostgreSQL chooses for a compiled query, as one line.</summary>
+  /// <remarks>
+  /// The compiled SQL carries no parameters for these cases, every value being a constant, so the
+  /// text goes to EXPLAIN as it stands once the parameter prefix is spelled the way SQL does.
+  /// </remarks>
+  private static async Task<string> _planForAsync(
+    NpgsqlConnection db, string sql, CancellationToken cancellationToken) {
     var plan = new List<string>();
-    await using (var explain = new NpgsqlCommand($"EXPLAIN {sql.Replace("@__", "$", StringComparison.Ordinal)}", db)) {
-      // The compiled SQL carries no parameters for these cases, every value being a constant.
-      await using var reader = await explain.ExecuteReaderAsync(cancellationToken);
-      while (await reader.ReadAsync(cancellationToken)) {
-        plan.Add(reader.GetString(0).Trim());
-      }
+
+    await using var explain = new NpgsqlCommand($"EXPLAIN {sql.Replace("@__", "$", StringComparison.Ordinal)}", db);
+    await using var reader = await explain.ExecuteReaderAsync(cancellationToken);
+    while (await reader.ReadAsync(cancellationToken)) {
+      plan.Add(reader.GetString(0).Trim());
     }
 
-    await Assert.That(string.Join(" | ", plan)).Contains(indexName, StringComparison.Ordinal)
-      .Because($"a range over a {type} field has to be answered from the index the generator builds");
+    return string.Join(" | ", plan);
+  }
+
+  /// <summary>
+  /// A comparison that folds case is answered by the folded index, and not by the plain one.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is the measurement the whole case-insensitive option rests on, and both halves matter. The
+  /// negative half is the reason the option exists: if the plain index answered a folded comparison
+  /// there would be nothing to add. The positive half is the reason the folded expression is the one
+  /// it is, rather than any other rendering that also lowercases.
+  /// </para>
+  /// <para>
+  /// Measured with the plain index in place and alone first, so the negative half is a plan and not
+  /// an assumption. A sequential scan here would otherwise be indistinguishable from the planner
+  /// simply preferring one for an unselective predicate, which is why the compared value matches one
+  /// row in forty thousand.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(180000)]
+  [SuppressMessage("Globalization", "CA1304:Specify CultureInfo",
+    Justification = "The parameterless ToLower is the only form Entity Framework maps, to the SQL "
+      + "lower() function; the overload taking a culture has no translation at all. The fold "
+      + "happens in the database under its collation, so there is no CLR culture in play.")]
+  [SuppressMessage("Globalization", "CA1311:Specify a culture or use an invariant version",
+    Justification = "Same reason as CA1304: ToLowerInvariant has no translation, so the invariant "
+      + "version this asks for would make the query fail rather than run.")]
+  [SuppressMessage("Globalization", "CA1862:Prefer string.Equals with StringComparison",
+    Justification = "The comparison is translated to SQL, and Entity Framework declines the "
+      + "StringComparison overloads on principle: their meaning is not what SQL equality means "
+      + "under any particular collation. Writing the fold explicitly is therefore the only shape "
+      + "that reaches the database, which is exactly the shape this test is about.")]
+  [SuppressMessage("Roslynator", "RCS1155:Use StringComparison when comparing strings",
+    Justification = "Same reason as CA1862 above: inside a query expression the comparison becomes "
+      + "SQL, and the overload this asks for has no translation.")]
+  public async Task AFoldedComparison_IsAnsweredByTheFoldedIndexOnlyAsync(CancellationToken cancellationToken) {
+    var plain = JsonIndexSql.Expression("data", "Title", JsonIndexCast.None);
+    var folded = JsonIndexSql.Expression("data", "Title", JsonIndexCast.None, caseInsensitive: true);
+
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync(cancellationToken);
+    await _execAsync(db, $"CREATE INDEX idx_json_title_plain ON {TABLE} ({plain})");
+    await _execAsync(db, $"ANALYZE {TABLE}");
+
+    var sql = _context!.Set<PerspectiveRow<IndexModel>>()
+      .Where(r => r.Data.Title.ToLower() == "title-00030000")
+      .ToQueryString();
+
+    // The expression the index is built over has to be the one the query produces, or the index is
+    // over something else and the plan below would be a scan for that reason instead.
+    await Assert.That(sql).Contains("lower(w.data ->> 'Title')", StringComparison.Ordinal)
+      .Because($"the folded index is built over {folded}, so the comparison has to compile to the "
+        + "same fold of the same extraction");
+
+    await Assert.That(await _planForAsync(db, sql, cancellationToken))
+      .DoesNotContain("idx_json_title_plain", StringComparison.Ordinal)
+      .Because("an index over the stored value cannot answer a comparison over the folded value, "
+        + "which is the gap the case-insensitive declaration exists to close");
+
+    await _execAsync(db, $"CREATE INDEX idx_json_title_ci ON {TABLE} ({folded})");
+    await _execAsync(db, $"ANALYZE {TABLE}");
+
+    await Assert.That(await _planForAsync(db, sql, cancellationToken))
+      .Contains("idx_json_title_ci", StringComparison.Ordinal)
+      .Because("the folded index is over exactly the expression the comparison produces, so the "
+        + "planner has to be able to use it");
   }
 }

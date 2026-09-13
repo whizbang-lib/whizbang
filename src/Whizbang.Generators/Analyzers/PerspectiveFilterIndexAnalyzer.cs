@@ -48,16 +48,41 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   private const string STREAM_ID_ATTRIBUTE = "Whizbang.Core.StreamIdAttribute";
   private const string SUPPRESS_ATTRIBUTE = "Whizbang.Core.Perspectives.SuppressIndexAdvisoryAttribute";
 
-  /// <summary>IndexKinds.Btree.</summary>
-  private const int KIND_BTREE = 1;
-
-  /// <summary>IndexKinds.Trigram.</summary>
-  private const int KIND_TRIGRAM = 2;
-
   /// <summary>The string operations a trigram index answers.</summary>
   private static readonly HashSet<string> _substringOperators = new(StringComparer.Ordinal) {
     "Contains", "StartsWith", "EndsWith",
   };
+
+  /// <summary>The operations that fold case in the database, and which fold they compile to.</summary>
+  /// <remarks>
+  /// <para>
+  /// Only the parameterless forms, and that is measured rather than chosen: Entity Framework maps
+  /// <c>ToLower()</c> and <c>ToUpper()</c> to <c>lower()</c> and <c>upper()</c>, and has no mapping
+  /// for the invariant forms or the ones taking a culture. A query written with those does not scan,
+  /// it fails to translate, so there is no index question to answer about it and listing them here
+  /// would attach index advice to a query that never reaches the database.
+  /// </para>
+  /// <para>
+  /// Nothing else is listed for a different reason: another function over the field is another
+  /// expression again, and no declaration can ask for an index over it.
+  /// </para>
+  /// </remarks>
+  private static readonly Dictionary<string, Fold> _foldingOperators = new(StringComparer.Ordinal) {
+    ["ToLower"] = Fold.Lower,
+    ["ToUpper"] = Fold.Upper,
+  };
+
+  /// <summary>Which expression a comparison is over, of the ones an index can be built on.</summary>
+  private enum Fold {
+    /// <summary>The stored value, compared as it is stored.</summary>
+    Respects,
+
+    /// <summary>The value folded down, which is the fold a declaration can ask for.</summary>
+    Lower,
+
+    /// <summary>The value folded up, which no declaration builds an index over.</summary>
+    Upper,
+  }
   private const string ASYNC_SUFFIX = "Async";
 
   /// <summary>
@@ -142,7 +167,7 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       node.Name.GetLocation(),
       TypeNameUtilities.MinimallyQualified(model),
       field.Name,
-      _adviceFor(model)));
+      _adviceFor(model, _foldOf(node))));
   }
 
   /// <summary>
@@ -153,9 +178,22 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// <returns><c>true</c> when a declared index answers this filter.</returns>
   /// <remarks>
   /// <para>
-  /// A btree covers what a btree serves: ranges, orderings, equality and null tests. A trigram covers
-  /// substring matching and nothing else, which is the same distinction the runtime makes when it
-  /// decides whether to stand the containment rewrite down.
+  /// Two questions, and both have to be yes. The kind decides which shapes are answered: the ordered
+  /// capability covers ranges, orderings, equality and null tests, and substring matching covers
+  /// pattern matching and nothing else, which is the same distinction the runtime makes when it
+  /// decides whether to stand the containment rewrite down. The fold decides which expression the
+  /// index is over, and a comparison can only be answered by an index over the expression it
+  /// produces.
+  /// </para>
+  /// <para>
+  /// Asking only the first question is what made a declared index look like it served every query on
+  /// the field. It is the quietest version of this failure: the author declared the index, can see it
+  /// in the database, and every folded comparison still reads every row with nothing reported.
+  /// </para>
+  /// <para>
+  /// Asked only of a field indexed through its document. A promoted column is settled earlier, and
+  /// deliberately: the attribute cannot ask for a functional index on a column, so a report there
+  /// would name a problem with no fix to offer.
   /// </para>
   /// <para>
   /// Kept narrow on purpose. Treating any declaration as covering any shape would silence the
@@ -164,17 +202,29 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// </para>
   /// </remarks>
   private static bool _declaredIndexServes(MemberAccessExpressionSyntax node, IPropertySymbol field) {
-    var kind = JsonIndexDiscovery.DeclaredKind(field);
+    var fold = _foldOf(node);
+
+    // Only the lower fold is declarable, so a comparison over the upper one is answered by no index
+    // the author can ask for, whatever the field declares.
+    if (fold == Fold.Upper) {
+      return false;
+    }
+
+    var kind = JsonIndexDiscovery.DeclaredKind(field, caseInsensitive: fold == Fold.Lower);
     if (kind is null) {
       return false;
     }
 
-    if ((kind.Value & KIND_BTREE) != 0) {
-      return true;
-    }
-
-    return (kind.Value & KIND_TRIGRAM) != 0 && _isSubstringMatch(node);
+    return JsonIndexDiscovery.IncludesOrdered(kind.Value)
+      || (JsonIndexDiscovery.IncludesSubstring(kind.Value) && _isSubstringMatch(node));
   }
+
+  /// <summary>Which expression the comparison this member access feeds is over.</summary>
+  private static Fold _foldOf(MemberAccessExpressionSyntax node) =>
+    node.Parent is MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax } call
+    && _foldingOperators.TryGetValue(call.Name.Identifier.ValueText, out var fold)
+      ? fold
+      : Fold.Respects;
 
   /// <summary>Whether this member access is the receiver of a substring match.</summary>
   private static bool _isSubstringMatch(MemberAccessExpressionSyntax node) =>
@@ -185,22 +235,44 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// The fixes that actually work for this model, which depends on how its document is stored.
   /// </summary>
   /// <param name="model">The perspective's model type.</param>
+  /// <param name="fold">The expression the comparison is over.</param>
   /// <returns>The sentence naming the available fixes.</returns>
   /// <remarks>
+  /// <para>
   /// A model holding a polymorphic member is stored as one serialized value rather than as mapped
   /// properties, so an index over an extraction from it is unreachable and the generator skips it.
   /// Offering <c>[Indexed]</c> there would send an author who takes the advice straight into
   /// WHIZ304 for having taken it. The two diagnostics have to agree about what is possible, so the
   /// advice follows the storage rather than being fixed text.
+  /// </para>
+  /// <para>
+  /// It follows the comparison for the same reason. A field reported for a folded comparison is
+  /// commonly already marked <c>[Indexed]</c>, and repeating that advice reads as the diagnostic
+  /// being wrong rather than as one word being missing.
+  /// </para>
   /// </remarks>
-  private static string _adviceFor(INamedTypeSymbol model) =>
-    PolymorphicModelDiscovery.IsPolymorphic(model)
-      ? "This model holds a polymorphic member, so its document is stored as one serialized value and "
+  private static string _adviceFor(INamedTypeSymbol model, Fold fold) {
+    if (PolymorphicModelDiscovery.IsPolymorphic(model)) {
+      // The fold is beside the point here: no index over this document is reachable at all.
+      return "This model holds a polymorphic member, so its document is stored as one serialized value and "
         + "an index over a field inside it cannot be reached. Promote it with "
         + "[PhysicalField] plus [Indexed] to get a real indexed column, or record the decision with "
-        + "[SuppressIndexAdvisory(\"reason\")]"
-      : "Mark it [Indexed] for an index over the stored value, [PhysicalField] plus [Indexed] to "
-        + "promote it to a column, or record the decision with [SuppressIndexAdvisory(\"reason\")]";
+        + "[SuppressIndexAdvisory(\"reason\")]";
+    }
+
+    const string PROMOTE_OR_SUPPRESS = "[PhysicalField] plus [Indexed] to promote it to a column, or "
+      + "record the decision with [SuppressIndexAdvisory(\"reason\")]";
+
+    return fold switch {
+      Fold.Lower => "This comparison folds case, which is a different expression from the stored value "
+        + "and so a different index. Mark it [Indexed(caseInsensitive: true)] for an index over the "
+        + "folded value, " + PROMOTE_OR_SUPPRESS,
+      Fold.Upper => "This comparison folds case upward, and the index a declaration builds is over the "
+        + "downward fold. Compare with ToLower() and mark it [Indexed(caseInsensitive: true)], use "
+        + PROMOTE_OR_SUPPRESS,
+      _ => "Mark it [Indexed] for an index over the stored value, " + PROMOTE_OR_SUPPRESS,
+    };
+  }
 
   /// <summary>
   /// Resolves <paramref name="expression"/> as <c>PerspectiveRow&lt;TModel&gt;.Data</c> and returns

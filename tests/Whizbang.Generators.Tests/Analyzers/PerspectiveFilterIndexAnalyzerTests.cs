@@ -78,8 +78,18 @@ public class PerspectiveFilterIndexAnalyzerTests {
         [Indexed]
         public int DeclaredBtree { get; init; }
 
-        [Indexed(IndexKinds.Trigram)]
+        [Indexed(IndexKinds.Substring)]
         public string DeclaredTrigram { get; init; } = string.Empty;
+
+        [Indexed]
+        public string DeclaredSensitive { get; init; } = string.Empty;
+
+        [Indexed(caseInsensitive: true)]
+        public string DeclaredFolded { get; init; } = string.Empty;
+
+        [Indexed]
+        [Indexed(caseInsensitive: true)]
+        public string DeclaredBothWays { get; init; } = string.Empty;
       }
 
       public enum Mood { Low, High }
@@ -763,5 +773,160 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(_whiz302(diagnostics)).IsEmpty()
       .Because("[PhysicalField] promotes it and [Indexed] indexes the column, so the filter is a "
         + "lookup and there is nothing left to advise");
+  }
+
+  // ========================================
+  // Case folding: the index has to be over the expression the comparison produces
+  // ========================================
+
+  /// <summary>
+  /// A comparison that folds case is reported even on a declared field, because the index built over
+  /// the stored value cannot answer a comparison over the folded one.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The fold is part of the expression, so an index over the extraction and an index over the folded
+  /// extraction are two different indexes and neither answers the other's query. This is the failure
+  /// that is invisible without the check: the author declared an index, can see it in the database,
+  /// and every one of these queries still reads every row.
+  /// </para>
+  /// <para>
+  /// The advice has to name the fold, because the author has already taken the advice this diagnostic
+  /// gives by default.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("ToLower")]
+  public async Task Filter_FoldingCase_OnAnUnfoldedDeclaration_ReportsAsync(string fold) {
+    var source = _repositoryOver($$"""
+            return _rows.Where(r => r.Data.DeclaredSensitive.{{fold}}() == "ab").ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+    var reported = _whiz302(diagnostics).ToList();
+
+    await Assert.That(reported).HasSingleItem()
+      .Because("an index over the stored value cannot answer a comparison over the folded value, so "
+        + "this filter reads every row despite the declaration");
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture))
+      .Contains("caseInsensitive: true", StringComparison.Ordinal)
+      .Because("the author already marked the field [Indexed], so repeating that advice has no exit");
+  }
+
+  /// <summary>A folded declaration answers the folded comparison, which is what it is for.</summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("ToLower")]
+  public async Task Filter_FoldingCase_OnAFoldedDeclaration_IsNotReportedAsync(string fold) {
+    var source = _repositoryOver($$"""
+            return _rows.Where(r => r.Data.DeclaredFolded.{{fold}}() == "ab").ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty()
+      .Because("the index is built over the folded value, which is the expression this comparison "
+        + "produces, so the filter is a lookup");
+  }
+
+  /// <summary>
+  /// A folded declaration does not answer a comparison that respects case, so that is still reported.
+  /// </summary>
+  /// <remarks>
+  /// The mirror of the case above, and the reason the two declarations are separate rather than one
+  /// index serving both. Written as a range because plain equality is answered by the document's
+  /// containment index, which would make this silent for a reason that has nothing to do with the
+  /// fold.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Filter_RespectingCase_OnAFoldedDeclaration_ReportsAsync() {
+    var source = _repositoryOver("""
+            return _rows.Where(r => r.Data.DeclaredFolded.CompareTo("m") > 0).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).HasSingleItem()
+      .Because("the only index on the field is over the folded value, and a range that respects case "
+        + "cannot be answered from it");
+  }
+
+  /// <summary>
+  /// A field declared both ways answers both comparisons, which is what declaring it twice buys.
+  /// </summary>
+  /// <remarks>
+  /// The guard on the fix above. Matching the comparison's fold against a single answer for the whole
+  /// field would silence one form and report the other, and a field filtered both ways is the
+  /// ordinary case rather than the exotic one.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("r.Data.DeclaredBothWays.ToLower() == \"ab\"")]
+  [Arguments("r.Data.DeclaredBothWays.CompareTo(\"m\") > 0")]
+  public async Task Filter_OnAFieldDeclaredBothWays_IsNotReportedAsync(string filter) {
+    var source = _repositoryOver($$"""
+            return _rows.Where(r => {{filter}}).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty()
+      .Because("both indexes exist, so whichever way the comparison folds there is one over the "
+        + "expression it produces");
+  }
+
+  /// <summary>
+  /// Folding upward is reported whatever is declared, because the framework indexes the lower fold.
+  /// </summary>
+  /// <remarks>
+  /// <c>ToUpper</c> compiles to <c>upper(...)</c>, and an index over <c>lower(...)</c> is no more use
+  /// to it than an index over the stored value. One fold has to be the one that is built, so the
+  /// message says which, rather than letting the query look served when it is not.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("ToUpper")]
+  public async Task Filter_FoldingUpward_ReportsAndNamesTheFoldThatIsIndexedAsync(string fold) {
+    var source = _repositoryOver($$"""
+            return _rows.Where(r => r.Data.DeclaredBothWays.{{fold}}() == "AB").ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+    var reported = _whiz302(diagnostics).ToList();
+
+    await Assert.That(reported).HasSingleItem()
+      .Because("no index the attribute can ask for is built over the upper fold, so this reads every "
+        + "row however the field is declared");
+    await Assert.That(reported[0].GetMessage(CultureInfo.InvariantCulture))
+      .Contains("ToLower", StringComparison.Ordinal)
+      .Because("the fix is to compare with the fold the index is built over, so the message has to "
+        + "name it");
+  }
+
+  /// <summary>
+  /// A fold that never becomes SQL is not treated as one, because there is no plan to advise about.
+  /// </summary>
+  /// <remarks>
+  /// Entity Framework maps the parameterless <c>ToLower</c> and <c>ToUpper</c> and has no mapping for
+  /// the invariant forms or the ones taking a culture: a query written with those fails to translate
+  /// rather than scanning. Reading them as folds would attach index advice to a query that never
+  /// reaches the database, and would quietly start reporting fields whose declarations are right.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("ToLowerInvariant")]
+  [Arguments("ToUpperInvariant")]
+  public async Task Filter_FoldingThatDoesNotTranslate_IsNotTreatedAsAFoldAsync(string fold) {
+    var source = _repositoryOver($$"""
+            return _rows.Where(r => r.Data.DeclaredSensitive.{{fold}}() == "ab").ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty()
+      .Because("this query does not run at all, so an index advisory on it would be advice about a "
+        + "plan that never exists");
   }
 }

@@ -1527,11 +1527,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // situation the rewrite exists to correct rather than to cause.
     foreach (var index in model.JsonIndexes) {
       var kinds = new System.Collections.Generic.List<string>();
-      if (index.Btree) {
-        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Btree");
+      if (index.Ordered) {
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Ordered");
       }
-      if (index.Trigram) {
-        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Trigram");
+      if (index.Substring) {
+        kinds.Add("Whizbang.Core.Perspectives.IndexKinds.Substring");
       }
 
       var kindExpression = string.Join(" | ", kinds);
