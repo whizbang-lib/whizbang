@@ -22,6 +22,15 @@ public sealed partial class TableStatisticsCollector(
   private readonly ILogger<TableStatisticsCollector> _logger =
     logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<TableStatisticsCollector>.Instance;
 
+  /// <summary>
+  /// Holds the advisory across cycles, which is what makes its once-per-process promise hold.
+  /// </summary>
+  /// <remarks>
+  /// Created on the first cycle from the scope's logger factory rather than injected, so the advisory
+  /// keeps its own log category without this collector growing another optional injected dependency.
+  /// </remarks>
+  private QueryExposureAdvisory? _exposureAdvisory;
+
   private const int COLLECTION_INTERVAL_SECONDS = 30;
 
   /// <summary>
@@ -57,6 +66,16 @@ public sealed partial class TableStatisticsCollector(
 
         var sizes = await provider.GetEstimatedTableSizesAsync(stoppingToken);
         metrics.UpdateTableSizes(sizes);
+
+        // The sizes are already in hand, and they are the half WHIZ306 could not know at build time:
+        // an exposed perspective of a few hundred rows is fine, and the same exposure over several
+        // gigabytes is the most expensive query shape there is. Reported here rather than from its own
+        // cycle so it costs one dictionary walk instead of a second round trip.
+        _exposureAdvisory ??= new QueryExposureAdvisory(
+          scope.ServiceProvider.GetService<ILoggerFactory>()?.CreateLogger<QueryExposureAdvisory>()
+          ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<QueryExposureAdvisory>.Instance);
+        _exposureAdvisory.Report(
+          sizes, scope.ServiceProvider.GetService<Whizbang.Core.Perspectives.ICollectiveSiblingTableSource>());
 
         var depths = await provider.GetQueueDepthsAsync(stoppingToken);
         metrics.UpdateQueueDepths(depths);
