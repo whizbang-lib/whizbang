@@ -51,6 +51,14 @@ service can never be upgraded".
 already makes the statement idempotent, so a killed pod resumes where it stopped rather than
 restarting. This alone turns a permanent failure into a slow one.
 
+There is a constraint here that the single statement satisfies by accident and a batched one does
+not. A rolling update keeps the previous release serving until the new pod is ready, and the previous
+release reads the rendering. One transaction is invisible to those readers until it commits, so they
+keep working throughout; a batched conversion commits as it goes, and they would start reading
+converted rows they cannot parse. Anything batched therefore needs the old readers to tolerate both
+forms, which is a compatibility question about the release before it rather than a detail of the
+rewrite. That is the real reason this is not a small change.
+
 **Say what is happening.** The step should report rows remaining, so an operator reading a readiness
 timeout can tell a large backfill from a hang. Right now they look identical.
 
