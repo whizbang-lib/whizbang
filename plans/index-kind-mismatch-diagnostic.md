@@ -66,3 +66,26 @@ Both halves need a test, and the second is the one that would rot: a fixture dec
 non-text field asserts the diagnostic, and a fixture declaring it on text asserts silence *and* that
 a trigram statement is actually emitted. Without the second, a change that made the diagnostic fire
 for every trigram declaration would pass.
+
+## Built as WHIZ305
+
+`JsonIndexDeclarationAnalyzer.DeclaredCapabilityDoesNotApply`. Both halves are covered, split across
+two suites on purpose: `JsonIndexDeclarationAnalyzerTests.ACapabilityThatApplies_IsNotReportedAsync`
+asserts the silence, and the emission it has to be silent *about* is asserted by
+`JsonIndexGenerationTests.ATrigramIndexUsesGinWithTheTrigramOperatorClassAsync` and
+`AFieldComparedBothWaysGetsAnIndexForEachAsync`. The pair was checked by mutation: inverting the text
+guard fails eight tests across both halves.
+
+Two details the plan did not anticipate.
+
+It covers **case folding as well as substring matching**, because the same argument applies to it
+word for word: folding is a property of text, was dropped in silence for anything else, and the fix
+is one word. One message names both when both are asked for, since the edit is the same.
+
+It is **reported after WHIZ303 and never alongside it**. A field whose type can carry no index at all
+has a different fix, promote or remove, and offering a capability to change as well would suggest an
+edit that leaves the field still unindexable. The larger problem is the one that speaks.
+
+The type-based default is still rejected, for the reason recorded above, and the mismatch diagnostic
+is what makes rejecting it safe: nothing infers a kind, but a kind that cannot work is now refused
+out loud instead of dropped.
