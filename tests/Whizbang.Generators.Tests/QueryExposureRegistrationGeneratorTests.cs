@@ -49,6 +49,13 @@ public class QueryExposureRegistrationGeneratorTests {
       public Guid Id { get; init; }
       public string JobName { get; init; } = string.Empty;
     }
+
+    [SuppressIndexAdvisory("admin screen, tens of rows")]
+    public class AnsweredModel {
+      [StreamId]
+      public Guid Id { get; init; }
+      public string Note { get; init; } = string.Empty;
+    }
     """;
 
   private static string _generate(string source) {
@@ -70,6 +77,28 @@ public class QueryExposureRegistrationGeneratorTests {
     await Assert.That(generated).Contains("QueryExposure.Ordering");
     await Assert.That(generated).Contains("ModuleInitializer")
       .Because("the registration must run at assembly load, without the host calling anything");
+    await Assert.That(generated).Contains("\"JobName\"")
+      .Because("which fields were unaccounted for is a build-time fact the runtime cannot recompute "
+        + "without reading the model's attributes");
+  }
+
+  /// <summary>
+  /// A model that already answered registers its exposure with no unaccounted fields.
+  /// </summary>
+  /// <remarks>
+  /// This is what carries a recorded decision to runtime. Registering the fields anyway would make
+  /// [SuppressIndexAdvisory] stand down the build warning while the runtime advisory kept asking.
+  /// </remarks>
+  [Test]
+  public async Task AnAccountedForModelRegistersNoFieldsAsync() {
+    var generated = _generate("""
+      [Sortable]
+      public interface IAnsweredLens : ILensQuery<AnsweredModel>;
+      """);
+
+    await Assert.That(generated).Contains("Register<global::TestApp.AnsweredModel>");
+    await Assert.That(generated).DoesNotContain("\"Note\"")
+      .Because("the author recorded a decision, so there is nothing for the runtime to advise about");
   }
 
   /// <summary>An assembly that exposes nothing emits no file.</summary>

@@ -80,7 +80,17 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
       _ => null,
     };
 
-    return model is null ? null : new ExposedModel(TypeNameUtilities.FullyQualified(model), exposure);
+    if (model is null) {
+      return null;
+    }
+
+    // Carried from here because it cannot be recomputed at runtime without reading the model's
+    // attributes, and because it is what lets a recorded decision stand down the runtime advisory as
+    // well as the build warning: a suppressed or fully indexed model registers no unaccounted fields.
+    var unattributed = SortableExposureDiscovery.UnattributedFields(model);
+
+    return new ExposedModel(
+      TypeNameUtilities.FullyQualified(model), exposure, string.Join("\u001f", unattributed));
   }
 
   private static void _emit(SourceProductionContext context, ImmutableArray<ExposedModel> exposures) {
@@ -92,9 +102,20 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
     // is the norm, and emitting a call apiece would make the generated file grow with the number of
     // endpoints while saying the same thing.
     var combined = new SortedDictionary<string, int>(StringComparer.Ordinal);
+    var fields = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
     foreach (var exposure in exposures) {
       combined[exposure.ModelTypeName] =
         combined.TryGetValue(exposure.ModelTypeName, out var held) ? held | exposure.Exposure : exposure.Exposure;
+
+      if (!fields.TryGetValue(exposure.ModelTypeName, out var names)) {
+        names = new SortedSet<string>(StringComparer.Ordinal);
+        fields[exposure.ModelTypeName] = names;
+      }
+      foreach (var name in exposure.UnindexedFields.Split('\u001f')) {
+        if (name.Length > 0) {
+          names.Add(name);
+        }
+      }
     }
 
     var sb = new StringBuilder();
@@ -112,8 +133,13 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
       sb.Append("    global::Whizbang.Core.Perspectives.QueryExposureRegistry.Register<")
         .Append(entry.Key)
         .Append(">(")
-        .Append(_renderExposure(entry.Value))
-        .AppendLine(");");
+        .Append(_renderExposure(entry.Value));
+
+      foreach (var name in fields[entry.Key]) {
+        sb.Append(", \"").Append(name).Append('"');
+      }
+
+      sb.AppendLine(");");
     }
 
     sb.AppendLine("  }");
@@ -136,5 +162,10 @@ public sealed class QueryExposureRegistrationGenerator : IIncrementalGenerator {
   /// <summary>One model and what a request can shape about it, as a value for the generator cache.</summary>
   /// <param name="ModelTypeName">The model's fully qualified name.</param>
   /// <param name="Exposure">The <c>QueryExposure</c> flags, as an integer.</param>
-  private readonly record struct ExposedModel(string ModelTypeName, int Exposure);
+  /// <param name="UnindexedFields">
+  /// The unaccounted field names, joined by a unit separator. A single string rather than an array
+  /// because the generator cache compares by value and an array compares by reference, which would
+  /// make every candidate look changed on every build.
+  /// </param>
+  private readonly record struct ExposedModel(string ModelTypeName, int Exposure, string UnindexedFields);
 }

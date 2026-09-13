@@ -31,6 +31,8 @@ public class QueryExposureAdvisoryTests {
   private sealed class AdvisoryUntabledModel;
   private sealed class AdvisoryRepeatModel;
   private sealed class AdvisoryMissingSizeModel;
+  private sealed class AdvisoryAnsweredModel;
+  private sealed class AdvisoryFieldsModel;
 
   /// <summary>Names a table per model, and throws for anything it was not given.</summary>
   private sealed class FakeTables(Dictionary<Type, string> byModel) : ICollectiveSiblingTableSource {
@@ -43,7 +45,7 @@ public class QueryExposureAdvisoryTests {
   /// <summary>An exposed perspective over a large table is the reported case.</summary>
   [Test]
   public async Task ALargeOrderablePerspectiveIsReportedAsync() {
-    QueryExposureRegistry.Register<AdvisoryOrderedModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<AdvisoryOrderedModel>(QueryExposure.Ordering, "JobName");
 
     var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
       new Dictionary<string, long> { ["ordered_table"] = BIG },
@@ -59,7 +61,7 @@ public class QueryExposureAdvisoryTests {
   /// </remarks>
   [Test]
   public async Task ASmallPerspectiveIsNotReportedAsync() {
-    QueryExposureRegistry.Register<AdvisorySmallModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<AdvisorySmallModel>(QueryExposure.Ordering, "JobName");
 
     var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
       new Dictionary<string, long> { ["small_table"] = BIG - 1 },
@@ -71,7 +73,7 @@ public class QueryExposureAdvisoryTests {
   /// <summary>Filtering alone is not the expensive case, however big the table is.</summary>
   [Test]
   public async Task AFilterOnlyExposureIsNotReportedAsync() {
-    QueryExposureRegistry.Register<AdvisoryFilteredModel>(QueryExposure.Filtering);
+    QueryExposureRegistry.Register<AdvisoryFilteredModel>(QueryExposure.Filtering, "JobName");
 
     var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
       new Dictionary<string, long> { ["filtered_table"] = BIG * 10 },
@@ -92,7 +94,7 @@ public class QueryExposureAdvisoryTests {
   /// </remarks>
   [Test]
   public async Task AModelWithNoKnownTableIsSkippedAsync() {
-    QueryExposureRegistry.Register<AdvisoryUntabledModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<AdvisoryUntabledModel>(QueryExposure.Ordering, "JobName");
 
     var advisory = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance);
     var reported = advisory.Report(
@@ -105,7 +107,7 @@ public class QueryExposureAdvisoryTests {
   /// <summary>A table the statistics did not mention is skipped.</summary>
   [Test]
   public async Task AModelWithNoSizeReportedIsSkippedAsync() {
-    QueryExposureRegistry.Register<AdvisoryMissingSizeModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<AdvisoryMissingSizeModel>(QueryExposure.Ordering, "JobName");
 
     var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
       new Dictionary<string, long>(),
@@ -117,7 +119,7 @@ public class QueryExposureAdvisoryTests {
   /// <summary>The same finding is reported once, not once per cycle.</summary>
   [Test]
   public async Task AFindingIsReportedOnceAsync() {
-    QueryExposureRegistry.Register<AdvisoryRepeatModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<AdvisoryRepeatModel>(QueryExposure.Ordering, "JobName");
 
     var advisory = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance);
     var sizes = new Dictionary<string, long> { ["repeat_table"] = BIG };
@@ -137,7 +139,7 @@ public class QueryExposureAdvisoryTests {
   /// <summary>Without a table source nothing can be said, and nothing is.</summary>
   [Test]
   public async Task NoTableSourceReportsNothingAsync() {
-    QueryExposureRegistry.Register<AdvisoryOrderedModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<AdvisoryOrderedModel>(QueryExposure.Ordering, "JobName");
 
     var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
       new Dictionary<string, long> { ["ordered_table"] = BIG }, tables: null);
@@ -153,10 +155,44 @@ public class QueryExposureAdvisoryTests {
       .Throws<ArgumentNullException>();
   }
 
+  /// <summary>
+  /// A model whose fields are all accounted for is not reported, however large it is.
+  /// </summary>
+  /// <remarks>
+  /// This is what makes a recorded decision mean something. A model that indexed what it exposes,
+  /// asked for every field, or carries <c>[SuppressIndexAdvisory]</c> registers its exposure with no
+  /// unaccounted fields, and an advisory that asked again at runtime would make the suppression
+  /// worthless while claiming to honor it.
+  /// </remarks>
+  [Test]
+  public async Task AnAccountedForModelIsNotReportedAsync() {
+    QueryExposureRegistry.Register<AdvisoryAnsweredModel>(QueryExposure.Ordering);
+
+    var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
+      new Dictionary<string, long> { ["answered_table"] = BIG * 100 },
+      new FakeTables(new() { [typeof(AdvisoryAnsweredModel)] = "answered_table" }));
+
+    await Assert.That(reported).IsEqualTo(0)
+      .Because("the author already answered, at build time, and the answer travels with the "
+        + "registration");
+  }
+
+  /// <summary>The fields a surface left unaccounted for are what comes back.</summary>
+  [Test]
+  public async Task TheUnaccountedFieldsAreRecordedAsync() {
+    QueryExposureRegistry.Register<AdvisoryFieldsModel>(QueryExposure.Ordering, "JobName", "Status");
+
+    var fields = QueryExposureRegistry.UnindexedFields(typeof(AdvisoryFieldsModel));
+
+    await Assert.That(fields).Contains("JobName");
+    await Assert.That(fields).Contains("Status");
+    await Assert.That(QueryExposureRegistry.UnindexedFields(typeof(AdvisoryAnsweredModel))).IsEmpty();
+  }
+
   /// <summary>The threshold is the caller's to set.</summary>
   [Test]
   public async Task TheThresholdIsConfigurableAsync() {
-    QueryExposureRegistry.Register<AdvisorySmallModel>(QueryExposure.Ordering);
+    QueryExposureRegistry.Register<AdvisorySmallModel>(QueryExposure.Ordering, "JobName");
 
     var reported = new QueryExposureAdvisory(NullLogger<QueryExposureAdvisory>.Instance).Report(
       new Dictionary<string, long> { ["small_table"] = 4096 },

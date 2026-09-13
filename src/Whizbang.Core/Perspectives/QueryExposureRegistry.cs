@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 
 namespace Whizbang.Core.Perspectives;
 
@@ -54,6 +55,7 @@ public enum QueryExposure {
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/QueryExposureRegistryTests.cs</tests>
 public static class QueryExposureRegistry {
   private static readonly ConcurrentDictionary<Type, QueryExposure> _exposures = new();
+  private static readonly ConcurrentDictionary<Type, ImmutableArray<string>> _unindexedFields = new();
 
   /// <summary>
   /// Records that a model is reachable by a request-composed query.
@@ -63,16 +65,43 @@ public static class QueryExposureRegistry {
   public static void Register<TModel>(QueryExposure exposure) => Register(typeof(TModel), exposure);
 
   /// <summary>
+  /// Records that a model is reachable by a request-composed query, and which of its fields had no
+  /// index and no recorded decision when it was built.
+  /// </summary>
+  /// <typeparam name="TModel">The perspective's model type.</typeparam>
+  /// <param name="exposure">The ways a request can shape the query.</param>
+  /// <param name="unindexedFields">
+  /// The fields a request could name that nothing accounted for. Empty when every field has an
+  /// answer, when the model asked to index all of them, when the author recorded a decision, or when
+  /// the model is stored opaquely and has no per-field extraction to index.
+  /// </param>
+  public static void Register<TModel>(QueryExposure exposure, params string[] unindexedFields) =>
+    Register(typeof(TModel), exposure, unindexedFields);
+
+  /// <summary>
   /// Records that a model is reachable by a request-composed query.
   /// </summary>
   /// <param name="modelType">The perspective's model type.</param>
   /// <param name="exposure">The ways a request can shape the query.</param>
+  /// <param name="unindexedFields">
+  /// The fields a request could name that nothing accounted for; empty or null when there are none.
+  /// </param>
   /// <remarks>
+  /// <para>
   /// Combined rather than replaced, because one model is commonly reached from several surfaces and
   /// each registers only what it offers. The widest exposure is the one that matters, and taking the
   /// last writer instead would make the answer depend on assembly load order.
+  /// </para>
+  /// <para>
+  /// The unaccounted fields are a build-time fact and cannot be recomputed here, since asking a model
+  /// which of its fields carry an index would mean reading its attributes at runtime. Carrying them
+  /// is also what lets a recorded decision stand down the runtime advisory as well as the build
+  /// warning: a suppressed or fully indexed model registers its exposure with no unaccounted fields,
+  /// and an advisory with nothing to report says nothing.
+  /// </para>
   /// </remarks>
-  public static void Register(Type modelType, QueryExposure exposure) {
+  public static void Register(
+      Type modelType, QueryExposure exposure, IReadOnlyList<string>? unindexedFields = null) {
     ArgumentNullException.ThrowIfNull(modelType);
 
     if (exposure == QueryExposure.None) {
@@ -80,6 +109,29 @@ public static class QueryExposureRegistry {
     }
 
     _exposures.AddOrUpdate(modelType, exposure, (_, existing) => existing | exposure);
+
+    if (unindexedFields is { Count: > 0 }) {
+      _unindexedFields.AddOrUpdate(
+        modelType,
+        _ => [.. unindexedFields],
+        (_, held) => [.. held.Union(unindexedFields, StringComparer.Ordinal)]);
+    }
+  }
+
+  /// <summary>
+  /// The model's fields that a request could name and that nothing accounted for at build time.
+  /// </summary>
+  /// <param name="modelType">The perspective's model type.</param>
+  /// <returns>The unaccounted field names, empty when every field has an answer.</returns>
+  /// <remarks>
+  /// Empty is the answer for a model that indexed what it exposes, asked for every field, recorded a
+  /// decision with <c>[SuppressIndexAdvisory]</c>, or is stored opaquely. All four mean the same
+  /// thing to a caller: there is nothing here to advise about.
+  /// </remarks>
+  public static IReadOnlyList<string> UnindexedFields(Type modelType) {
+    ArgumentNullException.ThrowIfNull(modelType);
+
+    return _unindexedFields.TryGetValue(modelType, out var fields) ? fields : [];
   }
 
   /// <summary>

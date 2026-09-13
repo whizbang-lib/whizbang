@@ -81,6 +81,15 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
         continue;
       }
 
+      // A model that indexed what it exposes, asked for every field, or recorded a decision with
+      // [SuppressIndexAdvisory] registers no unaccounted fields. All three are an author having
+      // already answered this, and repeating the question at runtime is how a suppression stops
+      // meaning anything.
+      var unindexed = QueryExposureRegistry.UnindexedFields(model);
+      if (unindexed.Count == 0) {
+        continue;
+      }
+
       var table = _tableFor(tables, model);
       if (table is null || !tableSizes.TryGetValue(table, out var bytes) || bytes < thresholdBytes) {
         continue;
@@ -88,7 +97,8 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
 
       if (_claim(model)) {
         LogExposedPerspectiveIsLarge(
-          _logger, model.Name, table, bytes / (1024 * 1024), exposure.ToString(), null);
+          _logger, model.Name, table, bytes / (1024 * 1024), exposure.ToString(),
+          unindexed.Count, string.Join(", ", unindexed), null);
         reported++;
       }
     }
@@ -131,9 +141,11 @@ public sealed partial class QueryExposureAdvisory(ILogger<QueryExposureAdvisory>
     Level = LogLevel.Warning,
     Message = "Perspective '{ModelName}' ({TableName}) is {SizeMegabytes} MB and a request can shape "
         + "its query ({Exposure}), so any field it names can reach an ORDER BY or WHERE that no index "
-        + "serves, reading the whole table. Declare [Indexed] on the fields the surface offers, "
+        + "serves, reading the whole table. {UnindexedCount} of its fields carry no index and no "
+        + "recorded decision ({UnindexedFields}). Declare [Indexed] on the fields the surface offers, "
         + "[IndexAllFields] if it is queried every way, or record the decision with "
         + "[SuppressIndexAdvisory(\"reason\")]. Reported once per process.")]
   static partial void LogExposedPerspectiveIsLarge(
-    ILogger logger, string ModelName, string TableName, long SizeMegabytes, string Exposure, Exception? exception);
+    ILogger logger, string ModelName, string TableName, long SizeMegabytes, string Exposure,
+    int UnindexedCount, string UnindexedFields, Exception? exception);
 }
