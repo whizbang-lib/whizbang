@@ -416,4 +416,75 @@ public class CanonicalTemporalConfigurationTests {
       .Because("the mapping is the narrower set, and that difference is the whole point: one decides "
         + "the stored form, the other decides what a query can reach");
   }
+
+  /// <summary>
+  /// A temporal property excluded with <c>[NotMapped]</c> is not configured either.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The same failure as a computed property, reached from the other direction. The author has said
+  /// the property is not storage, so Entity Framework will not map it, and configuring it contradicts
+  /// them and fails model validation for the whole context.
+  /// </para>
+  /// <para>
+  /// It matters because this is the workaround a consumer reaches for first. Finding that the
+  /// documented way to exclude a property makes no difference is a worse experience than the original
+  /// failure.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task ATemporalPropertyExcludedFromMappingIsNotConfiguredAsync() {
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync("""
+      using System;
+      using System.ComponentModel.DataAnnotations.Schema;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Ran : IEvent;
+
+      public record RunModel {
+        [StreamId]
+        public Guid RunId { get; init; }
+
+        public DateTimeOffset StartedAt { get; init; }
+
+        // Storage by shape, but the author has said it is not mapped.
+        [NotMapped]
+        public DateTimeOffset? ArchivedAt { get; init; }
+      }
+
+      public class RunPerspective : IPerspectiveFor<RunModel, Ran> {
+        public RunModel Apply(RunModel currentData, Ran eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class RunDbContext : DbContext {
+        public RunDbContext(DbContextOptions<RunDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    // If the attribute does not resolve in this compilation the filter cannot see it, and the test
+    // would be reporting the reference list rather than the behavior.
+    var unresolved = result.Compilation.GetDiagnostics()
+      .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+      .Select(d => d.ToString())
+      .Where(m => m.Contains("NotMapped", StringComparison.Ordinal)
+        || m.Contains("DataAnnotations", StringComparison.Ordinal))
+      .ToList();
+    await Assert.That(unresolved).IsEmpty()
+      .Because("the attribute has to bind for the discovery to recognize it");
+
+    await Assert.That(output).Contains("p.StartedAt", StringComparison.Ordinal)
+      .Because("the mapped timestamp beside it is still configured, so this is about the one "
+        + "property rather than the model being skipped");
+    await Assert.That(output).DoesNotContain("p.ArchivedAt", StringComparison.Ordinal)
+      .Because("Entity Framework does not map a property marked [NotMapped], so naming it in the "
+        + "configuration is the same contradiction a computed property creates");
+  }
 }
