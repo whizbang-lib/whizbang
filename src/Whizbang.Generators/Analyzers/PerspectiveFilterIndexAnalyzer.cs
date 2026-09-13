@@ -279,9 +279,14 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// </para>
   /// </remarks>
   private static string _adviceFor(INamedTypeSymbol model, Fold fold) {
-    if (PolymorphicModelDiscovery.IsPolymorphic(model)) {
-      // The fold is beside the point here: no index over this document is reachable at all.
-      return "This model holds a polymorphic member, so its document is stored as one serialized value and "
+    if (MappedPathDiscovery.MustStoreOpaquely(model)) {
+      // The fold is beside the point here: no index over this document is reachable at all. Which
+      // reason applies decides what the author should go looking for, so the sentence names it.
+      var reason = PolymorphicModelDiscovery.IsPolymorphic(model)
+        ? "holds a polymorphic member"
+        : $"holds '{MappedPathDiscovery.UnmappableMember(model)}', which the mapped path cannot construct";
+
+      return $"This model {reason}, so its document is stored as one serialized value and "
         + "an index over a field inside it cannot be reached. Promote it with "
         + "[PhysicalField] plus [Indexed] to get a real indexed column, or record the decision with "
         + "[SuppressIndexAdvisory(\"reason\")]";

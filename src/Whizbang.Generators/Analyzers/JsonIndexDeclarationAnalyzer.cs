@@ -288,8 +288,18 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   /// right here.
   /// </remarks>
   private static string? _polymorphicMember(INamedTypeSymbol model) {
-    if (!PolymorphicModelDiscovery.IsPolymorphic(model)) {
+    if (!MappedPathDiscovery.MustStoreOpaquely(model)) {
       return null;
+    }
+
+    // Two unrelated reasons force the opaque form, and the message has to say which: an author told
+    // that a model "holds a polymorphic member" when the real problem is a collection the mapped
+    // path cannot fill will go looking for an abstract type that is not there.
+    if (!PolymorphicModelDiscovery.IsPolymorphic(model)) {
+      var unmappable = MappedPathDiscovery.UnmappableMember(model);
+      return unmappable is null
+        ? null
+        : $"'{unmappable}', which the mapped path cannot construct";
     }
 
     var named = model.GetMembers().OfType<IPropertySymbol>()

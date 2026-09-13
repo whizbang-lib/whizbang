@@ -638,7 +638,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// while the generator emitted it, or the reverse.
   /// </remarks>
   private static bool _hasPolymorphicProperties(INamedTypeSymbol? modelType) =>
-      PolymorphicModelDiscovery.IsPolymorphic(modelType);
+      MappedPathDiscovery.MustStoreOpaquely(modelType);
 
   /// <summary>
   /// Generates EF Core shadow property configurations for physical fields.
