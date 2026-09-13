@@ -90,6 +90,9 @@ public class PerspectiveFilterIndexAnalyzerTests {
         [Indexed]
         [Indexed(caseInsensitive: true)]
         public string DeclaredBothWays { get; init; } = string.Empty;
+
+        [Indexed(IndexKinds.Substring, caseInsensitive: true)]
+        public string DeclaredFoldedSubstring { get; init; } = string.Empty;
       }
 
       public enum Mood { Low, High }
@@ -928,5 +931,128 @@ public class PerspectiveFilterIndexAnalyzerTests {
     await Assert.That(_whiz302(diagnostics)).IsEmpty()
       .Because("this query does not run at all, so an index advisory on it would be advice about a "
         + "plan that never exists");
+  }
+
+  /// <summary>
+  /// A substring match that folds case is served by a declaration that asks for both.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This is what a case-insensitive search looks like in practice, and it reads through the fold:
+  /// the operator is applied to the folded value, so the shape is <c>field.ToLower().Contains(…)</c>
+  /// and the field the index is over is two calls away rather than one.
+  /// </para>
+  /// <para>
+  /// Worth its own test because missing it fails in the direction that wastes people's time. The
+  /// author declares exactly the right thing, the index is built, the query uses it, and the advisory
+  /// goes on reporting the line: advice with no exit, on the most common shape there is.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Filter_FoldedSubstringMatch_OnAFoldedSubstringDeclaration_IsNotReportedAsync() {
+    var source = _repositoryOver("""
+            return _rows.Where(r => r.Data.DeclaredFoldedSubstring.ToLower().Contains("ab")).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty()
+      .Because("the index answers pattern matching and is built over the folded value, which is "
+        + "both of the things this comparison needs");
+  }
+
+  /// <summary>
+  /// A folded substring match is not served by a substring index over the stored value.
+  /// </summary>
+  /// <remarks>
+  /// The pair to the case above, and the reason it cannot simply read through the fold and forget it:
+  /// the fold still has to match, or the advisory would silence the one shape that made the
+  /// case-insensitive declaration necessary.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Filter_FoldedSubstringMatch_OnAnUnfoldedSubstringDeclaration_ReportsAsync() {
+    var source = _repositoryOver("""
+            return _rows.Where(r => r.Data.DeclaredTrigram.ToLower().Contains("ab")).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).HasSingleItem()
+      .Because("the index is over the stored value, and this pattern is matched against the folded "
+        + "one, so the planner has nothing to use");
+  }
+
+  /// <summary>
+  /// A substring match that respects case is not served by a folded substring index.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles]
+  public async Task Filter_SubstringMatch_OnAFoldedSubstringDeclaration_ReportsAsync() {
+    var source = _repositoryOver("""
+            return _rows.Where(r => r.Data.DeclaredFoldedSubstring.Contains("ab")).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).HasSingleItem()
+      .Because("the only index on the field is over the folded value, and a pattern matched against "
+        + "the stored one cannot be answered from it");
+  }
+
+  /// <summary>
+  /// A substring match is not served by an ordered declaration, in either direction.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The mirror of the case above it, which has always held: a substring index answers pattern
+  /// matching and nothing else, so an ordering on such a field still reports. The reverse was not
+  /// checked, and an ordered declaration silenced every shape including the one it cannot answer. An
+  /// ordered index over text is no use to a pattern match with a leading wildcard, and none to a
+  /// prefix match either under any ordinary collation.
+  /// </para>
+  /// <para>
+  /// It is the same false negative the folding work removed, one axis over: a field carrying an index
+  /// looked served by every query on it.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("Contains")]
+  [Arguments("StartsWith")]
+  [Arguments("EndsWith")]
+  public async Task Filter_SubstringMatch_OnAnOrderedDeclaration_ReportsAsync(string op) {
+    var source = _repositoryOver($$"""
+            return _rows.Where(r => r.Data.DeclaredSensitive.{{op}}("ab")).ToList();
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).HasSingleItem()
+      .Because("an ordered index answers ranges and orderings, and a pattern match is answered by "
+        + "neither, so this filter still reads every row");
+  }
+
+  /// <summary>An ordered declaration still serves the shapes it is for.</summary>
+  /// <remarks>
+  /// The guard on the fix above. Narrowing what an ordered declaration covers must not start
+  /// reporting the ranges, orderings, equality and null tests it exists to answer.
+  /// </remarks>
+  [Test]
+  [RequiresAssemblyFiles]
+  [Arguments("_rows.Where(r => r.Data.DeclaredSensitive.CompareTo(\"m\") > 0).ToList()")]
+  [Arguments("_rows.OrderBy(r => r.Data.DeclaredSensitive).ToList()")]
+  [Arguments("_rows.Where(r => r.Data.DeclaredSensitive == null).ToList()")]
+  [Arguments("_rows.Where(r => r.Data.DeclaredBtree > 3).ToList()")]
+  public async Task Filter_OrderedShapes_OnAnOrderedDeclaration_AreNotReportedAsync(string query) {
+    var source = _repositoryOver($$"""
+            return {{query}};
+      """);
+
+    var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<PerspectiveFilterIndexAnalyzer>(source);
+
+    await Assert.That(_whiz302(diagnostics)).IsEmpty()
+      .Because("these are exactly what an ordered index answers, so the declaration serves them");
   }
 }

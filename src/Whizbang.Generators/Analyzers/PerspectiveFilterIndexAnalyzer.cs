@@ -186,6 +186,11 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
   /// produces.
   /// </para>
   /// <para>
+  /// The kind is matched to the shape in both directions. An ordered declaration used to cover every
+  /// shape, including a pattern match, which an ordered index does not answer with a leading wildcard
+  /// and does not answer for a prefix either under any ordinary collation.
+  /// </para>
+  /// <para>
   /// Asking only the first question is what made a declared index look like it served every query on
   /// the field. It is the quietest version of this failure: the author declared the index, can see it
   /// in the database, and every folded comparison still reads every row with nothing reported.
@@ -215,8 +220,11 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       return false;
     }
 
-    return JsonIndexDiscovery.IncludesOrdered(kind.Value)
-      || (JsonIndexDiscovery.IncludesSubstring(kind.Value) && _isSubstringMatch(node));
+    // Each shape has one capability that answers it, and asking the other way round is what let a
+    // declaration cover shapes it cannot serve.
+    return _isSubstringMatch(node)
+      ? JsonIndexDiscovery.IncludesSubstring(kind.Value)
+      : JsonIndexDiscovery.IncludesOrdered(kind.Value);
   }
 
   /// <summary>Which expression the comparison this member access feeds is over.</summary>
@@ -226,10 +234,25 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
       ? fold
       : Fold.Respects;
 
-  /// <summary>Whether this member access is the receiver of a substring match.</summary>
-  private static bool _isSubstringMatch(MemberAccessExpressionSyntax node) =>
-    node.Parent is MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax } call
-    && _substringOperators.Contains(call.Name.Identifier.ValueText);
+  /// <summary>Whether this expression is the receiver of a substring match.</summary>
+  /// <remarks>
+  /// Looks through a fold, because a case-insensitive search applies the operator to the folded
+  /// value: the shape is <c>field.ToLower().Contains(…)</c> and the operator is one call further out
+  /// than it would otherwise be. Whether the fold itself is served is a separate question, answered
+  /// by the declaration's own folding; missing it here would report the most common search shape
+  /// there is to an author who had declared exactly the right index for it.
+  /// </remarks>
+  private static bool _isSubstringMatch(SyntaxNode node) {
+    if (node.Parent is not MemberAccessExpressionSyntax { Parent: InvocationExpressionSyntax invocation } call) {
+      return false;
+    }
+
+    var name = call.Name.Identifier.ValueText;
+
+    return _foldingOperators.ContainsKey(name)
+      ? _isSubstringMatch(invocation)
+      : _substringOperators.Contains(name);
+  }
 
   /// <summary>
   /// The fixes that actually work for this model, which depends on how its document is stored.
@@ -499,7 +522,15 @@ public class PerspectiveFilterIndexAnalyzer : DiagnosticAnalyzer {
         case STREAM_ID_ATTRIBUTE:
           return true;
         case PHYSICAL_FIELD_ATTRIBUTE:
-          if (_namedFlag(attribute, "Indexed") == true || _namedFlag(attribute, "Unique") == true) {
+          // The promotion's own flags, and the universal attribute written alongside it. Either way
+          // the index is on a real column, where the capabilities do not apply: they describe
+          // indexes over an extraction from the document, and nothing can ask for a pattern-matching
+          // index on a column. Settled here so the shape matching below is only ever asked about a
+          // field held in the document, and so a promoted field is never reported with advice it
+          // has already taken and a message about JSON it no longer lives in.
+          if (_namedFlag(attribute, "Indexed") == true
+              || _namedFlag(attribute, "Unique") == true
+              || JsonIndexDiscovery.DeclaredKind(property) is > 0) {
             return true;
           }
 
