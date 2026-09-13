@@ -586,7 +586,60 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
     cancellationToken.ThrowIfCancellationRequested();
     var evt = BuildCompletedEvent(ctx, finalStatus, completedByItemIdentifier, completedItems, failedItems, totalItems, DateTimeOffset.UtcNow);
     var claimKey = SagaCompletionGuard.ClaimKey(_sagaName, ctx.SagaId);
-    return await _emitter.PublishOnceAsync(claimKey, evt, cancellationToken).ConfigureAwait(false);
+    var won = await _emitter.PublishOnceAsync(claimKey, evt, cancellationToken).ConfigureAwait(false);
+    await _requestContinuationsAsync(ctx, finalStatus, cancellationToken).ConfigureAwait(false);
+    return won;
+  }
+
+  /// <summary>
+  /// Asks for each declared continuation whose trigger matches the final status.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Attempted whether or not this caller won the completion claim, and each request carries its own
+  /// claim key. If only the completion winner asked, a process dying between the two publishes would
+  /// strand the chain for good: the completion claim is taken, so no retry and no watchdog tick
+  /// re-emits it. Letting every terminal caller ask, deduped by the continuation's own claim, removes
+  /// that single point of failure and still yields one request.
+  /// </para>
+  /// <para>
+  /// A failed request does not fail the completion. The saga did finish, the completion event is the
+  /// durable record of that, and propagating a transient publish failure here would roll back the
+  /// caller's transaction and re-run the terminal path. The watchdog can drive the request again; an
+  /// undone completion is worse.
+  /// </para>
+  /// </remarks>
+  private async Task _requestContinuationsAsync(
+      SagaContext ctx, SagaStatus finalStatus, CancellationToken cancellationToken) {
+    var continuations = SagaContinuationRegistry.For(_sagaName);
+    if (continuations.Count == 0) {
+      return;
+    }
+
+    foreach (var continuation in continuations) {
+      if (!continuation.StartsAfter(finalStatus)) {
+        continue;
+      }
+
+      var request = new SagaContinuationRequestedEvent {
+        SagaName = continuation.SagaName,
+        EntityId = ctx.EntityId,
+        StreamId = ctx.SagaId,
+        ParentSagaName = _sagaName,
+        ParentSagaId = ctx.SagaId,
+        ParentFinalStatus = finalStatus,
+      };
+      var continuationClaim =
+        SagaContinuationGuard.ClaimKey(_sagaName, ctx.SagaId, continuation.SagaName);
+
+      try {
+        await _emitter.PublishOnceAsync(continuationClaim, request, cancellationToken)
+          .ConfigureAwait(false);
+        LogContinuationRequested(_logger, continuation.SagaName, _sagaName, ctx.SagaId, null);
+      } catch (Exception ex) {
+        LogContinuationRequestFailed(_logger, continuation.SagaName, _sagaName, ctx.SagaId, ex);
+      }
+    }
   }
 
   public async Task ResetItemAsync(SagaContext ctx, string itemIdentifier, SagaItemState previousStatus, CancellationToken cancellationToken) {
@@ -646,6 +699,12 @@ public abstract partial class BaseSagaService<TInit, TItemsDispatched, TItemStar
   }
 
   // ── LoggerMessage source-gen partials ────────────────────────────────
+
+  [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "Requested continuation saga {ContinuationSagaName} after {SagaName} {SagaId}")]
+  private static partial void LogContinuationRequested(ILogger logger, string ContinuationSagaName, string SagaName, Guid SagaId, Exception? exception);
+
+  [LoggerMessage(EventId = 5, Level = LogLevel.Error, Message = "Could not request continuation saga {ContinuationSagaName} after {SagaName} {SagaId} — the saga still completed; the watchdog can drive the request again")]
+  private static partial void LogContinuationRequestFailed(ILogger logger, string ContinuationSagaName, string SagaName, Guid SagaId, Exception? exception);
 
   [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "Hook {HookName} already terminal on saga {SagaName} {SagaId} — skip")]
   private static partial void LogHookSkipped(ILogger logger, string HookName, string SagaName, Guid SagaId, Exception? exception);

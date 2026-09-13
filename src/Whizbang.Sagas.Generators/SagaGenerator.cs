@@ -18,6 +18,9 @@ namespace Whizbang.Sagas.Generators;
 /// </summary>
 [Generator]
 public sealed class SagaGenerator : IIncrementalGenerator {
+  private const string CONTINUES_WITH_ATTRIBUTE = "Whizbang.Sagas.ContinuesWithAttribute";
+  private const int RAN_TO_THE_END = 3;   // Completed | CompletedWithFailures
+
 
   // SagaAttribute and SagaAttribute<TEventBase> live in
   // Whizbang.Sagas.Contracts as regular runtime types — not emitted via
@@ -105,7 +108,8 @@ public sealed class SagaGenerator : IIncrementalGenerator {
       includeHooks: includeHooks,
       generateService: generateService,
       isPartial: isPartial,
-      location: classDecl.Identifier.GetLocation());
+      location: classDecl.Identifier.GetLocation(),
+      continuations: _readContinuations(typeSymbol));
   }
 
   private static void _emit(SourceProductionContext spc, SagaInfo info) {
@@ -146,6 +150,10 @@ public sealed class SagaGenerator : IIncrementalGenerator {
 
     if (info.GenerateService) {
       _emitServiceCollectionExtension(sb, info);
+    }
+
+    if (info.Continuations.Length > 0) {
+      _emitContinuationRegistration(sb, info);
     }
 
     var fileName = (info.Namespace is null ? "" : info.Namespace + ".") + info.ClassName + ".g.cs";
@@ -350,6 +358,76 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
   }
 
+  /// <summary>
+  /// The <c>[ContinuesWith]</c> declarations on a saga class, in source order.
+  /// </summary>
+  /// <remarks>
+  /// Read from the class symbol rather than the generator's attribute context, which holds only the
+  /// <c>[Saga]</c> attribute that triggered this generator.
+  /// </remarks>
+  private static ImmutableArray<ContinuationDeclaration> _readContinuations(INamedTypeSymbol typeSymbol) {
+    var declarations = ImmutableArray.CreateBuilder<ContinuationDeclaration>();
+
+    foreach (var attribute in typeSymbol.GetAttributes()) {
+      if (!TypeNameUtilities.IsNamed(attribute.AttributeClass, CONTINUES_WITH_ATTRIBUTE)) {
+        continue;
+      }
+      if (attribute.ConstructorArguments.Length == 0
+          || attribute.ConstructorArguments[0].Value is not string name
+          || string.IsNullOrWhiteSpace(name)) {
+        continue;   // a blank name is the attribute's own argument check, not this generator's
+      }
+
+      var trigger = attribute.ConstructorArguments.Length > 1
+                    && attribute.ConstructorArguments[1].Value is int declared
+        ? declared
+        : RAN_TO_THE_END;
+
+      declarations.Add(new ContinuationDeclaration(name, trigger));
+    }
+
+    return declarations.ToImmutable();
+  }
+
+  /// <summary>
+  /// Emits the registration that puts this saga's chain in the runtime registry.
+  /// </summary>
+  /// <remarks>
+  /// A module initializer rather than the DI extension, so the chain is registered even for a saga
+  /// generated with <c>GenerateService = false</c>, and so it does not depend on the host remembering
+  /// to call an Add method. This is the same shape <c>SagasJsonContextInitializer</c> uses to register
+  /// the framework's own serialization context.
+  /// </remarks>
+  private static void _emitContinuationRegistration(StringBuilder sb, SagaInfo info) {
+    sb.AppendLine();
+    sb.Append("internal static class ").Append(info.ClassName).AppendLine("ContinuationRegistration {");
+    sb.AppendLine("  [global::System.Runtime.CompilerServices.ModuleInitializer]");
+    sb.AppendLine("  internal static void RegisterContinuations() {");
+
+    foreach (var continuation in info.Continuations) {
+      sb.AppendLine("    global::Whizbang.Sagas.SagaContinuationRegistry.Register(");
+      sb.Append("      \"").Append(info.SagaName).AppendLine("\",");
+      sb.Append("      new global::Whizbang.Sagas.SagaContinuation(\"").Append(continuation.SagaName).Append("\", ")
+        .Append(_renderTrigger(continuation.Trigger)).AppendLine("));");
+    }
+
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
+  }
+
+  /// <summary>
+  /// The trigger as named flags, so the generated call reads like the declaration it came from.
+  /// </summary>
+  private static string _renderTrigger(int trigger) {
+    var names = new List<string>();
+    if ((trigger & 1) != 0) { names.Add("Completed"); }
+    if ((trigger & 2) != 0) { names.Add("CompletedWithFailures"); }
+    if ((trigger & 4) != 0) { names.Add("Failed"); }
+    if (names.Count == 0) { names.Add("None"); }
+
+    return string.Join(" | ", names.Select(static n => "global::Whizbang.Sagas.SagaContinuationTrigger." + n));
+  }
+
   private static void _emitServiceCollectionExtension(StringBuilder sb, SagaInfo info) {
     sb.AppendLine();
     sb.Append("public static class ").Append(info.ClassName).AppendLine("ServiceCollectionExtensions {");
@@ -358,8 +436,14 @@ public sealed class SagaGenerator : IIncrementalGenerator {
     sb.AppendLine("}");
   }
 
+  /// <summary>One <c>[ContinuesWith]</c> declaration read off a saga class.</summary>
+  private readonly struct ContinuationDeclaration(string sagaName, int trigger) {
+    public string SagaName { get; } = sagaName;
+    public int Trigger { get; } = trigger;
+  }
+
   private sealed class SagaInfo {
-    public SagaInfo(string? @namespace, string className, string sagaName, string eventBaseFullName, bool includeHooks, bool generateService, bool isPartial, Location location) {
+    public SagaInfo(string? @namespace, string className, string sagaName, string eventBaseFullName, bool includeHooks, bool generateService, bool isPartial, Location location, ImmutableArray<ContinuationDeclaration> continuations) {
       Namespace = @namespace;
       ClassName = className;
       SagaName = sagaName;
@@ -368,7 +452,9 @@ public sealed class SagaGenerator : IIncrementalGenerator {
       GenerateService = generateService;
       IsPartial = isPartial;
       Location = location;
+      Continuations = continuations;
     }
+    public ImmutableArray<ContinuationDeclaration> Continuations { get; }
     public string? Namespace { get; }
     public string ClassName { get; }
     public string SagaName { get; }
