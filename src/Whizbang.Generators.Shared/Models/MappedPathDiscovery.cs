@@ -91,39 +91,43 @@ public static class MappedPathDiscovery {
 
     foreach (var property in type.GetMembers().OfType<IPropertySymbol>()
         .Where(PolymorphicModelDiscovery.IsAnalyzableProperty)) {
-      if (property.Type is not INamedTypeSymbol propertyType) {
-        continue;
-      }
-
-      var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
-      var element = _collectionElement(propertyType);
-
-      // A collection the mapped path cannot fill, holding something other than a primitive. A
-      // collection of primitives is stored as a value whatever interface declares it.
-      if (element is not null && !_isPrimitive(element) && _cannotBeFilled(propertyType)) {
-        return here;
-      }
-
-      // Walk through a collection to its element: the element is what the mapped path has to
-      // construct, and stepping into the collection type itself would inspect List rather than the
-      // model's own type.
-      var nested = element ?? propertyType;
-      if (_isPrimitive(nested)) {
-        continue;
-      }
-
-      // A nested type the mapped path cannot construct.
-      if (_hasNoBindableConstructor(nested)) {
-        return here;
-      }
-
-      var deeper = _findUnmappable(nested, visited, here);
-      if (deeper is not null) {
-        return deeper;
+      var found = _judgeProperty(property, visited, path);
+      if (found is not null) {
+        return found;
       }
     }
 
     return null;
+  }
+
+  /// <summary>The unmappable member at or below this property, or null.</summary>
+  private static string? _judgeProperty(
+      IPropertySymbol property, HashSet<INamedTypeSymbol> visited, string path) {
+    if (property.Type is not INamedTypeSymbol propertyType) {
+      return null;
+    }
+
+    var here = path.Length == 0 ? property.Name : $"{path}.{property.Name}";
+    var element = _collectionElement(propertyType);
+
+    // A collection the mapped path cannot fill, holding something other than a primitive. A
+    // collection of primitives is stored as a value whatever interface declares it.
+    if (element is not null && !_isPrimitive(element) && _cannotBeFilled(propertyType)) {
+      return here;
+    }
+
+    // Walk through a collection to its element: the element is what the mapped path has to
+    // construct, and stepping into the collection type itself would inspect List rather than the
+    // model's own type.
+    var nested = element ?? propertyType;
+    if (_isPrimitive(nested)) {
+      return null;
+    }
+
+    // A nested type the mapped path cannot construct.
+    return _hasNoBindableConstructor(nested)
+      ? here
+      : _findUnmappable(nested, visited, here);
   }
 
   /// <summary>The element type when the property is a collection, fillable or not.</summary>
@@ -200,7 +204,8 @@ public static class MappedPathDiscovery {
 
     var containing = type.ContainingNamespace is { } ns ? TypeNameUtilities.Display(ns) : null;
 
-    return containing?.StartsWith("System", System.StringComparison.Ordinal) == true
-      && containing?.StartsWith("System.Collections", System.StringComparison.Ordinal) != true;
+    return containing is not null
+      && containing.StartsWith("System", System.StringComparison.Ordinal)
+      && !containing.StartsWith("System.Collections", System.StringComparison.Ordinal);
   }
 }

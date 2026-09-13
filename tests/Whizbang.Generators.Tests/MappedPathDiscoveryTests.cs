@@ -197,4 +197,39 @@ public class MappedPathDiscoveryTests {
       .Because("the turn cannot be constructed, so the collection holding it is where the mapped "
         + "path stops and the whole document has to take the opaque form");
   }
+
+  /// <summary>
+  /// A member further down the graph is found and named by its path.
+  /// </summary>
+  /// <remarks>
+  /// The walk recurses, and a one-level model never exercises the return that carries a find back up.
+  /// It matters for the message as much as the answer: the author needs the path to the member, not
+  /// the name of the property that happened to start the descent.
+  /// </remarks>
+  [Test]
+  public async Task AnUnmappableMemberDeeperInTheGraphIsNamedByItsPathAsync() {
+    const string SOURCE = """
+      using System;
+      using System.Collections.Generic;
+
+      namespace TestApp;
+
+      public record Tag(Guid TagId, string Label);
+
+      public class Inner {
+        public IReadOnlyList<Tag> Tags { get; init; } = null!;
+      }
+
+      public class Middle {
+        public Inner Inner { get; init; } = new();
+      }
+
+      public class Model {
+        public Middle Middle { get; init; } = new();
+      }
+      """;
+
+    await Assert.That(_unmappable(SOURCE)).IsEqualTo("Middle.Inner.Tags")
+      .Because("the path is what makes the message actionable two levels down");
+  }
 }

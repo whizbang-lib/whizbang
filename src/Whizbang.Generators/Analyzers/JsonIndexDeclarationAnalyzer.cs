@@ -75,8 +75,8 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
   public static readonly DiagnosticDescriptor DeclaredIndexCannotBeReached = new(
       id: "WHIZ304",
       title: "Declared index cannot be reached for this model's storage",
-      messageFormat: "'{0}' declares an index over its JSON, but the model holds a polymorphic member "
-          + "({1}), so its document is stored as one serialized value rather than as mapped properties. "
+      messageFormat: "'{0}' declares an index over its JSON, but {1}, so its document is stored as one "
+          + "serialized value rather than as mapped properties. "
           + "A filter on a field inside it never compiles to the extraction the index is built over, so "
           + "the index would be maintained on every write and scanned by nothing. Promote the fields you "
           + "filter on with [PhysicalField] plus [Indexed] to get real indexed columns, or remove the "
@@ -84,7 +84,8 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "A model holding an abstract member, or one marked for polymorphic serialization, cannot be "
+      description: "Two unrelated things put a document in this form, and the message says which. A model "
+          + "holding an abstract member, or one marked for polymorphic serialization, cannot be "
           + "mapped property by property: that mapping reconstructs the declared type and loses the derived one it "
           + "was given. Such a model is stored as a single serialized value, and nothing inside that value is a "
           + "mapped property, so an index over an extraction from it is unreachable. Reported rather than skipped "
@@ -299,7 +300,7 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
       var unmappable = MappedPathDiscovery.UnmappableMember(model);
       return unmappable is null
         ? null
-        : $"'{unmappable}', which the mapped path cannot construct";
+        : $"the model holds '{unmappable}', which the mapped path cannot construct";
     }
 
     var named = model.GetMembers().OfType<IPropertySymbol>()
@@ -307,7 +308,7 @@ public sealed class JsonIndexDeclarationAnalyzer : DiagnosticAnalyzer {
         .FirstOrDefault(p => p.Type is INamedTypeSymbol t && PolymorphicModelDiscovery.IsPolymorphicType(t));
 
     return named is null
-      ? "a polymorphic member in its graph"
-      : $"{named.Name} is {TypeNameUtilities.Display(named.Type)}";
+      ? "the model holds a polymorphic member in its graph"
+      : $"the model holds a polymorphic member ({named.Name} is {TypeNameUtilities.Display(named.Type)})";
   }
 }

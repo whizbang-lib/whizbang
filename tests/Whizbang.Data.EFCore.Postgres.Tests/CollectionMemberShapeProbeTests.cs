@@ -34,17 +34,17 @@ public class CollectionMemberShapeProbeTests {
   public record Tag(Guid TagId, string Label);
 
   /// <summary>A nested positional record whose constructor takes a collection.</summary>
-  public record Turn(Guid TurnId, string Content, IReadOnlyList<Tag>? Tags = null);
+  public record Turn(Guid TurnId, string Content, IReadOnlyList<Tag>? Tags);
 
   public class ListModel { [StreamId] public Guid Id { get; init; } public List<Tag> Items { get; init; } = []; }
-  public class IListModel { [StreamId] public Guid Id { get; init; } public IList<Tag> Items { get; init; } = new List<Tag>(); }
-  public class ImmutableModel { [StreamId] public Guid Id { get; init; } public ImmutableList<Tag> Items { get; init; } = ImmutableList<Tag>.Empty; }
-  public class PrimitiveInterfaceModel { [StreamId] public Guid Id { get; init; } public IReadOnlyList<string> Items { get; init; } = new List<string>(); }
+  public class IListModel { [StreamId] public Guid Id { get; init; } public IList<Tag> Items { get; init; } = []; }
+  public class ImmutableModel { [StreamId] public Guid Id { get; init; } public ImmutableList<Tag> Items { get; init; } = []; }
+  public class PrimitiveInterfaceModel { [StreamId] public Guid Id { get; init; } public IReadOnlyList<string> Items { get; init; } = []; }
 
-  public class ICollectionModel { [StreamId] public Guid Id { get; init; } public ICollection<Tag> Items { get; init; } = new List<Tag>(); }
-  public class IEnumerableModel { [StreamId] public Guid Id { get; init; } public IEnumerable<Tag> Items { get; init; } = new List<Tag>(); }
-  public class IReadOnlyListModel { [StreamId] public Guid Id { get; init; } public IReadOnlyList<Tag> Items { get; init; } = new List<Tag>(); }
-  public class IReadOnlyCollectionModel { [StreamId] public Guid Id { get; init; } public IReadOnlyCollection<Tag> Items { get; init; } = new List<Tag>(); }
+  public class ICollectionModel { [StreamId] public Guid Id { get; init; } public ICollection<Tag> Items { get; init; } = []; }
+  public class IEnumerableModel { [StreamId] public Guid Id { get; init; } public IEnumerable<Tag> Items { get; init; } = []; }
+  public class IReadOnlyListModel { [StreamId] public Guid Id { get; init; } public IReadOnlyList<Tag> Items { get; init; } = []; }
+  public class IReadOnlyCollectionModel { [StreamId] public Guid Id { get; init; } public IReadOnlyCollection<Tag> Items { get; init; } = []; }
   public class UnconstructibleElementModel { [StreamId] public Guid Id { get; init; } public List<Turn> Turns { get; init; } = []; }
 
   /// <summary>The document mapped property by property, which walks the whole graph.</summary>
