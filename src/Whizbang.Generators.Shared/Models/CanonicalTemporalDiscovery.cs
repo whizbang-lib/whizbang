@@ -101,7 +101,31 @@ public static class CanonicalTemporalDiscovery {
   /// typed for it, where none of this applies.
   /// </para>
   /// </remarks>
-  public static ImmutableArray<CanonicalTemporalProperty> From(INamedTypeSymbol? model) {
+  public static ImmutableArray<CanonicalTemporalProperty> From(INamedTypeSymbol? model) =>
+    _from(model, mappableOnly: false);
+
+  /// <summary>
+  /// The temporal properties Entity Framework can be told to convert.
+  /// </summary>
+  /// <param name="model">The perspective's model type.</param>
+  /// <returns>The subset of <see cref="From"/> that Entity Framework is able to map.</returns>
+  /// <remarks>
+  /// <para>
+  /// Narrower than <see cref="From"/>, and deliberately so. The serializer writes every temporal
+  /// property including a computed one, and the backfill rewrites what the serializer wrote, so both
+  /// of those work from the full set. Entity Framework maps only what it can write back, and naming
+  /// anything else in the configuration is what makes it try: the model then fails to validate, which
+  /// takes the service down at startup rather than affecting one query.
+  /// </para>
+  /// <para>
+  /// Keeping the stored form decided by one set and the mapping by another is what stops this fix
+  /// from quietly changing how a derived value is written.
+  /// </para>
+  /// </remarks>
+  public static ImmutableArray<CanonicalTemporalProperty> MappableFrom(INamedTypeSymbol? model) =>
+    _from(model, mappableOnly: true);
+
+  private static ImmutableArray<CanonicalTemporalProperty> _from(INamedTypeSymbol? model, bool mappableOnly) {
     if (model is null) {
       return [];
     }
@@ -112,6 +136,10 @@ public static class CanonicalTemporalDiscovery {
       if (property.GetAttributes().Any(a =>
           TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.PhysicalFieldAttribute")
           || TypeNameUtilities.IsNamed(a.AttributeClass, "Whizbang.Core.Perspectives.VectorFieldAttribute"))) {
+        continue;
+      }
+
+      if (mappableOnly && !_canBeMapped(property)) {
         continue;
       }
 
@@ -127,6 +155,43 @@ public static class CanonicalTemporalDiscovery {
     }
 
     return [.. found];
+  }
+
+  /// <summary>
+  /// Whether Entity Framework can map this property, and so whether configuring it is safe.
+  /// </summary>
+  /// <param name="property">The property to judge.</param>
+  /// <returns><c>true</c> when the property is storage rather than a calculation.</returns>
+  /// <remarks>
+  /// <para>
+  /// Two shapes are storage. One has a setter. The other is an automatic property declared get-only,
+  /// which is ordinary for an immutable model: the compiler gives it a backing field and the
+  /// constructor writes it, so Entity Framework maps it like any other value.
+  /// </para>
+  /// <para>
+  /// A calculation has neither, and Entity Framework leaves such a property unmapped by convention.
+  /// Naming it explicitly overrides that convention and turns a property it was happy to ignore into
+  /// one it must map and cannot, failing model validation for the whole context.
+  /// </para>
+  /// <para>
+  /// A property excluded with <c>[NotMapped]</c> is skipped for the same reason from the other
+  /// direction: the author has said it is not storage, and configuring it contradicts them.
+  /// </para>
+  /// <para>
+  /// The derived value is still written to the document, because the serializer writes read-only
+  /// properties, and that is correct: nothing has to reconstruct it on the way back in.
+  /// </para>
+  /// </remarks>
+  private static bool _canBeMapped(IPropertySymbol property) {
+    if (property.GetAttributes().Any(a => TypeNameUtilities.IsNamed(
+        a.AttributeClass, "System.ComponentModel.DataAnnotations.Schema.NotMappedAttribute"))) {
+      return false;
+    }
+
+    return property.SetMethod is not null
+      || property.ContainingType.GetMembers()
+          .OfType<IFieldSymbol>()
+          .Any(f => SymbolEqualityComparer.Default.Equals(f.AssociatedSymbol, property));
   }
 
   /// <summary>
