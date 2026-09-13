@@ -365,7 +365,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
         IsSplitMode: isSplitMode,
-        TemporalProperties: CanonicalTemporalDiscovery.From(modelType as INamedTypeSymbol)
+        TemporalProperties: CanonicalTemporalDiscovery.MappableFrom(modelType as INamedTypeSymbol)
     );
   }
 

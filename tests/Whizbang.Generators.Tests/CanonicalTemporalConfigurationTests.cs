@@ -239,4 +239,181 @@ public class CanonicalTemporalConfigurationTests {
 
     await Assert.That(output).Contains("CanonicalTemporalFormat", StringComparison.Ordinal);
   }
+
+  /// <summary>
+  /// A computed temporal property is not configured, because Entity Framework cannot map one.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A property with no setter and no backing field is a calculation, not storage. Naming it in the
+  /// configuration is what forces Entity Framework to map it, and model validation then fails with
+  /// "No backing field could be found ... and the property does not have a setter". That failure
+  /// happens while the model is built, so it takes the whole service down at startup rather than
+  /// affecting one query.
+  /// </para>
+  /// <para>
+  /// Left alone, such a property is simply not mapped, which is what Entity Framework does with any
+  /// computed property by convention. It still appears in the stored document, because the serializer
+  /// writes read-only properties, and that is correct: the value is derived, so reading it back costs
+  /// nothing and writing it is free.
+  /// </para>
+  /// <para>
+  /// Found in a consumer, where a perspective carrying a computed duration alongside real timestamps
+  /// could not start at all.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AComputedTemporalPropertyIsNotConfiguredAsync() {
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Ran : IEvent;
+
+      public record RunModel {
+        [StreamId]
+        public Guid RunId { get; init; }
+
+        public DateTimeOffset StartedAt { get; init; }
+        public DateTimeOffset? FinishedAt { get; init; }
+
+        // Calculated from the two above. No setter, no backing field.
+        public TimeSpan? Elapsed => FinishedAt.HasValue ? FinishedAt.Value - StartedAt : null;
+      }
+
+      public class RunPerspective : IPerspectiveFor<RunModel, Ran> {
+        public RunModel Apply(RunModel currentData, Ran eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class RunDbContext : DbContext {
+        public RunDbContext(DbContextOptions<RunDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).Contains("p.StartedAt", StringComparison.Ordinal)
+      .Because("the stored timestamps are still configured, so this is about which properties are "
+        + "skipped rather than about the model being skipped");
+    await Assert.That(output).DoesNotContain("p.Elapsed", StringComparison.Ordinal)
+      .Because("Entity Framework cannot map a property with no setter and no backing field, and "
+        + "naming it in the configuration is what makes it try");
+  }
+
+  /// <summary>
+  /// A get-only property that is still stored is configured, because that one can be mapped.
+  /// </summary>
+  /// <remarks>
+  /// The pair to the case above, and the reason the check is about mappability rather than about the
+  /// absence of a setter. An automatic property declared get-only has a backing field the constructor
+  /// writes, which is ordinary for an immutable model, and Entity Framework maps it happily.
+  /// </remarks>
+  [Test]
+  public async Task AGetOnlyStoredTemporalPropertyIsStillConfiguredAsync() {
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Ran : IEvent;
+
+      public class RunModel {
+        [StreamId]
+        public Guid RunId { get; init; }
+
+        // Get-only, but automatic: it has a backing field, so it is storage.
+        public DateTimeOffset StartedAt { get; }
+      }
+
+      public class RunPerspective : IPerspectiveFor<RunModel, Ran> {
+        public RunModel Apply(RunModel currentData, Ran eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class RunDbContext : DbContext {
+        public RunDbContext(DbContextOptions<RunDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    await Assert.That(output).Contains("p.StartedAt", StringComparison.Ordinal)
+      .Because("a get-only automatic property has a backing field, so it is mapped like any other "
+        + "stored value and still needs its canonical conversion");
+  }
+
+  /// <summary>
+  /// The serializer still writes a computed temporal in canonical form, even though the mapping skips it.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The two sets are deliberately different and this is the test that says so. What Entity Framework
+  /// maps decides what a query can reach; what the serializer converts decides what the document
+  /// holds. A derived value is in the document because read-only properties are serialized, so it
+  /// keeps the canonical form its siblings have, and the backfill that rewrites old rows keeps
+  /// covering it.
+  /// </para>
+  /// <para>
+  /// Without this, narrowing the mapping looks like it could be done once in the shared discovery,
+  /// and doing that would silently change the stored form of every derived date in every consumer.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AComputedTemporalIsStillSerializedCanonicallyAsync() {
+    const string SOURCE = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Ran : IEvent;
+
+      public record RunModel {
+        [StreamId]
+        public Guid RunId { get; init; }
+
+        public DateTimeOffset StartedAt { get; init; }
+        public DateTimeOffset? FinishedAt { get; init; }
+
+        public TimeSpan? Elapsed => FinishedAt.HasValue ? FinishedAt.Value - StartedAt : null;
+      }
+
+      public class RunPerspective : IPerspectiveFor<RunModel, Ran> {
+        public RunModel Apply(RunModel currentData, Ran eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class RunDbContext : DbContext {
+        public RunDbContext(DbContextOptions<RunDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync(SOURCE);
+    var mapping = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    var serialization = GeneratorTestHelper.RunGenerator<
+      global::Whizbang.Data.EFCore.Postgres.Generators.PerspectivePersistenceJsonContextGenerator>(SOURCE);
+    var serialized = string.Join("\n",
+      serialization.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SourceText.ToString()));
+
+    await Assert.That(serialized).Contains("\"Elapsed\"", StringComparison.Ordinal)
+      .Because("the serializer writes read-only properties, so the derived value is in the document "
+        + "and keeps the canonical form the rest of the document uses");
+    await Assert.That(mapping).DoesNotContain("p.Elapsed", StringComparison.Ordinal)
+      .Because("the mapping is the narrower set, and that difference is the whole point: one decides "
+        + "the stored form, the other decides what a query can reach");
+  }
 }
