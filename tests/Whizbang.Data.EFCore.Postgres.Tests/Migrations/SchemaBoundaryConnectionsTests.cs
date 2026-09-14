@@ -144,6 +144,26 @@ public class SchemaBoundaryConnectionsTests : IAsyncDisposable {
       context, initConnectionString: null, serviceProvider: null));
   }
 
+  /// <summary>
+  /// A context carrying neither a data source nor a connection string answers nothing.
+  /// </summary>
+  /// <remarks>
+  /// Asserted because the caller's two behaviors are different and both matter: no factory makes it
+  /// warn and apply the script whole, which is correct for a database with nothing to rewrite, while
+  /// a factory that cannot open would fail the whole schema pass. A resolution that returned
+  /// something unusable here would turn a warning into an outage.
+  /// </remarks>
+  [Test]
+  public async Task NothingAvailableAnswersNothingAsync() {
+    await using var context = new WorkCoordinationDbContext(
+      new DbContextOptionsBuilder<WorkCoordinationDbContext>().UseNpgsql().Options);
+
+    var factory = SchemaBoundaryConnections.Resolve(
+      context, initConnectionString: null, serviceProvider: null);
+
+    await Assert.That(factory is null).IsTrue();
+  }
+
   /// <summary>Whitespace is not an initialization connection string.</summary>
   [Test]
   [Arguments("")]
