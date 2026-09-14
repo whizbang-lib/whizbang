@@ -48,6 +48,18 @@ public class ClaimWorkerCoverageTests {
     public int CallCount { get; private set; }
     public int LastMaxStreams { get; private set; }
 
+    /// <summary>
+    /// The widest window ever requested.
+    /// </summary>
+    /// <remarks>
+    /// A snapshot of <see cref="LastMaxStreams"/> taken at some cycle is not the width the window
+    /// reached: it keeps growing while clean batches keep being returned, so on a loaded machine
+    /// more cycles run before a test's next step lands and the window ends up wider than whatever
+    /// was recorded. A narrowing then measures against a stale number and looks like no narrowing
+    /// at all. The peak is the honest comparison point.
+    /// </remarks>
+    public int PeakMaxStreams { get; private set; }
+
     public WorkBatch BatchToReturn {
       get { lock (_lock) { return _batchToReturn; } }
       set { lock (_lock) { _batchToReturn = value; } }
@@ -64,6 +76,7 @@ public class ClaimWorkerCoverageTests {
       lock (_lock) {
         CallCount++;
         LastMaxStreams = req.MaxStreams;
+        if (req.MaxStreams > PeakMaxStreams) { PeakMaxStreams = req.MaxStreams; }
         batch = _batchToReturn;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
@@ -447,8 +460,7 @@ public class ClaimWorkerCoverageTests {
     }, churnFeedback: churnFeedback);
 
     await coord.WaitForCallsAsync(4, TimeSpan.FromSeconds(5));
-    var grownWidth = coord.LastMaxStreams;
-    await Assert.That(grownWidth).IsGreaterThan(25)
+    await Assert.That(coord.LastMaxStreams).IsGreaterThan(25)
       .Because("the window must actually have grown above its floor here, or a later narrowing "
              + "would not be distinguishable from the window simply never having moved");
 
@@ -477,7 +489,12 @@ public class ClaimWorkerCoverageTests {
     // reports zero churn on every later poll, which reads as UNMEASURED, not clean).
     await coord.WaitForCallsAsync(15, TimeSpan.FromSeconds(5));
 
-    await Assert.That(coord.LastMaxStreams).IsLessThan(grownWidth)
+    // Compared against the peak rather than a width sampled before the swap. Growth continues
+    // until the swapped batch lands, so a sampled width is only a lower bound on how wide the
+    // window actually got, and on a loaded machine the extra cycles pushed the real peak above it
+    // — leaving a genuine narrowing still above the sample. Nothing after the swap can grow the
+    // window, so the peak is the pre-swap width by construction.
+    await Assert.That(coord.LastMaxStreams).IsLessThan(coord.PeakMaxStreams)
       .Because("churn fed in externally by the drain worker must narrow the window exactly as if "
              + "ClaimWorker had observed the re-claims itself — without the reconstruction, the "
              + "stream-id path stays blind to the condition the window exists to correct, and the "

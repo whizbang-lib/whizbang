@@ -1493,6 +1493,98 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
+  /// Regression lock: EVERY generated DbContext configuration must carry the full npgsqlOptions, not
+  /// just the ones registered through <c>AddDbContext</c>.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// There are three places a context is configured: the public Add method, the model-registration
+  /// re-add, and the schema initializer's dedicated context built from the initialization connection
+  /// string. The first two share an emission helper and the third did not, so it was missing the EF
+  /// vector mapping, the Whizbang function translators, and retry.
+  /// </para>
+  /// <para>
+  /// The cost of that omission was not a compile error. The dedicated context is only built when an
+  /// initialization connection string exists, so the path lay dormant until one was configured, and
+  /// then EF model validation refused the vector property and no schema could be initialized at all.
+  /// </para>
+  /// <para>
+  /// Asserted by counting rather than by looking at the helper, because the previous lock counted
+  /// <c>services.AddDbContext&lt;</c> and the third path does not use it: a test shaped around one
+  /// registration style cannot see a new one. Every <c>UseNpgsql</c> gets the same configuration or
+  /// this fails.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task Generator_EveryDbContextConfiguration_CarriesTheFullNpgsqlOptionsAsync() {
+    const string source = """
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+
+      [PerspectiveStorage(FieldStorageMode.Split)]
+      public record EmbeddingModel {
+        [StreamId]
+        public Guid Id { get; init; }
+
+        [VectorField(1536)]
+        [Indexed]
+        public float[]? Embeddings { get; init; }
+
+        public string Name { get; init; } = "";
+      }
+
+      public class EmbeddingPerspective : IPerspectiveFor<EmbeddingModel, TestEvent> {
+        public EmbeddingModel Apply(EmbeddingModel currentData, TestEvent @event) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    var configurations = 0;
+    var functions = 0;
+    var retries = 0;
+    var vectorMappings = 0;
+
+    foreach (var generated in result.GeneratedSources) {
+      foreach (var raw in generated.SourceText.ToString().Split('\n')) {
+        var line = raw.Trim();
+        // Comments mention these by name, and a mention is not a call.
+        if (line.StartsWith("//", StringComparison.Ordinal)) {
+          continue;
+        }
+
+        if (line.Contains(".UseNpgsql(", StringComparison.Ordinal)) { configurations++; }
+        if (line.Contains("npgsqlOptions.UseWhizbangFunctions()", StringComparison.Ordinal)) { functions++; }
+        if (line.Contains("npgsqlOptions.EnableRetryOnFailure(", StringComparison.Ordinal)) { retries++; }
+        if (line.Contains("npgsqlOptions.UseVector()", StringComparison.Ordinal)) { vectorMappings++; }
+      }
+    }
+
+    await Assert.That(configurations).IsGreaterThan(1)
+      .Because("there is more than one place a context is configured, and this only means something "
+        + "if it sees all of them");
+    await Assert.That(functions).IsEqualTo(configurations)
+      .Because("collective-apply ExecuteUpdate cannot translate JsonbSet without the translators");
+    await Assert.That(retries).IsEqualTo(configurations)
+      .Because("a context without retry fails on the first transient error instead of surviving it");
+    await Assert.That(vectorMappings).IsEqualTo(configurations)
+      .Because("the data-source handler is not the EF mapping: without npgsqlOptions.UseVector() the "
+        + "model refuses a vector property and nothing can be initialized");
+  }
+
+  /// <summary>
   /// Test that perspective DDL includes vector fields marked with [VectorField] attribute.
   /// Vector fields should use pgvector's vector type with specified dimensions.
   /// </summary>
