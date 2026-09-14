@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// type's behavior cost as much as the expensive half.
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
+[Category("Shard1")]
 public class SchemaCommandBoundarySegmentTests {
 
   /// <summary>A script with no marker yields itself, so a caller applies both cases alike.</summary>
