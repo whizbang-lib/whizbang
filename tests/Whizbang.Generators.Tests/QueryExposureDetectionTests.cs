@@ -152,6 +152,57 @@ public class QueryExposureDetectionTests {
   /// Matching is by fully qualified name precisely so the test can declare the type itself. What is
   /// verified is the name list, not a package reference.
   /// </remarks>
+  /// <summary>
+  /// A known name grants what that middleware actually offers, not both.
+  /// </summary>
+  /// <remarks>
+  /// Returning ordering for a filtering-only surface is the false positive this whole design claims
+  /// to avoid: WHIZ306 reports only ordering, so a name list that hands ordering to
+  /// <c>[UseFiltering]</c> reports every filterable collection as an unindexed sort. Measured against
+  /// a real consumer, that was 78 repositories offering filtering alone and still being reported.
+  /// </remarks>
+  [Test]
+  public async Task AFilteringOnlyNameGrantsFilteringOnlyAsync() {
+    var exposure = _exposureOfType($$"""
+      using System;
+
+      namespace HotChocolate.Data {
+        [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]
+        public sealed class UseFilteringAttribute : Attribute { }
+      }
+
+      namespace TestApp {
+        [global::HotChocolate.Data.UseFiltering]
+        public class Surface { }
+      }
+      """);
+
+    await Assert.That(exposure).IsEqualTo(FILTERING);
+    await Assert.That(SortableExposureDiscovery.AllowsOrdering(exposure)).IsFalse()
+      .Because("a filtering middleware narrows rows and does not choose their order");
+  }
+
+  /// <summary>A sorting name grants ordering.</summary>
+  [Test]
+  public async Task ASortingOnlyNameGrantsOrderingAsync() {
+    var exposure = _exposureOfType($$"""
+      using System;
+
+      namespace HotChocolate.Data {
+        [AttributeUsage(AttributeTargets.Method | AttributeTargets.Class)]
+        public sealed class UseSortingAttribute : Attribute { }
+      }
+
+      namespace TestApp {
+        [global::HotChocolate.Data.UseSorting]
+        public class Surface { }
+      }
+      """);
+
+    await Assert.That(exposure).IsEqualTo(ORDERING);
+    await Assert.That(SortableExposureDiscovery.AllowsOrdering(exposure)).IsTrue();
+  }
+
   [Test]
   [Arguments("UseSortingAttribute")]
   [Arguments("UseFilteringAttribute")]
@@ -170,7 +221,8 @@ public class QueryExposureDetectionTests {
       }
       """);
 
-    await Assert.That(exposure).IsEqualTo(ORDERING | FILTERING);
+    await Assert.That(exposure).IsNotEqualTo(0)
+      .Because("both names are recognized; which capability each grants is pinned above");
   }
 
   /// <summary>A consumer can name an attribute the framework cannot reach.</summary>

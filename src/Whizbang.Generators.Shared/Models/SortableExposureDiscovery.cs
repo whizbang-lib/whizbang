@@ -49,18 +49,26 @@ public static class SortableExposureDiscovery {
   /// The attribute names that compose a query from the request but cannot carry the marker.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// A third party's attribute cannot be annotated by this assembly, so the ones the framework ships
   /// an integration for are named here. Anything else is reached either by the marker, which travels
   /// with the package that defines it, or by an analyzer configuration option, which travels with
   /// the consumer. Naming is the last resort of the three because it is the only one that goes stale
   /// silently.
+  /// </para>
+  /// <para>
+  /// Each name grants what its middleware actually offers. Granting both to either of them is the
+  /// false positive this design exists to avoid: WHIZ306 reports only ordering, so handing ordering
+  /// to a filtering attribute reports every filterable collection as an unindexed sort. Measured
+  /// against a real consumer that was 78 repositories offering filtering alone and still reported.
+  /// </para>
   /// </remarks>
-  private static readonly string[] _knownComposingAttributes = [
-    "HotChocolate.Data.UseSortingAttribute",
-    "HotChocolate.Data.UseFilteringAttribute",
-    "HotChocolate.Types.UseSortingAttribute",
-    "HotChocolate.Types.UseFilteringAttribute",
-  ];
+  private static readonly Dictionary<string, int> _knownComposingAttributes = new(StringComparer.Ordinal) {
+    ["HotChocolate.Data.UseSortingAttribute"] = EXPOSURE_ORDERING,
+    ["HotChocolate.Data.UseFilteringAttribute"] = EXPOSURE_FILTERING,
+    ["HotChocolate.Types.UseSortingAttribute"] = EXPOSURE_ORDERING,
+    ["HotChocolate.Types.UseFilteringAttribute"] = EXPOSURE_FILTERING,
+  };
 
   /// <summary>
   /// What a request can shape, given the attributes on a method or a lens declaration.
@@ -107,12 +115,16 @@ public static class SortableExposureDiscovery {
       ? null
       : TypeNameUtilities.Display(attribute.AttributeClass);
 
-    if (name is not null
-        && (_knownComposingAttributes.Contains(name)
-            || (!extraComposingNames.IsDefaultOrEmpty && extraComposingNames.Contains(name)))) {
-      // A sorting or filtering middleware offers both in practice: the same surface that orders also
-      // narrows, and naming them apart would make the list twice as long for no gain.
-      return EXPOSURE_ORDERING | EXPOSURE_FILTERING;
+    if (name is not null) {
+      if (_knownComposingAttributes.TryGetValue(name, out var known)) {
+        return known;
+      }
+
+      // A configured name says only "this composes a query"; the consumer cannot express which half
+      // through a build property, so it is read as the widest thing it could mean.
+      if (!extraComposingNames.IsDefaultOrEmpty && extraComposingNames.Contains(name)) {
+        return EXPOSURE_ORDERING | EXPOSURE_FILTERING;
+      }
     }
 
     var marker = attribute.AttributeClass?.GetAttributes()
