@@ -355,6 +355,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     // drain loop would silently stop batching for that stream for the life of the process, with
     // messages accepted into a buffer nothing reads.
     var attempts = 0;
+    var firstFlush = new TaskCompletionSource();
     var secondFlush = new TaskCompletionSource();
     var logger = new RecordingLogger();
 
@@ -362,6 +363,7 @@ public class SlidingWindowInboxBatchStrategyTests {
       flush: (msgs, ct) => {
         var n = Interlocked.Increment(ref attempts);
         if (n == 1) {
+          firstFlush.TrySetResult();
           return Task.FromException(new InvalidOperationException("database unavailable"));
         }
         secondFlush.TrySetResult();
@@ -376,8 +378,14 @@ public class SlidingWindowInboxBatchStrategyTests {
 
     var streamId = Guid.CreateVersion7();
     await sut.AppendAsync(_makeMessage(streamId), testToken);
-    // Give the first (failing) flush time to land before the second batch.
-    await Task.Delay(120, testToken);
+
+    // Wait for the first flush to be entered rather than sleeping for longer than it ought to take.
+    // Its invocation is proof the first batch closed and was dispatched, which is the whole reason
+    // the second append has to come after it: appended sooner, both messages join one batch, the
+    // second flush never happens and the test times out. A 120ms sleep held on a quiet machine and
+    // failed under CI load, which is the flake this replaces.
+    await firstFlush.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);
+
     await sut.AppendAsync(_makeMessage(streamId), testToken);
 
     await secondFlush.Task.WaitAsync(TimeSpan.FromSeconds(10), testToken);

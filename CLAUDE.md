@@ -215,6 +215,19 @@ test that pass without testing anything, how to measure coverage truthfully (CI 
 local runs; the collector failure modes that look like success), the detector discipline that
 avoids both over- and under-reporting, and changes that were investigated and correctly *not* made.
 
+### 📖 **[schema-initialization-connections.md](ai-docs/schema-initialization-connections.md)** - CRITICAL
+**Read when**:
+- Touching schema initialization, the perspective schema pass, or the SQL it emits
+- Anything needs a connection of its own (out-of-band DDL, VACUUM, a rewrite)
+- A statement depends on an earlier statement's **committed** effect
+
+**Why critical**: two traps in here each shipped once and each passed every local test first.
+Ordering statements inside one transaction does not make an index see a rewrite that has not
+committed, and a rollback then undoes the rewrite so no retry can ever get further. And there is
+almost never a connection string to open a second connection from, because Npgsql redacts the
+password and the turnkey registration configures the context with a data source. One answer exists
+for each; the file says which, and why a green test suite proves neither.
+
 ### 📖 **[type-naming.md](ai-docs/type-naming.md)** - CRITICAL
 **Read when**:
 - Writing or comparing a type name that is a key (`clr_type_name`, `event_type`, perspective names, registry JSON)

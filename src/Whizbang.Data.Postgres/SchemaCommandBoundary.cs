@@ -87,12 +87,18 @@ public static class SchemaCommandBoundary {
   /// <summary>
   /// Applies <paramref name="sql"/> piece by piece, committing each piece before the next begins.
   /// </summary>
-  /// <param name="connectionString">Where to apply it.</param>
+  /// <param name="connectionFactory">
+  /// Produces a fresh, unopened connection for each piece. A factory rather than a connection
+  /// string because the string is frequently not available: Npgsql redacts the password from every
+  /// <c>ConnectionString</c> surface once a connection has opened, and a context configured with a
+  /// data source never had one to redact. The data source itself still holds the credentials, so a
+  /// caller in that position hands over <c>CreateConnection</c> and this works unchanged.
+  /// </param>
   /// <param name="sql">The script, with or without markers.</param>
   /// <param name="commandTimeoutSeconds">
   /// The timeout for each piece. A rewrite over a large table is one statement that legitimately
   /// takes far longer than an ordinary command, so the caller's schema timeout is used rather than
-  /// the connection string's default.
+  /// the connection's default.
   /// </param>
   /// <param name="cancellationToken">Cancellation token.</param>
   /// <remarks>
@@ -100,21 +106,40 @@ public static class SchemaCommandBoundary {
   /// passed one would get the behavior this type exists to avoid.
   /// </remarks>
   public static async Task ApplyAsync(
-      string connectionString,
+      Func<NpgsqlConnection> connectionFactory,
       string sql,
       int commandTimeoutSeconds,
       CancellationToken cancellationToken = default) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(sql);
 
     foreach (var segment in Segments(sql)) {
-      await using var connection = new NpgsqlConnection(connectionString);
+      await using var connection = connectionFactory();
       await connection.OpenAsync(cancellationToken);
       await using var command = new NpgsqlCommand(segment, connection) {
         CommandTimeout = commandTimeoutSeconds,
       };
       await command.ExecuteNonQueryAsync(cancellationToken);
     }
+  }
+
+  /// <summary>
+  /// Applies <paramref name="sql"/> piece by piece, opening each piece's connection from
+  /// <paramref name="connectionString"/>.
+  /// </summary>
+  /// <param name="connectionString">Where to apply it. Must still carry its credentials.</param>
+  /// <param name="sql">The script, with or without markers.</param>
+  /// <param name="commandTimeoutSeconds">The timeout for each piece.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  public static Task ApplyAsync(
+      string connectionString,
+      string sql,
+      int commandTimeoutSeconds,
+      CancellationToken cancellationToken = default) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+    return ApplyAsync(
+      () => new NpgsqlConnection(connectionString), sql, commandTimeoutSeconds, cancellationToken);
   }
 
   private static void _flush(ImmutableArray<string>.Builder segments, List<string> lines) {
