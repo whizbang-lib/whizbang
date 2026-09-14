@@ -10,6 +10,101 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
+/// How a script is divided, for the cases that need no database to decide.
+/// </summary>
+/// <remarks>
+/// Separate from the integration tests below because these are decisions about text. Standing up a
+/// database to assert that a script with no marker yields itself would make the cheap half of this
+/// type's behavior cost as much as the expensive half.
+/// </remarks>
+/// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
+public class SchemaCommandBoundarySegmentTests {
+
+  /// <summary>A script with no marker yields itself, so a caller applies both cases alike.</summary>
+  [Test]
+  public async Task AScriptWithNoMarkerIsOneSegmentAsync() {
+    var segments = SchemaCommandBoundary.Segments("SELECT 1;");
+
+    await Assert.That(segments.Length).IsEqualTo(1);
+    await Assert.That(segments[0]).IsEqualTo("SELECT 1;");
+  }
+
+  /// <summary>Nothing to apply yields nothing, rather than one empty command.</summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   \n  ")]
+  public async Task AnEmptyScriptYieldsNoSegmentAsync(string sql) =>
+    await Assert.That(SchemaCommandBoundary.Segments(sql).Length).IsEqualTo(0);
+
+  /// <summary>
+  /// A marker is recognized whatever it is indented by, and contributes no segment of its own.
+  /// </summary>
+  /// <remarks>
+  /// The generator writes the schema for a perspective entry indented, so a comparison that did not
+  /// trim would match in the bulk script and silently not match in the per-perspective one, which is
+  /// the path that actually runs.
+  /// </remarks>
+  [Test]
+  public async Task AnIndentedMarkerStillSeparatesAsync() {
+    var segments = SchemaCommandBoundary.Segments(
+      $"SELECT 1;\n      {SchemaCommandBoundary.MARKER}   \nSELECT 2;\nSELECT 3;");
+
+    await Assert.That(segments.Length).IsEqualTo(2);
+    await Assert.That(segments[0].Trim()).IsEqualTo("SELECT 1;");
+    await Assert.That(segments[1]).Contains("SELECT 3;", StringComparison.Ordinal);
+    await Assert.That(segments[1]).DoesNotContain("@whizbang", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// A marker with nothing after it yields no trailing empty segment.
+  /// </summary>
+  /// <remarks>
+  /// An empty command is not merely wasteful: it is a round trip that opens a connection to send
+  /// nothing, and Npgsql rejects it.
+  /// </remarks>
+  [Test]
+  public async Task ATrailingMarkerAddsNoSegmentAsync() =>
+    await Assert.That(
+      SchemaCommandBoundary.Segments($"SELECT 1;\n{SchemaCommandBoundary.MARKER}\n").Length)
+      .IsEqualTo(1);
+
+  /// <summary>Several markers divide into several pieces.</summary>
+  [Test]
+  public async Task SeveralMarkersDivideIntoSeveralPiecesAsync() {
+    var m = SchemaCommandBoundary.MARKER;
+
+    await Assert.That(
+      SchemaCommandBoundary.Segments($"SELECT 1;\n{m}\nSELECT 2;\n{m}\nSELECT 3;").Length)
+      .IsEqualTo(3);
+  }
+
+  /// <summary>A missing script is a caller error rather than a script with nothing in it.</summary>
+  [Test]
+  public async Task ANullScriptIsRefusedAsync() =>
+    await Assert.That(() => SchemaCommandBoundary.Segments(null!))
+      .Throws<ArgumentNullException>();
+
+  /// <summary>
+  /// Applying without somewhere to apply it is a caller error, said at the call rather than as a
+  /// connection failure later.
+  /// </summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task ApplyingWithNoConnectionStringIsRefusedAsync(string connectionString) =>
+    await Assert.That(async () =>
+        await SchemaCommandBoundary.ApplyAsync(connectionString, "SELECT 1;", 30))
+      .Throws<ArgumentException>();
+
+  /// <summary>A missing script is refused by the apply as well.</summary>
+  [Test]
+  public async Task ApplyingANullScriptIsRefusedAsync() =>
+    await Assert.That(async () =>
+        await SchemaCommandBoundary.ApplyAsync("Host=nowhere", null!, 30))
+      .Throws<ArgumentNullException>();
+}
+
+/// <summary>
 /// That a rewrite of a stored value and an index built over the result are applied with a commit
 /// between them, and what goes wrong when they are not.
 /// </summary>
