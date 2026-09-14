@@ -165,28 +165,11 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
     GC.SuppressFinalize(this);
   }
 
-  /// <summary>
-  /// Resolves the test's data source and nothing else, standing in for the scope a host initializes
-  /// from.
-  /// </summary>
-  /// <remarks>
-  /// The initializer borrows an <c>NpgsqlDataSource</c> from the scope to open the extra connection
-  /// that schema SQL carrying a commit boundary needs. Without one it warns and applies the script
-  /// whole, which succeeds here, because a database created by this run has nothing to rewrite. So
-  /// passing no scope made every test in this project exercise the fallback and none exercise the
-  /// path a deployment takes.
-  /// </remarks>
-  private sealed class InitializationScope(NpgsqlDataSource dataSource) : IServiceProvider {
-    public object? GetService(Type serviceType) =>
-      serviceType == typeof(NpgsqlDataSource) ? dataSource : null;
-  }
-
   private async Task InitializeDatabaseAsync() {
     // Use generated EnsureWhizbangDatabaseInitializedAsync extension method
     // This creates all tables, functions, and sequences needed by the EF Core implementation
     await using var dbContext = CreateDbContext();
-    await dbContext.EnsureWhizbangDatabaseInitializedAsync(
-      serviceProvider: new InitializationScope(_dataSource!));
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
   }
 
   /// <summary>

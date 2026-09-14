@@ -441,7 +441,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // 3. Multiple pods can run maintenance concurrently without issues
     // Gracefully handles failures so it never prevents service startup
     logger?.LogDebug("Running database maintenance for {DbContext}...", "__DBCONTEXT_CLASS__");
-    await PerformMaintenanceAsync(dbContext, logger, initConnectionString, cancellationToken);
+    await PerformMaintenanceAsync(
+      dbContext, logger, initConnectionString, serviceProvider, cancellationToken);
   }
 
   /// <summary>
@@ -1577,6 +1578,7 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
     __DBCONTEXT_FQN__ dbContext,
     ILogger? logger,
     string? initConnectionString,
+    IServiceProvider? serviceProvider,
     CancellationToken cancellationToken) {
     try {
       // Call the maintenance function and log results
@@ -1597,30 +1599,14 @@ CREATE INDEX IF NOT EXISTS idx_perspective_cursors_failed
           taskName, rowsAffected, durationMs, status);
       }
 
-      // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined.
-      // When an initConnectionString is provided, use it directly for VACUUM (bypasses PgBouncer).
-      // Otherwise, get NpgsqlDataSource from EF Core options which preserves full auth.
+      // VACUUM ANALYZE must run outside a transaction block and cannot be pipelined, so it needs a
+      // connection of its own. Same need, and the same sources in the same order, as schema SQL
+      // carrying a commit boundary: see SchemaBoundaryConnections for why a connection string is
+      // usually not among them.
       Npgsql.NpgsqlConnection? vacuumConn = null;
       try {
-        if (!string.IsNullOrEmpty(initConnectionString)) {
-          vacuumConn = new Npgsql.NpgsqlConnection(initConnectionString);
-        } else {
-          // When using NpgsqlDataSource (Aspire/cloud), GetConnectionString() strips the password,
-          // so creating a new NpgsqlConnection from it would fail auth.
-          // Instead, get the DbDataSource from EF Core's options extension which preserves full auth.
-          var npgsqlExt = dbContext.GetService<Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>()
-            .Extensions.OfType<Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal.NpgsqlOptionsExtension>()
-            .FirstOrDefault();
-          var dataSource = npgsqlExt?.DataSource as Npgsql.NpgsqlDataSource;
-          if (dataSource != null) {
-            vacuumConn = dataSource.CreateConnection();
-          } else {
-            var connectionString = dbContext.Database.GetConnectionString();
-            if (!string.IsNullOrEmpty(connectionString)) {
-              vacuumConn = new Npgsql.NpgsqlConnection(connectionString);
-            }
-          }
-        }
+        vacuumConn = Whizbang.Data.EFCore.Postgres.SchemaBoundaryConnections.Resolve(
+          dbContext, initConnectionString, serviceProvider)?.Invoke();
 
         if (vacuumConn != null) {
           await vacuumConn.OpenAsync(cancellationToken);

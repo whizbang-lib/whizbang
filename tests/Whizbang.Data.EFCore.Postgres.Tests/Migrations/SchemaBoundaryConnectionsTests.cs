@@ -19,11 +19,13 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// resolution that silently answers nothing looks like a working build until it meets real data.
 /// </para>
 /// <para>
-/// The case that matters is the data source. A connection string is the obvious source and usually
-/// absent: Npgsql redacts the password from every <c>ConnectionString</c> surface once a connection
-/// has opened, and the turnkey registration configures the context with an <c>NpgsqlDataSource</c>
-/// rather than a string, so there was never a string to redact. A resolution that looked only at
-/// strings found nothing on every ordinary deployment.
+/// The case that matters is the data source the context was configured with. A connection string is
+/// the obvious source and usually absent: Npgsql redacts the password from every
+/// <c>ConnectionString</c> surface once a connection has opened, and the turnkey registration
+/// configures the context with an <c>NpgsqlDataSource</c> rather than a string, so there was never a
+/// string to redact. A resolution that looked only at strings found nothing on every ordinary
+/// deployment, and one that looked only in the container found nothing whenever the caller passed
+/// no scope, which is every caller that takes the default.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
@@ -79,21 +81,32 @@ public class SchemaBoundaryConnectionsTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// A context configured with a data source and nothing else still yields a usable connection.
+  /// A context configured with a data source yields a usable connection with no scope at all.
   /// </summary>
   /// <remarks>
-  /// The regression. This is how the turnkey registration configures every context, so a resolution
-  /// that failed here failed on every ordinary deployment while the test suite stayed green.
+  /// The regression, and the reason the context's own data source is preferred to the container's:
+  /// this is how the turnkey registration configures every context, and the caller frequently has
+  /// no scope to offer. A resolution that needed one failed on every ordinary deployment while the
+  /// test suite stayed green.
   /// </remarks>
   [Test]
-  public async Task ADataSourceInTheScopeIsBorrowedAsync() {
+  public async Task TheContextsOwnDataSourceIsUsedWithNoScopeAsync() {
     await using var context = _dataSourceContext();
 
-    var factory = SchemaBoundaryConnections.Resolve(
-      context, initConnectionString: null,
-      new OneServiceProvider(typeof(NpgsqlDataSource), _dataSource));
+    await _canOpenAsync(SchemaBoundaryConnections.Resolve(
+      context, initConnectionString: null, serviceProvider: null));
+  }
 
-    await _canOpenAsync(factory);
+  /// <summary>
+  /// A data source in the scope is used when the context carries none of its own.
+  /// </summary>
+  [Test]
+  public async Task AScopeDataSourceIsBorrowedWhenTheContextHasNoneAsync() {
+    await using var context = _connectionStringContext();
+
+    await _canOpenAsync(SchemaBoundaryConnections.Resolve(
+      context, initConnectionString: null,
+      new OneServiceProvider(typeof(NpgsqlDataSource), _dataSource)));
   }
 
   /// <summary>
@@ -129,23 +142,6 @@ public class SchemaBoundaryConnectionsTests : IAsyncDisposable {
 
     await _canOpenAsync(SchemaBoundaryConnections.Resolve(
       context, initConnectionString: null, serviceProvider: null));
-  }
-
-  /// <summary>
-  /// Nothing available answers nothing, so the caller can say so rather than guess.
-  /// </summary>
-  /// <remarks>
-  /// Asserted because the caller's behavior differs: a null answer makes it warn and apply the
-  /// script whole, and an answer that cannot open would instead fail the whole schema pass.
-  /// </remarks>
-  [Test]
-  public async Task NothingAvailableAnswersNothingAsync() {
-    await using var context = _dataSourceContext();
-
-    var factory = SchemaBoundaryConnections.Resolve(
-      context, initConnectionString: null, serviceProvider: null);
-
-    await Assert.That(factory is null).IsTrue();
   }
 
   /// <summary>Whitespace is not an initialization connection string.</summary>

@@ -18,6 +18,7 @@ This directory contains focused documentation topics to help Claude Code underst
   - **Critical:** Test-first is mandatory, 100% coverage goal
 
 - **[flaky-tests.md](flaky-tests.md)** - Diagnosing and fixing intermittent test failures
+- [schema-initialization-connections.md](schema-initialization-connections.md) — two traps that each shipped once: statements that need a commit between them, and why there is almost never a connection string to open a second connection from
 - [test-sharding.md](test-sharding.md) — how CI splits slow test projects across runners, and the guard that stops a class silently running in no shard
 - [coverage-exclusions.md](coverage-exclusions.md) — when `[ExcludeFromCodeCoverage]` is right, when it hides real coverage, and how to pin the invariant that makes a guard unreachable
   - **When to use:** Tests pass sometimes but fail other times
@@ -45,6 +46,7 @@ This directory contains focused documentation topics to help Claude Code underst
   - **When to use:** Working on ECommerce or other samples
   - **Critical:** When sample needs feature → implement in library first
 
+- **[schema-initialization-connections.md](schema-initialization-connections.md)** - Required before touching schema init: commit boundaries, and where an out-of-band connection comes from
 - **[startup-registration-invariants.md](startup-registration-invariants.md)** - Six invariants for startup and DI registration, each from a shipped defect
   - **When to use:** Touching `AddWhizbangWorkers`, `DbContextInitializationRegistry`, `PostgresDriverExtensions`, `EventSubscriptionDiscovery`, or notification connection resolution
   - **Critical:** Never let the framework silently do less than the consumer asked for; refuse with a reason or log the consequence

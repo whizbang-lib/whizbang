@@ -2,6 +2,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Npgsql;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure.Internal;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
@@ -40,9 +41,9 @@ public static class SchemaBoundaryConnections {
   /// rest of the schema pass already prefers.
   /// </param>
   /// <param name="serviceProvider">
-  /// The scope the initializer was called from, used to borrow the application's
-  /// <see cref="NpgsqlDataSource"/>. Borrowed means used as-is and never disposed here, because the
-  /// application owns its lifetime.
+  /// The scope the initializer was called from, used only when the context carries no data source of
+  /// its own. Borrowed means used as-is and never disposed here, because the application owns its
+  /// lifetime.
   /// </param>
   /// <returns>
   /// The factory, or <see langword="null"/>. A null answer is a real possibility rather than a
@@ -61,8 +62,24 @@ public static class SchemaBoundaryConnections {
       return () => new NpgsqlConnection(direct);
     }
 
-    if (serviceProvider?.GetService(typeof(NpgsqlDataSource)) is NpgsqlDataSource dataSource) {
-      return dataSource.CreateConnection;
+    // The context's own data source, which is what the turnkey registration configured it with and
+    // the only thing here that still holds its credentials. Taken from the options rather than from
+    // the container so that a caller which passed no scope still gets one, and so that a container
+    // holding a different data source cannot be used to open the wrong database.
+#pragma warning disable EF1001 // NpgsqlOptionsExtension is EF-internal, and there is no public way
+    // to read the data source a context was configured with. The alternative is a connection string,
+    // which Npgsql has already redacted the password from, so the choice is this or no credentials
+    // at all. The maintenance pass reads it the same way for the same reason. A break here surfaces
+    // as this returning null, which the caller reports rather than failing on.
+    foreach (var extension in dbContext.GetService<IDbContextOptions>().Extensions) {
+      if (extension is NpgsqlOptionsExtension npgsql && npgsql.DataSource is NpgsqlDataSource own) {
+        return own.CreateConnection;
+      }
+    }
+#pragma warning restore EF1001
+
+    if (serviceProvider?.GetService(typeof(NpgsqlDataSource)) is NpgsqlDataSource registered) {
+      return registered.CreateConnection;
     }
 
     foreach (var extension in dbContext.GetService<IDbContextOptions>().Extensions) {
