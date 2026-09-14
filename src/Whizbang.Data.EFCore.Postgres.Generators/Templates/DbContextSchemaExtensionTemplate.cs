@@ -79,6 +79,33 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var segmentConnectionFactory = Whizbang.Data.EFCore.Postgres.SchemaBoundaryConnections.Resolve(
       dbContext, initConnectionString, serviceProvider);
 
+    // The schema itself has to exist, and be committed, before any of that can run. A connection of
+    // its own cannot see a schema the initializer's own transaction created and has not committed,
+    // so the first statement it sends into a non-default schema fails with 3F000. Creating it here,
+    // before that transaction opens, is what makes the side connection able to address anything:
+    // this instance holds no lock yet, so waiting on another instance's in-flight creation is a
+    // wait rather than a deadlock, and for the default schema it is a no-op.
+    if (segmentConnectionFactory is not null) {
+      try {
+        await using var schemaConnection = segmentConnectionFactory();
+        await schemaConnection.OpenAsync(cancellationToken);
+        await using var createSchema = new Npgsql.NpgsqlCommand(
+          @"CREATE SCHEMA IF NOT EXISTS __QUOTED_SCHEMA__", schemaConnection);
+        await createSchema.ExecuteNonQueryAsync(cancellationToken);
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P06") {
+        // Another instance created it between the existence check and the create. IF NOT EXISTS is
+        // not atomic, so this is the expected shape of that race rather than a failure.
+        logger?.LogDebug("Schema {Schema} was created concurrently", "__SCHEMA__");
+      } catch (Exception ex) {
+        // Not fatal on its own: the initializer's own transaction creates the schema too, and the
+        // only thing lost is the side connection's ability to address it, which is reported where
+        // that matters. Said out loud because a permission failure here is worth seeing.
+        logger?.LogWarning(ex,
+          "Could not pre-create schema {Schema} on a separate connection; schema SQL needing a "
+          + "commit boundary may not be applicable", "__SCHEMA__");
+      }
+    }
+
     // Outer retry loop: retries on transient failures (connection drops, timeouts, deadlocks).
     // Separate from the inner advisory lock retry loop which handles normal lock contention.
     // No max attempt limit — loops until cancellationToken fires (host shutdown).

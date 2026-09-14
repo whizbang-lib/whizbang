@@ -64,6 +64,24 @@ its transaction is running on. The obvious source is a connection string, and it
 - The turnkey registration configures the context with `UseNpgsql(NpgsqlDataSource)`, so for most
   deployments **there was never a string to redact**.
 
+### And a side connection sees only committed work
+
+The connection is independent, which cuts both ways. It cannot see anything the initializer's own
+transaction has done and not committed, including **the schema itself**:
+
+```
+3F000: schema "inventory" does not exist
+```
+
+The schema is created by the initializer's transaction, so the first statement a side connection
+sends into a non-default schema fails. It is created in its own committed statement **before** that
+transaction opens, deliberately before the advisory lock is taken: this instance then holds nothing,
+so waiting on another instance's in-flight creation is a wait rather than a deadlock. `IF NOT
+EXISTS` is not atomic, so `42P06` is tolerated as the expected shape of that race.
+
+**Every test of mine ran against `public`, which always exists, so none of them could fail.** The
+sample apps use non-default schemas and caught it in 135 tests across three suites.
+
 **The data source is the thing that still holds the credentials.** `SchemaBoundaryConnections.Resolve`
 is the single answer, in this order:
 
@@ -113,8 +131,12 @@ What actually guards this now:
    boundary.
 3. **Does the test seed data in the old shape, wide enough to defeat an in-place update?** If not, it
    proves nothing.
-4. **Run the whole `Whizbang.Data.EFCore.Postgres.Tests` project, not a filter.** The first version of
+4. **Does anything exercise a non-default schema?** `public` always exists, so a test against it
+   cannot see a side connection that is unable to address the schema. The ECommerce sample suites
+   (`InMemory`, `RabbitMQ`, `ServiceBus`) are the only coverage of that, and they are the only
+   reason this was found before the next deployment.
+5. **Run the whole `Whizbang.Data.EFCore.Postgres.Tests` project, not a filter.** The first version of
    the connection fix passed 6 targeted tests and failed 1780 in the full suite.
-5. **Look for the existing pattern before adding one.** Both traps already had a correct answer
+6. **Look for the existing pattern before adding one.** Both traps already had a correct answer
    elsewhere in the repo (the maintenance `VACUUM` path, and the notification workers' "borrow the
    data source" comment) when they were solved wrongly a second time.
