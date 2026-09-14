@@ -163,7 +163,7 @@ public class QueryExposureDetectionTests {
   /// </remarks>
   [Test]
   public async Task AFilteringOnlyNameGrantsFilteringOnlyAsync() {
-    var exposure = _exposureOfType($$"""
+    var exposure = _exposureOfType("""
       using System;
 
       namespace HotChocolate.Data {
@@ -185,7 +185,7 @@ public class QueryExposureDetectionTests {
   /// <summary>A sorting name grants ordering.</summary>
   [Test]
   public async Task ASortingOnlyNameGrantsOrderingAsync() {
-    var exposure = _exposureOfType($$"""
+    var exposure = _exposureOfType("""
       using System;
 
       namespace HotChocolate.Data {
