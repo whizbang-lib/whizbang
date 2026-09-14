@@ -39,6 +39,26 @@ public static class CanonicalTemporalBackfillSql {
   /// Casting the word to a timestamp succeeds and taking its epoch overflows, so this is a case that
   /// has to be named rather than left to the general conversion.
   /// </remarks>
+  /// <summary>
+  /// The line that tells the runtime to commit before applying what follows.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// An index over an extraction of a key this rewrites cannot be built in the transaction that did
+  /// the rewriting: the index is built by evaluating its expression on every heap tuple that is not
+  /// yet dead, and the row version an uncommitted rewrite superseded is still live, so the index
+  /// meets the rendering that was just replaced. Ordering the statements is necessary and not
+  /// sufficient, which is why this is emitted after the rewrite rather than relying on order alone.
+  /// </para>
+  /// <para>
+  /// Must be the same text as <c>Whizbang.Data.Postgres.SchemaCommandBoundary.MARKER</c>, which is
+  /// what reads it. The two cannot share a declaration because this assembly ships only to
+  /// generators, so the equality is pinned by
+  /// <c>SchemaCommandBoundaryTests.TheGeneratorAndTheRuntimeAgreeOnTheMarkerAsync</c>.
+  /// </para>
+  /// </remarks>
+  public const string COMMIT_BOUNDARY = "-- @whizbang:commit-boundary";
+
   private const string MAX_MICROSECONDS = "253402300799999999";
 
   /// <summary>Microseconds since the epoch for <c>DateTime.MinValue</c>.</summary>
