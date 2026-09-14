@@ -364,18 +364,51 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   private static void _emitTurnkeyDbContextRegistration(
       System.Text.StringBuilder sb, string dbContextFqn, bool hasVectorFields, bool hasPhysicalFields, string indent) {
     sb.AppendLine($"{indent}services.AddDbContext<{dbContextFqn}>((sp, options) => {{");
-    sb.AppendLine($"{indent}  options.UseNpgsql(sp.GetRequiredService<Npgsql.NpgsqlDataSource>(), npgsqlOptions => {{");
-    if (hasVectorFields) {
-      sb.AppendLine($"{indent}    npgsqlOptions.UseVector();");
-    }
-    sb.AppendLine($"{indent}    // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
-    sb.AppendLine($"{indent}    npgsqlOptions.UseWhizbangFunctions();");
-    sb.AppendLine($"{indent}    npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
-    sb.AppendLine($"{indent}  }});");
-    if (hasPhysicalFields) {
-      sb.AppendLine($"{indent}  options.UseWhizbangPhysicalFields();");
-    }
+    _emitNpgsqlConfiguration(
+      sb, "options", "sp.GetRequiredService<Npgsql.NpgsqlDataSource>()",
+      hasVectorFields, hasPhysicalFields, $"{indent}  ");
     sb.AppendLine($"{indent}}});");
+  }
+
+  /// <summary>
+  /// Emits the configuration every DbContext needs, wherever it is being configured.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Separate from the registration above because a context is configured in three places, and only
+  /// two of them use <c>AddDbContext</c>: the schema initializer builds its own from the
+  /// initialization connection string. That one carried none of this, which cost a whole environment
+  /// its schema the first time such a string existed. EF model validation refuses a vector property
+  /// without the mapping, so nothing could initialize at all.
+  /// </para>
+  /// <para>
+  /// <c>npgsqlOptions.UseVector()</c> is the EF type mapping and is not the same thing as
+  /// <c>NpgsqlDataSourceBuilder.UseVector()</c>, which only teaches the driver the CLR type. Both are
+  /// needed, and having only the second is what the failure looked like.
+  /// </para>
+  /// <para>
+  /// Retry is safe here even though the initializer runs explicit transactions: it uses a raw ADO.NET
+  /// transaction precisely because a retrying execution strategy refuses
+  /// <c>Database.BeginTransactionAsync</c>.
+  /// </para>
+  /// </remarks>
+  /// <param name="receiver">The options builder to configure, as it is named at the call site.</param>
+  /// <param name="dataSourceExpression">The data source expression to pass to <c>UseNpgsql</c>.</param>
+  /// <param name="indent">The leading whitespace of the <paramref name="receiver"/> lines.</param>
+  private static void _emitNpgsqlConfiguration(
+      System.Text.StringBuilder sb, string receiver, string dataSourceExpression,
+      bool hasVectorFields, bool hasPhysicalFields, string indent) {
+    sb.AppendLine($"{indent}{receiver}.UseNpgsql({dataSourceExpression}, npgsqlOptions => {{");
+    if (hasVectorFields) {
+      sb.AppendLine($"{indent}  npgsqlOptions.UseVector();");
+    }
+    sb.AppendLine($"{indent}  // Whizbang custom function translators (JsonbSet, etc.) — required for collective-apply ExecuteUpdate.");
+    sb.AppendLine($"{indent}  npgsqlOptions.UseWhizbangFunctions();");
+    sb.AppendLine($"{indent}  npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null);");
+    sb.AppendLine($"{indent}}});");
+    if (hasPhysicalFields) {
+      sb.AppendLine($"{indent}{receiver}.UseWhizbangPhysicalFields();");
+    }
   }
 
   private static string _deriveConnectionStringName(string className) {
@@ -2044,9 +2077,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("        initDsBuilder.UseVector();");
     }
     sb.AppendLine("        await using var initDataSource = initDsBuilder.Build();");
-    sb.AppendLine($"        var initOptions = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<{dbContext.FullyQualifiedName}>()");
-    sb.AppendLine("            .UseNpgsql(initDataSource)");
-    sb.AppendLine("            .Options;");
+    sb.AppendLine($"        var initOptionsBuilder = new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<{dbContext.FullyQualifiedName}>();");
+    // The same configuration the registered context gets. Anything missing here is missing only on
+    // the path that runs when an initialization connection string exists, which is the path no test
+    // exercised until one did.
+    _emitNpgsqlConfiguration(
+      sb, "initOptionsBuilder", "initDataSource", hasVectorFields, hasPhysicalFields, "        ");
+    sb.AppendLine("        var initOptions = initOptionsBuilder.Options;");
     sb.AppendLine($"        await using var initDbContext = new {dbContext.FullyQualifiedName}(initOptions);");
     sb.AppendLine("        await initDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, initConnStr, scope.ServiceProvider, ct);");
     sb.AppendLine("      } else {");
