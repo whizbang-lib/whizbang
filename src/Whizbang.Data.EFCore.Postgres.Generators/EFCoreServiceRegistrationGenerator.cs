@@ -2330,8 +2330,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var perspective in uniqueTables) {
       _appendCreateTableSql(sb, perspective, schema, quotedSchema);
-      // Before the indexes, not after: the index cannot be built while a row still holds a
-      // rendering, so an unfinished rewrite has to fail at the next statement.
+      // Before the indexes, not after, and with a commit boundary between: an index over a key this
+      // rewrites cannot be built in the same transaction as the rewrite.
       _appendCanonicalTemporalBackfill(sb, perspective, quotedSchema);
       _appendStandardIndexes(sb, perspective, quotedSchema);
       _appendPhysicalFieldIndexes(sb, perspective, quotedSchema);
@@ -2616,10 +2616,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// Placed between the table and its indexes on purpose. PostgreSQL evaluates an index expression
-  /// for every row, so it refuses to build the index while any row still holds a rendering: in this
-  /// order a rewrite that did not finish fails at the next statement, and in the other it would
-  /// leave an index over a column about to change underneath it.
+  /// Placed between the table and its indexes on purpose, and followed by a commit boundary.
+  /// PostgreSQL evaluates an index expression for every heap tuple that is not yet dead, and a row
+  /// version superseded by an uncommitted rewrite is still live, so an index built in the
+  /// transaction that rewrote its key is built over the values as they were before. Ordering is
+  /// therefore necessary and not sufficient: without the boundary the index fails, the rollback
+  /// undoes the rewrite with it, and every retry begins from the state that just failed.
   /// </para>
   /// <para>
   /// Each statement selects on the stored type being a string, so a database created by this release
@@ -2629,9 +2631,21 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </remarks>
   private static void _appendCanonicalTemporalBackfill(
       StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    var rewrote = false;
+
     foreach (var statement in CanonicalTemporalBackfillSql.Statements(
         perspective.TemporalProperties, $"{quotedSchema}.{perspective.TableName}")) {
       sb.AppendLine(statement);
+      sb.AppendLine();
+      rewrote = true;
+    }
+
+    if (rewrote) {
+      // The indexes that follow include ones built over what was just rewritten, and an index over
+      // an expression is built by evaluating it on every heap tuple that is not yet dead. A row
+      // version superseded by an uncommitted rewrite is still live, so ordering the statements is
+      // not enough: the rewrite has to be committed first, and this is where that happens.
+      sb.AppendLine(CanonicalTemporalBackfillSql.COMMIT_BOUNDARY);
       sb.AppendLine();
     }
   }

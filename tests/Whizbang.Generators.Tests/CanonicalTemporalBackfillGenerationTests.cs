@@ -1,4 +1,5 @@
 using TUnit.Assertions.Extensions;
+using Whizbang.Generators.Shared.Models;
 
 namespace Whizbang.Generators.Tests;
 
@@ -9,9 +10,9 @@ namespace Whizbang.Generators.Tests;
 /// <remarks>
 /// <para>
 /// The ordering is not convention. With the numeric form PostgreSQL refuses to build the index while
-/// any row is still a string, so a rewrite that did not finish fails at the next statement rather
-/// than leaving an index that is silently useless. Emitted the other way round, a partial conversion
-/// would be invisible.
+/// any row is still a string, so emitted the other way round a partial conversion would leave an
+/// index over a column about to change underneath it. Order alone is not enough either: the rewrite
+/// has to be committed before the index is built, which is what the boundary between them is for.
 /// </para>
 /// <para>
 /// The statements themselves are proven against a real database in
@@ -76,9 +77,9 @@ public class CanonicalTemporalBackfillGenerationTests {
   /// The rewrite comes before the index over what it produced.
   /// </summary>
   /// <remarks>
-  /// PostgreSQL evaluates the index expression for every row, so it refuses to build while any row
-  /// is still a string. In this order an unfinished rewrite fails loudly at the next statement; in
-  /// the other it would leave an index built over a column that is about to change underneath it.
+  /// PostgreSQL evaluates the index expression for every heap tuple that is not yet dead, so an
+  /// index built over a key while a row is still a string refuses to build. The other order would
+  /// leave an index over a column about to change underneath it.
   /// </remarks>
   [Test]
   public async Task TheRewriteComesBeforeTheIndexAsync() {
@@ -91,8 +92,33 @@ public class CanonicalTemporalBackfillGenerationTests {
     await Assert.That(rewrite).IsGreaterThan(-1);
     await Assert.That(index).IsGreaterThan(-1);
     await Assert.That(rewrite).IsLessThan(index)
-      .Because("the index cannot be built while a row is still a string, so a rewrite that did not "
-        + "finish has to fail at the next statement rather than leave a useless index");
+      .Because("an index over a rewritten key cannot be built before the rewrite that produced it");
+  }
+
+  /// <summary>
+  /// A commit boundary sits between the rewrite and the index built over its result.
+  /// </summary>
+  /// <remarks>
+  /// Ordering the two is necessary and not sufficient. A superseded row version stays live until the
+  /// rewrite commits, and the index build evaluates its expression over live tuples, so an index
+  /// built in the rewriting transaction meets the values as they were before it. The rollback then
+  /// undoes the rewrite along with the index and every retry begins from the state that just failed,
+  /// which is a schema that can never finish migrating rather than a startup that failed once.
+  /// </remarks>
+  [Test]
+  public async Task ACommitBoundarySeparatesTheRewriteFromTheIndexAsync() {
+    var output = await _generatedAsync(TEMPORAL_MODEL);
+
+    var rewrite = output.IndexOf("jsonb_typeof(data -> 'OccurredAt') = 'string'",
+      StringComparison.Ordinal);
+    var boundary = output.IndexOf(CanonicalTemporalBackfillSql.COMMIT_BOUNDARY,
+      StringComparison.Ordinal);
+    var index = output.IndexOf("'OccurredAt')::bigint", StringComparison.Ordinal);
+
+    await Assert.That(boundary).IsGreaterThan(rewrite)
+      .Because("the boundary commits the rewrite, so it has to come after it");
+    await Assert.That(boundary).IsLessThan(index)
+      .Because("the index is the statement that needs the rewrite committed");
   }
 
   /// <summary>
@@ -132,6 +158,11 @@ public class CanonicalTemporalBackfillGenerationTests {
     await Assert.That(output).DoesNotContain("jsonb_typeof(data -> ", StringComparison.Ordinal)
       .Because("a model with nothing to convert should not carry a statement that scans its table "
         + "at every startup to discover there is nothing to do");
+
+    // And no boundary either. The boundary takes schema work out of the initializer's transaction,
+    // which is worth doing only for the dependency that needs it.
+    await Assert.That(output).DoesNotContain(
+      CanonicalTemporalBackfillSql.COMMIT_BOUNDARY, StringComparison.Ordinal);
   }
 
   /// <summary>
