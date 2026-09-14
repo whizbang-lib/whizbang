@@ -73,13 +73,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // them would run DDL together.
     var lockId = Whizbang.Data.Postgres.SchemaInitializationLockKey.Compute("__SCHEMA__");
     var rng = new Random();
-    // Schema SQL carrying a commit boundary is applied on a connection of its own, so a string that
-    // can open one is needed. Taken from the configured options rather than from the live
-    // connection: Npgsql removes the password from a connection's own ConnectionString once it has
-    // been opened, because Persist Security Info defaults to false, and a DbContext handed to this
-    // method has usually been used already. Reading it back from there yields a string that
-    // authenticates as nobody.
-    var schemaConnectionString = initConnectionString ?? _configuredConnectionString(dbContext);
+    // Schema SQL carrying a commit boundary is applied on a connection of its own, so a way to open
+    // one is resolved up front. See SchemaBoundaryConnections for why this is a factory over a
+    // borrowed data source rather than a connection string.
+    var segmentConnectionFactory = Whizbang.Data.EFCore.Postgres.SchemaBoundaryConnections.Resolve(
+      dbContext, initConnectionString, serviceProvider);
 
     // Outer retry loop: retries on transient failures (connection drops, timeouts, deadlocks).
     // Separate from the inner advisory lock retry loop which handles normal lock contention.
@@ -298,7 +296,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
             // Step 3: Create perspective tables with per-perspective hash tracking
             logger?.LogDebug("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
             phaseSw.Restart();
-            await ExecutePerspectiveTablesAsync(dbContext, schemaConnectionString, logger, cancellationToken);
+            await ExecutePerspectiveTablesAsync(dbContext, segmentConnectionFactory, logger, cancellationToken);
             phases.Add(("PerspectiveTables", phaseSw.ElapsedMilliseconds, "completed"));
           } else {
             phases.Add(("PerspectiveTables", 0, "skipped (hash match)"));
@@ -528,28 +526,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   private static string _renderFormatBraces(string sql) => sql.Replace("{{", "{").Replace("}}", "}");
 
   /// <summary>
-  /// The connection string the DbContext was configured with, password included.
-  /// </summary>
-  /// <remarks>
-  /// Read from the options rather than from <c>Database.GetConnectionString()</c>, which reports the
-  /// live connection's string. Npgsql strips the password from that once the connection has been
-  /// opened, so the live string opens nothing. Null when the context was configured with a data
-  /// source rather than a string, which the caller has to cope with.
-  /// </remarks>
-  private static string? _configuredConnectionString(
-      Microsoft.EntityFrameworkCore.DbContext dbContext) {
-    foreach (var extension in dbContext.GetService<
-        Microsoft.EntityFrameworkCore.Infrastructure.IDbContextOptions>().Extensions) {
-      if (extension is Microsoft.EntityFrameworkCore.Infrastructure.RelationalOptionsExtension relational
-          && !string.IsNullOrWhiteSpace(relational.ConnectionString)) {
-        return relational.ConnectionString;
-      }
-    }
-
-    return null;
-  }
-
-  /// <summary>
   /// Applies schema SQL, committing wherever the generator marked a boundary.
   /// </summary>
   /// <remarks>
@@ -569,7 +545,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// </remarks>
   private static async Task _applySchemaSqlAsync(
       Microsoft.EntityFrameworkCore.DbContext dbContext,
-      string? schemaConnectionString,
+      Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
       string sql,
       ILogger? logger,
       CancellationToken cancellationToken) {
@@ -578,18 +554,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       return;
     }
 
-    if (string.IsNullOrWhiteSpace(schemaConnectionString)) {
-      // Nothing to open a second connection with, which happens when the context was configured
-      // with a data source rather than a string and no initialization string was passed. Applying
-      // the script whole is what this exists to avoid, so it is said out loud: every new database
-      // succeeds either way, because there are no rows to rewrite, and one carrying rows written in
-      // an older format fails until a connection string reaches this.
+    if (segmentConnectionFactory is null) {
+      // Nothing to open a second connection with: no initialization string, no data source in the
+      // container, and no configured string either. Applying the script whole is what this exists
+      // to avoid, so it is said out loud: every new database succeeds either way, because there are
+      // no rows to rewrite, and one carrying rows written in an older format fails until a
+      // connection can be had.
       logger?.LogWarning(
-        "Schema SQL for {Schema} needs a commit boundary but no connection string is available to "
-        + "apply it across one, so it is being applied whole. A rewrite of a stored format cannot "
-        + "commit before the index built over it, so a database holding rows in the older format "
-        + "will fail to migrate. Pass initConnectionString, or configure the context with a "
-        + "connection string.", "__SCHEMA__");
+        "Schema SQL for {Schema} needs a commit boundary but no connection can be opened to apply "
+        + "it across one, so it is being applied whole. A rewrite of a stored format cannot commit "
+        + "before the index built over it, so a database holding rows in the older format will fail "
+        + "to migrate. Pass an initialization connection string, or register an NpgsqlDataSource.",
+        "__SCHEMA__");
       await dbContext.Database.ExecuteSqlRawAsync(sql, cancellationToken);
       return;
     }
@@ -597,7 +573,7 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // ExecuteSqlRawAsync reads its argument as a format string and un-doubles the braces the
     // generator doubled. Going around it means doing that here, or a brace arrives literally.
     await Whizbang.Data.Postgres.SchemaCommandBoundary.ApplyAsync(
-      schemaConnectionString,
+      segmentConnectionFactory,
       _renderFormatBraces(sql),
       SCHEMA_COMMAND_TIMEOUT_SECONDS,
       cancellationToken);
@@ -815,7 +791,7 @@ END $$;
   /// </summary>
   private static async Task ExecutePerspectiveTablesAsync(
     __DBCONTEXT_FQN__ dbContext,
-    string? schemaConnectionString,
+    Func<Npgsql.NpgsqlConnection>? segmentConnectionFactory,
     ILogger? logger,
     CancellationToken cancellationToken) {
 
@@ -827,7 +803,7 @@ END $$;
       const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
       if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
         try {
-          await _applySchemaSqlAsync(dbContext, schemaConnectionString, PerspectiveTablesSchema, logger, cancellationToken);
+          await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, cancellationToken);
         } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
           logger?.LogDebug("Perspective tables already exist (expected): {Table}", ex.TableName ?? "unknown");
         }
@@ -846,7 +822,7 @@ END $$;
       const string PerspectiveTablesSchema = __PERSPECTIVE_TABLES_SCHEMA__;
       if (!string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
         try {
-          await _applySchemaSqlAsync(dbContext, schemaConnectionString, PerspectiveTablesSchema, logger, cancellationToken);
+          await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, PerspectiveTablesSchema, logger, cancellationToken);
         } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
           logger?.LogDebug("Perspective tables already exist (expected): {Table}", ex.TableName ?? "unknown");
         }
@@ -879,7 +855,7 @@ END $$;
       var isUpdate = existingHash != null;
 
       try {
-        await _applySchemaSqlAsync(dbContext, schemaConnectionString, sql, logger, cancellationToken);
+        await _applySchemaSqlAsync(dbContext, segmentConnectionFactory, sql, logger, cancellationToken);
 
         var status = isUpdate ? 2 : 1;
         var desc = isUpdate ? $"Updated from hash {existingHash![..8]}..." : "First apply";

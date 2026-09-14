@@ -1,0 +1,168 @@
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Testing.Containers;
+
+namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
+
+/// <summary>
+/// Where the initializer gets a second connection from, in the order it prefers them.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Schema SQL carrying a commit boundary is applied on a connection of its own. Failing to find one
+/// is quiet: the initializer applies the script whole instead, which succeeds on every database
+/// that has nothing to rewrite and fails only on the databases the boundary exists for. So a
+/// resolution that silently answers nothing looks like a working build until it meets real data.
+/// </para>
+/// <para>
+/// The case that matters is the data source. A connection string is the obvious source and usually
+/// absent: Npgsql redacts the password from every <c>ConnectionString</c> surface once a connection
+/// has opened, and the turnkey registration configures the context with an <c>NpgsqlDataSource</c>
+/// rather than a string, so there was never a string to redact. A resolution that looked only at
+/// strings found nothing on every ordinary deployment.
+/// </para>
+/// </remarks>
+/// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
+[Category("Integration")]
+[NotInParallel("EFCorePostgresTests")]
+[Category("Shard1")]
+public class SchemaBoundaryConnectionsTests : IAsyncDisposable {
+  private NpgsqlDataSource _dataSource = null!;
+  private string _connectionString = null!;
+
+  /// <summary>A container that resolves exactly one thing, so what is asked for is unambiguous.</summary>
+  private sealed class OneServiceProvider(Type type, object instance) : IServiceProvider {
+    public object? GetService(Type serviceType) => serviceType == type ? instance : null;
+  }
+
+  [Before(Test)]
+  public async Task SetupAsync() {
+    await SharedPostgresContainer.InitializeAsync();
+    _connectionString = SharedPostgresContainer.ConnectionString;
+    _dataSource = new NpgsqlDataSourceBuilder(_connectionString).Build();
+  }
+
+  [After(Test)]
+  public async ValueTask DisposeAsync() {
+    if (_dataSource is not null) {
+      await _dataSource.DisposeAsync();
+    }
+
+    GC.SuppressFinalize(this);
+  }
+
+  /// <summary>A context configured the way the turnkey registration configures one.</summary>
+  private WorkCoordinationDbContext _dataSourceContext() =>
+    new(new DbContextOptionsBuilder<WorkCoordinationDbContext>()
+      .UseNpgsql(_dataSource)
+      .Options);
+
+  /// <summary>A context configured with a string, which some hosts still do.</summary>
+  private WorkCoordinationDbContext _connectionStringContext() =>
+    new(new DbContextOptionsBuilder<WorkCoordinationDbContext>()
+      .UseNpgsql(_connectionString)
+      .Options);
+
+  /// <summary>The factory opens a connection that actually authenticates.</summary>
+  private static async Task _canOpenAsync(Func<NpgsqlConnection>? factory) {
+    // Compared as a bool: Assert.That(aDelegate) binds to the overload that INVOKES it, so it
+    // would assert about the connection it produced rather than about the factory being there.
+    await Assert.That(factory is not null).IsTrue();
+    await using var connection = factory!();
+    await connection.OpenAsync();
+    await using var command = new NpgsqlCommand("SELECT 1", connection);
+    await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(1);
+  }
+
+  /// <summary>
+  /// A context configured with a data source and nothing else still yields a usable connection.
+  /// </summary>
+  /// <remarks>
+  /// The regression. This is how the turnkey registration configures every context, so a resolution
+  /// that failed here failed on every ordinary deployment while the test suite stayed green.
+  /// </remarks>
+  [Test]
+  public async Task ADataSourceInTheScopeIsBorrowedAsync() {
+    await using var context = _dataSourceContext();
+
+    var factory = SchemaBoundaryConnections.Resolve(
+      context, initConnectionString: null,
+      new OneServiceProvider(typeof(NpgsqlDataSource), _dataSource));
+
+    await _canOpenAsync(factory);
+  }
+
+  /// <summary>
+  /// The initialization connection string wins over the data source when the host supplied one.
+  /// </summary>
+  /// <remarks>
+  /// It addresses PostgreSQL directly rather than through a pooler, which is what the rest of the
+  /// schema pass already prefers, and a rewrite of a whole table is the last thing that should go
+  /// through a pooler's timeouts.
+  /// </remarks>
+  [Test]
+  public async Task TheInitializationStringIsPreferredAsync() {
+    await using var context = _dataSourceContext();
+    var marked = new NpgsqlConnectionStringBuilder(_connectionString) {
+      ApplicationName = "init-string-wins",
+    }.ConnectionString;
+
+    var factory = SchemaBoundaryConnections.Resolve(
+      context, marked, new OneServiceProvider(typeof(NpgsqlDataSource), _dataSource));
+
+    await Assert.That(factory is not null).IsTrue();
+    await using var connection = factory!();
+    await Assert.That(connection.ConnectionString).Contains(
+      "init-string-wins", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// A context configured with a string yields one even when the scope holds no data source.
+  /// </summary>
+  [Test]
+  public async Task AConfiguredConnectionStringIsUsedWhenThereIsNoDataSourceAsync() {
+    await using var context = _connectionStringContext();
+
+    await _canOpenAsync(SchemaBoundaryConnections.Resolve(
+      context, initConnectionString: null, serviceProvider: null));
+  }
+
+  /// <summary>
+  /// Nothing available answers nothing, so the caller can say so rather than guess.
+  /// </summary>
+  /// <remarks>
+  /// Asserted because the caller's behavior differs: a null answer makes it warn and apply the
+  /// script whole, and an answer that cannot open would instead fail the whole schema pass.
+  /// </remarks>
+  [Test]
+  public async Task NothingAvailableAnswersNothingAsync() {
+    await using var context = _dataSourceContext();
+
+    var factory = SchemaBoundaryConnections.Resolve(
+      context, initConnectionString: null, serviceProvider: null);
+
+    await Assert.That(factory is null).IsTrue();
+  }
+
+  /// <summary>Whitespace is not an initialization connection string.</summary>
+  [Test]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task AnEmptyInitializationStringIsIgnoredAsync(string initConnectionString) {
+    await using var context = _dataSourceContext();
+
+    await _canOpenAsync(SchemaBoundaryConnections.Resolve(
+      context, initConnectionString,
+      new OneServiceProvider(typeof(NpgsqlDataSource), _dataSource)));
+  }
+
+  /// <summary>A missing context is a caller error.</summary>
+  [Test]
+  public async Task ANullContextIsRefusedAsync() =>
+    await Assert.That(() => SchemaBoundaryConnections.Resolve(null!, null, null))
+      .Throws<ArgumentNullException>();
+}
