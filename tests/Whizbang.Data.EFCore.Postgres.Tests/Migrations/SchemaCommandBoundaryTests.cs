@@ -72,7 +72,7 @@ public class SchemaCommandBoundarySegmentTests {
   /// <summary>Several markers divide into several pieces.</summary>
   [Test]
   public async Task SeveralMarkersDivideIntoSeveralPiecesAsync() {
-    var m = SchemaCommandBoundary.MARKER;
+    const string m = SchemaCommandBoundary.MARKER;
 
     await Assert.That(
       SchemaCommandBoundary.Segments($"SELECT 1;\n{m}\nSELECT 2;\n{m}\nSELECT 3;").Length)
@@ -358,7 +358,7 @@ public class SchemaCommandBoundaryTests : IAsyncDisposable {
   [Test]
   public async Task AScriptWithoutABoundaryIsAppliedWholeAsync() {
     await SchemaCommandBoundary.ApplyAsync(
-      _connectionString, $"CREATE TABLE wh_per_plain (id uuid PRIMARY KEY);", 600);
+      _connectionString, "CREATE TABLE wh_per_plain (id uuid PRIMARY KEY);", 600);
 
     await Assert.That(await _scalarAsync(
       "SELECT count(*) FROM pg_tables WHERE tablename = 'wh_per_plain'")).IsEqualTo("1");
