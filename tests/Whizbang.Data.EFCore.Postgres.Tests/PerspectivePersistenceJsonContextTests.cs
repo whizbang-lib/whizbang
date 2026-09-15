@@ -84,4 +84,33 @@ public class PerspectivePersistenceJsonContextTests {
     await Assert.That(options.TypeInfoResolver).IsNotNull();
     await Assert.That(options.DefaultIgnoreCondition).IsEqualTo(System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull);
   }
+
+  /// <summary>
+  /// The options the factory hands out are persistence options in every respect: they carry the
+  /// persistence profile's converters, so a document serialized with them directly takes the same
+  /// form the upsert writes.
+  /// </summary>
+  /// <remarks>
+  /// A bare resolver chain looks like persistence options and is not: it writes a date as a
+  /// rendering, and Entity Framework reads the document's dates as numbers. Any caller serializing
+  /// with these options, a test mirroring the upsert included, has to get the profile's form.
+  /// </remarks>
+  [Test]
+  public async Task CreateOptions_CarriesThePersistenceProfilesConvertersAsync() {
+    var options = PerspectivePersistenceJsonContext.CreateOptions(
+      MessageJsonContext.Default, global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
+    var names = options.Converters.Select(c => c.GetType().Name).ToList();
+
+    await Assert.That(names).Contains(nameof(Whizbang.Core.Perspectives.CanonicalTemporalJsonConverters.InstantConverter))
+      .Because("options that claim to be persistence options must write a date the way persistence does");
+    await Assert.That(names).Contains(nameof(Whizbang.Core.Perspectives.CanonicalTemporalJsonConverters.DurationConverter));
+    await Assert.That(names).DoesNotContain(nameof(Whizbang.Core.Serialization.LenientDateTimeOffsetConverter))
+      .Because("that reader is the wire's profile's, not this one's");
+
+    var written = System.Text.Json.JsonSerializer.Serialize(
+      new Whizbang.Core.Lenses.PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc) },
+      options.GetTypeInfo(typeof(Whizbang.Core.Lenses.PerspectiveMetadata)));
+    await Assert.That(System.Text.Json.JsonDocument.Parse(written).RootElement.GetProperty("Timestamp").ValueKind)
+      .IsEqualTo(System.Text.Json.JsonValueKind.Number);
+  }
 }

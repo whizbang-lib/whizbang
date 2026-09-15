@@ -131,9 +131,17 @@ __PHYSICAL_FIELD_CONFIGS__
       // For type-based queries, use physical discriminator columns marked with
       // [PolymorphicDiscriminator] for efficient indexed queries.
       //
-      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb");
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
-      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
+      // Bound to the persistence profile explicitly, through the same options the upsert writes
+      // with. Left to the data source's JSON options the document would be read under the default
+      // profile, whose date reader takes a rendering, and every row holding a canonical number
+      // would be unreadable. The data source cannot change profile: the outbox, inbox and event
+      // store metadata read through it in the wire's form. See PerspectiveDocumentSerialization.
+      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<__MODEL_TYPE__>());
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<global::Whizbang.Core.Lenses.PerspectiveMetadata>());
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<global::Whizbang.Core.Lenses.PerspectiveScope>());
 
       // System fields
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();

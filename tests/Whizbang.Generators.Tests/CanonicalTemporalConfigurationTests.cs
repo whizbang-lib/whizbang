@@ -87,6 +87,75 @@ public class CanonicalTemporalConfigurationTests {
     }
   }
 
+  /// <summary>
+  /// A document stored as one serialized value is bound to the persistence profile explicitly.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Such a document is written by the upsert under the persistence profile and read back by
+  /// Entity Framework as one value. Read through the data source's JSON options it was read under
+  /// the default profile, whose only date reader takes a rendering, and every row holding a
+  /// canonical number was unreadable. The data source cannot move profiles, because the outbox,
+  /// inbox and event store metadata read through it in the wire's form.
+  /// </para>
+  /// <para>
+  /// So the column is bound to the profile it is written in, through a converter that uses the
+  /// same options the upsert does. This pins the binding for the document, its metadata and its
+  /// scope; a plain jsonb mapping here is the failure coming back.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task AnOpaqueDocumentIsBoundToThePersistenceProfileAsync() {
+    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync("""
+      using System;
+      using System.Collections.Generic;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Spoke : IEvent;
+
+      public record Attachment(Guid UploadId, string FileName);
+
+      public record Turn(Guid TurnId, DateTime At, IReadOnlyList<Attachment>? Attachments);
+
+      public class ConversationModel {
+        [StreamId]
+        public Guid Id { get; init; }
+        public DateTime StartedAt { get; init; }
+        public List<Turn> Turns { get; init; } = new();
+      }
+
+      public class ConversationPerspective : IPerspectiveFor<ConversationModel, Spoke> {
+        public ConversationModel Apply(ConversationModel currentData, Spoke eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ConversationDbContext : DbContext {
+        public ConversationDbContext(DbContextOptions<ConversationDbContext> options) : base(options) { }
+      }
+      """);
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    const string SERIALIZATION = "global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization";
+    await Assert.That(output).Contains(
+      $".HasConversion({SERIALIZATION}.ConverterFor<global::TestApp.ConversationModel>())",
+      StringComparison.Ordinal)
+      .Because("the document is written under the persistence profile, so it has to be read under it, "
+        + "whatever profile the data source carries");
+    await Assert.That(output).Contains(
+      $".HasConversion({SERIALIZATION}.ConverterFor<global::Whizbang.Core.Lenses.PerspectiveMetadata>())",
+      StringComparison.Ordinal);
+    await Assert.That(output).Contains(
+      $".HasConversion({SERIALIZATION}.ConverterFor<global::Whizbang.Core.Lenses.PerspectiveScope>())",
+      StringComparison.Ordinal);
+    await Assert.That(output).DoesNotContain("HasColumnType(\"jsonb\");", StringComparison.Ordinal)
+      .Because("a jsonb column with no binding is read through the data source, on the wrong profile");
+  }
+
   /// <summary>The document is still mapped property by property; only the conversion moved.</summary>
   [Test]
   public async Task TheDocumentIsStillMappedAsync() {

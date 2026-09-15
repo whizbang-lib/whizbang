@@ -207,10 +207,35 @@ scalar form for rows the EF fallback path wrote under Default before 3.4, count 
 
 ### 3.4 An opaque document is read under the profile it was written in
 
-Both data-source emission sites in `EFCoreServiceRegistrationGenerator` change to
-`ConfigureJsonOptions(JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence))`.
-That is the whole of the fix for 1.1. A generator test pins the profile by name so it cannot drift
-back.
+**Corrected during implementation.** The data source's JSON options cannot move to the
+Persistence profile: they also serve the outbox, inbox and event store `metadata` and `scope`
+columns, which `WhizbangModelBuilderExtensions` maps as jsonb POCOs through a `COLUMN_TYPE_JSONB`
+constant (a literal grep for `"jsonb"` misses it, which is how section 2 came to say the data
+source had one consumer). Those columns are the wire's form and are read elsewhere with explicit
+Default-profile options; moving the data source would have reproduced 1.1 for every envelope.
+
+So the document column is bound to the profile it is written in, explicitly. The opaque mapping
+snippet emits `.HasConversion(PerspectiveDocumentSerialization.ConverterFor<T>())` for `data`,
+`metadata` and `scope`, where `PerspectiveDocumentSerialization` (runtime, `Whizbang.Data.EFCore.Postgres`)
+holds the one set of options every perspective document is written and read with: the same
+resolution the atomic upsert uses (union under Persistence, caller provider as fallback, registered
+modifiers re-applied), cached and rebuilt only when `JsonContextRegistry.Generation` advances. The
+upsert's own `_resolvePersistenceOptions` now delegates to it, so the writer and the opaque reader
+are literally one options object. The data source keeps the Default profile. A generator test pins
+the binding for all three columns; an integration test writes through the upsert with the data
+source on the Default profile, reads through Entity Framework, and proves the Default profile could
+not have read the row.
+
+**Second correction, found by the same tests.** The generated `MessageJsonContext` facade answers
+for primitive types itself (`DateTime`, `DateTimeOffset`, `TimeSpan`, `DateOnly`, `TimeOnly`, and
+every other primitive) with a fixed built-in converter, bypassing `options.Converters`. Any chain
+that consults a consumer's facade before the framework's contexts therefore wrote a rendering under
+the Persistence profile, whatever the profile registered; the union only worked because Core's
+contexts happen to register first. The facade now emits `_registeredOrBuiltIn<TValue>`, which
+defers to a converter registered on the options (a factory is asked for its converter) before the
+built-in one, for the primitive, nullable and list-element branches alike. The generated
+`PerspectivePersistenceJsonContext.CreateOptions` is also based on the profile's own options, so
+options that claim to be persistence options carry the profile's converters in every respect.
 
 ### 3.5 A mapped document: EF converts exactly what EF maps
 

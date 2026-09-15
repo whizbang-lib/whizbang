@@ -212,6 +212,9 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("  /// Chain order: this context (object-mode [WhizbangId]) — first, so it wins for WhizbangId types;");
     sb.AppendLine("  /// then any other resolver caller chooses to add. Deliberately does NOT include");
     sb.AppendLine("  /// WhizbangIdJsonContext or its value-converter, which would re-flatten WhizbangId structs.");
+    sb.AppendLine("  /// Based on the persistence profile's own options, so the profile's converters (the canonical");
+    sb.AppendLine("  /// temporal form among them) apply to a document serialized with these directly, exactly as");
+    sb.AppendLine("  /// they apply to one the upsert writes.");
     sb.AppendLine("  /// </summary>");
     sb.AppendLine("  public static JsonSerializerOptions CreateOptions(params IJsonTypeInfoResolver[] additionalResolvers) {");
     sb.AppendLine("    var resolvers = new IJsonTypeInfoResolver[1 + (additionalResolvers?.Length ?? 0)];");
@@ -221,7 +224,7 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("        resolvers[i + 1] = additionalResolvers[i];");
     sb.AppendLine("      }");
     sb.AppendLine("    }");
-    sb.AppendLine("    return new JsonSerializerOptions {");
+    sb.AppendLine("    return new JsonSerializerOptions(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(global::Whizbang.Core.Serialization.SerializationProfile.Persistence)) {");
     sb.AppendLine("      TypeInfoResolver = JsonTypeInfoResolver.Combine(resolvers),");
     sb.AppendLine("      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull");
     sb.AppendLine("    };");

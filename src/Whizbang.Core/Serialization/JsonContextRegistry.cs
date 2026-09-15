@@ -333,6 +333,19 @@ public static class JsonContextRegistry {
   public static int RegisteredCount => _resolvers.Count;
 
   /// <summary>
+  /// A number that advances on every registration of a context, a converter or a modifier, and
+  /// holds still otherwise.
+  /// </summary>
+  /// <remarks>
+  /// What lets a caller reuse a set of options built from this registry without either rebuilding
+  /// per call, which throws the serializer's metadata cache away every time, or caching forever,
+  /// which cannot resolve a type from an assembly whose contexts registered after the cache was
+  /// built. Compare it to the value seen when the options were built; a difference means rebuild.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryGenerationTests.cs</tests>
+  public static long Generation => Interlocked.Read(ref _registrationSeq);
+
+  /// <summary>
   /// Gets the count of registered type name mappings (for diagnostics/testing).
   /// </summary>
   public static int RegisteredTypeNameCount => _typeNameMappings.Count;

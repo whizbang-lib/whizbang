@@ -114,6 +114,11 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     await Assert.That(generated).Contains("resolvers[0] = Default;");
     await Assert.That(generated).Contains("TypeInfoResolver = JsonTypeInfoResolver.Combine(resolvers)");
     await Assert.That(generated).Contains("DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull");
+    await Assert.That(generated).Contains(
+      "new JsonSerializerOptions(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions("
+      + "global::Whizbang.Core.Serialization.SerializationProfile.Persistence))")
+      .Because("the factory's options are persistence options in every respect, the profile's "
+        + "converters included, or a document serialized with them directly takes the wire's form");
   }
 
   /// <summary>
