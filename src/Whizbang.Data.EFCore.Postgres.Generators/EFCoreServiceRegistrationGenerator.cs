@@ -2130,6 +2130,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Load migration files (once for all DbContexts)
     // Note: Core infrastructure schema is now generated at runtime by PostgresSchemaBuilder
     string migrationsCode = _generateMigrationsCode(context);
+    // The subset that has to exist before a migrator can be elected at all. Marked in the SQL
+    // rather than listed here, because a list goes stale the first time a migration gains a
+    // dependency and a marker sits next to the statement it describes.
+    string bootstrapMigrationsCode = _generateBootstrapMigrationsCode();
 
     // Loop through each DbContext and generate extension method
     foreach (var dbContext in dbContexts) {
@@ -2171,6 +2175,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           template,
           "MIGRATIONS",
           migrationsCode
+      );
+      // The bootstrap subset, applied before anything is elected.
+      template = TemplateUtilities.ReplaceRegion(
+          template,
+          "BOOTSTRAP_MIGRATIONS",
+          bootstrapMigrationsCode
       );
 
       // Get assembly name for service identification
@@ -2244,6 +2254,58 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// source of truth for the SQL files — no manual sync required.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
+  /// <summary>
+  /// Emits the marked bootstrap regions, in migration order.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deciding which instance migrates is a duty election, the elector records its win through
+  /// <c>record_capability</c>, and a migration is what creates that function. The cycle is broken by
+  /// applying a marked subset first, so this emits that subset as its own list alongside the full
+  /// one. The same files appear in both: the bootstrap only makes objects exist, and the ordinary
+  /// pass still applies and records them exactly as before.
+  /// </para>
+  /// <para>
+  /// Escaped identically to the full list, including the <c>__SCHEMA__</c> to
+  /// <c>__MIGRATION_SCHEMA__</c> substitution, so both go through the same runtime transform.
+  /// </para>
+  /// </remarks>
+  private static string _generateBootstrapMigrationsCode() {
+    var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+    var resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+
+    var entries = new List<string>();
+
+    foreach (var resourceName in assembly.GetManifestResourceNames()
+        .Where(name => name.StartsWith(resourcePrefix, StringComparison.Ordinal)
+                    && name.EndsWith(".sql", StringComparison.Ordinal))
+        .OrderBy(name => name, StringComparer.Ordinal)) {
+      using var stream = assembly.GetManifestResourceStream(resourceName);
+      if (stream == null) {
+        continue;
+      }
+
+      using var reader = new System.IO.StreamReader(stream);
+      var bootstrap = Whizbang.Generators.Shared.Models.MigrationBootstrapRegions.Extract(
+        reader.ReadToEnd());
+      if (bootstrap is null) {
+        continue;
+      }
+
+      var fileName = resourceName[resourcePrefix.Length..];
+      var escaped = bootstrap
+          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")
+          .Replace("\"", "\"\"")
+          .Replace("{", "{{")
+          .Replace("}", "}}");
+      entries.Add($"      (\"{fileName}\", @\"{escaped}\")");
+    }
+
+    return entries.Count == 0
+      ? "// No bootstrap regions found in embedded migrations"
+      : string.Join(",\n", entries);
+  }
+
   private static string _generateMigrationsCode(SourceProductionContext context) {
     var sb = new StringBuilder();
 

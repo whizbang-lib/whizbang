@@ -1,10 +1,14 @@
-# Schema initialization: connections, transactions, and the two traps
+# Schema initialization: connections, transactions, and who migrates
 
 Read this before changing anything in `DbContextSchemaExtensionTemplate.cs`, `SchemaCommandBoundary`,
-`SchemaBoundaryConnections`, or the SQL the perspective pass emits.
+`SchemaBoundaryConnections`, `SchemaMigrationDeferral`, `AdvisoryLockProbe`, or the SQL the
+perspective pass emits.
 
-Both traps below shipped once. Both passed every local test first. Neither is discoverable by reading
-the code, which is why they are written down here.
+Traps 1 and 2 each shipped once, and each passed every local test first. Trap 3 is the one that
+looks solved and is not: the lock has always excluded correctly, so nothing fails, and the cost is
+paid quietly by every replica on every startup.
+
+None of the three is discoverable by reading the code, which is why they are written down here.
 
 ---
 
@@ -101,7 +105,7 @@ fourth copy of this decision.**
 
 ---
 
-## Why the test suite did not catch either of these
+## Why the test suite did not catch traps 1 and 2
 
 The fallback is quiet by construction: applying the script whole succeeds on every database that has
 **nothing to rewrite**, which is every database a test creates, and fails only on the databases the
@@ -123,8 +127,159 @@ What actually guards this now:
 
 ---
 
+## Trap 3: the lock says "not yours", not "wait" or "take over"
+
+`pg_try_advisory_xact_lock` elects the migrator: exactly one instance can win it, and the winner does
+the DDL. The losers get a single bit back, and that bit does **not** distinguish the two situations
+they care about.
+
+| Situation | Right move | Wrong move costs |
+|---|---|---|
+| The winner is alive and migrating | wait for its result | two instances inside the same DDL |
+| The winner's pod died holding it | take the work over | the schema never advances; nothing in the fleet starts |
+
+`pg_locks` separates them, and it does so with **no deadline to tune**: a lock vanishes when its
+session ends, cleanly or not. So the loser polls two lock-free questions in this order:
+
+1. **Is the schema current yet?** If so the winner committed, and there is nothing to apply.
+2. **Does anything still hold the lock?** Held means alive and working, so keep waiting however long
+   that takes. Released, with the schema still behind, means the migrator died.
+
+`SchemaMigrationDeferral.DeferAsync` is that loop; `AdvisoryLockProbe.IsHeldElsewhereAsync` is
+question 2.
+
+### The order of the two questions is the whole design
+
+A commit releases the lock **and** marks the schema current in the same instant. Ask about the lock
+first and the poll that lands there reads "released", concludes the migrator died, and goes off to
+redo a migration with nothing in it, on every replica, on every startup. It is not incorrect, which
+is exactly why it would never be noticed.
+
+### Reassembling the key is not optional
+
+PostgreSQL splits a single-bigint advisory key across `classid` (high 32 bits) and `objid` (low 32).
+Every key this framework computes is a full 64-bit FNV-1a hash, so:
+
+```sql
+-- WRONG: finds nothing for any negative key, and aliases any two keys sharing a low half
+WHERE l.objid::bigint = $1
+-- RIGHT
+WHERE ((l.classid::bigint << 32) | (l.objid::bigint & 4294967295)) = $1
+```
+
+`SchemaInitializationLockKey.Compute("public")` is negative, so the wrong form reports **every**
+working migrator as dead on the default schema. The shift is deliberately unchecked; Postgres bit
+shifts do not raise on overflow, which is what reproduces the sign bit. Also require
+`objsubid = 1` (the two-int32 key shape shares the representation) and the current `database`
+(advisory locks are database-local, `pg_locks` is not).
+
+---
+
+## Trap 4: electing a migrator is a cycle, and it bites in two different ways
+
+`StartupDuties.MIGRATOR` is the right mechanism and cannot simply be called. `PgDutyElector`
+records a win through `record_capability`, which
+
+- **does not exist** on a fresh database (migration `108_InstanceCapabilities.sql` creates it), so
+  `TryAcquireAsync` throws `42883`; and
+- returns **false** for an instance that is not in `wh_service_instances`, which at schema-init time
+  is every instance, because the heartbeat worker starts *after* the schema is ready. The elector
+  reports that as `DutyRefusal.Refused`.
+
+**Treating `Refused` as fatal is a fleet-wide outage.** It reads like "this instance is evicted and
+must not do exclusive work", and on an established database it actually means "nobody has
+heartbeated yet", which is every instance of every service. That shipped once as a throw.
+
+### The bootstrap, and the three properties that make it safe
+
+`SchemaBootstrapPhase` applies a marked subset first: the core tables, then the regions marked
+`-- @whizbang:bootstrap-begin` / `-- @whizbang:bootstrap-end`. `MigratorDutyStaging` then registers
+the instance and elects. Three properties, each of which is a test:
+
+1. **It writes no ledger rows.** Making objects exist and claiming to have migrated them are
+   different things. If the bootstrap wrote hashes, the ordinary pass would read them, conclude
+   those migrations were applied, and skip work the bootstrap only partly did.
+2. **It does not assume its own success.** Having applied the scripts it asks the database whether
+   an election is now possible (`CanElectAsync`) and reports *that*. An incomplete closure
+   therefore costs the election, not the startup.
+3. **Nothing about staging is fatal.** A refusal, a missing function, a failed registration, no
+   elector registered, an elector that throws: every path ends `Unstaged`, migrating under the
+   advisory lock exactly as before. Never migrating needs a human to clear; duplicated work does
+   not.
+
+### The closure is not what the migration headers say
+
+Three of the four headers are wrong or incomplete, so derive it from the SQL and never the comments:
+
+| Needed | Where it actually comes from | What the headers say |
+|---|---|---|
+| `wh_service_instances` | `PostgresSchemaBuilder.BuildInfrastructureSchema`, **no migration at all** | 010 "requires wh_service_instances", without saying who creates it |
+| `drop_all_overloads` | `000_MigrationTracking.sql` | 010 "Dependencies: 001-009" |
+| `wh_instance_evictions` | `106_InstanceEvictionFencing.sql` | 108 "106", correctly |
+| `record_capability` | `108_InstanceCapabilities.sql` | 106 points *forward* at 029 |
+
+`106` is in the subset for its **table only**. It also redefines `cleanup_stale_instances` and
+`record_heartbeat`, which reach objects the bootstrap deliberately does not create, and that is why
+bootstrap is a marked *region* rather than a marked file.
+
+**The only honest test of a closure is an empty database.**
+`SchemaBootstrapPhaseTests.AnEmptyDatabaseCanElectAfterTheBootstrapAsync` creates its own database,
+runs only the bootstrap, then registers an instance and calls `record_capability` for real. It takes
+the script list from the generated initializer rather than rebuilding it, so the markers, the order
+and the schema transform under test are the ones that ship. Removing any single marker turns it red.
+
+### What a non-holder watches
+
+The **duty** lock key, not the schema lock key. Watching the schema key would report the migrator as
+gone the moment it finished its own bootstrap and before it started migrating.
+`Staged_ANonHolderWaitsForTheDutyHolderAsync` is also the only thing that proves the two sides agree
+on that key: the elector derives it from the notification connection's search path and the
+initializer derives it from the DbContext schema, and nothing but a test makes those the same.
+
+### What guards this
+
+| Guard | What it catches |
+|---|---|
+| `AdvisoryLockProbeTests.TheRealSchemaKeyIsFoundEvenThoughItIsNegativeAsync` | the half-key predicate, on the key every default deployment uses |
+| `AdvisoryLockProbeTests.KeysSharingALowHalfDoNotAliasAsync` | the aliasing half of the same bug |
+| `AdvisoryLockProbeTests.ATransactionScopedLockReadsAsHeldAsync` | a probe that only sees session locks |
+| `SchemaMigrationDeferralTests.ACommittedMigratorIsNotMistakenForADeadOneAsync` | the two questions asked in the wrong order |
+| `SchemaMigrationDeferralTests.AMigratorThatDiesMidWaitIsNoticedAsync` | detection that stops working once the backoff settles |
+| `SchemaMigrationDeferralTests.AFailedLockProbeContendsForTheLockAsync` | waiting on a condition that can no longer be observed |
+| `SchemaInitializationConcurrencyTests.Deferral_WhenTheMigratorCommits_AppliesNothingItselfAsync` | the deferral falling through and migrating anyway |
+| `SchemaInitializationConcurrencyTests.Deferral_WhenTheMigratorIsKilled_TakesTheWorkOverAsync` | a stranded fleet after an OOMKill |
+| `SchemaMigratorDeferralGenerationTests` | the generator not emitting the call at all |
+| `SchemaBootstrapPhaseTests.AnEmptyDatabaseCanElectAfterTheBootstrapAsync` | an incomplete bootstrap closure, from an empty schema |
+| `SchemaBootstrapPhaseTests.WithoutTheBootstrapThereIsNothingToElectWithAsync` | the cycle itself, so the bootstrap is not solving a problem nobody had |
+| `SchemaBootstrapPhaseTests.AnUnregisteredInstanceIsRefusedACapabilityAsync` | registration ordering, against the real function |
+| `SchemaBootstrapPhaseTests.ATombstonedInstanceIsStillRefusedAsync` | the eviction fence surviving being reached this early |
+| `SchemaBootstrapPhaseTests.TheBootstrapRecordsNothingInTheLedgerAsync` | the bootstrap claiming to have migrated what it only created |
+| `SchemaBootstrapPhaseTests.AFailedScriptReportsNotReadyRatherThanThrowingAsync` | a bootstrap failure becoming a startup failure |
+| `MigratorDutyStagingTests.ARefusedInstanceMigratesUnderTheLockRatherThanThrowingAsync` | the fleet-wide outage that shipped once |
+| `MigrationBootstrapRegionsTests.TheEvictionMigrationContributesItsTableAndNotItsFunctionsAsync` | bootstrap growing from a region into a whole file |
+| `MigrationBootstrapRegionsTests.EveryShippedMigrationHasBalancedMarkersAsync` | a mistyped marker silently resizing the bootstrap |
+| `Staged_ANonHolderWaitsForTheDutyHolderAsync` | the elector and the waiter disagreeing about the duty lock key |
+| `Staged_AKilledDutyHolderIsTakenOverAsync` | a fleet stranded on a duty holder that no longer exists |
+| `Staged_TheMigratorRegistersAndThenReleasesTheDutyAsync` | a leaked duty, which would stall the next deployment |
+
+The integration witness is `wh_schema_migrations.updated_at`. Re-applying a migration stamps it
+`NOW()`, so a sentinel timestamp surviving the run is proof the deferring instance applied nothing,
+which no row count and no absence of an exception can establish.
+
+---
+
 ## Checklist for a change in this area
 
+0. **Does more than one instance reach it at startup?** The advisory lock elects one migrator; the
+   losers must defer to it, not re-contend. Never key a decision on the lock's absence alone -
+   ask whether the schema is current first.
+0b. **Does it decide who migrates?** Nothing in that decision may be fatal. Every failure path ends
+   with this instance migrating under the advisory lock, because never migrating needs a human to
+   clear and duplicated work does not. `DutyRefusal.Refused` in particular means "not in the
+   registry yet" far more often than it means "evicted".
+0c. **Did a migration gain a dependency?** If anything in a bootstrap region now references a new
+   object, that object joins the closure. `AnEmptyDatabaseCanElectAfterTheBootstrapAsync` is what
+   catches it; the migration headers are not reliable and three of them are already wrong.
 1. **Does it need a connection of its own?** Call `SchemaBoundaryConnections.Resolve`. Never open one
    from `GetConnectionString()`.
 2. **Does one statement depend on another's committed effect?** Ordering is not enough. Emit a

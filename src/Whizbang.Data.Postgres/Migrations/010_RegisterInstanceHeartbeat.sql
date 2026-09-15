@@ -4,6 +4,9 @@
 --              Used by process_work_batch orchestrator to maintain instance liveness tracking.
 -- Dependencies: 001-009 (requires wh_service_instances table)
 
+-- @whizbang:bootstrap-begin
+-- Bootstrap: an instance cannot be granted a duty until it is in the registry, and this is how it gets there.
+
 SELECT __SCHEMA__.drop_all_overloads('register_instance_heartbeat');
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.register_instance_heartbeat(
@@ -51,3 +54,5 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.register_instance_heartbeat IS
 'Updates service instance heartbeat timestamp. Inserts new instance if not exists, updates last_heartbeat_at if exists. Called by process_work_batch orchestrator.';
+
+-- @whizbang:bootstrap-end

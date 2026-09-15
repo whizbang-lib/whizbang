@@ -3,6 +3,9 @@
 -- Description: Creates migration tracking tables for hash-based change detection.
 -- This migration is always executed (cannot be hash-checked since it creates the hash tables).
 
+-- @whizbang:bootstrap-begin
+-- Bootstrap: the ledger tables, and drop_all_overloads, which 010 calls.
+
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_schema_versions (
   id SERIAL PRIMARY KEY,
   library_version VARCHAR(50) NOT NULL,
@@ -66,3 +69,5 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
+
+-- @whizbang:bootstrap-end
