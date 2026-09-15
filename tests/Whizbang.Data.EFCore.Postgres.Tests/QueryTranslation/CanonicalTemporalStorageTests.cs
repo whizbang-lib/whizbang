@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 using Whizbang.Testing.Containers;
@@ -18,17 +19,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The generator emits this configuration; those tests assert the text it emits. This asserts that
-/// the text describes something that works. Neither is sufficient alone: a generator test passes on
-/// output that no database would accept, and a hand-written mapping proves nothing about what a
-/// model author actually gets.
-/// </para>
-/// <para>
-/// The seam between them is real and worth naming. The configuration here is written by hand to
-/// mirror what the generator emits, because a value conversion needs a property expression per
-/// property and those exist only at compile time. <c>CanonicalTemporalConfigurationTests</c> pins the
-/// emitted line exactly so the two cannot drift apart quietly; if this file changes shape, that
-/// assertion has to change with it.
+/// Nothing here configures a conversion. The mapping is the shape the generator emits, which names
+/// no temporal property at all; the conversion is applied by the convention every perspective
+/// context carries, which walks the model Entity Framework built and converts whatever it maps.
+/// This asserts that what a model author actually gets works against a real database.
 /// </para>
 /// <para>
 /// The index assertion is the reason any of this happened. A text rendering of a date casts out of
@@ -73,28 +67,9 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
         entity.ToTable(TABLE);
         entity.HasKey(e => e.Id);
         entity.Property(e => e.Id).HasColumnName("id");
-        entity.ComplexProperty(e => e.Data, d => {
-          d.ToJson("data");
-          // Mirrors CanonicalTemporalDiscovery.ConfigurationFor exactly. See the note on the class.
-          d.Property(p => p.OccurredAt).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
-            v => CanonicalTemporalFormat.FromEpochMicroseconds(v));
-          d.Property(p => p.RecordedAt).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
-            v => CanonicalTemporalFormat.OffsetFromEpochMicroseconds(v));
-          d.Property(p => p.Day).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
-            v => CanonicalTemporalFormat.DayFromEpochMicroseconds(v));
-          d.Property(p => p.Clock).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToMicrosecondsOfDay(v),
-            v => CanonicalTemporalFormat.FromMicrosecondsOfDay(v));
-          d.Property(p => p.Elapsed).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToMicroseconds(v),
-            v => CanonicalTemporalFormat.DurationFromMicroseconds(v));
-          d.Property(p => p.MaybeAt).HasConversion<long?>(
-            v => v == null ? (long?)null : CanonicalTemporalFormat.ToEpochMicroseconds(v.Value),
-            v => v == null ? (DateTime?)null : CanonicalTemporalFormat.FromEpochMicroseconds(v.Value));
-        });
+        // No conversion is named here. The convention every perspective context carries converts
+        // every temporal Entity Framework maps inside the document.
+        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
         entity.ComplexProperty(e => e.Scope, s => {
           s.ToJson("scope");
@@ -157,7 +132,7 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
     }
 
     _context = new TemporalDbContext(new DbContextOptionsBuilder<TemporalDbContext>()
-      .UseNpgsql(_connectionString)
+      .UseNpgsql(_connectionString, npgsql => npgsql.UseWhizbangFunctions())
       .UseWhizbangPhysicalFields()
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options);

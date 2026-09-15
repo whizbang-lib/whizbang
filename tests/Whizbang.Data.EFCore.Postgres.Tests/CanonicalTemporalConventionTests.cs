@@ -1,8 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
-using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using Microsoft.EntityFrameworkCore.Metadata.Conventions;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql;
 using TUnit.Assertions;
@@ -11,35 +9,34 @@ using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Whether a model-finalizing convention can reach every temporal property Entity Framework maps
-/// inside a JSON document, and convert it, without anything having been discovered by a generator.
+/// That Entity Framework converts every temporal it maps inside a JSON document, with nothing
+/// configured per model and nothing discovered by a generator.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The canonical temporal form has two writers and Entity Framework is only one of them. If the
-/// serializer converts every temporal in a document and Entity Framework converts only the ones a
-/// generator found, every property the generator missed is written as a number and read as a
-/// rendering, and the row is unreadable. The way out is to let Entity Framework's own walk decide
-/// what Entity Framework converts, so the two sides agree by construction rather than by two
-/// discoveries staying in step.
+/// The canonical temporal form has two writers and Entity Framework is only one of them. The
+/// serializer converts every temporal in a document it writes under the persistence profile. If
+/// Entity Framework converted only the properties a generator had found, every property the
+/// generator missed would be written as a number and read as a rendering, and the row would be
+/// unreadable. So Entity Framework's own walk of the model decides what Entity Framework converts,
+/// and the two sides agree by construction rather than by two discoveries staying in step.
 /// </para>
 /// <para>
-/// Measured against a real model build and a real round trip rather than reasoned about, because
-/// what a convention can reach inside a complex collection's element type is Entity Framework's
-/// business and it has changed between releases. If a future release stops reaching one of these
-/// placements, this fails and the design gets revisited before a consumer finds out.
+/// The convention rides the same options extension every generated context already carries, so a
+/// consumer opts into it by registering a perspective context and in no other way.
 /// </para>
 /// </remarks>
-/// <docs>fundamentals/perspectives/jsonb-containment</docs>
+/// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/CanonicalTemporalConvention.cs</code-under-test>
 [Category("Integration")]
 [Category("Shard4")]
-public class TemporalConventionReachProbeTests {
-  private const string TABLE = "wh_per_temporal_reach_probe";
+public class CanonicalTemporalConventionTests {
+  private const string TABLE = "wh_per_temporal_convention";
 
   /// <summary>A temporal declared on a base class, which a member walk of the model misses.</summary>
   public abstract class Audited {
@@ -68,63 +65,16 @@ public class TemporalConventionReachProbeTests {
     public List<Occurrence> Occurrences { get; set; } = [];
   }
 
-  /// <summary>
-  /// The convention under measurement: every temporal property of every JSON-mapped complex type,
-  /// found by walking the model Entity Framework built.
-  /// </summary>
-  private sealed class CanonicalTemporalProbeConvention : IModelFinalizingConvention {
-    private static readonly ValueConverter<DateTime, long> _instant = new(
-      v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
-      v => CanonicalTemporalFormat.FromEpochMicroseconds(v));
-    private static readonly ValueConverter<DateTimeOffset, long> _offset = new(
-      v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
-      v => CanonicalTemporalFormat.OffsetFromEpochMicroseconds(v));
-    private static readonly ValueConverter<DateOnly, long> _day = new(
-      v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
-      v => CanonicalTemporalFormat.DayFromEpochMicroseconds(v));
-    private static readonly ValueConverter<TimeOnly, long> _timeOfDay = new(
-      v => CanonicalTemporalFormat.ToMicrosecondsOfDay(v),
-      v => CanonicalTemporalFormat.FromMicrosecondsOfDay(v));
-    private static readonly ValueConverter<TimeSpan, long> _duration = new(
-      v => CanonicalTemporalFormat.ToMicroseconds(v),
-      v => CanonicalTemporalFormat.DurationFromMicroseconds(v));
-
-    public void ProcessModelFinalizing(
-        IConventionModelBuilder modelBuilder, IConventionContext<IConventionModelBuilder> context) {
-      foreach (var entityType in modelBuilder.Metadata.GetEntityTypes()) {
-        foreach (var complex in entityType.GetComplexProperties()) {
-          _walk(complex);
-        }
-      }
-    }
-
-    private static void _walk(IConventionComplexProperty complex) {
-      foreach (var property in complex.ComplexType.GetProperties()) {
-        var converter = _converterFor(Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType);
-        if (converter is not null) {
-          property.Builder.HasConversion(converter, fromDataAnnotation: false);
-        }
-      }
-      foreach (var nested in complex.ComplexType.GetComplexProperties()) {
-        _walk(nested);
-      }
-    }
-
-    private static ValueConverter? _converterFor(Type clrType) =>
-      clrType == typeof(DateTime) ? _instant
-      : clrType == typeof(DateTimeOffset) ? _offset
-      : clrType == typeof(DateOnly) ? _day
-      : clrType == typeof(TimeOnly) ? _timeOfDay
-      : clrType == typeof(TimeSpan) ? _duration
-      : null;
+  /// <summary>A row type with a complex property mapped to columns rather than to a document.</summary>
+  public sealed class ColumnRow {
+    public Guid Id { get; set; }
+    public Window Window { get; set; } = new();
+    public DateTime StampedAt { get; set; }
   }
 
-  /// <summary>The mapped shape the generator emits, with the convention and nothing else.</summary>
-  private sealed class ProbeContext(DbContextOptions<ProbeContext> options) : DbContext(options) {
-    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder) =>
-      configurationBuilder.Conventions.Add(_ => new CanonicalTemporalProbeConvention());
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+  /// <summary>The mapped shape the generator emits, with no conversion written out.</summary>
+  private sealed class ConventionContext(DbContextOptions<ConventionContext> options) : DbContext(options) {
+    protected override void OnModelCreating(ModelBuilder modelBuilder) {
       modelBuilder.Entity<PerspectiveRow<ReachModel>>(entity => {
         entity.ToTable(TABLE);
         entity.HasKey(e => e.Id);
@@ -139,18 +89,25 @@ public class TemporalConventionReachProbeTests {
         entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
         entity.Property(e => e.Version).HasColumnName("version");
       });
+      modelBuilder.Entity<ColumnRow>(entity => {
+        entity.ToTable("wh_column_row");
+        entity.HasKey(e => e.Id);
+        entity.ComplexProperty(e => e.Window);
+      });
+    }
   }
 
-  private static ProbeContext _context(string connectionString) =>
-    new(new DbContextOptionsBuilder<ProbeContext>().UseNpgsql(connectionString).Options);
+  /// <summary>The context as a generated registration configures it: the functions extension and nothing else.</summary>
+  private static ConventionContext _context(string connectionString) =>
+    new(new DbContextOptionsBuilder<ConventionContext>()
+      .UseNpgsql(connectionString, npgsql => npgsql.UseWhizbangFunctions())
+      .Options);
 
-  /// <summary>Every property of a JSON-mapped complex type, with its converter, keyed by path.</summary>
-  private static Dictionary<string, ValueConverter?> _mappedTemporals(IModel model) {
+  /// <summary>Every temporal property of a complex type, with its converter, keyed by path.</summary>
+  private static Dictionary<string, ValueConverter?> _temporals(IModel model, Type rowType) {
     var found = new Dictionary<string, ValueConverter?>();
-    foreach (var entityType in model.GetEntityTypes()) {
-      foreach (var complex in entityType.GetComplexProperties()) {
-        _collect(complex, complex.Name, found);
-      }
+    foreach (var complex in model.FindEntityType(rowType)!.GetComplexProperties()) {
+      _collect(complex, complex.Name, found);
     }
     return found;
   }
@@ -169,13 +126,13 @@ public class TemporalConventionReachProbeTests {
   }
 
   /// <summary>
-  /// The convention reaches every placement, including the ones a member walk of the model misses.
+  /// Every placement Entity Framework maps inside a document carries the conversion.
   /// </summary>
   /// <remarks>No database: building the model needs a provider, not a connection.</remarks>
   [Test]
-  public async Task TheConventionReachesEveryPlacementEntityFrameworkMapsAsync() {
+  public async Task EveryTemporalInADocumentIsConvertedAsync() {
     using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
-    var temporals = _mappedTemporals(context.Model);
+    var temporals = _temporals(context.Model, typeof(PerspectiveRow<ReachModel>));
 
     string[] expected = [
       "Data.OccurredAt",
@@ -191,9 +148,34 @@ public class TemporalConventionReachProbeTests {
         .Because($"{path} is a temporal Entity Framework maps and the walk must see it");
       await Assert.That(temporals[path]).IsNotNull()
         .Because($"{path} must carry the canonical conversion, or the writer's number is unreadable there");
+      await Assert.That(temporals[path]!.ProviderClrType).IsEqualTo(typeof(long))
+        .Because("every kind stores in the same eight-byte unit");
     }
     await Assert.That(temporals.Count).IsEqualTo(expected.Length)
       .Because("the walk is exhaustive: nothing else in this model is temporal");
+  }
+
+  /// <summary>
+  /// A column outside any document is left alone, and so is a complex type mapped to columns.
+  /// </summary>
+  /// <remarks>
+  /// The stored form is a property of the document, not of the type. A timestamp column is a
+  /// timestamp column, and a complex type spread over columns has typed columns of its own.
+  /// </remarks>
+  [Test]
+  public async Task ATemporalOutsideADocumentIsLeftAloneAsync() {
+    using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
+
+    var row = context.Model.FindEntityType(typeof(PerspectiveRow<ReachModel>))!;
+    await Assert.That(row.FindProperty(nameof(PerspectiveRow<ReachModel>.CreatedAt))!.GetValueConverter()).IsNull()
+      .Because("a timestamp column is typed for what it holds and needs no conversion");
+
+    var columns = _temporals(context.Model, typeof(ColumnRow));
+    await Assert.That(columns["Window.Opens"]).IsNull()
+      .Because("a complex type mapped to columns has a typed column per property; the document form "
+        + "does not apply to it");
+    await Assert.That(context.Model.FindEntityType(typeof(ColumnRow))!
+        .FindProperty(nameof(ColumnRow.StampedAt))!.GetValueConverter()).IsNull();
   }
 
   /// <summary>
@@ -234,15 +216,19 @@ public class TemporalConventionReachProbeTests {
     }
 
     var (data, metadata) = await _storedAsync(connectionString, id, cancellationToken);
-    await Assert.That(data.GetProperty("OccurredAt").ValueKind).IsEqualTo(JsonValueKind.Number);
+    await Assert.That(data.GetProperty("OccurredAt").GetInt64())
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(occurredAt));
     await Assert.That(data.GetProperty("RecordedAt").ValueKind).IsEqualTo(JsonValueKind.Number)
       .Because("an inherited temporal is one Entity Framework maps, so it must be converted too");
     await Assert.That(data.GetProperty("Window").GetProperty("Opens").ValueKind).IsEqualTo(JsonValueKind.Number);
-    await Assert.That(data.GetProperty("Window").GetProperty("Length").ValueKind).IsEqualTo(JsonValueKind.Number);
+    await Assert.That(data.GetProperty("Window").GetProperty("Length").GetInt64())
+      .IsEqualTo(CanonicalTemporalFormat.ToMicroseconds(TimeSpan.FromMinutes(90)));
     var occurrence = data.GetProperty("Occurrences")[0];
-    await Assert.That(occurrence.GetProperty("Day").ValueKind).IsEqualTo(JsonValueKind.Number);
+    await Assert.That(occurrence.GetProperty("Day").GetInt64())
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(new DateOnly(2026, 3, 5)));
     await Assert.That(occurrence.GetProperty("MaybeAt").ValueKind).IsEqualTo(JsonValueKind.Number);
-    await Assert.That(metadata.GetProperty("Timestamp").ValueKind).IsEqualTo(JsonValueKind.Number)
+    await Assert.That(metadata.GetProperty("Timestamp").GetInt64())
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(occurredAt))
       .Because("the framework's own document is a document like any other");
 
     await using var reader = _context(connectionString);

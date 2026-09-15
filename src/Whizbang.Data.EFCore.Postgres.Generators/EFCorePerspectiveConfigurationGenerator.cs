@@ -364,8 +364,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableBaseName: tableBaseName,
         PhysicalFields: physicalFields,
         HasPolymorphicProperties: hasPolymorphicProperties,
-        IsSplitMode: isSplitMode,
-        TemporalProperties: CanonicalTemporalDiscovery.MappableFrom(modelType as INamedTypeSymbol)
+        IsSplitMode: isSplitMode
     );
   }
 
@@ -384,8 +383,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         TableName: tableName,
         PhysicalFields: candidate.PhysicalFields,
         HasPolymorphicProperties: candidate.HasPolymorphicProperties,
-        IsSplitMode: candidate.IsSplitMode,
-        TemporalProperties: candidate.TemporalProperties
+        IsSplitMode: candidate.IsSplitMode
     );
   }
 
@@ -887,22 +885,13 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     var physicalFieldConfigs = _generatePhysicalFieldConfigurations(perspective.PhysicalFields, perspective.TableName);
 
-    // A polymorphic model is mapped as a jsonb column rather than a complex property, so its document
-    // is written by the serializer and a value converter has nothing to act on. The placeholder is
-    // absent from that snippet, so this replacement is simply a no-op there.
-    var temporalConfigs = perspective.TemporalProperties.IsDefaultOrEmpty
-      ? string.Empty
-      : string.Join(
-          // Four, not eight: the snippet's placeholder already carries the block's indentation for
-          // the first line, and the template pass indents every line it emits after that one.
-          "\n    ",
-          CanonicalTemporalDiscovery.ConfigurationFor(perspective.TemporalProperties, "d"));
-
+    // No temporal conversion is emitted. The canonical temporal form is applied by a convention
+    // every generated context carries, which walks the model Entity Framework built and so reaches
+    // inherited, nested and collection-element temporals a discovery here never saw.
     return snippet
         .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
         .Replace("__TABLE_NAME__", perspective.TableName)
         .Replace("__SCHEMA__", effectiveSchema)
-        .Replace("__TEMPORAL_CONVERTER_CONFIGS__", temporalConfigs)
         .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs);
   }
 

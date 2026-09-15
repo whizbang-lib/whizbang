@@ -3,18 +3,23 @@ using TUnit.Assertions.Extensions;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// That a perspective's dates, times and durations are configured to store as numbers.
+/// That the generated mapping names no temporal property, because the conversion is not the
+/// mapping's to decide.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The stored form is a decision the framework makes once rather than one every model repeats, so the
-/// converters are emitted into the generated configuration. A model author writes an ordinary
-/// <c>DateTime</c> property and never sees this.
+/// The stored form of a date, a time or a duration is a decision the framework makes once. It used
+/// to be emitted here as one <c>HasConversion</c> line per property a generator had discovered, and
+/// that discovery was partial: a member inherited from a base class, a nested object, an element of
+/// a collection and the framework's own metadata were all invisible to it. Each was written as a
+/// rendering and read as one, so nothing failed, and each was a place where widening the writer
+/// alone would have produced rows the reader could not parse.
 /// </para>
 /// <para>
-/// It is also what makes a new installation need no migration at all: the first row a fresh database
-/// receives is already in the canonical form, so nothing is ever written in one shape and rewritten
-/// into another.
+/// Now a convention every perspective context carries walks the model Entity Framework built and
+/// converts whatever it maps. The mapping has nothing to say about it, and these tests pin that it
+/// says nothing: a per-property line here would be a second list, and two lists are two chances to
+/// disagree.
 /// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
@@ -61,121 +66,35 @@ public class CanonicalTemporalConfigurationTests {
     return string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
   }
 
-  /// <summary>Each temporal type is converted to the number that is its canonical stored form.</summary>
-  [Test]
-  [Arguments("OccurredAt", "FromEpochMicroseconds")]
-  [Arguments("RecordedAt", "OffsetFromEpochMicroseconds")]
-  [Arguments("Day", "DayFromEpochMicroseconds")]
-  [Arguments("Clock", "FromMicrosecondsOfDay")]
-  [Arguments("Elapsed", "DurationFromMicroseconds")]
-  public async Task ATemporalPropertyIsStoredAsANumberAsync(string property, string conversion) {
-    var output = await _generatedAsync();
-
-    await Assert.That(output).Contains(property, StringComparison.Ordinal);
-    await Assert.That(output).Contains(conversion, StringComparison.Ordinal)
-      .Because($"'{property}' has to reach the document as a number, or its extraction cannot carry "
-        + "an index and a range over it cannot be answered");
-  }
-
-  /// <summary>An optional one is converted too, since a null simply has no entry.</summary>
-  [Test]
-  public async Task AnOptionalTemporalPropertyIsConvertedAsync() {
-    var output = await _generatedAsync();
-
-    await Assert.That(output).Contains("MaybeAt", StringComparison.Ordinal)
-      .Because("an absent value is an absent key either way, so nullability changes nothing about "
-        + "the form the value takes when it is present");
-  }
-
-  /// <summary>Nothing else is touched, because nothing else needs it.</summary>
-  [Test]
-  [Arguments("Label")]
-  [Arguments("Count")]
-  public async Task ANonTemporalPropertyIsLeftAloneAsync(string property) {
-    var output = await _generatedAsync();
-
-    var conversions = output.Split('\n')
-      .Where(line => line.Contains("HasConversion", StringComparison.Ordinal)
-                     && line.Contains(property, StringComparison.Ordinal));
-
-    await Assert.That(conversions).IsEmpty()
-      .Because("a string and a number already store in a form the index can reach, so converting "
-        + "them would be cost without purpose");
-  }
-
   /// <summary>
-  /// The emitted line is pinned exactly, because something else has to mirror it.
+  /// The mapping configures no conversion for any temporal property, of any kind, optional or not.
   /// </summary>
   /// <remarks>
-  /// <para>
-  /// A value conversion needs a property expression per property, and those exist only at compile
-  /// time, so nothing at runtime can apply this configuration on a caller's behalf. That leaves a
-  /// seam: <c>CanonicalTemporalStorageTests</c> writes the same configuration by hand to prove it
-  /// works against a real database, and the two could drift apart without either failing.
-  /// </para>
-  /// <para>
-  /// A <c>Contains</c> on a method name would not catch a drift, which is why this is the whole line.
-  /// If it changes, that file has to change with it.
-  /// </para>
+  /// The convention converts every temporal Entity Framework maps, inherited and nested ones
+  /// included. A line here would name a subset, and the subset is exactly what went wrong before.
   /// </remarks>
   [Test]
-  public async Task TheEmittedLineIsPinnedAsync() {
+  public async Task TheMappingNamesNoTemporalPropertyAsync() {
     var output = await _generatedAsync();
 
-    await Assert.That(output).Contains(
-      "d.Property(p => p.OccurredAt).HasConversion<long>("
-      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.ToEpochMicroseconds(v), "
-      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.FromEpochMicroseconds(v));",
-      StringComparison.Ordinal)
-      .Because("the integration test that proves this configuration works writes it by hand, so the "
-        + "emitted form has to be pinned or the two can drift apart with both still passing");
+    await Assert.That(output).DoesNotContain("HasConversion<", StringComparison.Ordinal)
+      .Because("the convention converts what Entity Framework maps; a per-property line is a "
+        + "second list that can disagree with it");
+    await Assert.That(output).DoesNotContain("CanonicalTemporalFormat", StringComparison.Ordinal)
+      .Because("the mapping has no reason to know the stored form at all");
+    foreach (var property in new[] { "OccurredAt", "RecordedAt", "Day", "Clock", "Elapsed", "MaybeAt" }) {
+      await Assert.That(output).DoesNotContain($"d.Property(p => p.{property})", StringComparison.Ordinal);
+    }
   }
 
-  /// <summary>
-  /// A date and a duration store as the same eight-byte unit as an instant, pinned exactly.
-  /// </summary>
-  /// <remarks>
-  /// The first release of this form stored a date as a four-byte day count and a duration as ticks,
-  /// so a date could not be compared with an instant and a duration could not be added to one. One
-  /// unit for every kind is the contract now, and a stored type other than <c>long</c> here would
-  /// silently reintroduce a second one.
-  /// </remarks>
+  /// <summary>The document is still mapped property by property; only the conversion moved.</summary>
   [Test]
-  public async Task ADateAndADurationStoreInTheSharedUnitAsync() {
+  public async Task TheDocumentIsStillMappedAsync() {
     var output = await _generatedAsync();
 
-    await Assert.That(output).Contains(
-      "d.Property(p => p.Day).HasConversion<long>("
-      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.ToEpochMicroseconds(v), "
-      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.DayFromEpochMicroseconds(v));",
-      StringComparison.Ordinal)
-      .Because("a date in the same unit as an instant is what lets the two order against each other");
-    await Assert.That(output).Contains(
-      "d.Property(p => p.Elapsed).HasConversion<long>("
-      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.ToMicroseconds(v), "
-      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.DurationFromMicroseconds(v));",
-      StringComparison.Ordinal)
-      .Because("a duration in microseconds is what lets it be added to an instant in SQL");
-    await Assert.That(output).DoesNotContain("HasConversion<int>", StringComparison.Ordinal)
-      .Because("no kind stores in a four-byte unit any more");
-  }
-
-  /// <summary>
-  /// The optional form is pinned too, since its null branch is the part most easily got wrong.
-  /// </summary>
-  [Test]
-  public async Task TheOptionalEmittedLineIsPinnedAsync() {
-    var output = await _generatedAsync();
-
-    await Assert.That(output).Contains(
-      "d.Property(p => p.MaybeAt).HasConversion<long?>("
-      + "v => v == null ? (long?)null : "
-      + "global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.ToEpochMicroseconds(v.Value), "
-      + "v => v == null ? (global::System.DateTime?)null : "
-      + "global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.FromEpochMicroseconds(v.Value));",
-      StringComparison.Ordinal)
-      .Because("a converter that lost its null branch would write the epoch for an absent value, "
-        + "which reads back as a real date rather than as nothing");
+    await Assert.That(output).Contains("ComplexProperty(e => e.Data", StringComparison.Ordinal)
+      .Because("a mapped document is what lets a filter compile to an extraction and carry an index");
+    await Assert.That(output).Contains("ToJson(\"data\")", StringComparison.Ordinal);
   }
 
   /// <summary>
@@ -255,150 +174,23 @@ public class CanonicalTemporalConfigurationTests {
   }
 
   /// <summary>
-  /// The conversion is the framework's own, not an expression written out per property.
-  /// </summary>
-  /// <remarks>
-  /// Worth asserting rather than assuming: the stored form is a compatibility contract, and having
-  /// one definition of it that the generator calls is what keeps the writer, the reader and the
-  /// backfill from drifting apart. An inlined expression per property is three chances to disagree.
-  /// </remarks>
-  [Test]
-  public async Task TheConversionIsTheSharedOneAsync() {
-    var output = await _generatedAsync();
-
-    await Assert.That(output).Contains("CanonicalTemporalFormat", StringComparison.Ordinal);
-  }
-
-  /// <summary>
-  /// A computed temporal property is not configured, because Entity Framework cannot map one.
+  /// A computed temporal property is mapped by nobody and converted by the serializer, and the
+  /// mapping does not have to know either of those things.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// A property with no setter and no backing field is a calculation, not storage. Naming it in the
-  /// configuration is what forces Entity Framework to map it, and model validation then fails with
-  /// "No backing field could be found ... and the property does not have a setter". That failure
-  /// happens while the model is built, so it takes the whole service down at startup rather than
-  /// affecting one query.
+  /// A property with no setter and no backing field is a calculation, not storage. Entity Framework
+  /// leaves it unmapped by convention, so the convention that converts mapped temporals never sees
+  /// it; naming it in the configuration was what used to force Entity Framework to map it and fail
+  /// model validation for the whole context at startup. There is nothing to name now.
   /// </para>
   /// <para>
-  /// Left alone, such a property is simply not mapped, which is what Entity Framework does with any
-  /// computed property by convention. It still appears in the stored document, because the serializer
-  /// writes read-only properties, and that is correct: the value is derived, so reading it back costs
-  /// nothing and writing it is free.
-  /// </para>
-  /// <para>
-  /// Found in a consumer, where a perspective carrying a computed duration alongside real timestamps
-  /// could not start at all.
+  /// It still appears in the stored document, because the serializer writes read-only properties,
+  /// and it keeps the canonical form its siblings have.
   /// </para>
   /// </remarks>
   [Test]
-  public async Task AComputedTemporalPropertyIsNotConfiguredAsync() {
-    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync("""
-      using System;
-      using Microsoft.EntityFrameworkCore;
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
-      using Whizbang.Data.EFCore.Custom;
-
-      namespace TestApp;
-
-      public record Ran : IEvent;
-
-      public record RunModel {
-        [StreamId]
-        public Guid RunId { get; init; }
-
-        public DateTimeOffset StartedAt { get; init; }
-        public DateTimeOffset? FinishedAt { get; init; }
-
-        // Calculated from the two above. No setter, no backing field.
-        public TimeSpan? Elapsed => FinishedAt.HasValue ? FinishedAt.Value - StartedAt : null;
-      }
-
-      public class RunPerspective : IPerspectiveFor<RunModel, Ran> {
-        public RunModel Apply(RunModel currentData, Ran eventData) => currentData;
-      }
-
-      [WhizbangDbContext]
-      public class RunDbContext : DbContext {
-        public RunDbContext(DbContextOptions<RunDbContext> options) : base(options) { }
-      }
-      """);
-
-    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
-
-    await Assert.That(output).Contains("p.StartedAt", StringComparison.Ordinal)
-      .Because("the stored timestamps are still configured, so this is about which properties are "
-        + "skipped rather than about the model being skipped");
-    await Assert.That(output).DoesNotContain("p.Elapsed", StringComparison.Ordinal)
-      .Because("Entity Framework cannot map a property with no setter and no backing field, and "
-        + "naming it in the configuration is what makes it try");
-  }
-
-  /// <summary>
-  /// A get-only property that is still stored is configured, because that one can be mapped.
-  /// </summary>
-  /// <remarks>
-  /// The pair to the case above, and the reason the check is about mappability rather than about the
-  /// absence of a setter. An automatic property declared get-only has a backing field the constructor
-  /// writes, which is ordinary for an immutable model, and Entity Framework maps it happily.
-  /// </remarks>
-  [Test]
-  public async Task AGetOnlyStoredTemporalPropertyIsStillConfiguredAsync() {
-    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync("""
-      using System;
-      using Microsoft.EntityFrameworkCore;
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
-      using Whizbang.Data.EFCore.Custom;
-
-      namespace TestApp;
-
-      public record Ran : IEvent;
-
-      public class RunModel {
-        [StreamId]
-        public Guid RunId { get; init; }
-
-        // Get-only, but automatic: it has a backing field, so it is storage.
-        public DateTimeOffset StartedAt { get; }
-      }
-
-      public class RunPerspective : IPerspectiveFor<RunModel, Ran> {
-        public RunModel Apply(RunModel currentData, Ran eventData) => currentData;
-      }
-
-      [WhizbangDbContext]
-      public class RunDbContext : DbContext {
-        public RunDbContext(DbContextOptions<RunDbContext> options) : base(options) { }
-      }
-      """);
-
-    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
-
-    await Assert.That(output).Contains("p.StartedAt", StringComparison.Ordinal)
-      .Because("a get-only automatic property has a backing field, so it is mapped like any other "
-        + "stored value and still needs its canonical conversion");
-  }
-
-  /// <summary>
-  /// The serializer still writes a computed temporal in canonical form, even though the mapping skips it.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// The two sets are deliberately different and this is the test that says so. What Entity Framework
-  /// maps decides what a query can reach; what the serializer converts decides what the document
-  /// holds. A derived value is in the document because read-only properties are serialized, so it
-  /// keeps the canonical form its siblings have, and the backfill that rewrites old rows keeps
-  /// covering it.
-  /// </para>
-  /// <para>
-  /// Without this, narrowing the mapping looks like it could be done once in the shared discovery,
-  /// and doing that would silently change the stored form of every derived date in every consumer.
-  /// </para>
-  /// </remarks>
-  [Test]
-  public async Task AComputedTemporalIsStillSerializedCanonicallyAsync() {
+  public async Task AComputedTemporalIsSerializedAndNotMappedAsync() {
     const string SOURCE = """
       using System;
       using Microsoft.EntityFrameworkCore;
@@ -442,78 +234,8 @@ public class CanonicalTemporalConfigurationTests {
       .Because("the serializer writes read-only properties, so the derived value is in the document "
         + "and keeps the canonical form the rest of the document uses");
     await Assert.That(mapping).DoesNotContain("p.Elapsed", StringComparison.Ordinal)
-      .Because("the mapping is the narrower set, and that difference is the whole point: one decides "
-        + "the stored form, the other decides what a query can reach");
-  }
-
-  /// <summary>
-  /// A temporal property excluded with <c>[NotMapped]</c> is not configured either.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// The same failure as a computed property, reached from the other direction. The author has said
-  /// the property is not storage, so Entity Framework will not map it, and configuring it contradicts
-  /// them and fails model validation for the whole context.
-  /// </para>
-  /// <para>
-  /// It matters because this is the workaround a consumer reaches for first. Finding that the
-  /// documented way to exclude a property makes no difference is a worse experience than the original
-  /// failure.
-  /// </para>
-  /// </remarks>
-  [Test]
-  public async Task ATemporalPropertyExcludedFromMappingIsNotConfiguredAsync() {
-    var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync("""
-      using System;
-      using System.ComponentModel.DataAnnotations.Schema;
-      using Microsoft.EntityFrameworkCore;
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
-      using Whizbang.Data.EFCore.Custom;
-
-      namespace TestApp;
-
-      public record Ran : IEvent;
-
-      public record RunModel {
-        [StreamId]
-        public Guid RunId { get; init; }
-
-        public DateTimeOffset StartedAt { get; init; }
-
-        // Storage by shape, but the author has said it is not mapped.
-        [NotMapped]
-        public DateTimeOffset? ArchivedAt { get; init; }
-      }
-
-      public class RunPerspective : IPerspectiveFor<RunModel, Ran> {
-        public RunModel Apply(RunModel currentData, Ran eventData) => currentData;
-      }
-
-      [WhizbangDbContext]
-      public class RunDbContext : DbContext {
-        public RunDbContext(DbContextOptions<RunDbContext> options) : base(options) { }
-      }
-      """);
-
-    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
-
-    // If the attribute does not resolve in this compilation the filter cannot see it, and the test
-    // would be reporting the reference list rather than the behavior.
-    var unresolved = result.Compilation.GetDiagnostics()
-      .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
-      .Select(d => d.ToString())
-      .Where(m => m.Contains("NotMapped", StringComparison.Ordinal)
-        || m.Contains("DataAnnotations", StringComparison.Ordinal))
-      .ToList();
-    await Assert.That(unresolved).IsEmpty()
-      .Because("the attribute has to bind for the discovery to recognize it");
-
-    await Assert.That(output).Contains("p.StartedAt", StringComparison.Ordinal)
-      .Because("the mapped timestamp beside it is still configured, so this is about the one "
-        + "property rather than the model being skipped");
-    await Assert.That(output).DoesNotContain("p.ArchivedAt", StringComparison.Ordinal)
-      .Because("Entity Framework does not map a property marked [NotMapped], so naming it in the "
-        + "configuration is the same contradiction a computed property creates");
+      .Because("naming a computed property is what forced Entity Framework to map it and fail at "
+        + "startup; the mapping names nothing now");
+    await Assert.That(mapping).DoesNotContain("p.StartedAt", StringComparison.Ordinal);
   }
 }
