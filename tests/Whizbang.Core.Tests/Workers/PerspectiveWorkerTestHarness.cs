@@ -97,7 +97,7 @@ internal sealed class CapturingFailureChannel : IFailureChannel, IDisposable {
   }
 
   /// <summary>Completes when at least <paramref name="count"/> failures have been enqueued.
-  /// Signal-based (SemaphoreSlim released on enqueue) — no polling.</summary>
+  /// Signal-based (SemaphoreSlim released on enqueue), no polling.</summary>
   public async Task WaitForCountAsync(int count, TimeSpan timeout) {
     using var deadline = new CancellationTokenSource(timeout);
     while (Items.Count < count) {
