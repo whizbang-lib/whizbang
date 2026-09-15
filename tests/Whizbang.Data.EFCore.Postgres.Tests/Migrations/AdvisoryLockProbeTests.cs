@@ -174,14 +174,14 @@ public class AdvisoryLockProbeTests {
   [Timeout(60000)]
   public async Task KeysSharingALowHalfDoNotAliasAsync(CancellationToken cancellationToken) {
     const long LOW_HALF = 0x1234_5678L;
-    var held = (0x0000_0001L << 32) | LOW_HALF;
-    var asked = (0x0000_0002L << 32) | LOW_HALF;
-    await using var holder = await _holdSessionLockAsync(held);
+    const long HELD = (0x0000_0001L << 32) | LOW_HALF;
+    const long ASKED = (0x0000_0002L << 32) | LOW_HALF;
+    await using var holder = await _holdSessionLockAsync(HELD);
     await using var asker = await _askerAsync();
 
-    await Assert.That(await AdvisoryLockProbe.IsHeldElsewhereAsync(asker, held, cancellationToken))
+    await Assert.That(await AdvisoryLockProbe.IsHeldElsewhereAsync(asker, HELD, cancellationToken))
       .IsTrue();
-    await Assert.That(await AdvisoryLockProbe.IsHeldElsewhereAsync(asker, asked, cancellationToken))
+    await Assert.That(await AdvisoryLockProbe.IsHeldElsewhereAsync(asker, ASKED, cancellationToken))
       .IsFalse()
       .Because("a low half is not a key; treating it as one makes an instance wait on nothing");
   }
@@ -199,7 +199,7 @@ public class AdvisoryLockProbeTests {
   public async Task ATwoIntegerLockOnTheSameNumbersIsNotOursAsync(CancellationToken cancellationToken) {
     const int HIGH = 0x0000_4321;
     const int LOW = 0x0000_8765;
-    var asked = ((long)HIGH << 32) | (uint)LOW;
+    const long ASKED_PAIR = ((long)HIGH << 32) | (uint)LOW;
 
     await using var holder = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
     await holder.OpenAsync(cancellationToken);
@@ -210,7 +210,7 @@ public class AdvisoryLockProbeTests {
     }
     await using var asker = await _askerAsync();
 
-    await Assert.That(await AdvisoryLockProbe.IsHeldElsewhereAsync(asker, asked, cancellationToken))
+    await Assert.That(await AdvisoryLockProbe.IsHeldElsewhereAsync(asker, ASKED_PAIR, cancellationToken))
       .IsFalse();
   }
 

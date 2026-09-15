@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using Whizbang.Core.Observability;
 
@@ -36,9 +37,17 @@ namespace Whizbang.Data.Postgres;
 /// before this existed, rather than to a service that cannot start.
 /// </para>
 /// <para>
-/// It <b>never blocks</b>. The lock is taken with <c>pg_try_advisory_lock</c>, and an instance that
-/// does not get it applies nothing and simply asks the same question. The holder's work serves
+/// It <b>never blocks</b>. The lock is taken with <c>pg_try_advisory_xact_lock</c>, and an instance
+/// that does not get it applies nothing and simply asks the same question. The holder's work serves
 /// everyone, and a fleet starting together does not queue.
+/// </para>
+/// <para>
+/// That the lock is transaction-scoped rather than session-scoped is load bearing. A session lock
+/// does not survive a transaction-pooling front end, because the lock and the unlock land on
+/// different server connections; the unlock misses, and since both advisory scopes share one lock
+/// space, the leaked lock then blocks the DDL phase's own try-lock on the same key indefinitely.
+/// Nothing would ever migrate that schema again. A transaction-scoped lock cannot leak: the server
+/// releases it on commit and on rollback alike.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#which-instance-migrates</docs>
@@ -70,29 +79,53 @@ public static class SchemaBootstrapPhase {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(scripts);
 
+    // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
+    var log = logger ?? NullLogger.Instance;
+
     await using var connection = connectionFactory();
     await connection.OpenAsync(cancellationToken);
 
-    if (await _tryLockAsync(connection, lockId, cancellationToken).ConfigureAwait(false)) {
+    // One transaction, so the bootstrap is atomic and its lock cannot leak (see the type remarks).
+    // Every statement in it is idempotent DDL and none of it needs to run outside a transaction, so
+    // there is nothing to lose by making it all-or-nothing: a partly applied bootstrap would be
+    // reported as not ready by the probe below anyway.
+    //
+    // Scoped so the transaction is closed before that probe, which has to read committed state.
+    // Nothing rolls back explicitly: disposing an uncommitted transaction is a rollback, and on
+    // every path out of here that is exactly what should happen.
+    {
+      var applying = "<none>";
+      await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
+        .ConfigureAwait(false);
       try {
-        foreach (var (name, sql) in scripts) {
-          await _applyAsync(connection, name, sql, commandTimeoutSeconds, logger, cancellationToken)
-            .ConfigureAwait(false);
+        if (await _tryLockAsync(connection, lockId, cancellationToken).ConfigureAwait(false)) {
+          foreach (var (name, sql) in scripts) {
+            applying = name;
+            await using var command = new NpgsqlCommand(sql, connection) {
+              CommandTimeout = commandTimeoutSeconds,
+            };
+            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+          }
+          await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        } else {
+          // The expected outcome for every instance but one, and not a failure: the holder's
+          // committed work is what the probe below will find.
+          SchemaBootstrapLog.LockHeldElsewhere(log, lockId);
         }
-      } finally {
-        await _unlockAsync(connection, lockId).ConfigureAwait(false);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Reported and carried on from, never rethrown. A bootstrap that cannot be applied costs
+        // the election; the caller then migrates under the advisory lock, which is what every
+        // instance did before an election existed. Throwing here would turn a wrong closure or a
+        // permission problem into a service that cannot start at all.
+        SchemaBootstrapLog.ScriptFailed(log, ex, applying);
       }
-    } else if (logger is not null) {
-      // The expected outcome for every instance but one, and not a failure: the holder's committed
-      // work is what the probe below will find.
-      SchemaBootstrapLog.LockHeldElsewhere(logger, lockId);
     }
 
     var ready = await CanElectAsync(connection, schema, cancellationToken).ConfigureAwait(false);
-    if (!ready && logger is not null) {
+    if (!ready) {
       // Said out loud because the consequence is invisible otherwise: startup still works, but
       // every instance migrates under the lock instead of one being chosen.
-      SchemaBootstrapLog.ElectionUnavailable(logger, schema);
+      SchemaBootstrapLog.ElectionUnavailable(log, schema);
     }
 
     return ready;
@@ -181,41 +214,19 @@ public static class SchemaBootstrapPhase {
   private static string _quoteIdentifier(string identifier) =>
     "\"" + identifier.Replace("\"", "\"\"") + "\"";
 
-  private static async Task _applyAsync(
-      NpgsqlConnection connection,
-      string name,
-      string sql,
-      int commandTimeoutSeconds,
-      ILogger? logger,
-      CancellationToken cancellationToken) {
-    try {
-      await using var command = new NpgsqlCommand(sql, connection) {
-        CommandTimeout = commandTimeoutSeconds,
-      };
-      await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-    } catch (Exception ex) when (ex is not OperationCanceledException) {
-      // Reported and carried on with. A failure here costs the election, not the startup, and the
-      // probe that follows is what decides; stopping would convert a lost optimization into the
-      // outage this whole phase exists to avoid.
-      if (logger is not null) {
-        SchemaBootstrapLog.ScriptFailed(logger, ex, name);
-      }
-    }
-  }
-
+  /// <summary>
+  /// Takes the schema lock for the life of the caller's transaction, without waiting.
+  /// </summary>
+  /// <remarks>
+  /// Transaction-scoped rather than session-scoped, which is what makes this safe behind a
+  /// transaction-pooling front end and impossible to leak. The same key the DDL phase uses, so an
+  /// instance bootstrapping and an instance creating tables exclude each other.
+  /// </remarks>
   private static async Task<bool> _tryLockAsync(
       NpgsqlConnection connection, long lockId, CancellationToken cancellationToken) {
-    await using var command = new NpgsqlCommand("SELECT pg_try_advisory_lock($1)", connection);
+    await using var command = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock($1)", connection);
     command.Parameters.AddWithValue(lockId);
     return await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
-  }
-
-  private static async Task _unlockAsync(NpgsqlConnection connection, long lockId) {
-    // Deliberately not cancellable: a canceled unlock would hold the lock for the life of the
-    // connection and stall every other instance's bootstrap.
-    await using var command = new NpgsqlCommand("SELECT pg_advisory_unlock($1)", connection);
-    command.Parameters.AddWithValue(lockId);
-    await command.ExecuteScalarAsync(CancellationToken.None).ConfigureAwait(false);
   }
 }
 

@@ -53,15 +53,15 @@ public class MigrationBootstrapRegionsTests {
   /// <summary>Every shipped migration, as the generator reads them.</summary>
   private static IEnumerable<(string Name, string Sql)> _migrations() {
     var assembly = System.Reflection.Assembly.Load("Whizbang.Data.EFCore.Postgres.Generators");
-    var prefix = "Whizbang.Data.EFCore.Postgres.Generators.Templates.Migrations.";
+    const string PREFIX = "Whizbang.Data.EFCore.Postgres.Generators.Templates.Migrations.";
 
     foreach (var resource in assembly.GetManifestResourceNames()
-        .Where(n => n.StartsWith(prefix, StringComparison.Ordinal)
+        .Where(n => n.StartsWith(PREFIX, StringComparison.Ordinal)
                  && n.EndsWith(".sql", StringComparison.Ordinal))
         .OrderBy(n => n, StringComparer.Ordinal)) {
       using var stream = assembly.GetManifestResourceStream(resource)!;
       using var reader = new StreamReader(stream);
-      yield return (resource[prefix.Length..], reader.ReadToEnd());
+      yield return (resource[PREFIX.Length..], reader.ReadToEnd());
     }
   }
 
@@ -85,7 +85,7 @@ public class MigrationBootstrapRegionsTests {
       """);
 
     await Assert.That(extracted).IsNotNull();
-    await Assert.That(extracted!).Contains("inside_it", StringComparison.Ordinal);
+    await Assert.That(extracted).Contains("inside_it", StringComparison.Ordinal);
     await Assert.That(extracted).DoesNotContain("before_it", StringComparison.Ordinal);
     await Assert.That(extracted).DoesNotContain("after_it", StringComparison.Ordinal);
   }

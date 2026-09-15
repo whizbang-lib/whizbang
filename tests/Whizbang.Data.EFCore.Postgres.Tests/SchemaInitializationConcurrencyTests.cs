@@ -388,7 +388,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     cmd.CommandText = @"
       UPDATE wh_schema_migrations SET content_hash = @hash, updated_at = @at WHERE file_name = @name";
     cmd.Parameters.AddWithValue("name", file);
-    cmd.Parameters.AddWithValue("hash", hash);
+    cmd.Parameters.AddWithValue(nameof(hash), hash);
     cmd.Parameters.AddWithValue("at", updatedAt);
     var changed = await cmd.ExecuteNonQueryAsync(ct);
     await Assert.That(changed).IsEqualTo(1).Because("the arrangement must actually bite");
@@ -442,13 +442,13 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Deferral_WhenTheMigratorCommits_AppliesNothingItselfAsync(CancellationToken cancellationToken) {
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
     var (holder, _) = await _holdSchemaLockAsync(cancellationToken);
     await using var holding = holder;
 
     // Force the slow path: the fast path skips the lock entirely while every hash matches, and a
     // lock never reached cannot be deferred to.
-    await _setLedgerRowAsync(row.File, "forced-drift", DateTime.UtcNow, cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
 
     var watch = new _DeferralWatch();
     await using var context = CreateDbContext();
@@ -458,7 +458,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     // The migrator finishes: the schema is current again, and the commit that made it so released
     // the lock. Both become true together, exactly as a real commit makes them.
-    await _setLedgerRowAsync(row.File, row.Hash, UNTOUCHED, cancellationToken);
+    await _setLedgerRowAsync(rowFile, rowHash, UNTOUCHED, cancellationToken);
     await using (var release = holding.CreateCommand()) {
       release.CommandText = $"SELECT pg_advisory_unlock({_schemaKey()})";
       await release.ExecuteNonQueryAsync(cancellationToken);
@@ -466,12 +466,12 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await init;
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.UpdatedAt).IsEqualTo(UNTOUCHED)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterUpdatedAt).IsEqualTo(UNTOUCHED)
       .Because("the migrator's work had landed, so the deferring instance had nothing to apply");
-    await Assert.That(after.Hash).IsEqualTo(row.Hash);
+    await Assert.That(afterHash).IsEqualTo(rowHash);
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   /// <summary>
@@ -485,11 +485,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Deferral_WhenTheMigratorIsKilled_TakesTheWorkOverAsync(CancellationToken cancellationToken) {
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
     var (holder, pid) = await _holdSchemaLockAsync(cancellationToken);
     await using var holding = holder;
 
-    await _setLedgerRowAsync(row.File, "forced-drift", UNTOUCHED, cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
     var watch = new _DeferralWatch();
     await using var context = CreateDbContext();
@@ -508,13 +508,13 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await init;
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.Hash).IsEqualTo(row.Hash)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
       .Because("the survivor took over and finished the work the dead instance left outstanding");
-    await Assert.That(after.UpdatedAt).IsNotEqualTo(UNTOUCHED)
+    await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED)
       .Because("taking over means re-applying, which stamps the row");
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   /// <summary>
@@ -530,11 +530,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task Deferral_WhenTheMigratorReleasesWithWorkOutstanding_TakesTheWorkOverAsync(
       CancellationToken cancellationToken) {
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
     var (holder, _) = await _holdSchemaLockAsync(cancellationToken);
     await using var holding = holder;
 
-    await _setLedgerRowAsync(row.File, "forced-drift", UNTOUCHED, cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
     var watch = new _DeferralWatch();
     await using var context = CreateDbContext();
@@ -550,12 +550,12 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await init;
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.Hash).IsEqualTo(row.Hash);
-    await Assert.That(after.UpdatedAt).IsNotEqualTo(UNTOUCHED)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash);
+    await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED)
       .Because("a released lock over an unfinished schema is a failed migrator, not a finished one");
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   /// <summary>
@@ -570,8 +570,8 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(180000)]
   public async Task Deferral_ThreeInstancesOnADriftedSchemaConvergeAsync(CancellationToken cancellationToken) {
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
-    await _setLedgerRowAsync(row.File, "forced-drift", UNTOUCHED, cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
     await using var first = CreateDbContext();
     await using var second = CreateDbContext();
@@ -583,11 +583,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       third.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken)))
       .ThrowsNothing();
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.Hash).IsEqualTo(row.Hash)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
       .Because("whichever instance won, the drift must be gone once all three have returned");
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -679,8 +679,8 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task Staged_TheMigratorRegistersAndThenReleasesTheDutyAsync(CancellationToken cancellationToken) {
     var pod = new _Pod();
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
-    await _setLedgerRowAsync(row.File, "forced-drift", DateTime.UtcNow, cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
 
     await using var context = CreateDbContext();
     await context.EnsureWhizbangDatabaseInitializedAsync(
@@ -692,11 +692,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
       .Because("a duty still recorded after migrating would read as a holder that never let go");
     await Assert.That(await _dutyLockHoldersAsync(cancellationToken)).IsEqualTo(0L);
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.Hash).IsEqualTo(row.Hash)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
       .Because("the elected instance did the work, not merely the electing");
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   /// <summary>
@@ -712,11 +712,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Staged_ANonHolderWaitsForTheDutyHolderAsync(CancellationToken cancellationToken) {
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
     var (holder, _) = await _holdMigratorDutyAsync(cancellationToken);
     await using var holding = holder;
 
-    await _setLedgerRowAsync(row.File, "forced-drift", DateTime.UtcNow, cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
 
     var watch = new _DeferralWatch();
     await using var context = CreateDbContext();
@@ -726,7 +726,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await watch.Deferring;
 
     // The holder finishes: the schema is current again and the duty is released.
-    await _setLedgerRowAsync(row.File, row.Hash, UNTOUCHED, cancellationToken);
+    await _setLedgerRowAsync(rowFile, rowHash, UNTOUCHED, cancellationToken);
     await using (var release = holding.CreateCommand()) {
       release.CommandText = $"SELECT pg_advisory_unlock({_migratorDutyKey()})";
       await release.ExecuteNonQueryAsync(cancellationToken);
@@ -734,11 +734,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await init;
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.UpdatedAt).IsEqualTo(UNTOUCHED)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterUpdatedAt).IsEqualTo(UNTOUCHED)
       .Because("it waited on the duty holder and then found nothing left to apply");
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   /// <summary>
@@ -752,11 +752,11 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Test]
   [Timeout(120000)]
   public async Task Staged_AKilledDutyHolderIsTakenOverAsync(CancellationToken cancellationToken) {
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
     var (holder, pid) = await _holdMigratorDutyAsync(cancellationToken);
     await using var holding = holder;
 
-    await _setLedgerRowAsync(row.File, "forced-drift", UNTOUCHED, cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
     var watch = new _DeferralWatch();
     await using var context = CreateDbContext();
@@ -775,12 +775,12 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await init;
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.Hash).IsEqualTo(row.Hash)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
       .Because("the survivor took over the work the dead holder left outstanding");
-    await Assert.That(after.UpdatedAt).IsNotEqualTo(UNTOUCHED);
+    await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED);
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   /// <summary>
@@ -795,8 +795,8 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Timeout(120000)]
   public async Task Staged_WithNoElectorTheLockIsStillTheGuardAsync(CancellationToken cancellationToken) {
     var pod = new _Pod();
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
-    await _setLedgerRowAsync(row.File, "forced-drift", UNTOUCHED, cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
     var services = new ServiceCollection();
     services.AddSingleton<IServiceInstanceProvider>(pod);
@@ -805,12 +805,12 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     await context.EnsureWhizbangDatabaseInitializedAsync(
       null, null, services.BuildServiceProvider(), cancellationToken);
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.Hash).IsEqualTo(row.Hash);
-    await Assert.That(after.UpdatedAt).IsNotEqualTo(UNTOUCHED)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash);
+    await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED)
       .Because("it migrated under the lock alone, which is what it did before an election existed");
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   /// <summary>
@@ -826,8 +826,8 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
   [Timeout(180000)]
   public async Task Staged_ThreeInstancesConvergeAndNoneKeepsTheDutyAsync(CancellationToken cancellationToken) {
     var pods = new[] { new _Pod(), new _Pod(), new _Pod() };
-    var row = await _aFrameworkLedgerRowAsync(cancellationToken);
-    await _setLedgerRowAsync(row.File, "forced-drift", UNTOUCHED, cancellationToken);
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
 
     await using var first = CreateDbContext();
     await using var second = CreateDbContext();
@@ -839,8 +839,8 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
         null, null, _stagedScope(pods[i]), cancellationToken))))
       .ThrowsNothing();
 
-    var after = await _readLedgerRowAsync(row.File, cancellationToken);
-    await Assert.That(after.Hash).IsEqualTo(row.Hash)
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
       .Because("whichever instance was elected, the drift must be gone once all three have returned");
 
     foreach (var pod in pods) {
@@ -850,7 +850,7 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
 
     await Assert.That(await _dutyLockHoldersAsync(cancellationToken)).IsEqualTo(0L);
 
-    await _restoreLedgerAsync(row.File, row.Hash, cancellationToken);
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
   }
 
   private async Task<long> _dutyLockHoldersAsync(CancellationToken ct) {

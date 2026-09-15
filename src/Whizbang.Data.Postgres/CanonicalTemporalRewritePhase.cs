@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 
 namespace Whizbang.Data.Postgres;
@@ -60,6 +61,9 @@ public static class CanonicalTemporalRewritePhase {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(rewrites);
 
+    // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
+    var log = logger ?? NullLogger.Instance;
+
     var pending = new List<(string Name, string Sql)>(rewrites);
     if (pending.Count == 0) {
       // Nothing to do, and nothing worth opening a connection or taking a lock for.
@@ -70,9 +74,7 @@ public static class CanonicalTemporalRewritePhase {
     await connection.OpenAsync(cancellationToken);
 
     if (!await _tryLockAsync(connection, lockId, cancellationToken)) {
-      if (logger is not null) {
-        CanonicalTemporalRewriteLog.LockHeldElsewhere(logger, lockId);
-      }
+      CanonicalTemporalRewriteLog.LockHeldElsewhere(log, lockId);
       return false;
     }
 
@@ -85,9 +87,7 @@ public static class CanonicalTemporalRewritePhase {
           // Reported rather than fatal. A rewrite that did not run leaves rows in the older format,
           // and the index built over them fails with its own reason, which is a better place to read
           // the problem than a startup that stopped before saying what it was doing.
-          if (logger is not null) {
-            CanonicalTemporalRewriteLog.RewriteFailed(logger, ex, name);
-          }
+          CanonicalTemporalRewriteLog.RewriteFailed(log, ex, name);
         }
       }
     } finally {

@@ -2280,15 +2280,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         .Where(name => name.StartsWith(resourcePrefix, StringComparison.Ordinal)
                     && name.EndsWith(".sql", StringComparison.Ordinal))
         .OrderBy(name => name, StringComparer.Ordinal)) {
-      using var stream = assembly.GetManifestResourceStream(resourceName);
-      if (stream == null) {
-        continue;
-      }
-
+      // Non-null by contract: the name came from GetManifestResourceNames on this same assembly,
+      // so a guard here would be a branch no input can reach.
+      using var stream = assembly.GetManifestResourceStream(resourceName)!;
       using var reader = new System.IO.StreamReader(stream);
       var bootstrap = Whizbang.Generators.Shared.Models.MigrationBootstrapRegions.Extract(
         reader.ReadToEnd());
       if (bootstrap is null) {
+        // The ordinary case: all but a handful of migrations carry no bootstrap region.
         continue;
       }
 

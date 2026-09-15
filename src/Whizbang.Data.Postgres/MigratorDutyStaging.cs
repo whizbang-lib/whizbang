@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Startup;
 
 namespace Whizbang.Data.Postgres;
@@ -75,12 +76,13 @@ public static class MigratorDutyStaging {
     ArgumentNullException.ThrowIfNull(registerAsync);
     cancellationToken.ThrowIfCancellationRequested();
 
+    // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
+    var log = logger ?? NullLogger.Instance;
+
     if (elector is null) {
       // A deployment that never wired the notification services. The lock is the only guard, as
       // it always was.
-      if (logger is not null) {
-        MigratorDutyStagingLog.NoElector(logger, schema);
-      }
+      MigratorDutyStagingLog.NoElector(log, schema);
       return new SchemaStaging(SchemaStage.Unstaged, null, "no elector is registered");
     }
 
@@ -89,9 +91,7 @@ public static class MigratorDutyStaging {
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Electing now would be refused anyway, and the refusal would say "unregistered" rather than
       // what actually went wrong. Report the real reason and fall back.
-      if (logger is not null) {
-        MigratorDutyStagingLog.RegistrationFailed(logger, ex, schema);
-      }
+      MigratorDutyStagingLog.RegistrationFailed(log, ex, schema);
       return new SchemaStaging(SchemaStage.Unstaged, null, "this instance could not join the registry");
     }
 
@@ -102,25 +102,19 @@ public static class MigratorDutyStaging {
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // A database with no capability function yet answers this way, and so does one where the
       // elector has no connection of its own. Either is a reason to stop electing, not to stop.
-      if (logger is not null) {
-        MigratorDutyStagingLog.ElectorFailed(logger, ex, schema);
-      }
+      MigratorDutyStagingLog.ElectorFailed(log, ex, schema);
       return new SchemaStaging(SchemaStage.Unstaged, null, "the elector could not be asked");
     }
 
     if (attempt.Grant is { } grant) {
-      if (logger is not null) {
-        MigratorDutyStagingLog.Elected(logger, schema);
-      }
+      MigratorDutyStagingLog.Elected(log, schema);
       return new SchemaStaging(SchemaStage.Migrator, grant, "this instance holds the migrator duty");
     }
 
     var detail = attempt.Detail ?? "no detail";
 
     if (attempt.Refusal == DutyRefusal.Contended) {
-      if (logger is not null) {
-        MigratorDutyStagingLog.Deferring(logger, schema, detail);
-      }
+      MigratorDutyStagingLog.Deferring(log, schema, detail);
       return new SchemaStaging(SchemaStage.Waiter, null, detail);
     }
 
@@ -128,15 +122,11 @@ public static class MigratorDutyStaging {
       // Loud, because it means this instance is tombstoned or unknown and an operator should see
       // that. NOT fatal: refusing to migrate leaves the schema behind for everyone, and the lock
       // still stops two instances doing it at once.
-      if (logger is not null) {
-        MigratorDutyStagingLog.Refused(logger, schema, detail);
-      }
+      MigratorDutyStagingLog.Refused(log, schema, detail);
       return new SchemaStaging(SchemaStage.Unstaged, null, detail);
     }
 
-    if (logger is not null) {
-      MigratorDutyStagingLog.Unavailable(logger, schema, detail);
-    }
+    MigratorDutyStagingLog.Unavailable(log, schema, detail);
     return new SchemaStaging(SchemaStage.Unstaged, null, detail);
   }
 }

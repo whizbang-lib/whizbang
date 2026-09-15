@@ -207,6 +207,31 @@ the instance and elects. Three properties, each of which is a test:
    advisory lock exactly as before. Never migrating needs a human to clear; duplicated work does
    not.
 
+### The bootstrap lock must be transaction scoped, not session scoped
+
+This one is worth stating on its own, because the session-scoped version looks fine and is a
+permanent hang waiting to happen.
+
+The bootstrap needs the schema-init key, so an instance bootstrapping and an instance creating
+tables exclude each other. Taken with `pg_try_advisory_lock` (session scope) it does not survive a
+transaction-pooling front end: each standalone statement is its own transaction, so the lock and the
+unlock land on **different server connections**, the unlock misses, and the lock sits on a backend
+until that backend resets.
+
+Both advisory scopes share one lock space. So the leaked session lock then blocks the DDL phase's
+`pg_try_advisory_xact_lock` on the same key, on every instance, for ever. Nothing migrates the
+schema again, and every instance reports only that it is waiting.
+
+`pg_try_advisory_xact_lock` inside one transaction has none of that: a pooler pins the backend for
+the transaction's duration, and the server releases the lock on commit **and** on rollback, so there
+is no path that leaks it. It also makes the bootstrap atomic, which costs nothing here because every
+statement in it is idempotent DDL, none of it needs to run outside a transaction, and a partly
+applied bootstrap would be reported as not-ready anyway.
+
+The consumer that would have hit this is one with no `-init` connection configured, where
+`SchemaBoundaryConnections.Resolve` falls through to the context's own data source and that points
+at the pooler. `AFailedBootstrapLeavesTheLockFreeForTheDdlPhaseAsync` is the guard.
+
 ### The closure is not what the migration headers say
 
 Three of the four headers are wrong or incomplete, so derive it from the SQL and never the comments:
@@ -255,6 +280,8 @@ initializer derives it from the DbContext schema, and nothing but a test makes t
 | `SchemaBootstrapPhaseTests.ATombstonedInstanceIsStillRefusedAsync` | the eviction fence surviving being reached this early |
 | `SchemaBootstrapPhaseTests.TheBootstrapRecordsNothingInTheLedgerAsync` | the bootstrap claiming to have migrated what it only created |
 | `SchemaBootstrapPhaseTests.AFailedScriptReportsNotReadyRatherThanThrowingAsync` | a bootstrap failure becoming a startup failure |
+| `SchemaBootstrapPhaseTests.AFailedBootstrapLeavesTheLockFreeForTheDdlPhaseAsync` | a leaked bootstrap lock blocking every migration on the schema for ever |
+| `SchemaBootstrapPhaseTests.AFailedScriptRollsBackTheWholeBootstrapAsync` | a half-applied bootstrap left behind to confuse the next instance |
 | `MigratorDutyStagingTests.ARefusedInstanceMigratesUnderTheLockRatherThanThrowingAsync` | the fleet-wide outage that shipped once |
 | `MigrationBootstrapRegionsTests.TheEvictionMigrationContributesItsTableAndNotItsFunctionsAsync` | bootstrap growing from a region into a whole file |
 | `MigrationBootstrapRegionsTests.EveryShippedMigrationHasBalancedMarkersAsync` | a mistyped marker silently resizing the bootstrap |

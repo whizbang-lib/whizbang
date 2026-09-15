@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Whizbang.Data.Postgres;
 
@@ -114,17 +115,18 @@ public static class SchemaMigrationDeferral {
     ArgumentNullException.ThrowIfNull(isLockHeldAsync);
     ArgumentNullException.ThrowIfNull(timeProvider);
 
+    // Non-null so the log calls below need no guard. NullLogger discards, at no cost.
+    var log = logger ?? NullLogger.Instance;
+
     var delay = PollFloor;
     var polls = 0;
 
     while (true) {
       cancellationToken.ThrowIfCancellationRequested();
 
-      if (await _isCurrentAsync(isSchemaCleanAsync, logger, schema, cancellationToken)
+      if (await _isCurrentAsync(isSchemaCleanAsync, log, schema, cancellationToken)
           .ConfigureAwait(false)) {
-        if (logger is not null) {
-          SchemaMigrationDeferralLog.MigratorFinished(logger, schema, polls);
-        }
+        SchemaMigrationDeferralLog.MigratorFinished(log, schema, polls);
         return SchemaDeferralOutcome.AnotherInstanceMigrated;
       }
 
@@ -135,24 +137,20 @@ public static class SchemaMigrationDeferral {
         // Whether anyone is migrating can no longer be observed, so waiting would be a guess with
         // the whole fleet's startup riding on it. Contending for the lock is the guess that cannot
         // strand anything: it is what every instance did before this existed.
-        if (logger is not null) {
-          SchemaMigrationDeferralLog.LockProbeFailed(logger, ex, schema);
-        }
+        SchemaMigrationDeferralLog.LockProbeFailed(log, ex, schema);
         return SchemaDeferralOutcome.MigratingInstanceGone;
       }
 
       if (!held) {
         // The lock is gone and the schema is still behind. Whoever held it is not coming back.
-        if (logger is not null) {
-          SchemaMigrationDeferralLog.MigratorGone(logger, schema, polls);
-        }
+        SchemaMigrationDeferralLog.MigratorGone(log, schema, polls);
         return SchemaDeferralOutcome.MigratingInstanceGone;
       }
 
-      if (polls == 0 && logger is not null) {
+      if (polls == 0) {
         // Once, not once per poll: a fleet waiting out a long migration would otherwise fill its
         // logs with the fact that it is still waiting.
-        SchemaMigrationDeferralLog.DeferringToMigrator(logger, schema);
+        SchemaMigrationDeferralLog.DeferringToMigrator(log, schema);
       }
 
       polls++;
@@ -171,15 +169,13 @@ public static class SchemaMigrationDeferral {
   /// </remarks>
   private static async Task<bool> _isCurrentAsync(
       Func<CancellationToken, Task<bool>> isSchemaCleanAsync,
-      ILogger? logger,
+      ILogger log,
       string schema,
       CancellationToken cancellationToken) {
     try {
       return await isSchemaCleanAsync(cancellationToken).ConfigureAwait(false);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      if (logger is not null) {
-        SchemaMigrationDeferralLog.CurrencyProbeFailed(logger, ex, schema);
-      }
+      SchemaMigrationDeferralLog.CurrencyProbeFailed(log, ex, schema);
       return false;
     }
   }

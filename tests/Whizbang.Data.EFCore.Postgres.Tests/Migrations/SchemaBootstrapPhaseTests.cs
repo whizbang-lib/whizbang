@@ -377,23 +377,72 @@ public class SchemaBootstrapPhaseTests {
       .Because("a lock held after a failure would stall every other instance's bootstrap too");
   }
 
-  /// <summary>One failed script does not stop the rest.</summary>
+  /// <summary>
+  /// A failed script rolls the whole bootstrap back, leaving nothing half created.
+  /// </summary>
   /// <remarks>
-  /// The scripts create different objects, so a permission failure on one must not deny the others.
-  /// If enough of them land, the election still happens.
+  /// <para>
+  /// The bootstrap runs as one transaction, so this is all-or-nothing by construction, and that is
+  /// the behavior worth having. A half-applied bootstrap cannot elect anything anyway: the probe
+  /// asks for the full set, so "some of it landed" and "none of it landed" lead to the same
+  /// fallback. Leaving the partial objects behind would only make the next instance's failure
+  /// harder to read.
+  /// </para>
+  /// <para>
+  /// Nothing is lost by it either. The ordinary migration pass applies these same files under its
+  /// own lock and records them, so the objects still arrive; only the election is given up.
+  /// </para>
   /// </remarks>
   [Test]
   [Timeout(120000)]
-  public async Task OneFailedScriptDoesNotStopTheOthersAsync(CancellationToken cancellationToken) {
-    var scripts = new List<(string Name, string Sql)> {
+  public async Task AFailedScriptRollsBackTheWholeBootstrapAsync(CancellationToken cancellationToken) {
+    var scripts = new List<(string Name, string Sql)>(_bootstrapScripts()) {
       ("broken", "CREATE TABLE nonsense (x int) INHERITS (does_not_exist);"),
     };
-    scripts.AddRange(_bootstrapScripts());
 
+    var logger = new _RecordingLogger();
     var ready = await SchemaBootstrapPhase.ApplyAsync(
-      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, new _RecordingLogger(), cancellationToken);
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, logger, cancellationToken);
 
-    await Assert.That(ready).IsTrue();
+    await Assert.That(ready).IsFalse();
+    await Assert.That(await _scalarAsync<string>(
+      "SELECT to_regclass('public.wh_service_instances')::text")).IsNull()
+      .Because("the good scripts ran before the broken one and must have gone back with it");
+    await Assert.That(logger.Entries.Any(e => e.Level == LogLevel.Warning)).IsTrue()
+      .Because("giving up the election silently would leave a fleet duplicating work with no clue why");
+  }
+
+  /// <summary>
+  /// The lock is transaction scoped, so a failure cannot leave it held.
+  /// </summary>
+  /// <remarks>
+  /// The reason it is not a session lock. A session lock does not survive a transaction-pooling
+  /// front end, because the lock and the unlock land on different server connections; the unlock
+  /// misses, and since both advisory scopes share one lock space the leaked lock would then block
+  /// the DDL phase's own try-lock on the same key for ever. Nothing would migrate the schema again.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AFailedBootstrapLeavesTheLockFreeForTheDdlPhaseAsync(CancellationToken cancellationToken) {
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect,
+      LOCK_ID,
+      [("broken", "CREATE TABLE nonsense (x int) INHERITS (does_not_exist);")],
+      SCHEMA,
+      TIMEOUT_SECONDS,
+      new _RecordingLogger(),
+      cancellationToken);
+
+    await Assert.That(await _lockHoldersAsync()).IsEqualTo(0L);
+
+    // The DDL phase takes the same key, transaction scoped. It has to be able to.
+    await using var ddl = _connect();
+    await ddl.OpenAsync(cancellationToken);
+    await using var transaction = await ddl.BeginTransactionAsync(cancellationToken);
+    await using var take = new NpgsqlCommand($"SELECT pg_try_advisory_xact_lock({LOCK_ID})", ddl);
+    await Assert.That(await take.ExecuteScalarAsync(cancellationToken) is true).IsTrue()
+      .Because("a lock the bootstrap leaked would stall every migration on this schema for ever");
+    await transaction.CommitAsync(cancellationToken);
   }
 
   /// <summary>The lock is given back.</summary>
