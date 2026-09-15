@@ -252,6 +252,12 @@ public static class JsonIndexDiscovery {
   }
 
   /// <summary>One declared index, with the capabilities its stored form can actually answer.</summary>
+  /// <remarks>
+  /// A date once cast through <c>integer</c> over a day count, and now casts through <c>bigint</c>
+  /// over microseconds. An index whose expression changed under the same name is never rebuilt, so
+  /// the date's index is the one that carries a superseded cast: its old index is dropped and the
+  /// new one takes a new name.
+  /// </remarks>
   private static JsonIndexInfo _infoFor(
       IPropertySymbol property, JsonIndexCast cast, int kind, bool caseInsensitive, bool text) =>
     new(
@@ -260,7 +266,10 @@ public static class JsonIndexDiscovery {
         Cast: cast,
         Ordered: IncludesOrdered(kind),
         Substring: IncludesSubstring(kind) && text,
-        CaseInsensitive: caseInsensitive);
+        CaseInsensitive: caseInsensitive,
+        Superseded: CanonicalTemporalDiscovery.KindOf(property.Type) == CanonicalTemporalKind.Day
+          ? JsonIndexCast.Int4
+          : JsonIndexCast.None);
 
   /// <summary>
   /// Whether a combined kind includes substring matching.

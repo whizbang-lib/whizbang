@@ -2455,6 +2455,34 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Records a table this release creates in the microsecond stored form, settled, before it is
+  /// created.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Only at that moment can "fresh" be told from "upgraded". A table an older release created has
+  /// no ledger row and rows in the mixed-unit form; recording it as converted here would make the
+  /// rewrite skip it forever, so it is left to the rewrite, which records it after converting it.
+  /// A database without the ledger yet is left alone.
+  /// </para>
+  /// <para>
+  /// Inside a DO block, because a statement naming a table is planned when its branch first runs:
+  /// named directly, an INSERT into a ledger that is not there would fail before any guard ran.
+  /// </para>
+  /// </remarks>
+  private static void _appendFormLedgerRow(StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    sb.AppendLine("DO $wb$");
+    sb.AppendLine("BEGIN");
+    sb.AppendLine($"  IF to_regclass('{quotedSchema}.{perspective.TableName}') IS NULL AND to_regclass('{quotedSchema}.wh_perspective_forms') IS NOT NULL THEN");
+    sb.AppendLine($"    INSERT INTO {quotedSchema}.wh_perspective_forms (table_name, temporal_form, applied_at, settled_at)");
+    sb.AppendLine($"    VALUES ('{perspective.TableName}', 2, now(), now())");
+    sb.AppendLine("    ON CONFLICT (table_name) DO NOTHING;");
+    sb.AppendLine("  END IF;");
+    sb.AppendLine("END");
+    sb.AppendLine("$wb$;");
+  }
+
+  /// <summary>
   /// Appends CREATE TABLE SQL for a single perspective table.
   /// </summary>
   private static void _appendCreateTableSql(
@@ -2464,6 +2492,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string quotedSchema) {
     // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
     sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {TypeNameUtilities.GetSimpleName(perspective.ModelTypeName)})");
+    _appendFormLedgerRow(sb, perspective, quotedSchema);
     sb.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
     sb.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
     sb.AppendLine("  data JSONB NOT NULL,");
@@ -2675,6 +2704,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   private static void _generatePerspectiveTableSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
+    // See _appendFormLedgerRow: a table this release creates is recorded as converted at creation.
+    _appendFormLedgerRow(perspSql, perspective, quotedSchema);
     perspSql.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
     perspSql.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
     perspSql.AppendLine("  data JSONB NOT NULL,");

@@ -225,6 +225,62 @@ public class JsonIndexGenerationTests {
   }
 
   /// <summary>
+  /// A date's index takes a new name for its new cast, and the index built over the old cast is
+  /// dropped, because an index whose expression changed under the same name is never rebuilt.
+  /// </summary>
+  /// <remarks>
+  /// <c>CREATE INDEX IF NOT EXISTS</c> matches by name alone. Left under its old name, a date's index
+  /// would keep casting a microsecond count through <c>integer</c>, which overflows on the first
+  /// insert. The drop is idempotent and cheap once the old index is gone; the create is a no-op once
+  /// the new one exists. Only a date carries this, because only a date's cast changed.
+  /// </remarks>
+  [Test]
+  public async Task ADateIndexIsRenamedForItsNewCastAndTheOldOneDroppedAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Scheduled : IEvent;
+
+      [IndexAllFields]
+      public record ScheduleModel {
+        [StreamId]
+        public Guid ScheduleId { get; init; }
+
+        public DateOnly Day { get; init; }
+        public DateTime OccurredAt { get; init; }
+      }
+
+      public class SchedulePerspective : IPerspectiveFor<ScheduleModel, Scheduled> {
+        public ScheduleModel Apply(ScheduleModel currentData, Scheduled eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ScheduleDbContext : DbContext {
+        public ScheduleDbContext(DbContextOptions<ScheduleDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    // The schema SQL is embedded in a verbatim C# string, so a double quote in it reads doubled here,
+    // and the schema is the one derived from the namespace.
+    await Assert.That(output).Contains("DROP INDEX IF EXISTS \"\"testapp\"\".idx_schedule_day_json;", StringComparison.Ordinal)
+      .Because("the index over the day count casts through integer, which a microsecond count overflows");
+    await Assert.That(output).Contains("CREATE INDEX IF NOT EXISTS idx_schedule_day_bigint_json", StringComparison.Ordinal)
+      .Because("a new expression needs a new name, or IF NOT EXISTS keeps the old index");
+    await Assert.That(output).DoesNotContain("CREATE INDEX IF NOT EXISTS idx_schedule_day_json ", StringComparison.Ordinal);
+    await Assert.That(output).Contains("CREATE INDEX IF NOT EXISTS idx_schedule_occurredat_json", StringComparison.Ordinal)
+      .Because("an instant's cast did not change, so its index keeps its name and is not rebuilt");
+    await Assert.That(output).DoesNotContain("DROP INDEX IF EXISTS \"\"testapp\"\".idx_schedule_occurredat_json", StringComparison.Ordinal);
+  }
+
+  /// <summary>
   /// A model whose document has to be stored opaquely gets no index over that document, because no
   /// query against it would ever reach one.
   /// </summary>

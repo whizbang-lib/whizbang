@@ -80,6 +80,11 @@ public enum JsonIndexCast {
 /// Whether the comparison folds case, which decides the expression the index is built over rather
 /// than which index is built. Both capabilities can be built over either expression.
 /// </param>
+/// <param name="Superseded">
+/// The cast an earlier release built this field's index over, or none. An index whose expression
+/// changed under the same name is never rebuilt, so a field whose cast changed takes a new name and
+/// the index over the old cast is dropped.
+/// </param>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/JsonIndexGenerationTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveIndexSetupTests.cs</tests>
@@ -89,7 +94,8 @@ public sealed record JsonIndexInfo(
     JsonIndexCast Cast,
     bool Ordered,
     bool Substring,
-    bool CaseInsensitive
+    bool CaseInsensitive,
+    JsonIndexCast Superseded = JsonIndexCast.None
 );
 
 /// <summary>
@@ -187,8 +193,17 @@ public static class JsonIndexSql {
     var fold = index.CaseInsensitive ? "_ci" : string.Empty;
 
     if (index.Ordered) {
-      yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}{fold}_json "
-          + $"ON {qualifiedTable} ({element});";
+      var name = $"idx_{indexPrefix}_{suffix}{fold}_json";
+
+      if (index.Superseded != JsonIndexCast.None) {
+        // An index whose expression changed under the same name is never rebuilt: IF NOT EXISTS
+        // matches by name alone. So the index over the old cast is dropped by its old name, cheaply
+        // once it is gone, and the new one carries its store type in its name.
+        yield return $"DROP INDEX IF EXISTS {_schemaOf(qualifiedTable)}{name};";
+        name = $"idx_{indexPrefix}_{suffix}{fold}_{StoreType(index.Cast)}_json";
+      }
+
+      yield return $"CREATE INDEX IF NOT EXISTS {name} ON {qualifiedTable} ({element});";
     }
 
     if (index.Substring) {
@@ -198,5 +213,17 @@ public static class JsonIndexSql {
       yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}{fold}_trgm "
           + $"ON {qualifiedTable} USING gin ({element} gin_trgm_ops);";
     }
+  }
+
+  /// <summary>
+  /// The schema part of a qualified table, dot included, or nothing for an unqualified one.
+  /// </summary>
+  /// <remarks>
+  /// An index is created in its table's schema without being told, but dropping one by name has to
+  /// say which schema, or the drop looks in the search path and finds nothing.
+  /// </remarks>
+  private static string _schemaOf(string qualifiedTable) {
+    var dot = qualifiedTable.IndexOf('.');
+    return dot > 0 ? qualifiedTable.Substring(0, dot + 1) : string.Empty;
   }
 }

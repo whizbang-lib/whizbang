@@ -168,6 +168,28 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // still does the work once.
     if (segmentConnectionFactory is not null && staging.Stage != Whizbang.Data.Postgres.SchemaStage.Waiter) {
       try {
+        // A rewrite that changes a stored unit is not safe under a mixed fleet: an older instance
+        // keeps writing the old unit into a table the ledger already says is converted, and nothing
+        // can tell those rows apart afterward. The migrator cannot refuse to run, because under a
+        // rolling update the older instances stay until the newer ones are ready. It can say so.
+        if (serviceProvider?.GetService(typeof(Whizbang.Core.Observability.ILibraryVersionProvider))
+              is Whizbang.Core.Observability.ILibraryVersionProvider libraryVersion
+            && serviceProvider.GetService(typeof(Whizbang.Core.Observability.IServiceInstanceProvider))
+              is Whizbang.Core.Observability.IServiceInstanceProvider thisInstance) {
+          await using var fleetConnection = segmentConnectionFactory();
+          await fleetConnection.OpenAsync(cancellationToken);
+          var otherReleases = await Whizbang.Data.Postgres.FleetVersions.OtherLiveVersionsAsync(
+            fleetConnection, "__SCHEMA__", thisInstance.InstanceId, libraryVersion.LibraryVersion,
+            TimeSpan.FromMinutes(2), cancellationToken);
+          if (otherReleases.Count > 0) {
+            logger?.LogWarning(
+              "Other releases are alive in the fleet for schema {Schema} while the stored-form rewrite "
+              + "runs: {Releases}. A release that changes a stored unit is deployed without a mixed fleet; "
+              + "rows an older release writes into a converted table in the old unit cannot be told apart "
+              + "afterward", "__SCHEMA__", string.Join(", ", otherReleases));
+          }
+        }
+
         var rewrites = Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(
           dbContext.Model,
           Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,

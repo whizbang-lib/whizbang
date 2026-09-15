@@ -74,6 +74,40 @@ public class CanonicalTemporalRewriteWiringTests {
       .Because("an opaque document's paths come from the options it is read with");
   }
 
+  /// <summary>
+  /// A table this release creates is recorded in the microsecond form, settled, at creation.
+  /// </summary>
+  /// <remarks>
+  /// Recorded before the CREATE TABLE and only when the table does not exist yet, which is the only
+  /// moment "fresh" can be told from "upgraded": a table an older release created has rows in the
+  /// mixed-unit form and no ledger row, and recording it as converted here would make the rewrite
+  /// skip it forever. The rewrite records an upgraded table itself, after converting it.
+  /// </remarks>
+  [Test]
+  public async Task AFreshTableIsRecordedAtTheMicrosecondFormAsync() {
+    var output = await _generatedAsync(TEMPORAL_MODEL);
+
+    // The schema SQL is embedded in a verbatim C# string, so a double quote in it reads doubled here,
+    // and the schema is the one derived from the namespace.
+    var insert = output.IndexOf(
+      "INSERT INTO \"\"testapp\"\".wh_perspective_forms (table_name, temporal_form, applied_at, settled_at)",
+      StringComparison.Ordinal);
+    var create = output.IndexOf("CREATE TABLE IF NOT EXISTS \"\"testapp\"\".wh_per_report (", StringComparison.Ordinal);
+
+    await Assert.That(insert).IsGreaterThan(-1);
+    await Assert.That(create).IsGreaterThan(insert)
+      .Because("only before the CREATE TABLE can a fresh table be told from one an older release made");
+    await Assert.That(output).Contains(
+      "VALUES ('wh_per_report', 2, now(), now())", StringComparison.Ordinal);
+    await Assert.That(output).Contains(
+      "IF to_regclass('\"\"testapp\"\".wh_per_report') IS NULL AND to_regclass('\"\"testapp\"\".wh_perspective_forms') IS NOT NULL THEN",
+      StringComparison.Ordinal)
+      .Because("an upgraded table is left to the rewrite, and a database without the ledger yet is left "
+        + "alone; inside a DO block, so an absent ledger is a branch not taken rather than a statement "
+        + "that fails to plan");
+    await Assert.That(output).Contains("ON CONFLICT (table_name) DO NOTHING", StringComparison.Ordinal);
+  }
+
   /// <summary>Nothing per property is generated for it any more.</summary>
   [Test]
   public async Task NothingIsGeneratedPerPropertyAsync() {
@@ -111,5 +145,28 @@ public class CanonicalTemporalRewriteWiringTests {
       .Because("a waiter never rewrites; it waits for the migrator's result");
     await Assert.That(output).Contains(
       "staging.Stage != Whizbang.Data.Postgres.SchemaStage.Waiter", StringComparison.Ordinal);
+  }
+
+  /// <summary>
+  /// The migrator names the other releases alive in the fleet before it rewrites, at Warning.
+  /// </summary>
+  /// <remarks>
+  /// A rewrite that changes a stored unit is not safe under a mixed fleet, and the migrator cannot
+  /// refuse to run under a rolling update without deadlocking the rollout. So it says what it saw,
+  /// before it does anything, from the registry every instance heartbeats into.
+  /// </remarks>
+  [Test]
+  public async Task TheMigratorWarnsAboutOtherReleasesBeforeRewritingAsync() {
+    var output = await _generatedAsync(TEMPORAL_MODEL);
+
+    var warning = output.IndexOf("Whizbang.Data.Postgres.FleetVersions.OtherLiveVersionsAsync(", StringComparison.Ordinal);
+    var rewrite = output.IndexOf("CanonicalTemporalRewritePhase.ApplyAsync(", StringComparison.Ordinal);
+
+    await Assert.That(warning).IsGreaterThan(-1);
+    await Assert.That(warning).IsLessThan(rewrite)
+      .Because("the warning is worth nothing after the rows are already written");
+    await Assert.That(output).Contains("Other releases are alive in the fleet for schema {Schema}", StringComparison.Ordinal);
+    await Assert.That(output).Contains("ILibraryVersionProvider", StringComparison.Ordinal)
+      .Because("this instance's release is what the others are compared against");
   }
 }

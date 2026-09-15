@@ -385,7 +385,28 @@ migrations page (the ledger, the one-way note). Public API removal: `CanonicalTe
 - General park semantics for a stream that fails for any other reason (dead-letter recovery plan).
 - Making an older release read canonical rows.
 
-## 6. Decisions requested
+## 6. Progress
+
+Kept current as slices land. One branch, one PR, one release.
+
+| Slice | What | Status |
+|---|---|---|
+| S0 | Probes: an EF convention and an STJ options converter reach inherited, nested, collection-element and metadata temporals | done |
+| S1 | One unit (microseconds for all five kinds); readers strict about units, tolerant of renderings, metered | done |
+| S2 | Generator casts: `int8` for every kind, `HasConversion<long>` everywhere | done |
+| S3 | EF model-finalizing convention replaces generated `HasConversion` | done |
+| S4a | Profile-global Persistence converters; per-model modifiers and `ApplyTo` removed; lenient readers scoped to Default | done |
+| S4b | Opaque documents bound to the Persistence profile through `PerspectiveDocumentSerialization`; generated facade defers to registered converters | done |
+| S4c | Object-mode identifier readers accept the scalar form, counted by type (`StoredFormFallbacks`) | done |
+| S5a | Migration 153: `wh_perspective_forms` ledger and `wh_canonicalize_temporal` | done |
+| S5b | Runtime rewrite derived from the EF model and serializer metadata, one ledger-gated transaction per table, wired after the election | done |
+| S5c | Fresh tables recorded at form 2 (settled); Day index renamed for its new cast and the old one dropped; mixed-fleet warning | done |
+| S6 | Loudness: classified `StoredFormUnreadable` error once per stream, meter, parking | in progress |
+| S7 | Docs: stored-forms table, migrations page, ai-docs, code/tests/docs links | pending |
+| PR | Gate green (100% new-code coverage, zero Sonar), alpha published | pending |
+| Rollout | Pin in the consumer, deploy to the parked slot, unpause KEDA, restore config, prove the failing feature, import test | pending |
+
+## 7. Decisions requested
 
 1. Microseconds for all five kinds, Day at midnight UTC, Duration truncated to 1 us (3.1).
 2. Profile-global Persistence converters replacing per-model modifiers, and the data source on
