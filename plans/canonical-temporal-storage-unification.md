@@ -136,6 +136,26 @@ a time-of-day is a duration from midnight. `infinity` and `-infinity` keep the e
 (`MAX_MICROSECONDS`, `MIN_MICROSECONDS`); Day gets the same two sentinels for `DateOnly.MaxValue`
 and `MinValue`.
 
+**From what is stored today to this.** The conversion is exact for every kind, because the
+mixed-unit release wrote each kind deterministically, so there is no guessing involved:
+
+| Stored today | Conversion | Exact? |
+|---|---|---|
+| Instant, OffsetInstant, TimeOfDay as microseconds | none | already the target form |
+| Day as days | multiply by 86,400,000,000 | yes |
+| Duration as ticks | divide by 10 | truncates the sub-microsecond digit; PostgreSQL `interval` has no finer resolution either |
+| Any kind as a rendering (a path the discovery never found) | parse to microseconds, as the existing rewrite does | yes |
+| `metadata.Timestamp` as a rendering | parse to microseconds | yes |
+
+Within one table a given path is in one form, never a mix: a discovered path was rewritten to
+numbers before the release served and has been written as numbers since; an undiscovered path is
+renderings throughout. So for any (table, path): a string parses, a number converts from the unit
+the ledger says (3.6), and no value is ever inspected to decide which.
+
+An environment that never ran the mixed-unit release (still on renderings) converts straight to
+microseconds and never sees a day count or a tick count. An empty database creates every table at
+form 2 and converts nothing.
+
 Accepted precision changes, to be stated in the docs: `TimeSpan` loses its sub-microsecond digit
 (100 ns resolution to 1 us), which is the resolution PostgreSQL's `interval` has anyway; `DateTime`
 already loses it. `DateTimeOffset` continues to store the UTC instant and reads back with a zero
@@ -154,22 +174,36 @@ Remove the per-model `RegisterTypeInfoModifier` emission from `PerspectivePersis
 and the `CanonicalTemporalJsonConverters.ApplyTo` API it targets. The Default profile is untouched,
 so a model that crosses the wire still renders as a string there.
 
-### 3.3 One reader rule: a reader accepts every form the framework has ever written
+### 3.3 Reader tolerance: transitional, measured, and then removed
 
-Each canonical converter's `Read`:
+The conversion in 3.6 is SQL and does not need a tolerant C# reader. Tolerance exists for one
+reason only: a rendering the rewrite did not reach (a path the extended discovery still misses in an
+opaque document, or a row an older instance wrote during the rollout window) would otherwise stop a
+feature until the next release, which is the failure this design comes from. That is also the
+argument against it: a reader that absorbs an unconverted form hides the gap in the rewrite.
 
-- `Number`: the canonical unit (3.1);
-- `String`: the rendering (ISO 8601, and the `infinity` / `-infinity` and missing-offset cases
-  `LenientDateTimeOffsetConverter` already handles), because a row the rewrite has not reached, or a
-  document written by an older release, is still a document;
-- anything else: a `JsonException` naming the CLR type, the token found, and the two forms accepted.
+So tolerance is scoped, observable, and temporary:
+
+- **Strict about units, always.** A `Number` is read in the canonical unit (3.1), full stop. No
+  reader ever guesses whether a number is a day count, a tick count or a microsecond count; that
+  question is answered by the ledger in 3.6 before any reader sees the row.
+- **Tolerant of renderings, for now.** A `String` parses as the rendering (ISO 8601, and the
+  `infinity` / `-infinity` and missing-offset cases `LenientDateTimeOffsetConverter` already handles).
+  Anything else is a `JsonException` naming the CLR type, the token found and the forms accepted;
   STJ appends the JSON path.
+- **Every fallback is counted.** Reading a rendering increments
+  `whizbang.perspective.temporal_form_fallbacks` (tags: perspective, path, kind) and logs once per
+  (perspective, path) at Warning: "read a rendering where a canonical number was expected; the
+  rewrite did not reach this path". A non-zero meter is a rewrite bug with a path attached.
+- **Removed in a later release.** Once the meter reads zero across a release cycle in every
+  environment, the string branch goes and readers become strict. Until then the meter is the
+  evidence that removing it is safe, rather than a guess.
 
-This is insurance, not the mechanism. It cannot help the EF reader (section 2), and it cannot tell a
-day count from a microsecond count, which is why 3.6 has a ledger.
+Tolerance cannot help the EF reader for mapped models (section 2), which is why the rewrite in 3.6
+must be complete for everything EF maps regardless.
 
-The same rule applies to the object-mode `[WhizbangId]` readers on the Persistence profile: accept
-the scalar form too, for rows the EF fallback path wrote under Default before 3.4.
+The object-mode `[WhizbangId]` readers on the Persistence profile follow the same rule: accept the
+scalar form for rows the EF fallback path wrote under Default before 3.4, count it, remove it later.
 
 ### 3.4 An opaque document is read under the profile it was written in
 
@@ -222,6 +256,17 @@ skipped. Nothing about the values is inspected to decide whether to convert.
 
 **Placement.** Unchanged: the rewrite pre-phase runs under its own lock, ahead of the DDL phase, so
 indexes are built against committed rows (the trap in `ai-docs/schema-initialization-connections.md`).
+
+**The mixed-version window.** During a rolling update, instances of the previous release keep
+writing until they are replaced. For Instant, OffsetInstant and TimeOfDay that is harmless (same
+unit). For Day and Duration it is not: an old instance writes a day count or a tick count into a
+table the ledger already says is form 2, and nothing can tell that row apart afterward. Two rules
+follow. First, a release that changes a unit is deployed without a mixed fleet: scale to zero, deploy,
+bring up; the migrator logs a Warning naming any instance of an older release still heartbeating when
+the form-2 rewrite runs, which needs the release version in the instance registry if it is not there
+yet. Second, and already true since the canonical form first shipped: a `bigint` expression index
+rejects a rendering, so an older instance's insert into an indexed temporal fails during any rolling
+update across that boundary. The docs state both rules with the migration.
 
 **Indexes.** Every temporal index cast becomes `int8`. The Day indexes change expression, so their
 generated name changes (a cast suffix), the old name is dropped explicitly, and `IF NOT EXISTS`
@@ -302,8 +347,12 @@ migrations page (the ledger, the one-way note). Public API removal: `CanonicalTe
 ## 6. Decisions requested
 
 1. Microseconds for all five kinds, Day at midnight UTC, Duration truncated to 1 us (3.1).
-2. Profile-global Persistence converters replacing per-model modifiers, with tolerant readers,
-   and the data source on the Persistence profile (3.2, 3.3, 3.4).
+2. Profile-global Persistence converters replacing per-model modifiers, and the data source on
+   the Persistence profile (3.2, 3.4).
+2a. Reader tolerance of renderings as a transitional, metered feature removed in a later release
+   once the fallback meter reads zero; strict about units from the start (3.3).
+2b. A unit-changing release deploys without a mixed fleet, and the migrator warns about older
+   instances still heartbeating (3.6).
 3. An EF convention replacing generated `HasConversion`, probe first, self-check as the fallback (3.5).
 4. A form ledger and a SQL rewrite function that walks arrays (3.6).
 5. `PerspectiveMetadata.Timestamp` canonical (3.7).
