@@ -436,7 +436,7 @@ Kept current as slices land. One branch, one PR, one release.
 | S5c | Fresh tables recorded at form 2 (settled); Day index renamed for its new cast and the old one dropped; mixed-fleet warning | done |
 | S6 | Loudness: classified `StoredFormUnreadable` error once per stream, meter, parking; one reader per kind on both paths; migration 154 | done |
 | S7 | Docs: stored-forms table, migrations page, ai-docs, code/tests/docs links (docs site PR whizbang-lib.github.io#619) | done |
-| PR | Gate green (100% new-code coverage, zero Sonar), alpha published | in progress |
+| PR | #770 open against develop; gate green (100% new-code coverage, zero Sonar), alpha published | in progress |
 | Rollout | Pin in the consumer, deploy to the parked slot, unpause KEDA, restore config, prove the failing feature, import test | pending |
 
 ## 7. Decisions requested
