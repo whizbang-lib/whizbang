@@ -1281,6 +1281,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine();
       sb.AppendLine("    // Call user's extended configuration");
       sb.AppendLine("    OnModelCreatingExtended(modelBuilder);");
+      sb.AppendLine();
+      sb.AppendLine("    // Convert every date, time and duration the model maps inside a document, whatever options");
+      sb.AppendLine("    // this context was built with: a lens context built from a plain connection string carries no");
+      sb.AppendLine("    // convention plugin, and the rows it reads were written as numbers. After the extension, so");
+      sb.AppendLine("    // the walk sees what the consumer configured too.");
+      sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalConvention.Apply(modelBuilder);");
       sb.AppendLine("  }");
       sb.AppendLine();
       sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);

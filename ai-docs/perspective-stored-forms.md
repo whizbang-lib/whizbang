@@ -33,7 +33,7 @@ Both paths must read and write the same bytes. The pieces, and why each exists:
 | Piece | Path | What it does |
 |---|---|---|
 | `CanonicalTemporalJsonConverters`, registered on `SerializationProfile.Persistence` at priority 100 | opaque write and read | Applies wherever the type occurs: inherited, nested, collection element, positional record parameter, framework metadata |
-| `CanonicalTemporalConvention` (`IModelFinalizingConvention` via `IConventionSetPlugin`) | mapped | Walks the model EF built and sets a `ValueConverter<T,long>` and a JSON reader/writer on every temporal inside a document |
+| `CanonicalTemporalConvention` (`IModelFinalizingConvention` via `IConventionSetPlugin`, and `Apply(ModelBuilder)` called by the generated OnModelCreating) | mapped | Walks the model EF built and sets a `ValueConverter<T,long>` and a JSON reader/writer on every temporal inside a document. The plugin rides the Whizbang options extension; the generated OnModelCreating applies the same walk itself so a context built from a plain connection string (a hand-built lens context) converts too |
 | `CanonicalTemporalJsonReaderWriters` | mapped read and write | EF's own integer reader refused a rendering and refused an unexpected token with a generic error; these put the same reader on the mapped path |
 | `CanonicalTemporalReaders` | both | One reader per kind: number in the canonical unit, or a rendering (counted), or a `JsonException` naming the type, the forms accepted and the token found |
 | `PerspectiveDocumentSerialization.ConverterFor<T>()` | opaque | Binds the `data`, `metadata` and `scope` columns to the Persistence profile explicitly |

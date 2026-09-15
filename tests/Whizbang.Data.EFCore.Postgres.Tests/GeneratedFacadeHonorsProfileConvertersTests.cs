@@ -30,6 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Generators/MessageJsonContextGenerator.cs</code-under-test>
+[Category("Shard4")]
 public class GeneratedFacadeHonorsProfileConvertersTests {
   private static readonly DateTime _at = new(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
 

@@ -200,6 +200,31 @@ public class CanonicalTemporalConfigurationTests {
   }
 
   /// <summary>
+  /// The generated context applies the conversion itself, after the consumer's own configuration,
+  /// so a context built without the options extension converts its documents too.
+  /// </summary>
+  /// <remarks>
+  /// The convention plugin rides the options extension, and a lens context built by hand from a
+  /// plain connection string does not carry it. Such a context read a stored number with the
+  /// default reader, which takes a rendering. One call in the generated OnModelCreating, placed
+  /// after the consumer's extension so their configuration is covered as well, closes that.
+  /// </remarks>
+  [Test]
+  public async Task TheGeneratedContextAppliesTheConversionAfterTheConsumersConfigurationAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(MODEL);
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    var extended = output.IndexOf("OnModelCreatingExtended(modelBuilder);", StringComparison.Ordinal);
+    var applied = output.IndexOf(
+      "global::Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalConvention.Apply(modelBuilder);",
+      StringComparison.Ordinal);
+
+    await Assert.That(extended).IsGreaterThan(-1);
+    await Assert.That(applied).IsGreaterThan(extended)
+      .Because("the walk has to see what the consumer configured, so it runs after their extension");
+  }
+
+  /// <summary>
   /// A computed temporal property is mapped by nobody, and the mapping does not have to know it.
   /// </summary>
   /// <remarks>

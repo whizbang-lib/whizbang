@@ -77,4 +77,26 @@ public class StoredFormHealthSourceTests {
     await Assert.That(services.Any(d => d.ServiceType == typeof(StoredFormFailureRegistry))).IsTrue()
       .Because("the worker records into the same registry the health source reads");
   }
+
+  /// <summary>The registry and the source resolve from the pipeline's registrations as registered.</summary>
+  /// <remarks>
+  /// The registry takes an optional clock, which the container has to be able to satisfy or skip;
+  /// a descriptor that is present but cannot be constructed would fail at the first health probe.
+  /// </remarks>
+  [Test]
+  public async Task TheRegistryAndTheSourceResolveFromTheWorkerPipelineAsync() {
+    var services = new ServiceCollection();
+    services.AddLogging();
+    services.AddWhizbangWorkers();
+    await using var provider = services.BuildServiceProvider();
+
+    var registry = provider.GetRequiredService<StoredFormFailureRegistry>();
+    var source = provider.GetServices<IWhizbangHealthSource>().OfType<StoredFormHealthSource>().Single();
+    registry.Record("Orders", Guid.CreateVersion7(), _failure());
+
+    var health = await source.ReportAsync(CancellationToken.None);
+
+    await Assert.That(health.State).IsEqualTo(ComponentState.Degraded)
+      .Because("the source resolved over the same registry instance the worker records into");
+  }
 }

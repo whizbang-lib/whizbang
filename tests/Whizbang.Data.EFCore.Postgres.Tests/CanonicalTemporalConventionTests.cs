@@ -191,6 +191,35 @@ public class CanonicalTemporalConventionTests {
   }
 
   /// <summary>
+  /// A generated context converts its documents' temporals even when it is built without the
+  /// Whizbang options extension, because the conversion rides the generated model configuration.
+  /// </summary>
+  /// <remarks>
+  /// A lens context is often built by hand from a plain connection string, with no functions
+  /// extension, to read what the worker's context wrote. The convention plugin rides the options
+  /// extension, so such a context had no convention and read a stored number with the default
+  /// reader, which takes a rendering: the very split this design exists to close, reopened on the
+  /// read side. The generated OnModelCreating now applies the same walk itself, after the
+  /// consumer's own configuration, so any context that maps the perspectives converts them.
+  /// </remarks>
+  [Test]
+  public async Task AGeneratedContextConvertsWithoutTheOptionsExtensionAsync() {
+    using var context = new WorkCoordinationDbContext(new DbContextOptionsBuilder<WorkCoordinationDbContext>()
+      .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p")
+      .Options);
+
+    var row = context.Model.FindEntityType(typeof(PerspectiveRow<Order>))!;
+    var metadata = row.FindComplexProperty(nameof(PerspectiveRow<Order>.Metadata))!.ComplexType;
+    var timestamp = metadata.FindProperty(nameof(PerspectiveMetadata.Timestamp))!;
+
+    await Assert.That(timestamp.GetValueConverter()?.ProviderClrType).IsEqualTo(typeof(long))
+      .Because("the writer stored a number, and a context that maps the row has to read one");
+    await Assert.That(timestamp.GetJsonValueReaderWriter()?.GetType())
+      .IsEqualTo(typeof(CanonicalTemporalJsonReaderWriters.Instant))
+      .Because("the reader is the serializer's, on this path too, whatever options the context was built with");
+  }
+
+  /// <summary>
   /// Each reader/writer names its own instance as its constructor, which is what a compiled model
   /// emits to get it back, and a kind that is none has no reader/writer.
   /// </summary>

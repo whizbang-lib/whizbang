@@ -353,6 +353,13 @@ else changes. The pinned test `AFrameworkDocumentIsNotConvertedAsync` is inverte
   schedules the retry with backoff, and dead-letters at the threshold. That is the parking; the
   in-process registry (`StoredFormFailureRegistry`) only remembers the announcement and feeds the
   health source (`StoredFormHealthSource`, component `perspective-stored-forms`).
+- Also found, by the full suite: the convention plugin rides the Whizbang options extension, and a
+  lens context built by hand from a plain connection string (as four existing tests and any consumer
+  reading through a pooled factory do) carries no extension, so it had no convention and read the
+  stored numbers with the default reader. The generated OnModelCreating now calls
+  `CanonicalTemporalConvention.Apply(modelBuilder)` after the consumer's extension, the same walk
+  over the model as built, as explicit configuration; the finalizing convention stays for a
+  hand-written context that carries the extension, and the two agree.
 - Follow-up, not in this PR: the outbox and inbox failure functions read `FailureReason` the same
   way, so `failure_reason` on those rows has always been Unknown. Different tables and functions
   with their own drift-pinned tests, and no bearing on stored forms; it deserves its own change.

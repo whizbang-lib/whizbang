@@ -37,6 +37,13 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// A conversion the model author configured explicitly wins, because a convention configures at
 /// convention precedence and Entity Framework does not let it override an explicit one.
 /// </para>
+/// <para>
+/// The convention rides the Whizbang options extension, and a context built by hand from a plain
+/// connection string, as a lens context often is, does not carry it. So the generated
+/// OnModelCreating also calls <see cref="Apply(ModelBuilder)"/>, the same walk over the model as
+/// built, after the consumer's own configuration. A context that maps the perspectives converts
+/// them whatever options it was built with; the two applications agree and the second is a no-op.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CanonicalTemporalConventionTests.cs</tests>
@@ -70,6 +77,45 @@ public sealed class CanonicalTemporalConvention : IModelFinalizingConvention {
       foreach (var complex in entityType.GetComplexProperties()) {
         _convert(complex, inDocument: false);
       }
+    }
+  }
+
+  /// <summary>
+  /// Applies the conversion to every temporal the model as built so far maps inside a document,
+  /// as explicit configuration; called by the generated OnModelCreating after the consumer's own.
+  /// </summary>
+  /// <remarks>
+  /// A property the model author already converted is left alone. Explicit configuration is what
+  /// the finalizing convention then respects, so a context that carries the options extension as
+  /// well converts once, not twice.
+  /// </remarks>
+  /// <param name="modelBuilder">The builder, after every entity and complex property is configured.</param>
+  public static void Apply(ModelBuilder modelBuilder) {
+    ArgumentNullException.ThrowIfNull(modelBuilder);
+
+    foreach (var entityType in modelBuilder.Model.GetEntityTypes()) {
+      foreach (var complex in entityType.GetComplexProperties()) {
+        _apply(complex, inDocument: false);
+      }
+    }
+  }
+
+  private static void _apply(IMutableComplexProperty complex, bool inDocument) {
+    inDocument = inDocument || complex.ComplexType.IsMappedToJson();
+
+    if (inDocument) {
+      foreach (var property in complex.ComplexType.GetProperties()) {
+        var kind = KindOf(property.ClrType);
+        var converter = _converterFor(kind);
+        if (converter is not null && property.GetValueConverter() is null) {
+          property.SetValueConverter(converter);
+          property.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(kind));
+        }
+      }
+    }
+
+    foreach (var nested in complex.ComplexType.GetComplexProperties()) {
+      _apply(nested, inDocument);
     }
   }
 

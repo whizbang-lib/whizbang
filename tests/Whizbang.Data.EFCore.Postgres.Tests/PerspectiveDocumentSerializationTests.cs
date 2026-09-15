@@ -29,6 +29,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Data.EFCore.Postgres/Perspectives/PerspectiveDocumentSerialization.cs</code-under-test>
 [NotInParallel("PathOneProvider")]
+[Category("Shard4")]
 public class PerspectiveDocumentSerializationTests {
   private static readonly DateTime _startedAt = new(2026, 3, 4, 5, 6, 7, 890, DateTimeKind.Utc);
 
