@@ -93,8 +93,17 @@ in both the drain path and the channel path:
 The inbox lifecycle "(continuing)" swallow logs at Error instead of Warning when the cause is a
 deserialization failure (event id 74).
 
-## Two defects found underneath, one fixed here
+## Three defects found underneath, two fixed here
 
+- **The generated message facade cached metadata by type alone.** `MessageJsonContext`'s thread-local
+  `TypeInfoCache` was keyed by `Type`, but a `JsonTypeInfo` is bound to the `JsonSerializerOptions` it
+  was created for and a property's converter is chosen from those options. Once the wire profile had
+  asked for `DateTime` on a thread, the persistence profile got a date bound to the wire's options and
+  the upsert wrote `"2026-...Z"` into a document whose index casts the key to `bigint` (`22P02`), on
+  whichever thread the order went that way. The per-model modifiers used to hide it by rewriting the
+  cached metadata's converters in place. The cache is now `TypeInfoCacheFor(options)`, a per-thread
+  `ConditionalWeakTable<JsonSerializerOptions, Dictionary<Type, JsonTypeInfo>>`
+  (`JsonContextSnippets.cs`). Never cache a `JsonTypeInfo` without the options it belongs to.
 - **The failure element never matched a row.** `process_perspective_event_failures` read
   `EventWorkId`/`FailureReason` while the runtime serializes `MessageFailure` as `MessageId`/`Reason`.
   No perspective failure sent through the failure channel was ever recorded. Migration 154 reads both

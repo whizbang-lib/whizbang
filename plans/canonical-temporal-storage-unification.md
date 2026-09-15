@@ -360,6 +360,15 @@ else changes. The pinned test `AFrameworkDocumentIsNotConvertedAsync` is inverte
   `CanonicalTemporalConvention.Apply(modelBuilder)` after the consumer's extension, the same walk
   over the model as built, as explicit configuration; the finalizing convention stays for a
   hand-written context that carries the extension, and the two agree.
+- Also found, by the sample integration jobs on the PR's first CI run and reproduced locally (two
+  failures in six runs; the base branch clean in four): the generated message facade cached the
+  metadata it creates by type alone, per thread. Metadata is bound to the options it was created
+  for, and a property's converter is chosen from those options, so once the wire profile had asked
+  for a `DateTime` on a thread, the persistence profile received a date bound to the wire's options
+  and wrote a rendering into a document whose index casts the key to `bigint` (`22P02`). Before
+  this design the per-model modifiers hid it by rewriting the cached metadata's converters in
+  place. The facade's cache is now keyed by options (a weak table, per thread), pinned by a Core
+  test that asks in both orders and by a generator test.
 - Follow-up, not in this PR: the outbox and inbox failure functions read `FailureReason` the same
   way, so `failure_reason` on those rows has always been Unknown. Different tables and functions
   with their own drift-pinned tests, and no bearing on stored forms; it deserves its own change.

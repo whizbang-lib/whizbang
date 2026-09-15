@@ -4262,7 +4262,7 @@ public record TemplateCreatedEvent : IEvent {
     await Assert.That(code).Contains("CreateCtorParamsFor_TestApp_TemplateCreatedEvent");
 
     // Type info should be cached BEFORE deferred initialization runs
-    await Assert.That(code).Contains("TypeInfoCache[typeof(global::TestApp.TemplateCreatedEvent)]");
+    await Assert.That(code).Contains("TypeInfoCacheFor(options)[typeof(global::TestApp.TemplateCreatedEvent)]");
 
     // Event should have exactly one factory method
     var factoryCount = _createTemplateCreatedEventFactoryRegex().Count(code);

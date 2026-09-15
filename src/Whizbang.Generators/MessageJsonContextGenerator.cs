@@ -1680,7 +1680,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Create JsonTypeInfo and CACHE IT IMMEDIATELY before returning
     // This is critical for self-referencing types
     sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
-    sb.AppendLine($"  TypeInfoCache[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
+    sb.AppendLine($"  TypeInfoCacheFor(options)[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
     sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
     sb.AppendLine("  return jsonTypeInfo;");
     sb.AppendLine("}");

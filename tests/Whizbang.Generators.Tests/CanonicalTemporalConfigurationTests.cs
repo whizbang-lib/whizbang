@@ -225,6 +225,32 @@ public class CanonicalTemporalConfigurationTests {
   }
 
   /// <summary>
+  /// The message facade caches the metadata it creates per set of serializer options, never by
+  /// type alone, so the profile that asks first does not decide how every later profile writes.
+  /// </summary>
+  /// <remarks>
+  /// Metadata is bound to the options it was created for, and a property's converter is chosen
+  /// from those options. Cached by type alone, a date the wire profile asked for first was handed
+  /// to the persistence profile bound to the wire's options and written as a rendering into a
+  /// document whose index casts it to a number; whether it happened depended on which profile
+  /// asked first on that thread.
+  /// </remarks>
+  [Test]
+  public async Task TheFacadeCachesMetadataPerOptionsAsync() {
+    var result = GeneratorTestHelper.RunGenerator<global::Whizbang.Generators.MessageJsonContextGenerator>(MODEL);
+    var output = string.Join("\n",
+      result.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SourceText.ToString()));
+
+    await Assert.That(output).Contains(
+      "ConditionalWeakTable<global::System.Text.Json.JsonSerializerOptions", StringComparison.Ordinal)
+      .Because("the cache lives with the options it was built for, and dies with them");
+    await Assert.That(output).DoesNotContain(
+      "Dictionary<global::System.Type, global::System.Text.Json.Serialization.Metadata.JsonTypeInfo>? _typeInfoCache",
+      StringComparison.Ordinal)
+      .Because("a cache keyed by type alone is what handed one profile the other's metadata");
+  }
+
+  /// <summary>
   /// A computed temporal property is mapped by nobody, and the mapping does not have to know it.
   /// </summary>
   /// <remarks>

@@ -150,6 +150,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the refusal, counted on `whizbang.perspective.read_failures`, reported on the
   `perspective-stored-forms` health component, and its leased rows are parked with backoff through the
   failure channel instead of retried every cycle.
+- **The generated message context handed one serializer profile metadata built for another:** its
+  metadata cache was keyed by type alone, so a date the wire profile asked for first was written by
+  the persistence profile as a rendering, intermittently, into a document whose index casts the key to
+  `bigint`. The cache is now keyed by the options the metadata was created for.
 - **Perspective failures reported through the failure channel never matched a row:**
   `process_perspective_event_failures` read `EventWorkId`/`FailureReason` while the runtime serializes
   `MessageId`/`Reason`; migration 154 reads both spellings, so failures are recorded, backed off and
