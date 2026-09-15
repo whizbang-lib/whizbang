@@ -85,41 +85,11 @@ public static class SchemaBootstrapPhase {
     await using var connection = connectionFactory();
     await connection.OpenAsync(cancellationToken);
 
-    // One transaction, so the bootstrap is atomic and its lock cannot leak (see the type remarks).
-    // Every statement in it is idempotent DDL and none of it needs to run outside a transaction, so
-    // there is nothing to lose by making it all-or-nothing: a partly applied bootstrap would be
-    // reported as not ready by the probe below anyway.
-    //
-    // Scoped so the transaction is closed before that probe, which has to read committed state.
-    // Nothing rolls back explicitly: disposing an uncommitted transaction is a rollback, and on
-    // every path out of here that is exactly what should happen.
-    {
-      var applying = "<none>";
-      await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
-        .ConfigureAwait(false);
-      try {
-        if (await _tryLockAsync(connection, lockId, cancellationToken).ConfigureAwait(false)) {
-          foreach (var (name, sql) in scripts) {
-            applying = name;
-            await using var command = new NpgsqlCommand(sql, connection) {
-              CommandTimeout = commandTimeoutSeconds,
-            };
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-          }
-          await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        } else {
-          // The expected outcome for every instance but one, and not a failure: the holder's
-          // committed work is what the probe below will find.
-          SchemaBootstrapLog.LockHeldElsewhere(log, lockId);
-        }
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Reported and carried on from, never rethrown. A bootstrap that cannot be applied costs
-        // the election; the caller then migrates under the advisory lock, which is what every
-        // instance did before an election existed. Throwing here would turn a wrong closure or a
-        // permission problem into a service that cannot start at all.
-        SchemaBootstrapLog.ScriptFailed(log, ex, applying);
-      }
-    }
+    // Its own method so the transaction is closed before the probe below, which has to read
+    // committed state. That ordering is the reason this is not inlined here.
+    await _applyUnderTheLockAsync(
+      connection, lockId, scripts, commandTimeoutSeconds, log, cancellationToken)
+      .ConfigureAwait(false);
 
     var ready = await CanElectAsync(connection, schema, cancellationToken).ConfigureAwait(false);
     if (!ready) {
@@ -129,6 +99,65 @@ public static class SchemaBootstrapPhase {
     }
 
     return ready;
+  }
+
+  /// <summary>
+  /// Applies every script in one transaction, under the schema lock, reporting rather than throwing.
+  /// </summary>
+  /// <param name="connection">An open connection with no transaction of its own.</param>
+  /// <param name="lockId">The schema initialization lock key.</param>
+  /// <param name="scripts">The scripts, named for reporting.</param>
+  /// <param name="commandTimeoutSeconds">The timeout for one script.</param>
+  /// <param name="log">Where to report; never null.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <remarks>
+  /// <para>
+  /// All-or-nothing, which suits it: every statement is idempotent DDL, none of it needs to run
+  /// outside a transaction, and a partly applied bootstrap cannot elect anything anyway because the
+  /// caller's probe asks for the full set. So "some landed" and "none landed" reach the same
+  /// fallback, and leaving the partial objects behind would only make the next instance's failure
+  /// harder to read.
+  /// </para>
+  /// <para>
+  /// Nothing rolls back explicitly. Disposing an uncommitted transaction is a rollback, and on
+  /// every path out of this method that is exactly what should happen.
+  /// </para>
+  /// </remarks>
+  private static async Task _applyUnderTheLockAsync(
+      NpgsqlConnection connection,
+      long lockId,
+      IEnumerable<(string Name, string Sql)> scripts,
+      int commandTimeoutSeconds,
+      ILogger log,
+      CancellationToken cancellationToken) {
+    var applying = "<none>";
+    await using var transaction = await connection.BeginTransactionAsync(cancellationToken)
+      .ConfigureAwait(false);
+
+    try {
+      if (!await _tryLockAsync(connection, lockId, cancellationToken).ConfigureAwait(false)) {
+        // The expected outcome for every instance but one, and not a failure: the holder's
+        // committed work is what the caller's probe will find.
+        SchemaBootstrapLog.LockHeldElsewhere(log, lockId);
+        return;
+      }
+
+      foreach (var (name, sql) in scripts) {
+        applying = name;
+        await using var command = new NpgsqlCommand(sql, connection) {
+          CommandTimeout = commandTimeoutSeconds,
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
+
+      await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      // Reported and carried on from, never rethrown. A bootstrap that cannot be applied costs the
+      // election; the caller then migrates under the advisory lock, which is what every instance
+      // did before an election existed. Throwing here would turn a wrong closure or a permission
+      // problem into a service that cannot start at all.
+      SchemaBootstrapLog.ScriptFailed(log, ex, applying);
+    }
   }
 
   /// <summary>
