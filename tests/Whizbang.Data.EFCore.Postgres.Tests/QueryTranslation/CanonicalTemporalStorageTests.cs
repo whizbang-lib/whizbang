@@ -82,15 +82,15 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
           d.Property(p => p.RecordedAt).HasConversion<long>(
             v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
             v => CanonicalTemporalFormat.OffsetFromEpochMicroseconds(v));
-          d.Property(p => p.Day).HasConversion<int>(
-            v => CanonicalTemporalFormat.ToEpochDays(v),
-            v => CanonicalTemporalFormat.FromEpochDays(v));
+          d.Property(p => p.Day).HasConversion<long>(
+            v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
+            v => CanonicalTemporalFormat.DayFromEpochMicroseconds(v));
           d.Property(p => p.Clock).HasConversion<long>(
             v => CanonicalTemporalFormat.ToMicrosecondsOfDay(v),
             v => CanonicalTemporalFormat.FromMicrosecondsOfDay(v));
           d.Property(p => p.Elapsed).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToTicks(v),
-            v => CanonicalTemporalFormat.FromTicks(v));
+            v => CanonicalTemporalFormat.ToMicroseconds(v),
+            v => CanonicalTemporalFormat.DurationFromMicroseconds(v));
           d.Property(p => p.MaybeAt).HasConversion<long?>(
             v => v == null ? (long?)null : CanonicalTemporalFormat.ToEpochMicroseconds(v.Value),
             v => v == null ? (DateTime?)null : CanonicalTemporalFormat.FromEpochMicroseconds(v.Value));
@@ -267,9 +267,9 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
     await Assert.That(row.Data.Day).IsEqualTo(new DateOnly(2026, 3, 5));
     await Assert.That(row.Data.Clock).IsEqualTo(new TimeOnly(6, 6, 7));
     await Assert.That(row.Data.Elapsed)
-      .IsEqualTo(TimeSpan.FromMinutes(1).Add(TimeSpan.FromTicks(1_234_567)))
-      .Because("a duration is never compared against a PostgreSQL interval, so it keeps full .NET "
-        + "precision where the instants truncate to microseconds");
+      .IsEqualTo(TimeSpan.FromMinutes(1).Add(TimeSpan.FromTicks(1_234_560)))
+      .Because("a duration is microseconds like every other kind, so its seventh digit truncates "
+        + "exactly as an instant's does; keeping it would be a second unit in the same column family");
     await Assert.That(row.Data.MaybeAt).IsEqualTo(_origin.AddHours(1));
   }
 
@@ -528,7 +528,7 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
   [Test]
   [Arguments("OccurredAt", "bigint")]
   [Arguments("RecordedAt", "bigint")]
-  [Arguments("Day", "integer")]
+  [Arguments("Day", "bigint")]
   [Arguments("Clock", "bigint")]
   [Arguments("Elapsed", "bigint")]
   public async Task AnIndexCanBeBuiltOverTheExtractionAsync(string key, string cast) {

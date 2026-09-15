@@ -31,15 +31,29 @@ namespace Whizbang.Core.Perspectives;
 /// here. Three things have to agree about the stored form, and disagreement between any two is a
 /// silent wrong answer.
 /// </para>
+/// <para>
+/// Reading is strict about units and, for now, tolerant of renderings. A number is always the
+/// canonical unit; a reader never guesses whether it is a day count, a tick count or a microsecond
+/// count, because that question is settled by the stored form ledger before any reader sees the
+/// row. A rendering is read as the value it renders, counted and announced through
+/// <see cref="CanonicalTemporalFallbacks"/>, so a row the rewrite did not reach degrades to a
+/// counted read rather than a stopped feature. The rendering branch goes once the count reads zero
+/// across a release cycle.
+/// </para>
 /// </remarks>
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalJsonConverterTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalReaderToleranceTests.cs</tests>
 public static class CanonicalTemporalJsonConverters {
   /// <summary>An instant, as microseconds since the Unix epoch.</summary>
   public sealed class InstantConverter : JsonConverter<DateTime> {
     /// <inheritdoc/>
     public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-      CanonicalTemporalFormat.FromEpochMicroseconds(reader.GetInt64());
+      reader.TokenType switch {
+        JsonTokenType.Number => CanonicalTemporalFormat.FromEpochMicroseconds(reader.GetInt64()),
+        JsonTokenType.String => CanonicalTemporalRenderings.Instant(reader.GetString()!),
+        _ => throw CanonicalTemporalRenderings.Unexpected(nameof(DateTime), reader.TokenType),
+      };
 
     /// <inheritdoc/>
     public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options) {
@@ -52,7 +66,11 @@ public static class CanonicalTemporalJsonConverters {
   public sealed class OffsetInstantConverter : JsonConverter<DateTimeOffset> {
     /// <inheritdoc/>
     public override DateTimeOffset Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-      CanonicalTemporalFormat.OffsetFromEpochMicroseconds(reader.GetInt64());
+      reader.TokenType switch {
+        JsonTokenType.Number => CanonicalTemporalFormat.OffsetFromEpochMicroseconds(reader.GetInt64()),
+        JsonTokenType.String => CanonicalTemporalRenderings.OffsetInstant(reader.GetString()!),
+        _ => throw CanonicalTemporalRenderings.Unexpected(nameof(DateTimeOffset), reader.TokenType),
+      };
 
     /// <inheritdoc/>
     public override void Write(Utf8JsonWriter writer, DateTimeOffset value, JsonSerializerOptions options) {
@@ -61,16 +79,20 @@ public static class CanonicalTemporalJsonConverters {
     }
   }
 
-  /// <summary>A date without a time, as days since the Unix epoch.</summary>
+  /// <summary>A date without a time, as microseconds since the Unix epoch at its midnight.</summary>
   public sealed class DayConverter : JsonConverter<DateOnly> {
     /// <inheritdoc/>
     public override DateOnly Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-      CanonicalTemporalFormat.FromEpochDays(reader.GetInt32());
+      reader.TokenType switch {
+        JsonTokenType.Number => CanonicalTemporalFormat.DayFromEpochMicroseconds(reader.GetInt64()),
+        JsonTokenType.String => CanonicalTemporalRenderings.Day(reader.GetString()!),
+        _ => throw CanonicalTemporalRenderings.Unexpected(nameof(DateOnly), reader.TokenType),
+      };
 
     /// <inheritdoc/>
     public override void Write(Utf8JsonWriter writer, DateOnly value, JsonSerializerOptions options) {
       ArgumentNullException.ThrowIfNull(writer);
-      writer.WriteNumberValue(CanonicalTemporalFormat.ToEpochDays(value));
+      writer.WriteNumberValue(CanonicalTemporalFormat.ToEpochMicroseconds(value));
     }
   }
 
@@ -78,7 +100,11 @@ public static class CanonicalTemporalJsonConverters {
   public sealed class TimeOfDayConverter : JsonConverter<TimeOnly> {
     /// <inheritdoc/>
     public override TimeOnly Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-      CanonicalTemporalFormat.FromMicrosecondsOfDay(reader.GetInt64());
+      reader.TokenType switch {
+        JsonTokenType.Number => CanonicalTemporalFormat.FromMicrosecondsOfDay(reader.GetInt64()),
+        JsonTokenType.String => CanonicalTemporalRenderings.TimeOfDay(reader.GetString()!),
+        _ => throw CanonicalTemporalRenderings.Unexpected(nameof(TimeOnly), reader.TokenType),
+      };
 
     /// <inheritdoc/>
     public override void Write(Utf8JsonWriter writer, TimeOnly value, JsonSerializerOptions options) {
@@ -87,16 +113,20 @@ public static class CanonicalTemporalJsonConverters {
     }
   }
 
-  /// <summary>A duration, as its tick count.</summary>
+  /// <summary>A duration, as microseconds.</summary>
   public sealed class DurationConverter : JsonConverter<TimeSpan> {
     /// <inheritdoc/>
     public override TimeSpan Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-      CanonicalTemporalFormat.FromTicks(reader.GetInt64());
+      reader.TokenType switch {
+        JsonTokenType.Number => CanonicalTemporalFormat.DurationFromMicroseconds(reader.GetInt64()),
+        JsonTokenType.String => CanonicalTemporalRenderings.Duration(reader.GetString()!),
+        _ => throw CanonicalTemporalRenderings.Unexpected(nameof(TimeSpan), reader.TokenType),
+      };
 
     /// <inheritdoc/>
     public override void Write(Utf8JsonWriter writer, TimeSpan value, JsonSerializerOptions options) {
       ArgumentNullException.ThrowIfNull(writer);
-      writer.WriteNumberValue(CanonicalTemporalFormat.ToTicks(value));
+      writer.WriteNumberValue(CanonicalTemporalFormat.ToMicroseconds(value));
     }
   }
 

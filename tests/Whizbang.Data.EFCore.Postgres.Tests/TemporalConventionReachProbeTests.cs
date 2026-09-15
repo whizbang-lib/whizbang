@@ -79,15 +79,15 @@ public class TemporalConventionReachProbeTests {
     private static readonly ValueConverter<DateTimeOffset, long> _offset = new(
       v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
       v => CanonicalTemporalFormat.OffsetFromEpochMicroseconds(v));
-    private static readonly ValueConverter<DateOnly, int> _day = new(
-      v => CanonicalTemporalFormat.ToEpochDays(v),
-      v => CanonicalTemporalFormat.FromEpochDays(v));
+    private static readonly ValueConverter<DateOnly, long> _day = new(
+      v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
+      v => CanonicalTemporalFormat.DayFromEpochMicroseconds(v));
     private static readonly ValueConverter<TimeOnly, long> _timeOfDay = new(
       v => CanonicalTemporalFormat.ToMicrosecondsOfDay(v),
       v => CanonicalTemporalFormat.FromMicrosecondsOfDay(v));
     private static readonly ValueConverter<TimeSpan, long> _duration = new(
-      v => CanonicalTemporalFormat.ToTicks(v),
-      v => CanonicalTemporalFormat.FromTicks(v));
+      v => CanonicalTemporalFormat.ToMicroseconds(v),
+      v => CanonicalTemporalFormat.DurationFromMicroseconds(v));
 
     public void ProcessModelFinalizing(
         IConventionModelBuilder modelBuilder, IConventionContext<IConventionModelBuilder> context) {

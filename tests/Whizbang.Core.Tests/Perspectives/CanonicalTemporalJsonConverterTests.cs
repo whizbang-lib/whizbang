@@ -174,12 +174,12 @@ public class CanonicalTemporalJsonConverterTests {
 
     await Assert.That(written.GetProperty("OccurredAt").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_origin));
-    await Assert.That(written.GetProperty("Day").GetInt32())
-      .IsEqualTo(CanonicalTemporalFormat.ToEpochDays(new DateOnly(2026, 3, 4)));
+    await Assert.That(written.GetProperty("Day").GetInt64())
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(new DateOnly(2026, 3, 4)));
     await Assert.That(written.GetProperty("Clock").GetInt64())
       .IsEqualTo(CanonicalTemporalFormat.ToMicrosecondsOfDay(new TimeOnly(5, 6, 7)));
     await Assert.That(written.GetProperty("Elapsed").GetInt64())
-      .IsEqualTo(CanonicalTemporalFormat.ToTicks(TimeSpan.FromMinutes(3)));
+      .IsEqualTo(CanonicalTemporalFormat.ToMicroseconds(TimeSpan.FromMinutes(3)));
   }
 
   /// <summary>

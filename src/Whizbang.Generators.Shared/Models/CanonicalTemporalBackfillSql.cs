@@ -163,8 +163,10 @@ public static class CanonicalTemporalBackfillSql {
             ELSE (EXTRACT(EPOCH FROM (data ->> '{key}')::timestamptz) * 1000000)::bigint
           END
       """,
+    // A date is the instant at its midnight, in the unit every kind shares. Integer arithmetic on the
+    // day count rather than an epoch extraction, so the value is exact rather than a rounded double.
     CanonicalTemporalKind.Day =>
-      $"((data ->> '{key}')::date - DATE '1970-01-01')",
+      $"(((data ->> '{key}')::date - DATE '1970-01-01')::bigint * 86400000000)",
     // A time was rendered with seven fractional digits where a date got six, and the cast to a time
     // ROUNDS that seventh digit while the writer truncates it. Left alone the two disagree by a
     // microsecond, which is a difference no query would ever surface and every comparison would be
@@ -194,8 +196,10 @@ public static class CanonicalTemporalBackfillSql {
   /// <para>
   /// The rendering separates a day count from the clock with a period, where an interval wants a
   /// space, and it carries a seventh fractional digit an interval could not hold anyway. So the
-  /// components are matched and the ticks computed from them, which keeps full precision and does
-  /// not depend on how an interval would round.
+  /// components are matched, the ticks computed from them exactly, and the tick count divided down
+  /// to microseconds. Integer division truncates toward zero on both sides of the sign, which is
+  /// what the writer does with the seventh digit, so the row the rewrite leaves is the row the
+  /// writer would have written.
   /// </para>
   /// <para>
   /// The sign applies to the whole duration rather than to its first component, so it is taken from
@@ -211,13 +215,13 @@ public static class CanonicalTemporalBackfillSql {
   private static string _durationStatement(string key, string table) => $"""
     UPDATE {table} AS t
     SET data = t.data || jsonb_build_object('{key}',
-          (CASE WHEN left(t.data ->> '{key}', 1) = '-' THEN -1 ELSE 1 END)::bigint * (
+          ((CASE WHEN left(t.data ->> '{key}', 1) = '-' THEN -1 ELSE 1 END)::bigint * (
             coalesce(s.parts[1], '0')::bigint * 864000000000
             + s.parts[2]::bigint * 36000000000
             + s.parts[3]::bigint * 600000000
             + s.parts[4]::bigint * 10000000
             + coalesce(rpad(s.parts[5], 7, '0'), '0')::bigint
-          ))
+          )) / 10)
     FROM (
       SELECT id, regexp_match(data ->> '{key}', {DURATION_PATTERN}) AS parts
       FROM {table}

@@ -27,13 +27,13 @@ public enum CanonicalTemporalKind {
   /// <summary>An instant carrying an offset, normalized to the instant and stored the same way.</summary>
   OffsetInstant = 2,
 
-  /// <summary>A date without a time, stored as days since the Unix epoch.</summary>
+  /// <summary>A date without a time, stored as microseconds since the Unix epoch at its midnight.</summary>
   Day = 3,
 
   /// <summary>A time of day, stored as microseconds since midnight.</summary>
   TimeOfDay = 4,
 
-  /// <summary>A duration, stored as its tick count.</summary>
+  /// <summary>A duration, stored as microseconds.</summary>
   Duration = 5,
 }
 
@@ -209,10 +209,12 @@ public static class CanonicalTemporalDiscovery {
       ImmutableArray<CanonicalTemporalProperty> properties, string builder) {
     foreach (var property in properties) {
       var (clrType, toProvider, fromProvider) = _conversion(property);
-      var storedType = property.Kind == CanonicalTemporalKind.Day ? "int" : "long";
 
+      // One stored type for every kind. A date once stored as a four-byte day count, which put it
+      // in a unit nothing else used and made it incomparable with an instant.
+      const string STORED_TYPE = "long";
       var model = property.IsNullable ? $"{clrType}?" : clrType;
-      var stored = property.IsNullable ? $"{storedType}?" : storedType;
+      var stored = property.IsNullable ? $"{STORED_TYPE}?" : STORED_TYPE;
 
       // A nullable value converts through its underlying type, and a null is simply absent.
       var to = property.IsNullable
@@ -234,9 +236,9 @@ public static class CanonicalTemporalDiscovery {
         CanonicalTemporalKind.OffsetInstant =>
           ("global::System.DateTimeOffset", $"{FORMAT}.ToEpochMicroseconds", $"{FORMAT}.OffsetFromEpochMicroseconds"),
         CanonicalTemporalKind.Day =>
-          ("global::System.DateOnly", $"{FORMAT}.ToEpochDays", $"{FORMAT}.FromEpochDays"),
+          ("global::System.DateOnly", $"{FORMAT}.ToEpochMicroseconds", $"{FORMAT}.DayFromEpochMicroseconds"),
         CanonicalTemporalKind.TimeOfDay =>
           ("global::System.TimeOnly", $"{FORMAT}.ToMicrosecondsOfDay", $"{FORMAT}.FromMicrosecondsOfDay"),
-        _ => ("global::System.TimeSpan", $"{FORMAT}.ToTicks", $"{FORMAT}.FromTicks"),
+        _ => ("global::System.TimeSpan", $"{FORMAT}.ToMicroseconds", $"{FORMAT}.DurationFromMicroseconds"),
       };
 }

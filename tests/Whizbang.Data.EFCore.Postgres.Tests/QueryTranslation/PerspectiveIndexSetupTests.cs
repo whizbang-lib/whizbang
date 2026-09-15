@@ -152,7 +152,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   /// </remarks>
   [Test]
   [Arguments("OccurredAt", JsonIndexCast.Int8)]
-  [Arguments("Day", JsonIndexCast.Int4)]
+  [Arguments("Day", JsonIndexCast.Int8)]
   [Arguments("Clock", JsonIndexCast.Int8)]
   [Arguments("Elapsed", JsonIndexCast.Int8)]
   public async Task ATemporalFieldBuildsItsIndexAsync(string key, JsonIndexCast cast) {

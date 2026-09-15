@@ -98,9 +98,10 @@ public static class JsonIndexDiscovery {
       return JsonIndexCast.Uuid;
     }
 
+    // One cast for the whole family, because every kind stores in the same eight-byte unit. A date
+    // once cast through int4 over a day count, which baked a second unit into the schema.
     return CanonicalTemporalDiscovery.KindOf(type) switch {
       CanonicalTemporalKind.None => null,
-      CanonicalTemporalKind.Day => JsonIndexCast.Int4,
       _ => JsonIndexCast.Int8,
     };
   }

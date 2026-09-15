@@ -170,6 +170,61 @@ public class JsonIndexGenerationTests {
   }
 
   /// <summary>
+  /// Every temporal kind indexes through the same eight-byte cast, because every kind stores in
+  /// the same unit.
+  /// </summary>
+  /// <remarks>
+  /// A date once indexed through a four-byte cast over a day count. That was a second unit with its
+  /// own cast, and an index expression is the one place a unit is baked into the schema: changing it
+  /// later is a rebuild. One cast for the family is what keeps a date comparable with an instant in
+  /// the index as well as in the document.
+  /// </remarks>
+  [Test]
+  public async Task EveryTemporalKindIndexesThroughTheSameCastAsync() {
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync("""
+      using System;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record Scheduled : IEvent;
+
+      [IndexAllFields]
+      public record ScheduleModel {
+        [StreamId]
+        public Guid ScheduleId { get; init; }
+
+        public DateOnly Day { get; init; }
+        public TimeOnly Clock { get; init; }
+        public TimeSpan Elapsed { get; init; }
+        public DateTimeOffset RecordedAt { get; init; }
+      }
+
+      public class SchedulePerspective : IPerspectiveFor<ScheduleModel, Scheduled> {
+        public ScheduleModel Apply(ScheduleModel currentData, Scheduled eventData) => currentData;
+      }
+
+      [WhizbangDbContext]
+      public class ScheduleDbContext : DbContext {
+        public ScheduleDbContext(DbContextOptions<ScheduleDbContext> options) : base(options) { }
+      }
+      """);
+
+    var output = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
+
+    foreach (var key in new[] { "Day", "Clock", "Elapsed", "RecordedAt" }) {
+      await Assert.That(output).Contains($"((data ->> '{key}')::bigint)", StringComparison.Ordinal)
+        .Because($"'{key}' stores in microseconds like every other kind, so it indexes through the "
+          + "same cast");
+    }
+    await Assert.That(output).DoesNotContain("((data ->> 'Day')::integer)", StringComparison.Ordinal)
+      .Because("a four-byte cast over a date is the day-count unit surviving in the schema");
+  }
+
+  /// <summary>
   /// A model whose document has to be stored opaquely gets no index over that document, because no
   /// query against it would ever reach one.
   /// </summary>

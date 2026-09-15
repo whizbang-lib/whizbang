@@ -19,6 +19,15 @@ namespace Whizbang.Core.Perspectives;
 /// query outright instead of answering it wrongly.
 /// </para>
 /// <para>
+/// <strong>One unit for every kind: the microsecond.</strong> An instant is microseconds since the
+/// Unix epoch, a date is the same at midnight UTC, a time of day is microseconds since midnight and a
+/// duration is microseconds. So a date orders against an instant with the same cast, an instant plus
+/// a duration is arithmetic on the stored numbers, and a time of day is a duration from midnight.
+/// The first release of this form stored a date as a day count and a duration as a tick count, and
+/// nothing in a document could say which of three units a number was in; the ledger that migrated
+/// those rows is described with the migration.
+/// </para>
+/// <para>
 /// <strong>This is a compatibility contract.</strong> The moment rows exist in this form, changing
 /// any of it is a migration rather than a refactor, which is why the values are pinned by exact
 /// assertion rather than by round-trip alone.
@@ -27,11 +36,19 @@ namespace Whizbang.Core.Perspectives;
 /// <docs>fundamentals/perspectives/jsonb-containment</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/CanonicalTemporalFormatTests.cs</tests>
 public static class CanonicalTemporalFormat {
+#pragma warning disable CA1707
+  /// <summary>Microseconds in a day, which is what a date advances by.</summary>
+  public const long MICROSECONDS_PER_DAY = 86_400_000_000L;
+#pragma warning restore CA1707
+
   /// <summary>Ticks in a microsecond, which is the precision a PostgreSQL timestamp keeps.</summary>
   private const long TICKS_PER_MICROSECOND = TimeSpan.TicksPerMillisecond / 1000;
 
   /// <summary>Midnight on the first of January 1970, in ticks.</summary>
   private static readonly long _epochTicks = DateTime.UnixEpoch.Ticks;
+
+  /// <summary>The first of January 1970, as a day number.</summary>
+  private static readonly int _epochDayNumber = DateOnly.FromDateTime(DateTime.UnixEpoch).DayNumber;
 
   /// <summary>
   /// An instant as microseconds since the Unix epoch.
@@ -80,16 +97,33 @@ public static class CanonicalTemporalFormat {
   public static DateTimeOffset OffsetFromEpochMicroseconds(long microseconds) =>
     new(FromEpochMicroseconds(microseconds), TimeSpan.Zero);
 
-  /// <summary>A date as days since the Unix epoch.</summary>
+  /// <summary>A date as microseconds since the Unix epoch, at midnight UTC of that date.</summary>
   /// <param name="value">The date.</param>
-  /// <returns>Days since the epoch, negative before it.</returns>
-  public static int ToEpochDays(DateOnly value) => value.DayNumber - DateOnly.FromDateTime(DateTime.UnixEpoch).DayNumber;
+  /// <returns>Microseconds since the epoch, negative before it.</returns>
+  /// <remarks>
+  /// The same number an instant at that midnight has, which is what lets a date be compared with an
+  /// instant at all. A day count could not: a day count and a microsecond count are both integers,
+  /// and nothing in a document says which one a number is.
+  /// </remarks>
+  public static long ToEpochMicroseconds(DateOnly value) =>
+    (value.DayNumber - _epochDayNumber) * MICROSECONDS_PER_DAY;
 
-  /// <summary>The date that many days after the epoch.</summary>
-  /// <param name="days">Days since the epoch.</param>
-  /// <returns>The date.</returns>
-  public static DateOnly FromEpochDays(int days) =>
-    DateOnly.FromDayNumber(days + DateOnly.FromDateTime(DateTime.UnixEpoch).DayNumber);
+  /// <summary>The date that a number of microseconds since the epoch falls on.</summary>
+  /// <param name="microseconds">Microseconds since the epoch.</param>
+  /// <returns>The date containing that instant.</returns>
+  /// <remarks>
+  /// The writer only ever stores midnight, so this is about what a reader does with a number it did
+  /// not write, an instant compared against a date column, say. Floored rather than truncated, so a
+  /// value late on the last day of 1969 stays in 1969 instead of rounding toward zero into 1970.
+  /// </remarks>
+  public static DateOnly DayFromEpochMicroseconds(long microseconds) {
+    var days = Math.DivRem(microseconds, MICROSECONDS_PER_DAY, out var remainder);
+    if (remainder < 0) {
+      days--;
+    }
+
+    return DateOnly.FromDayNumber((int)days + _epochDayNumber);
+  }
 
   /// <summary>A time of day as microseconds since midnight.</summary>
   /// <param name="value">The time of day.</param>
@@ -107,19 +141,20 @@ public static class CanonicalTemporalFormat {
   public static TimeOnly FromMicrosecondsOfDay(long microseconds) =>
     new(microseconds * TICKS_PER_MICROSECOND);
 
-  /// <summary>A duration as its tick count.</summary>
+  /// <summary>A duration as microseconds.</summary>
   /// <param name="value">The duration.</param>
-  /// <returns>The tick count.</returns>
+  /// <returns>Microseconds, negative for a negative duration.</returns>
   /// <remarks>
-  /// Keeps full precision, unlike the instants, because a duration is never compared against a
-  /// PostgreSQL interval: it is a number on both sides of the comparison. The rendering that ruled it
-  /// out of the eligible set, a day count present only when non-zero followed by a trimmed fraction,
-  /// simply stops existing.
+  /// Truncates the seventh fractional digit, as an instant does. Stored as ticks a duration kept a
+  /// digit no other kind had and could not be added to an instant without a conversion nobody would
+  /// remember to write in SQL; a microsecond is what a PostgreSQL interval holds, so the digit given
+  /// up is one the database could never have compared against anyway.
   /// </remarks>
-  public static long ToTicks(TimeSpan value) => value.Ticks;
+  public static long ToMicroseconds(TimeSpan value) => value.Ticks / TICKS_PER_MICROSECOND;
 
-  /// <summary>The duration of that many ticks.</summary>
-  /// <param name="ticks">The tick count.</param>
+  /// <summary>The duration of that many microseconds.</summary>
+  /// <param name="microseconds">Microseconds.</param>
   /// <returns>The duration.</returns>
-  public static TimeSpan FromTicks(long ticks) => new(ticks);
+  public static TimeSpan DurationFromMicroseconds(long microseconds) =>
+    new(microseconds * TICKS_PER_MICROSECOND);
 }

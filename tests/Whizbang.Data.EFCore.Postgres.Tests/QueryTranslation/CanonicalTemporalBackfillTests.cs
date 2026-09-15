@@ -200,7 +200,7 @@ public class CanonicalTemporalBackfillTests : IAsyncDisposable {
         + "it able to find every row that holds it");
   }
 
-  /// <summary>A date becomes days since the epoch.</summary>
+  /// <summary>A date becomes microseconds since the epoch at its midnight, the unit every kind shares.</summary>
   [Test]
   public async Task ADateIsRewrittenAsync() {
     await _seedOldFormatAsync("a", """{"Label": "a", "Day": "2026-03-04"}""");
@@ -208,8 +208,9 @@ public class CanonicalTemporalBackfillTests : IAsyncDisposable {
     await _backfillAsync();
 
     await Assert.That(await _valueAsync("Day", "a")).IsEqualTo(
-      CanonicalTemporalFormat.ToEpochDays(new DateOnly(2026, 3, 4))
-        .ToString(CultureInfo.InvariantCulture));
+      CanonicalTemporalFormat.ToEpochMicroseconds(new DateOnly(2026, 3, 4))
+        .ToString(CultureInfo.InvariantCulture))
+      .Because("a date in the same unit as an instant is what lets the two order against each other");
   }
 
   /// <summary>
@@ -230,7 +231,8 @@ public class CanonicalTemporalBackfillTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// A duration becomes its tick count, through every shape its rendering took.
+  /// A duration becomes microseconds, through every shape its rendering took, truncating the seventh
+  /// digit exactly as the writer does.
   /// </summary>
   /// <remarks>
   /// The awkward one, and the reason it was ruled out of the eligible set: a day count present only
@@ -251,7 +253,9 @@ public class CanonicalTemporalBackfillTests : IAsyncDisposable {
     var expected = new TimeSpan(days, hours, minutes, seconds).Add(TimeSpan.FromTicks(ticks));
 
     await Assert.That(await _valueAsync("Elapsed", "a")).IsEqualTo(
-      CanonicalTemporalFormat.ToTicks(expected).ToString(CultureInfo.InvariantCulture));
+      CanonicalTemporalFormat.ToMicroseconds(expected).ToString(CultureInfo.InvariantCulture))
+      .Because("the row the rewrite leaves has to be the row the writer would have written, seventh "
+        + "digit truncated on both sides");
   }
 
   /// <summary>A negative duration keeps its sign across every component.</summary>
@@ -264,7 +268,7 @@ public class CanonicalTemporalBackfillTests : IAsyncDisposable {
     var expected = new TimeSpan(1, 5, 6, 7).Add(TimeSpan.FromTicks(1_234_567)).Negate();
 
     await Assert.That(await _valueAsync("Elapsed", "a")).IsEqualTo(
-      CanonicalTemporalFormat.ToTicks(expected).ToString(CultureInfo.InvariantCulture))
+      CanonicalTemporalFormat.ToMicroseconds(expected).ToString(CultureInfo.InvariantCulture))
       .Because("the sign applies to the whole duration rather than to its first component, which a "
         + "conversion that negated only the days would get wrong for everything but a whole number "
         + "of days");

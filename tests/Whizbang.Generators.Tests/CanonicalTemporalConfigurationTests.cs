@@ -63,11 +63,11 @@ public class CanonicalTemporalConfigurationTests {
 
   /// <summary>Each temporal type is converted to the number that is its canonical stored form.</summary>
   [Test]
-  [Arguments("OccurredAt", "ToEpochMicroseconds")]
-  [Arguments("RecordedAt", "ToEpochMicroseconds")]
-  [Arguments("Day", "ToEpochDays")]
-  [Arguments("Clock", "ToMicrosecondsOfDay")]
-  [Arguments("Elapsed", "ToTicks")]
+  [Arguments("OccurredAt", "FromEpochMicroseconds")]
+  [Arguments("RecordedAt", "OffsetFromEpochMicroseconds")]
+  [Arguments("Day", "DayFromEpochMicroseconds")]
+  [Arguments("Clock", "FromMicrosecondsOfDay")]
+  [Arguments("Elapsed", "DurationFromMicroseconds")]
   public async Task ATemporalPropertyIsStoredAsANumberAsync(string property, string conversion) {
     var output = await _generatedAsync();
 
@@ -129,6 +129,35 @@ public class CanonicalTemporalConfigurationTests {
       StringComparison.Ordinal)
       .Because("the integration test that proves this configuration works writes it by hand, so the "
         + "emitted form has to be pinned or the two can drift apart with both still passing");
+  }
+
+  /// <summary>
+  /// A date and a duration store as the same eight-byte unit as an instant, pinned exactly.
+  /// </summary>
+  /// <remarks>
+  /// The first release of this form stored a date as a four-byte day count and a duration as ticks,
+  /// so a date could not be compared with an instant and a duration could not be added to one. One
+  /// unit for every kind is the contract now, and a stored type other than <c>long</c> here would
+  /// silently reintroduce a second one.
+  /// </remarks>
+  [Test]
+  public async Task ADateAndADurationStoreInTheSharedUnitAsync() {
+    var output = await _generatedAsync();
+
+    await Assert.That(output).Contains(
+      "d.Property(p => p.Day).HasConversion<long>("
+      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.ToEpochMicroseconds(v), "
+      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.DayFromEpochMicroseconds(v));",
+      StringComparison.Ordinal)
+      .Because("a date in the same unit as an instant is what lets the two order against each other");
+    await Assert.That(output).Contains(
+      "d.Property(p => p.Elapsed).HasConversion<long>("
+      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.ToMicroseconds(v), "
+      + "v => global::Whizbang.Core.Perspectives.CanonicalTemporalFormat.DurationFromMicroseconds(v));",
+      StringComparison.Ordinal)
+      .Because("a duration in microseconds is what lets it be added to an instant in SQL");
+    await Assert.That(output).DoesNotContain("HasConversion<int>", StringComparison.Ordinal)
+      .Because("no kind stores in a four-byte unit any more");
   }
 
   /// <summary>
