@@ -56,6 +56,46 @@ public class PerspectiveFailureCounterSqlTests : EFCoreTestBase {
     await Assert.That(attempts).IsEqualTo(1).Because("recording a failure is not a new dispatch start (the next claim bumps attempts)");
   }
 
+  /// <summary>
+  /// The element the runtime actually writes, MessageId and Reason, records the failure.
+  /// </summary>
+  /// <remarks>
+  /// The failure channel serializes the one failure record every category shares, whose fields
+  /// are MessageId and Reason. The function read EventWorkId and FailureReason, so no element
+  /// the runtime ever sent matched a row: nothing was recorded, the counter the dead-letter
+  /// decision reads never moved, and an unreadable row was re-claimed and failed again every
+  /// cycle. Both spellings are read now.
+  /// </remarks>
+  [Test]
+  public async Task RecordedFailure_InTheShapeTheRuntimeWrites_IsRecordedAsync() {
+    await using var dbContext = CreateDbContext();
+    var conn = await _openAsync(dbContext);
+    var instance = (Guid)TrackedGuid.NewMedo();
+    var (streamId, workId) = await _seedPendingRowAsync(conn);
+    await _callGetStreamEventsAsync(conn, instance, streamId);
+
+    await using (var cmd = conn.CreateCommand()) {
+      cmd.CommandText = "SELECT process_perspective_event_failures(@failures::jsonb, NOW())";
+      cmd.Parameters.AddWithValue("failures",
+        $$"""[{"MessageId":"{{workId}}","CompletedStatus":0,"Error":"stored form unreadable","Reason":3}]""");
+      await cmd.ExecuteNonQueryAsync();
+    }
+
+    var (_, failures) = await _readCountersAsync(conn, workId);
+    await Assert.That(failures).IsEqualTo(1)
+      .Because("the element the runtime writes names the row by MessageId; a function that only read "
+        + "EventWorkId recorded nothing the runtime ever sent");
+    await using var read = conn.CreateCommand();
+    read.CommandText = "SELECT failure_reason::int, (scheduled_for > NOW())::text, (lease_expiry IS NULL)::text "
+      + "FROM wh_perspective_events WHERE event_work_id = @work";
+    read.Parameters.AddWithValue("work", workId);
+    await using var reader = await read.ExecuteReaderAsync();
+    await reader.ReadAsync();
+    await Assert.That(reader.GetInt32(0)).IsEqualTo(3).Because("the reason is read from Reason, the runtime's name");
+    await Assert.That(reader.GetString(1)).IsEqualTo("true").Because("the retry is scheduled with backoff");
+    await Assert.That(reader.GetString(2)).IsEqualTo("true").Because("the lease is released for the retry");
+  }
+
   [Test]
   public async Task GetStreamEvents_SurfacesFailures_ForTheDeadLetterDecisionAsync() {
     await using var dbContext = CreateDbContext();

@@ -29,7 +29,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// - Runner and PostPerspective receptor failures routed to the failure path
 /// - Buffered (BatchedCompletionStrategy) completions/failures flushed onto the Phase C channels
 /// </summary>
-public class PerspectiveWorkerDeepPathDrainTests {
+public partial class PerspectiveWorkerDeepPathDrainTests {
 
   private const string PERSPECTIVE = "Drain.DeepPerspective";
 
@@ -827,7 +827,9 @@ public class PerspectiveWorkerDeepPathDrainTests {
       ILogger<PerspectiveWorker>? logger = null,
       TimeProvider? timeProvider = null,
       IOptions<LeaseHandleOptions>? leaseHandleOptions = null,
-      IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null) {
+      IOptions<LeaseRenewalWorkerOptions>? leaseRenewalOptions = null,
+      PerspectiveMetrics? metrics = null,
+      StoredFormFailureRegistry? storedFormFailures = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -871,7 +873,9 @@ public class PerspectiveWorkerDeepPathDrainTests {
       recentlyProcessedEventCache: cooldownCache,
       leaseHandleOptions: leaseHandleOptions,
       leaseRenewalOptions: leaseRenewalOptions,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      metrics: metrics,
+      storedFormFailures: storedFormFailures);
     return (worker, harness, provider);
   }
 

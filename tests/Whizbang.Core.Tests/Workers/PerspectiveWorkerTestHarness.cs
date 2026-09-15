@@ -87,12 +87,29 @@ internal sealed class CapturingPerspectiveCompletionChannel : IPerspectiveComple
   }
 }
 
-internal sealed class CapturingFailureChannel : IFailureChannel {
+internal sealed class CapturingFailureChannel : IFailureChannel, IDisposable {
+  private readonly SemaphoreSlim _signal = new(0, int.MaxValue);
   public ConcurrentQueue<(WorkCategory category, MessageFailure failure)> Items { get; } = new();
   public ValueTask EnqueueAsync(WorkCategory category, MessageFailure failure, CancellationToken cancellationToken = default) {
     Items.Enqueue((category, failure));
+    _signal.Release();
     return ValueTask.CompletedTask;
   }
+
+  /// <summary>Completes when at least <paramref name="count"/> failures have been enqueued.
+  /// Signal-based (SemaphoreSlim released on enqueue) — no polling.</summary>
+  public async Task WaitForCountAsync(int count, TimeSpan timeout) {
+    using var deadline = new CancellationTokenSource(timeout);
+    while (Items.Count < count) {
+      try {
+        await _signal.WaitAsync(deadline.Token);
+      } catch (OperationCanceledException) {
+        throw new TimeoutException($"Only {Items.Count} of {count} failures seen within {timeout}");
+      }
+    }
+  }
+
+  public void Dispose() => _signal.Dispose();
 }
 
 internal sealed class CapturingLeaseRenewalChannel : ILeaseRenewalChannel {

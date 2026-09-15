@@ -342,6 +342,25 @@ else changes. The pinned test `AFrameworkDocumentIsNotConvertedAsync` is inverte
   reader/writers (set by the convention, `CanonicalTemporalJsonReaderWriters`) both call it, so
   both paths read and refuse the same values in the same words, and the classification is by
   exception type (`StoredFormUnreadable`) on both.
+- Also found: why "it never stops" (1.6). A drain-path apply failure reports a cursor failure with
+  no event id, which the coordinator skips, and the batched strategy then sends that same failure
+  through the failure channel with the empty id as the row id. And the failure function read the
+  element fields `EventWorkId`/`FailureReason` while the runtime serializes `MessageId`/`Reason`,
+  so no element the runtime ever sent matched a row. Nothing was recorded, the counter the
+  dead-letter decision reads never moved, no backoff was scheduled; the lease lapsed and the row
+  was re-claimed. Migration 154 reads both spellings, and the worker now reports every leased row
+  of a stream it cannot read through the failure channel, so the database records the failure,
+  schedules the retry with backoff, and dead-letters at the threshold. That is the parking; the
+  in-process registry (`StoredFormFailureRegistry`) only remembers the announcement and feeds the
+  health source (`StoredFormHealthSource`, component `perspective-stored-forms`).
+- Follow-up, not in this PR: the outbox and inbox failure functions read `FailureReason` the same
+  way, so `failure_reason` on those rows has always been Unknown. Different tables and functions
+  with their own drift-pinned tests, and no bearing on stored forms; it deserves its own change.
+- Follow-up, not in this PR: a drain-path apply failure for any other reason still reports only
+  the empty-id cursor failure, so those rows still park nothing. Changing that changes retry
+  semantics for every consumer's apply failure (rows would dead-letter after the configured
+  failures where today they retry until the source is fixed), which is a decision to make on its
+  own, not a side effect of this one.
 
 ### 3.9 Tests: the matrix that was missing
 
@@ -408,8 +427,8 @@ Kept current as slices land. One branch, one PR, one release.
 | S5a | Migration 153: `wh_perspective_forms` ledger and `wh_canonicalize_temporal` | done |
 | S5b | Runtime rewrite derived from the EF model and serializer metadata, one ledger-gated transaction per table, wired after the election | done |
 | S5c | Fresh tables recorded at form 2 (settled); Day index renamed for its new cast and the old one dropped; mixed-fleet warning | done |
-| S6 | Loudness: classified `StoredFormUnreadable` error once per stream, meter, parking | in progress |
-| S7 | Docs: stored-forms table, migrations page, ai-docs, code/tests/docs links | pending |
+| S6 | Loudness: classified `StoredFormUnreadable` error once per stream, meter, parking; one reader per kind on both paths; migration 154 | done |
+| S7 | Docs: stored-forms table, migrations page, ai-docs, code/tests/docs links | in progress |
 | PR | Gate green (100% new-code coverage, zero Sonar), alpha published | pending |
 | Rollout | Pin in the consumer, deploy to the parked slot, unpause KEDA, restore config, prove the failing feature, import test | pending |
 
