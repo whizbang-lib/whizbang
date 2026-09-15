@@ -93,7 +93,9 @@ public class SyncEventTrackerCoverageTests {
   // ==========================================================================
 
   [Test]
-  public async Task WaitForEventsAsync_ConcurrentMarkProcessed_NeverStrandsAWaiterAsync() {
+  [Timeout(120_000)]
+  public async Task WaitForEventsAsync_ConcurrentMarkProcessed_NeverStrandsAWaiterAsync(
+      CancellationToken cancellationToken) {
     // Losing the "check again after registering" guard would surface as intermittent multi-second
     // stalls on the waiting side under real concurrent load (a MarkProcessed call that lands in the
     // narrow window between the tracker's two pending-checks would otherwise go unnoticed until the
@@ -126,13 +128,23 @@ public class SyncEventTrackerCoverageTests {
 
     var waitTasks = new Task<bool>[eventCount];
     for (var i = 0; i < eventCount; i++) {
-      waitTasks[i] = tracker.WaitForEventsAsync([eventIds[i]], TimeSpan.FromSeconds(5));
+      // The timeout is a detector, not a deadline, and its absolute value is deliberately far
+      // larger than anything scheduling can account for. The defect this test exists to catch
+      // strands a waiter for the WHOLE timeout, so any value detects it; but a value close to
+      // real-world scheduling delay detects a loaded machine too. At five seconds this failed
+      // under the full parallel suite while passing every time in isolation, which is the
+      // signature of a test measuring the host rather than the code.
+      waitTasks[i] = tracker.WaitForEventsAsync(
+        [eventIds[i]], TimeSpan.FromSeconds(90), cancellationToken: cancellationToken);
     }
 
     await Task.WhenAll(workers);
     var results = await Task.WhenAll(waitTasks);
 
-    await Assert.That(results.All(r => r)).IsTrue()
-      .Because("every waiter racing a concurrent MarkProcessed drain must resolve true, never be stranded until timeout.");
+    // Asserted on the count as well as the predicate, so a failure says how many were stranded
+    // rather than only that one was: one is the race, twenty thousand is the guard being gone.
+    await Assert.That(results.Count(r => !r)).IsEqualTo(0)
+      .Because("every waiter racing a concurrent MarkProcessed drain must resolve true, never be "
+        + "stranded until timeout.");
   }
 }

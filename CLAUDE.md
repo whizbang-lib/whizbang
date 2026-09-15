@@ -220,13 +220,16 @@ avoids both over- and under-reporting, and changes that were investigated and co
 - Touching schema initialization, the perspective schema pass, or the SQL it emits
 - Anything needs a connection of its own (out-of-band DDL, VACUUM, a rewrite)
 - A statement depends on an earlier statement's **committed** effect
+- Deciding what an instance does when it does **not** win the schema lock
 
-**Why critical**: two traps in here each shipped once and each passed every local test first.
+**Why critical**: three traps, two of which shipped once and each passed every local test first.
 Ordering statements inside one transaction does not make an index see a rewrite that has not
-committed, and a rollback then undoes the rewrite so no retry can ever get further. And there is
-almost never a connection string to open a second connection from, because Npgsql redacts the
-password and the turnkey registration configures the context with a data source. One answer exists
-for each; the file says which, and why a green test suite proves neither.
+committed, and a rollback then undoes the rewrite so no retry can ever get further. There is almost
+never a connection string to open a second connection from, because Npgsql redacts the password and
+the turnkey registration configures the context with a data source. And a failed try-lock says only
+"not yours": it cannot tell a working migrator from a dead one, the two call for opposite behavior,
+and `pg_locks` answers it only if the 64-bit key is reassembled from both halves. One answer exists
+for each; the file says which, and why a green test suite proves none of them.
 
 ### 📖 **[type-naming.md](ai-docs/type-naming.md)** - CRITICAL
 **Read when**:

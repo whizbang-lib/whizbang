@@ -20,6 +20,10 @@
 -- Dependencies: 010-011 (wh_service_instances, cleanup_stale_instances)
 --               029 (record_heartbeat)
 
+-- @whizbang:bootstrap-begin
+-- Bootstrap: record_capability reads this table on every acquisition, so the TABLE is part of
+-- the bootstrap closure. The functions below are NOT: nothing calls them before the schema is
+-- migrated, and redefining them needs objects the bootstrap deliberately does not create.
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_instance_evictions (
   instance_id UUID PRIMARY KEY,
   evicted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -33,6 +37,8 @@ by perform_maintenance after instance_eviction_retention_hours (default 24).';
 
 CREATE INDEX IF NOT EXISTS idx_instance_evictions_evicted_at
   ON __SCHEMA__.wh_instance_evictions (evicted_at);
+
+-- @whizbang:bootstrap-end
 
 -- ============================================================================
 -- cleanup_stale_instances — same signature, body gains the tombstone insert.

@@ -2130,6 +2130,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Load migration files (once for all DbContexts)
     // Note: Core infrastructure schema is now generated at runtime by PostgresSchemaBuilder
     string migrationsCode = _generateMigrationsCode(context);
+    // The subset that has to exist before a migrator can be elected at all. Marked in the SQL
+    // rather than listed here, because a list goes stale the first time a migration gains a
+    // dependency and a marker sits next to the statement it describes.
+    string bootstrapMigrationsCode = _generateBootstrapMigrationsCode();
 
     // Loop through each DbContext and generate extension method
     foreach (var dbContext in dbContexts) {
@@ -2161,12 +2165,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
       // Replace PERSPECTIVE_ENTRIES region with per-perspective (name, sql) tuples for hash tracking
       template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_ENTRIES", perspectiveEntriesCode);
+      // The rewrites are their own phase, run and committed before the initializer's transaction.
+      template = TemplateUtilities.ReplaceRegion(
+        template, "CANONICAL_TEMPORAL_REWRITES",
+        _generateCanonicalTemporalRewritesCode(matchingPerspectives, dbContext.Schema));
 
       // Replace MIGRATIONS region with embedded migration scripts
       template = TemplateUtilities.ReplaceRegion(
           template,
           "MIGRATIONS",
           migrationsCode
+      );
+      // The bootstrap subset, applied before anything is elected.
+      template = TemplateUtilities.ReplaceRegion(
+          template,
+          "BOOTSTRAP_MIGRATIONS",
+          bootstrapMigrationsCode
       );
 
       // Get assembly name for service identification
@@ -2240,6 +2254,57 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// source of truth for the SQL files — no manual sync required.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
+  /// <summary>
+  /// Emits the marked bootstrap regions, in migration order.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Deciding which instance migrates is a duty election, the elector records its win through
+  /// <c>record_capability</c>, and a migration is what creates that function. The cycle is broken by
+  /// applying a marked subset first, so this emits that subset as its own list alongside the full
+  /// one. The same files appear in both: the bootstrap only makes objects exist, and the ordinary
+  /// pass still applies and records them exactly as before.
+  /// </para>
+  /// <para>
+  /// Escaped identically to the full list, including the <c>__SCHEMA__</c> to
+  /// <c>__MIGRATION_SCHEMA__</c> substitution, so both go through the same runtime transform.
+  /// </para>
+  /// </remarks>
+  private static string _generateBootstrapMigrationsCode() {
+    var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+    var resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+
+    var entries = new List<string>();
+
+    foreach (var resourceName in assembly.GetManifestResourceNames()
+        .Where(name => name.StartsWith(resourcePrefix, StringComparison.Ordinal)
+                    && name.EndsWith(".sql", StringComparison.Ordinal))
+        .OrderBy(name => name, StringComparer.Ordinal)) {
+      // Non-null by contract: the name came from GetManifestResourceNames on this same assembly,
+      // so a guard here would be a branch no input can reach.
+      using var stream = assembly.GetManifestResourceStream(resourceName)!;
+      using var reader = new System.IO.StreamReader(stream);
+      var bootstrap = Whizbang.Generators.Shared.Models.MigrationBootstrapRegions.Extract(
+        reader.ReadToEnd());
+      if (bootstrap is null) {
+        // The ordinary case: all but a handful of migrations carry no bootstrap region.
+        continue;
+      }
+
+      var fileName = resourceName[resourcePrefix.Length..];
+      var escaped = bootstrap
+          .Replace("__SCHEMA__", "__MIGRATION_SCHEMA__")
+          .Replace("\"", "\"\"")
+          .Replace("{", "{{")
+          .Replace("}", "}}");
+      entries.Add($"      (\"{fileName}\", @\"{escaped}\")");
+    }
+
+    return entries.Count == 0
+      ? "// No bootstrap regions found in embedded migrations"
+      : string.Join(",\n", entries);
+  }
+
   private static string _generateMigrationsCode(SourceProductionContext context) {
     var sb = new StringBuilder();
 
@@ -2369,7 +2434,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       _appendCreateTableSql(sb, perspective, schema, quotedSchema);
       // Before the indexes, not after, and with a commit boundary between: an index over a key this
       // rewrites cannot be built in the same transaction as the rewrite.
-      _appendCanonicalTemporalBackfill(sb, perspective, quotedSchema);
       _appendStandardIndexes(sb, perspective, quotedSchema);
       _appendPhysicalFieldIndexes(sb, perspective, quotedSchema);
     }
@@ -2555,6 +2619,52 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Each perspective gets its own CREATE TABLE + indexes SQL, enabling per-perspective
   /// change detection in the migration tracking system.
   /// </summary>
+  /// <summary>
+  /// Emits the guarded rewrites, one entry per perspective that has a stored format to convert.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// A phase of its own because of where it has to run. An index over an extraction of a rewritten
+  /// key needs the rewrite committed; the initializer builds its indexes inside one advisory-locked
+  /// transaction; and committing from a second connection while that transaction is open deadlocks
+  /// on catalog rows it has not committed, with neither side able to move and PostgreSQL unable to
+  /// detect it because one of them waits on a client rather than a lock.
+  /// </para>
+  /// <para>
+  /// Running before that transaction opens means the tables frequently do not exist yet, which is
+  /// why every statement carries its own <c>to_regclass</c> guard rather than being ordered after
+  /// the DDL. A perspective with nothing to convert contributes nothing.
+  /// </para>
+  /// </remarks>
+  private static string _generateCanonicalTemporalRewritesCode(
+      List<PerspectiveModelInfo> perspectives,
+      string schema) {
+    var quotedSchema = _quotePostgresIdentifier(schema);
+    var entries = new List<string>();
+
+    foreach (var perspective in perspectives
+        .GroupBy(p => p.TableName)
+        .Select(g => g.First())
+        .OrderBy(p => p.TableName)) {
+      var statements = CanonicalTemporalBackfillSql.GuardedStatements(
+        perspective.TemporalProperties, $"{quotedSchema}.{perspective.TableName}").ToList();
+      if (statements.Count == 0) {
+        continue;
+      }
+
+      var escapedSql = string.Join("\n", statements)
+          .Replace("\"", "\"\"")
+          .Replace("{", "{{")
+          .Replace("}", "}}");
+      var perspectiveName = TypeNameUtilities.GetSimpleName(perspective.ModelTypeName);
+      entries.Add($"      (\"{perspectiveName}\", @\"{escapedSql}\")");
+    }
+
+    return entries.Count == 0
+      ? "// No stored format to convert for this DbContext"
+      : string.Join(",\n", entries);
+  }
+
   private static string _generatePerspectiveEntriesCode(
       List<PerspectiveModelInfo> perspectives,
       string schema) {
@@ -2575,8 +2685,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var perspective = uniqueTables[i];
       var perspSql = new StringBuilder();
 
+      // No rewrite here. It runs as its own committed phase before the initializer's transaction
+      // opens; see _generateCanonicalTemporalRewritesCode.
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
-      _appendCanonicalTemporalBackfill(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
 
       var escapedSql = perspSql.ToString()
@@ -2647,45 +2758,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("  WHERE sys_created_at IS NULL OR sys_updated_at IS NULL;");
   }
 
-  /// <summary>
-  /// Emits the rewrite of a perspective's dates, times and durations into their canonical stored
-  /// form.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// Placed between the table and its indexes on purpose, and followed by a commit boundary.
-  /// PostgreSQL evaluates an index expression for every heap tuple that is not yet dead, and a row
-  /// version superseded by an uncommitted rewrite is still live, so an index built in the
-  /// transaction that rewrote its key is built over the values as they were before. Ordering is
-  /// therefore necessary and not sufficient: without the boundary the index fails, the rollback
-  /// undoes the rewrite with it, and every retry begins from the state that just failed.
-  /// </para>
-  /// <para>
-  /// Each statement selects on the stored type being a string, so a database created by this release
-  /// has nothing to convert and a re-run is a no-op. That is what lets this live in the ordinary
-  /// schema path rather than behind a version gate.
-  /// </para>
-  /// </remarks>
-  private static void _appendCanonicalTemporalBackfill(
-      StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
-    var rewrote = false;
-
-    foreach (var statement in CanonicalTemporalBackfillSql.Statements(
-        perspective.TemporalProperties, $"{quotedSchema}.{perspective.TableName}")) {
-      sb.AppendLine(statement);
-      sb.AppendLine();
-      rewrote = true;
-    }
-
-    if (rewrote) {
-      // The indexes that follow include ones built over what was just rewritten, and an index over
-      // an expression is built by evaluating it on every heap tuple that is not yet dead. A row
-      // version superseded by an uncommitted rewrite is still live, so ordering the statements is
-      // not enough: the rewrite has to be committed first, and this is where that happens.
-      sb.AppendLine(CanonicalTemporalBackfillSql.COMMIT_BOUNDARY);
-      sb.AppendLine();
-    }
-  }
 
   private static void _generatePerspectiveIndexSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {

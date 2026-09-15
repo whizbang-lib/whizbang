@@ -25,6 +25,9 @@
 -- Dependencies: 010 (wh_service_instances)
 --               106 (wh_instance_evictions)
 
+-- @whizbang:bootstrap-begin
+-- Bootstrap: record_capability is what the elector calls, so nothing can be elected before it exists.
+
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_instance_capabilities (
   instance_id UUID NOT NULL REFERENCES __SCHEMA__.wh_service_instances(instance_id) ON DELETE CASCADE,
   capability TEXT NOT NULL,
@@ -87,3 +90,5 @@ BEGIN
   WHERE instance_id = p_instance_id AND capability = p_capability;
 END;
 $$ LANGUAGE plpgsql;
+
+-- @whizbang:bootstrap-end

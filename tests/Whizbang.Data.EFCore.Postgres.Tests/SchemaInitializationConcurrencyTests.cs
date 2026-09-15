@@ -1,10 +1,20 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Notifications;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Startup;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Postgres;
+using Whizbang.Data.Postgres.Notifications;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -312,6 +322,546 @@ public class SchemaInitializationConcurrencyTests : EFCoreTestBase {
     }
     await using var restoreContext = CreateDbContext();
     await restoreContext.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Deferring to the elected migrator
+  //
+  // Winning pg_try_advisory_xact_lock is what elects a migrator; these cover what the instances
+  // that LOST it do. The two endings are opposite mistakes in the wrong situation — taking over
+  // while the migrator works puts two instances inside the same DDL, and waiting on a migrator
+  // that died strands the whole fleet on a schema that will never advance — and both situations
+  // look identical from a failed try-lock. So each test fixes which one it is.
+  //
+  // The witness is wh_schema_migrations.updated_at. Re-applying a migration stamps it NOW(); a
+  // sentinel value surviving the run is proof the deferring instance applied nothing, which no
+  // count of rows or absence of an exception could establish.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// <summary>A timestamp no real write produces, so an untouched row is recognizable.</summary>
+  private static readonly DateTime UNTOUCHED = new(1999, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+  /// <summary>Waits for the initializer to say it is deferring, rather than for a clock.</summary>
+  /// <remarks>
+  /// The test has to know the instance reached the deferral before it changes the world underneath
+  /// it, and a delay long enough to be safe would be a flake waiting to happen. The log line is the
+  /// event itself.
+  /// </remarks>
+  private sealed class _DeferralWatch : ILogger {
+    private readonly TaskCompletionSource _deferring = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public Task Deferring => _deferring.Task;
+
+    public IDisposable BeginScope<TState>(TState state) where TState : notnull => new _Scope();
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+        TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+      if (eventId.Name == "DeferringToMigrator") {
+        _deferring.TrySetResult();
+      }
+    }
+
+    private sealed class _Scope : IDisposable { public void Dispose() { } }
+  }
+
+  private static long _schemaKey() => Whizbang.Data.Postgres.SchemaInitializationLockKey.Compute("public");
+
+  /// <summary>One framework-owned ledger row, which every deployment has.</summary>
+  private async Task<(string File, string Hash)> _aFrameworkLedgerRowAsync(CancellationToken ct) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      SELECT file_name, content_hash
+      FROM wh_schema_migrations WHERE owner = 'whizbang' ORDER BY file_name LIMIT 1";
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    await Assert.That(await reader.ReadAsync(ct)).IsTrue()
+      .Because("the arrangement needs a real framework migration row to drift");
+    return (reader.GetString(0), reader.GetString(1));
+  }
+
+  private async Task _setLedgerRowAsync(string file, string hash, DateTime updatedAt, CancellationToken ct) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      UPDATE wh_schema_migrations SET content_hash = @hash, updated_at = @at WHERE file_name = @name";
+    cmd.Parameters.AddWithValue("name", file);
+    cmd.Parameters.AddWithValue(nameof(hash), hash);
+    cmd.Parameters.AddWithValue("at", updatedAt);
+    var changed = await cmd.ExecuteNonQueryAsync(ct);
+    await Assert.That(changed).IsEqualTo(1).Because("the arrangement must actually bite");
+  }
+
+  private async Task<(string Hash, DateTime UpdatedAt)> _readLedgerRowAsync(string file, CancellationToken ct) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = @"
+      SELECT content_hash, updated_at FROM wh_schema_migrations WHERE file_name = @name";
+    cmd.Parameters.AddWithValue("name", file);
+    await using var reader = await cmd.ExecuteReaderAsync(ct);
+    await reader.ReadAsync(ct);
+    return (reader.GetString(0), reader.GetDateTime(1));
+  }
+
+  /// <summary>A session holding the schema lock, standing in for the instance that won it.</summary>
+  private async Task<(NpgsqlConnection Connection, int Pid)> _holdSchemaLockAsync(CancellationToken ct) {
+    var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(ct);
+    int pid;
+    await using (var pidCmd = holder.CreateCommand()) {
+      pidCmd.CommandText = "SELECT pg_backend_pid()";
+      pid = Convert.ToInt32(await pidCmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
+    }
+    await using (var take = holder.CreateCommand()) {
+      take.CommandText = $"SELECT pg_advisory_lock({_schemaKey()})";
+      await take.ExecuteNonQueryAsync(ct);
+    }
+    return (holder, pid);
+  }
+
+  /// <summary>Restores the ledger so later tests see an ordinary, current schema.</summary>
+  private async Task _restoreLedgerAsync(string file, string hash, CancellationToken ct) {
+    await _setLedgerRowAsync(file, hash, DateTime.UtcNow, ct);
+    await using var context = CreateDbContext();
+    await context.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: ct);
+  }
+
+  /// <summary>
+  /// An instance that deferred to a migrator which then committed applies nothing itself.
+  /// </summary>
+  /// <remarks>
+  /// The headline property, and the one a green suite could otherwise hide: before this, the loser
+  /// re-contended for the lock, won it, opened a transaction, re-read the hashes and found nothing
+  /// to do — correct, but paid once per replica per startup, and the lock traffic was the cost that
+  /// made every replica scan the tables a rewrite touches. The untouched timestamp is what
+  /// distinguishes "did nothing" from "did it again harmlessly".
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task Deferral_WhenTheMigratorCommits_AppliesNothingItselfAsync(CancellationToken cancellationToken) {
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (holder, _) = await _holdSchemaLockAsync(cancellationToken);
+    await using var holding = holder;
+
+    // Force the slow path: the fast path skips the lock entirely while every hash matches, and a
+    // lock never reached cannot be deferred to.
+    await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
+
+    var watch = new _DeferralWatch();
+    await using var context = CreateDbContext();
+    var init = context.EnsureWhizbangDatabaseInitializedAsync(watch, cancellationToken: cancellationToken);
+
+    await watch.Deferring;
+
+    // The migrator finishes: the schema is current again, and the commit that made it so released
+    // the lock. Both become true together, exactly as a real commit makes them.
+    await _setLedgerRowAsync(rowFile, rowHash, UNTOUCHED, cancellationToken);
+    await using (var release = holding.CreateCommand()) {
+      release.CommandText = $"SELECT pg_advisory_unlock({_schemaKey()})";
+      await release.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await init;
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterUpdatedAt).IsEqualTo(UNTOUCHED)
+      .Because("the migrator's work had landed, so the deferring instance had nothing to apply");
+    await Assert.That(afterHash).IsEqualTo(rowHash);
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  /// <summary>
+  /// An instance that deferred to a migrator which died takes the work over.
+  /// </summary>
+  /// <remarks>
+  /// The crash shape an orchestrator actually produces: the pod is gone, no cleanup ran, and the
+  /// only thing that freed the lock was the backend dying. Waiting here is the worse failure — the
+  /// schema never advances, and every survivor waits on a pod that no longer exists.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task Deferral_WhenTheMigratorIsKilled_TakesTheWorkOverAsync(CancellationToken cancellationToken) {
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (holder, pid) = await _holdSchemaLockAsync(cancellationToken);
+    await using var holding = holder;
+
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
+
+    var watch = new _DeferralWatch();
+    await using var context = CreateDbContext();
+    var init = context.EnsureWhizbangDatabaseInitializedAsync(watch, cancellationToken: cancellationToken);
+
+    await watch.Deferring;
+
+    // Killed outright, with the schema still behind. Nothing ran a release.
+    await using (var killer = new NpgsqlConnection(ConnectionString)) {
+      await killer.OpenAsync(cancellationToken);
+      await using var kill = killer.CreateCommand();
+      kill.CommandText = "SELECT pg_terminate_backend(@pid)";
+      kill.Parameters.AddWithValue("pid", pid);
+      await kill.ExecuteScalarAsync(cancellationToken);
+    }
+
+    await init;
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
+      .Because("the survivor took over and finished the work the dead instance left outstanding");
+    await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED)
+      .Because("taking over means re-applying, which stamps the row");
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  /// <summary>
+  /// A migrator that releases the lock without finishing is also taken over.
+  /// </summary>
+  /// <remarks>
+  /// The same release as a successful commit, over the opposite schema state — a migration that
+  /// threw and rolled back. Paired deliberately with the commit case: identical lock event,
+  /// opposite correct decision, so a mechanism that keyed off the lock alone would get exactly one
+  /// of the two right.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task Deferral_WhenTheMigratorReleasesWithWorkOutstanding_TakesTheWorkOverAsync(
+      CancellationToken cancellationToken) {
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (holder, _) = await _holdSchemaLockAsync(cancellationToken);
+    await using var holding = holder;
+
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
+
+    var watch = new _DeferralWatch();
+    await using var context = CreateDbContext();
+    var init = context.EnsureWhizbangDatabaseInitializedAsync(watch, cancellationToken: cancellationToken);
+
+    await watch.Deferring;
+
+    // A rollback releases the lock exactly as a commit does, and leaves the schema behind.
+    await using (var release = holding.CreateCommand()) {
+      release.CommandText = $"SELECT pg_advisory_unlock({_schemaKey()})";
+      await release.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await init;
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash);
+    await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED)
+      .Because("a released lock over an unfinished schema is a failed migrator, not a finished one");
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  /// <summary>
+  /// Three instances starting together on a schema that genuinely needs work all converge.
+  /// </summary>
+  /// <remarks>
+  /// Two can exclude each other by accident of ordering. Three on a drifted schema exercises the
+  /// real sequence — one wins the lock and migrates while the other two defer, poll, and find the
+  /// work done — and asserts the outcome on the database rather than on the absence of an
+  /// exception.
+  /// </remarks>
+  [Test]
+  [Timeout(180000)]
+  public async Task Deferral_ThreeInstancesOnADriftedSchemaConvergeAsync(CancellationToken cancellationToken) {
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
+
+    await using var first = CreateDbContext();
+    await using var second = CreateDbContext();
+    await using var third = CreateDbContext();
+
+    await Assert.That(async () => await Task.WhenAll(
+      first.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken),
+      second.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken),
+      third.EnsureWhizbangDatabaseInitializedAsync(cancellationToken: cancellationToken)))
+      .ThrowsNothing();
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
+      .Because("whichever instance won, the drift must be gone once all three have returned");
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Staged startup: bootstrap, then elect a migrator
+  //
+  // The tests above cover the lock layer, which is what every instance falls back to. These cover
+  // the layer above it, over a real elector and a real database: the bootstrap makes an election
+  // possible, one instance is granted the migrator duty, and the rest wait on it.
+  //
+  // Driven through the generated initializer rather than a stand-in for it. A fake runner can prove
+  // the decisions and cannot prove that the schema lock key the waiter watches is the same one the
+  // elector takes, which is the part with a real chance of being quietly wrong: the elector derives
+  // its key from the notification connection's search path and the initializer derives its from the
+  // DbContext schema.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /// <summary>An instance identity, as a starting pod presents one.</summary>
+  private sealed class _Pod : IServiceInstanceProvider {
+    public Guid InstanceId { get; } = (Guid)TrackedGuid.NewMedo();
+    public string ServiceName => "staged-svc";
+    public string HostName => "staged-host";
+    public int ProcessId => 7;
+    public ServiceInstanceInfo ToInfo() => new() {
+      InstanceId = InstanceId,
+      ServiceName = ServiceName,
+      HostName = HostName,
+      ProcessId = ProcessId,
+    };
+  }
+
+  /// <summary>A scope carrying what staged startup resolves: an identity and an elector.</summary>
+  private IServiceProvider _stagedScope(_Pod pod) {
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(pod);
+    services.AddSingleton<IDutyElector>(new PgDutyElector(
+      Options.Create(new WhizbangNotificationOptions { DirectConnectionString = ConnectionString }),
+      new ConfigurationBuilder().AddInMemoryCollection([]).Build(),
+      pod,
+      NullLogger<PgDutyElector>.Instance));
+    return services.BuildServiceProvider();
+  }
+
+  private static long _migratorDutyKey() => DutyLockKey.Compute("public", StartupDuties.MIGRATOR);
+
+  /// <summary>A session holding the migrator duty, standing in for the instance that won it.</summary>
+  private async Task<(NpgsqlConnection Connection, int Pid)> _holdMigratorDutyAsync(CancellationToken ct) {
+    var holder = new NpgsqlConnection(ConnectionString);
+    await holder.OpenAsync(ct);
+    int pid;
+    await using (var pidCmd = holder.CreateCommand()) {
+      pidCmd.CommandText = "SELECT pg_backend_pid()";
+      pid = Convert.ToInt32(await pidCmd.ExecuteScalarAsync(ct), System.Globalization.CultureInfo.InvariantCulture);
+    }
+    await using (var take = holder.CreateCommand()) {
+      take.CommandText = $"SELECT pg_advisory_lock({_migratorDutyKey()})";
+      await take.ExecuteNonQueryAsync(ct);
+    }
+    return (holder, pid);
+  }
+
+  private async Task<long> _capabilityRowsAsync(Guid instanceId, CancellationToken ct) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT count(*) FROM wh_instance_capabilities WHERE instance_id = @id";
+    cmd.Parameters.AddWithValue("id", instanceId);
+    return (long)(await cmd.ExecuteScalarAsync(ct))!;
+  }
+
+  private async Task<long> _registryRowsAsync(Guid instanceId, CancellationToken ct) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText = "SELECT count(*) FROM wh_service_instances WHERE instance_id = @id";
+    cmd.Parameters.AddWithValue("id", instanceId);
+    return (long)(await cmd.ExecuteScalarAsync(ct))!;
+  }
+
+  /// <summary>
+  /// An instance that migrates joins the registry first, and gives the duty back afterwards.
+  /// </summary>
+  /// <remarks>
+  /// Both halves are the ones that would strand a fleet if they were wrong. Registration has to
+  /// happen before the election, because the capability record refuses an instance it cannot find.
+  /// Release has to happen afterwards, because a duty still held by an instance that has finished
+  /// leaves every other instance waiting on it indefinitely.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task Staged_TheMigratorRegistersAndThenReleasesTheDutyAsync(CancellationToken cancellationToken) {
+    var pod = new _Pod();
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
+
+    await using var context = CreateDbContext();
+    await context.EnsureWhizbangDatabaseInitializedAsync(
+      null, null, _stagedScope(pod), cancellationToken);
+
+    await Assert.That(await _registryRowsAsync(pod.InstanceId, cancellationToken)).IsEqualTo(1L)
+      .Because("the bootstrap registers this instance so a duty can be recorded against it");
+    await Assert.That(await _capabilityRowsAsync(pod.InstanceId, cancellationToken)).IsEqualTo(0L)
+      .Because("a duty still recorded after migrating would read as a holder that never let go");
+    await Assert.That(await _dutyLockHoldersAsync(cancellationToken)).IsEqualTo(0L);
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
+      .Because("the elected instance did the work, not merely the electing");
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  /// <summary>
+  /// An instance that did not win the duty waits for the holder and applies nothing.
+  /// </summary>
+  /// <remarks>
+  /// The property the whole election exists for, and the one that proves the two lock keys agree.
+  /// The duty is held here from a side session using the key the initializer computes; if the
+  /// elector derived a different key from its own connection's search path, this instance would win
+  /// a duty nobody was holding and migrate straight through, and the untouched timestamp would
+  /// change.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task Staged_ANonHolderWaitsForTheDutyHolderAsync(CancellationToken cancellationToken) {
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (holder, _) = await _holdMigratorDutyAsync(cancellationToken);
+    await using var holding = holder;
+
+    await _setLedgerRowAsync(rowFile, "forced-drift", DateTime.UtcNow, cancellationToken);
+
+    var watch = new _DeferralWatch();
+    await using var context = CreateDbContext();
+    var init = context.EnsureWhizbangDatabaseInitializedAsync(
+      watch, null, _stagedScope(new _Pod()), cancellationToken);
+
+    await watch.Deferring;
+
+    // The holder finishes: the schema is current again and the duty is released.
+    await _setLedgerRowAsync(rowFile, rowHash, UNTOUCHED, cancellationToken);
+    await using (var release = holding.CreateCommand()) {
+      release.CommandText = $"SELECT pg_advisory_unlock({_migratorDutyKey()})";
+      await release.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    await init;
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterUpdatedAt).IsEqualTo(UNTOUCHED)
+      .Because("it waited on the duty holder and then found nothing left to apply");
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  /// <summary>
+  /// A duty holder that is killed mid-migration is taken over.
+  /// </summary>
+  /// <remarks>
+  /// The crash an orchestrator actually produces. The duty rides a session advisory lock, so the
+  /// backend dying releases it with nothing to time out, and the survivor has to notice and finish
+  /// the work rather than wait on a pod that no longer exists.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task Staged_AKilledDutyHolderIsTakenOverAsync(CancellationToken cancellationToken) {
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    var (holder, pid) = await _holdMigratorDutyAsync(cancellationToken);
+    await using var holding = holder;
+
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
+
+    var watch = new _DeferralWatch();
+    await using var context = CreateDbContext();
+    var init = context.EnsureWhizbangDatabaseInitializedAsync(
+      watch, null, _stagedScope(new _Pod()), cancellationToken);
+
+    await watch.Deferring;
+
+    await using (var killer = new NpgsqlConnection(ConnectionString)) {
+      await killer.OpenAsync(cancellationToken);
+      await using var kill = killer.CreateCommand();
+      kill.CommandText = "SELECT pg_terminate_backend(@pid)";
+      kill.Parameters.AddWithValue("pid", pid);
+      await kill.ExecuteScalarAsync(cancellationToken);
+    }
+
+    await init;
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
+      .Because("the survivor took over the work the dead holder left outstanding");
+    await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED);
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  /// <summary>
+  /// With no elector in the scope, the advisory lock is still the guard.
+  /// </summary>
+  /// <remarks>
+  /// The backstop, asserted explicitly rather than left implicit in the other tests. A deployment
+  /// that never wired the notification services has nothing to elect with, and never migrating
+  /// would be far worse than migrating without a duty.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task Staged_WithNoElectorTheLockIsStillTheGuardAsync(CancellationToken cancellationToken) {
+    var pod = new _Pod();
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
+
+    var services = new ServiceCollection();
+    services.AddSingleton<IServiceInstanceProvider>(pod);
+
+    await using var context = CreateDbContext();
+    await context.EnsureWhizbangDatabaseInitializedAsync(
+      null, null, services.BuildServiceProvider(), cancellationToken);
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash);
+    await Assert.That(afterUpdatedAt).IsNotEqualTo(UNTOUCHED)
+      .Because("it migrated under the lock alone, which is what it did before an election existed");
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  /// <summary>
+  /// Three staged instances starting together converge, and only one is ever the migrator.
+  /// </summary>
+  /// <remarks>
+  /// Two instances can exclude each other by accident of ordering. Three contending over a real
+  /// elector and a real database is where a mechanism that only mostly works shows itself, and the
+  /// assertion is on the database afterwards rather than on the absence of an exception: the drift
+  /// is gone, and no instance is left holding a duty.
+  /// </remarks>
+  [Test]
+  [Timeout(180000)]
+  public async Task Staged_ThreeInstancesConvergeAndNoneKeepsTheDutyAsync(CancellationToken cancellationToken) {
+    var pods = new[] { new _Pod(), new _Pod(), new _Pod() };
+    var (rowFile, rowHash) = await _aFrameworkLedgerRowAsync(cancellationToken);
+    await _setLedgerRowAsync(rowFile, "forced-drift", UNTOUCHED, cancellationToken);
+
+    await using var first = CreateDbContext();
+    await using var second = CreateDbContext();
+    await using var third = CreateDbContext();
+    var contexts = new[] { first, second, third };
+
+    await Assert.That(async () => await Task.WhenAll(
+      contexts.Select((c, i) => c.EnsureWhizbangDatabaseInitializedAsync(
+        null, null, _stagedScope(pods[i]), cancellationToken))))
+      .ThrowsNothing();
+
+    var (afterHash, afterUpdatedAt) = await _readLedgerRowAsync(rowFile, cancellationToken);
+    await Assert.That(afterHash).IsEqualTo(rowHash)
+      .Because("whichever instance was elected, the drift must be gone once all three have returned");
+
+    foreach (var pod in pods) {
+      await Assert.That(await _capabilityRowsAsync(pod.InstanceId, cancellationToken)).IsEqualTo(0L)
+        .Because("every duty taken has to be given back, or the next deployment waits on a ghost");
+    }
+
+    await Assert.That(await _dutyLockHoldersAsync(cancellationToken)).IsEqualTo(0L);
+
+    await _restoreLedgerAsync(rowFile, rowHash, cancellationToken);
+  }
+
+  private async Task<long> _dutyLockHoldersAsync(CancellationToken ct) {
+    await using var conn = new NpgsqlConnection(ConnectionString);
+    await conn.OpenAsync(ct);
+    await using var cmd = conn.CreateCommand();
+    cmd.CommandText =
+      "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1 "
+      + "AND ((classid::bigint << 32) | (objid::bigint & 4294967295)) = @key";
+    cmd.Parameters.AddWithValue("key", _migratorDutyKey());
+    return (long)(await cmd.ExecuteScalarAsync(ct))!;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

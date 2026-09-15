@@ -91,6 +91,48 @@ public static class CanonicalTemporalBackfillSql {
   }
 
   /// <summary>
+  /// The same statements, each able to run before its table is known to exist.
+  /// </summary>
+  /// <param name="properties">The model's temporal properties.</param>
+  /// <param name="qualifiedTable">The perspective's table, already schema-qualified and quoted.</param>
+  /// <returns>One guarded statement per property, or none when the model holds no temporal property.</returns>
+  /// <remarks>
+  /// <para>
+  /// An index over an extraction of a rewritten key can only be built once the rewrite has
+  /// committed, and the initializer builds its indexes inside one advisory-locked transaction. That
+  /// leaves nowhere inside the transaction for the rewrite to commit, and committing it from a
+  /// second connection while the transaction is open deadlocks: the second connection blocks on
+  /// catalog rows the transaction has not committed, and the transaction cannot advance because it
+  /// is waiting for that connection to return. Neither side moves, and PostgreSQL cannot break it,
+  /// because one of them is waiting on a client rather than on a lock.
+  /// </para>
+  /// <para>
+  /// So the rewrite runs before that transaction opens, where it holds nothing and blocks nothing.
+  /// The cost is that the table is frequently not there yet: on a database created by this release
+  /// the tables are made later in the same pass. Hence the guard, which makes a missing table the
+  /// ordinary case rather than a failure.
+  /// </para>
+  /// <para>
+  /// A statement inside a <c>DO</c> body is planned on first execution, not when the block is
+  /// created, so naming a table that does not exist inside a branch that is not taken is safe.
+  /// </para>
+  /// </remarks>
+  public static IEnumerable<string> GuardedStatements(
+      ImmutableArray<CanonicalTemporalProperty> properties, string qualifiedTable) {
+    foreach (var statement in Statements(properties, qualifiedTable)) {
+      yield return $"""
+        DO $wb$
+        BEGIN
+          IF to_regclass('{qualifiedTable}') IS NOT NULL THEN
+            {statement}
+          END IF;
+        END
+        $wb$;
+        """;
+    }
+  }
+
+  /// <summary>
   /// The rewrite for everything whose rendering PostgreSQL can parse on its own.
   /// </summary>
   /// <remarks>
