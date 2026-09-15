@@ -279,8 +279,24 @@ ledger (absent means 1), then the ledger upsert to 2, then commit. Interrupted m
 is recorded and the whole table runs again; interrupted between tables, the finished ones are
 skipped. Nothing about the values is inspected to decide whether to convert.
 
-**Placement.** Unchanged: the rewrite pre-phase runs under its own lock, ahead of the DDL phase, so
-indexes are built against committed rows (the trap in `ai-docs/schema-initialization-connections.md`).
+**Placement.** Changed during implementation: the rewrite pre-phase used to run on every replica
+*before* the bootstrap, so the ledger and function a bootstrap-marked migration creates did not
+exist when it ran. It now runs right after the election, on the migrator or on an instance that
+could not be staged, never on a waiter, still under the session-scoped schema lock and still ahead
+of the DDL phase, so indexes are built against committed rows (the trap in
+`ai-docs/schema-initialization-connections.md`). Migration 153 is the fifth bootstrap-marked file.
+
+**Implemented shape (S5a, S5b).** `wh_perspective_forms(table_name, temporal_form, applied_at,
+settled_at)` plus `wh_canonicalize_temporal(doc, path[], kind, from_form)` and its leaf helper, in
+migration 153. `CanonicalTemporalRewrite` (runtime, `Whizbang.Data.EFCore.Postgres`) derives the
+paths at startup from the two readers themselves: the EF model for a mapped document (JSON complex
+properties, nested and collection ones included) and the serializer's `JsonTypeInfo` metadata for
+an opaque document (properties, enumerable elements, positional record parameters). One `DO` block
+per table: `to_regclass` guard, ledger read, early return when settled, one `UPDATE` per path whose
+`WHERE` is a `jsonb_path_exists` predicate (renderings always; numbers only below form 2 and only
+for Day and Duration), then the ledger upsert to form 2 with `settled_at` set when a pass at form 2
+touched nothing. The generated per-property rewrite, `CanonicalTemporalBackfillSql` and the
+generator-side discovery `From` are gone; `KindOf` stays for the index cast.
 
 **The mixed-version window.** During a rolling update, instances of the previous release keep
 writing until they are replaced. For Instant, OffsetInstant and TimeOfDay that is harmless (same

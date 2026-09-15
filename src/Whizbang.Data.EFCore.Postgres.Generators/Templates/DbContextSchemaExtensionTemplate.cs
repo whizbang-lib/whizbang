@@ -105,34 +105,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       }
     }
 
-    // The stored-format rewrites, committed before the transaction that indexes their result. An
-    // index over an extraction of a rewritten key cannot be built in the transaction that did the
-    // rewriting, because the index build evaluates its expression over row versions the rewrite
-    // superseded and those stay live until it commits.
-    //
-    // Under the same schema lock the DDL phase uses, at session scope. Running before that
-    // transaction also means running outside its transaction-scoped lock, and without one every
-    // replica would scan the same tables and two full-table updates over the same rows can deadlock
-    // each other. Non-blocking: an instance that does not get it applies nothing and the holder's
-    // commit serves everyone.
-    if (segmentConnectionFactory is not null) {
-      var rewrites = GetCanonicalTemporalRewrites()
-        .Select(r => (r.Name, Sql: _renderFormatBraces(r.Sql)))
-        .ToList();
-      try {
-        await Whizbang.Data.Postgres.CanonicalTemporalRewritePhase.ApplyAsync(
-          segmentConnectionFactory, lockId, rewrites, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger,
-          cancellationToken);
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        // Reported rather than fatal, for the same reason a single failed rewrite is: the index
-        // built over unconverted rows fails with its own reason, which is a better place to read
-        // the problem than a startup that stopped before saying what it was doing.
-        logger?.LogWarning(ex,
-          "The stored-format rewrite phase did not complete for {Schema}; an index over a "
-          + "rewritten key will fail until it does", "__SCHEMA__");
-      }
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     // STAGED STARTUP: bring up enough of the schema to elect a migrator, then elect one.
     //
@@ -182,6 +154,36 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // Released when this method returns, however it returns. A duty still held by an instance that
     // has finished, or failed, would leave every other instance waiting on it indefinitely.
     await using var migratorGrant = staging.Grant;
+
+    // The stored-form rewrite, committed before the transaction that indexes its result. An index
+    // over an extraction of a rewritten key cannot be built in the transaction that did the
+    // rewriting, because the index build evaluates its expression over row versions the rewrite
+    // superseded and those stay live until it commits.
+    //
+    // After the election, because the bootstrap creates the ledger and the function it needs, and
+    // on the migrator or an instance that could not be staged, never on a waiter: one instance's
+    // work. Derived from the model Entity Framework built and the serializer's metadata, the two
+    // things that read a document, so what a reader reads is what the rewrite converts. Under the
+    // same schema lock the DDL phase uses, at session scope, so a fleet that could not be staged
+    // still does the work once.
+    if (segmentConnectionFactory is not null && staging.Stage != Whizbang.Data.Postgres.SchemaStage.Waiter) {
+      try {
+        var rewrites = Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalRewrite.ForModel(
+          dbContext.Model,
+          Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.Options,
+          "__SCHEMA__");
+        await Whizbang.Data.Postgres.CanonicalTemporalRewritePhase.ApplyAsync(
+          segmentConnectionFactory, lockId, rewrites, SCHEMA_COMMAND_TIMEOUT_SECONDS, logger,
+          cancellationToken);
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
+        // Reported rather than fatal, for the same reason a single failed rewrite is: the index
+        // built over unconverted rows fails with its own reason, which is a better place to read
+        // the problem than a startup that stopped before saying what it was doing.
+        logger?.LogWarning(ex,
+          "The stored-format rewrite phase did not complete for {Schema}; an index over a "
+          + "rewritten key will fail until it does", "__SCHEMA__");
+      }
+    }
 
     // Phase 2 for an instance that did not win the duty: wait for the holder's result. The wait
     // watches the DUTY lock, so a holder that dies releases it and the wait ends in a takeover
@@ -1092,22 +1094,6 @@ END $$;
     return new (string Name, string Sql)[] {
       #region PERSPECTIVE_ENTRIES
       // Perspective entries will be embedded here by the source generator
-      #endregion
-    };
-  }
-
-  /// <summary>
-  /// The rewrites that convert a stored format, one entry per perspective that has one.
-  /// </summary>
-  /// <remarks>
-  /// Separate from the perspective entries because they run at a different time: before the
-  /// initializer's transaction opens, each committed on its own. Every statement carries a
-  /// to_regclass guard, because at that point the tables frequently do not exist yet.
-  /// </remarks>
-  private static (string Name, string Sql)[] GetCanonicalTemporalRewrites() {
-    return new (string Name, string Sql)[] {
-      #region CANONICAL_TEMPORAL_REWRITES
-      // Rewrites will be embedded here by the source generator
       #endregion
     };
   }

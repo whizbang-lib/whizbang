@@ -244,26 +244,24 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
       + "(gen_random_uuid(), '{\"OccurredAt\": \"2026-03-04T05:06:07Z\"}'::jsonb), "
       + "(gen_random_uuid(), '{\"OccurredAt\": 1772600767000000}'::jsonb);");
 
-    var properties = new[] {
-      new CanonicalTemporalProperty("OccurredAt", CanonicalTemporalKind.Instant, false),
-    }.ToImmutableArray();
-
     var index = new JsonIndexInfo(
       "OccurredAt", "OccurredAt", JsonIndexCast.Int8, Ordered: true, Substring: false, CaseInsensitive: false);
 
     // Indexing a column that still holds a rendering on any row is refused, which is the reason the
-    // generator emits the rewrite first.
+    // rewrite runs, and commits, before the index is built.
     await Assert.That(async () => await _createDeclaredAsync(index)).Throws<PostgresException>()
       .Because("the index expression is evaluated for every row, so one unconverted row is enough "
         + "to refuse it, and that refusal is what a half-finished backfill has to run into");
 
-    foreach (var statement in CanonicalTemporalBackfillSql.Statements(properties, TABLE)) {
-      await _executeAsync(statement);
-    }
+    // The rewrite of the one key, written out: the thing under test is the order, not the rewrite.
+    await _executeAsync(
+      $"UPDATE {TABLE} SET data = data || jsonb_build_object('OccurredAt', "
+      + "(EXTRACT(EPOCH FROM (data ->> 'OccurredAt')::timestamptz) * 1000000)::bigint) "
+      + "WHERE jsonb_typeof(data -> 'OccurredAt') = 'string'");
 
     await Assert.That(async () => await _createDeclaredAsync(index)).ThrowsNothing()
       .Because("every row is a number once the rewrite has run, which is the state the index needs "
-        + "and the reason the two are emitted in this order");
+        + "and the reason the rewrite runs first");
   }
 
   /// <summary>

@@ -534,7 +534,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
-        TemporalProperties: CanonicalTemporalDiscovery.From(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType)
     );
   }
@@ -586,7 +585,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
-        TemporalProperties: candidate.TemporalProperties,
         CoalesceBody: candidate.CoalesceBody
     );
   }
@@ -2165,10 +2163,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
       // Replace PERSPECTIVE_ENTRIES region with per-perspective (name, sql) tuples for hash tracking
       template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_ENTRIES", perspectiveEntriesCode);
-      // The rewrites are their own phase, run and committed before the initializer's transaction.
-      template = TemplateUtilities.ReplaceRegion(
-        template, "CANONICAL_TEMPORAL_REWRITES",
-        _generateCanonicalTemporalRewritesCode(matchingPerspectives, dbContext.Schema));
+      // No stored-form rewrite is generated. The template derives it at runtime from the model
+      // Entity Framework built and the serializer's metadata, the two things that read a document.
 
       // Replace MIGRATIONS region with embedded migration scripts
       template = TemplateUtilities.ReplaceRegion(
@@ -2636,35 +2632,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// the DDL. A perspective with nothing to convert contributes nothing.
   /// </para>
   /// </remarks>
-  private static string _generateCanonicalTemporalRewritesCode(
-      List<PerspectiveModelInfo> perspectives,
-      string schema) {
-    var quotedSchema = _quotePostgresIdentifier(schema);
-    var entries = new List<string>();
-
-    foreach (var perspective in perspectives
-        .GroupBy(p => p.TableName)
-        .Select(g => g.First())
-        .OrderBy(p => p.TableName)) {
-      var statements = CanonicalTemporalBackfillSql.GuardedStatements(
-        perspective.TemporalProperties, $"{quotedSchema}.{perspective.TableName}").ToList();
-      if (statements.Count == 0) {
-        continue;
-      }
-
-      var escapedSql = string.Join("\n", statements)
-          .Replace("\"", "\"\"")
-          .Replace("{", "{{")
-          .Replace("}", "}}");
-      var perspectiveName = TypeNameUtilities.GetSimpleName(perspective.ModelTypeName);
-      entries.Add($"      (\"{perspectiveName}\", @\"{escapedSql}\")");
-    }
-
-    return entries.Count == 0
-      ? "// No stored format to convert for this DbContext"
-      : string.Join(",\n", entries);
-  }
-
   private static string _generatePerspectiveEntriesCode(
       List<PerspectiveModelInfo> perspectives,
       string schema) {
@@ -2686,7 +2653,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var perspSql = new StringBuilder();
 
       // No rewrite here. It runs as its own committed phase before the initializer's transaction
-      // opens; see _generateCanonicalTemporalRewritesCode.
+      // opens, derived at runtime by CanonicalTemporalRewrite from the model and the serializer.
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
 
@@ -2958,7 +2925,6 @@ internal sealed record PerspectiveModelInfo(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
-    ImmutableArray<CanonicalTemporalProperty> TemporalProperties,
     string CoalesceBody);
 
 /// <summary>
@@ -2986,7 +2952,6 @@ internal sealed record PerspectiveModelCandidate(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
-    ImmutableArray<CanonicalTemporalProperty> TemporalProperties,
     string CoalesceBody);
 
 /// <summary>
