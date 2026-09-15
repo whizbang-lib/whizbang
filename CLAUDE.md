@@ -231,6 +231,18 @@ the turnkey registration configures the context with a data source. And a failed
 and `pg_locks` answers it only if the 64-bit key is reassembled from both halves. One answer exists
 for each; the file says which, and why a green test suite proves none of them.
 
+### 📖 **[perspective-stored-forms.md](ai-docs/perspective-stored-forms.md)** - CRITICAL
+**Read when**:
+- Touching how a perspective document stores or reads a date, time, duration or identifier
+- Touching the persistence serialization profile, `CanonicalTemporalConvention`, the JSON
+  reader/writers, `CanonicalTemporalRewrite`, or the perspective worker's failure path
+- Reading a "cannot read its stored document" error or a `temporal_form_fallbacks` count
+
+**Why critical**: a perspective document has two writers and two readers, and a row one path wrote
+that the other could not read stopped a feature in a deployed service. The file records the one
+rule (one unit, microseconds), why nothing per property may be generated, what the ledger and the
+rewrite do, and the two failure-path defects found underneath, one of them fixed and one deferred.
+
 ### 📖 **[type-naming.md](ai-docs/type-naming.md)** - CRITICAL
 **Read when**:
 - Writing or comparing a type name that is a key (`clr_type_name`, `event_type`, perspective names, registry JSON)

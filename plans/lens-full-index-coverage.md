@@ -63,10 +63,15 @@ Chosen so the extraction is both immutable-castable and order-preserving.
 | `decimal` | number | `((data ->> 'X')::numeric)` |
 | `double`, `float` | number | `((data ->> 'X')::float8)` |
 | `DateTime` | microseconds since the epoch, as a number | `((data ->> 'X')::bigint)` |
-| `DateTimeOffset` | the same, normalized to UTC, with the offset in a sibling key | `((data ->> 'X')::bigint)` |
-| `DateOnly` | days since the epoch, as a number | `((data ->> 'X')::bigint)` |
+| `DateTimeOffset` | the instant it names, as microseconds since the epoch; the offset is not kept | `((data ->> 'X')::bigint)` |
+| `DateOnly` | microseconds since the epoch at its midnight UTC, as a number | `((data ->> 'X')::bigint)` |
 | `TimeOnly` | microseconds since midnight, as a number | `((data ->> 'X')::bigint)` |
-| `TimeSpan` | total ticks, as a number | `((data ->> 'X')::bigint)` |
+| `TimeSpan` | microseconds, as a number | `((data ->> 'X')::bigint)` |
+
+One unit for the whole family, so any two of them order against each other and a day count can
+never be mistaken for a microsecond count. The first canonical release stored a date as a day count
+and a duration as ticks; `plans/canonical-temporal-storage-unification.md` is the record of why that
+was wrong and how the stored-form ledger and rewrite converted it.
 | `char` | its code point, as a number | `((data ->> 'X')::bigint)` |
 | `TrackedGuid` | a bare v7 identifier, as text | `((data ->> 'X')::uuid)` |
 
