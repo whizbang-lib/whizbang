@@ -2378,15 +2378,15 @@ public partial class PerspectiveWorker(
       new KeyValuePair<string, object?>("reason", Whizbang.Core.Perspectives.StoredFormUnreadable.REASON));
 
     var error = $"Stored form unreadable at {path}: {unreadable.Detail}";
-    if (_failureChannel is not null) {
-      foreach (var workId in workIds) {
-        await _failureChannel.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
-          MessageId = workId,
-          CompletedStatus = MessageProcessingStatus.None,
-          Error = error,
-          Reason = MessageFailureReason.SerializationError,
-        }, ct).ConfigureAwait(false);
-      }
+    // Both callers run only on the channel surfaces, which the worker refuses to start without
+    // (see the failure-channel checks at the top of each consumer loop), so the channel is present.
+    foreach (var workId in workIds) {
+      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+        MessageId = workId,
+        CompletedStatus = MessageProcessingStatus.None,
+        Error = error,
+        Reason = MessageFailureReason.SerializationError,
+      }, ct).ConfigureAwait(false);
     }
     return error;
   }

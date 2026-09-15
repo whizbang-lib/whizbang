@@ -190,6 +190,36 @@ public class CanonicalTemporalConventionTests {
     await Assert.That(readers.Count).IsEqualTo(expected.Count);
   }
 
+  /// <summary>
+  /// Each reader/writer names its own instance as its constructor, which is what a compiled model
+  /// emits to get it back, and a kind that is none has no reader/writer.
+  /// </summary>
+  [Test]
+  public async Task AReaderWriterConstructsItselfFromItsInstanceAsync() {
+    Microsoft.EntityFrameworkCore.Storage.Json.JsonValueReaderWriter[] instances = [
+      CanonicalTemporalJsonReaderWriters.Instant.Instance,
+      CanonicalTemporalJsonReaderWriters.OffsetInstant.Instance,
+      CanonicalTemporalJsonReaderWriters.Day.Instance,
+      CanonicalTemporalJsonReaderWriters.TimeOfDay.Instance,
+      CanonicalTemporalJsonReaderWriters.Duration.Instance,
+    ];
+    foreach (var instance in instances) {
+      // EF9100: the constructor expression is marked experimental; compiled models read it, so it
+      // has to be right, and this is the only way to observe what it names.
+#pragma warning disable EF9100
+      var constructed = System.Linq.Expressions.Expression
+        .Lambda<Func<Microsoft.EntityFrameworkCore.Storage.Json.JsonValueReaderWriter>>(instance.ConstructorExpression)
+        .Compile()();
+#pragma warning restore EF9100
+      await Assert.That(constructed).IsSameReferenceAs(instance)
+        .Because("a compiled model reconstructs the reader/writer from this expression, and there is one instance");
+    }
+
+    await Assert.That(CanonicalTemporalJsonReaderWriters.TypeFor(null)).IsNull();
+    await Assert.That(CanonicalTemporalJsonReaderWriters.TypeFor(StoredTemporalKind.Day))
+      .IsEqualTo(typeof(CanonicalTemporalJsonReaderWriters.Day));
+  }
+
   private static void _collectReaders(IComplexProperty complex, string path, Dictionary<string, Type?> found) {
     foreach (var property in complex.ComplexType.GetProperties()) {
       if (CanonicalTemporalConvention.KindOf(property.ClrType) is not null) {
