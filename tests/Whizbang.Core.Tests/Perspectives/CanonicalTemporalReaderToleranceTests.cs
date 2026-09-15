@@ -161,8 +161,8 @@ public class CanonicalTemporalReaderToleranceTests {
     var measurements = new List<(long Value, string? Kind)>();
     using var listener = new MeterListener();
     listener.InstrumentPublished = (instrument, l) => {
-      if (instrument.Meter.Name == CanonicalTemporalFallbacks.METER_NAME
-          && instrument.Name == CanonicalTemporalFallbacks.INSTRUMENT_NAME) {
+      if (instrument.Meter.Name == StoredFormFallbacks.METER_NAME
+          && instrument.Name == StoredFormFallbacks.INSTRUMENT_NAME) {
         l.EnableMeasurementEvents(instrument);
       }
     };
@@ -176,7 +176,7 @@ public class CanonicalTemporalReaderToleranceTests {
       measurements.Add((value, kind));
     });
     listener.Start();
-    CanonicalTemporalFallbacks.Configure(meterFactory: null, logger: null);
+    StoredFormFallbacks.Configure(meterFactory: null, logger: null);
 
     _read(new CanonicalTemporalJsonConverters.InstantConverter(), "\"2026-03-04T05:06:07Z\"");
     _read(new CanonicalTemporalJsonConverters.DurationConverter(), "\"00:03:00\"");
@@ -200,7 +200,7 @@ public class CanonicalTemporalReaderToleranceTests {
   [NotInParallel]
   public async Task TheFirstRenderingOfEachKindIsAnnouncedOnceAsync() {
     var logger = new FakeLogger();
-    CanonicalTemporalFallbacks.Configure(meterFactory: null, logger: logger);
+    StoredFormFallbacks.Configure(meterFactory: null, logger: logger);
 
     _read(new CanonicalTemporalJsonConverters.InstantConverter(), "\"2026-03-04T05:06:07Z\"");
     _read(new CanonicalTemporalJsonConverters.InstantConverter(), "\"2026-03-05T05:06:07Z\"");
@@ -212,7 +212,7 @@ public class CanonicalTemporalReaderToleranceTests {
       .Because("two kinds were read as renderings, and each is announced exactly once");
     await Assert.That(records.All(r => r.Level == LogLevel.Warning)).IsTrue();
     await Assert.That(records[0].Message).Contains(nameof(StoredTemporalKind.Instant));
-    await Assert.That(records[0].Message).Contains(CanonicalTemporalFallbacks.INSTRUMENT_NAME);
+    await Assert.That(records[0].Message).Contains(StoredFormFallbacks.INSTRUMENT_NAME);
     await Assert.That(records[1].Message).Contains(nameof(StoredTemporalKind.Day));
   }
 
@@ -221,11 +221,11 @@ public class CanonicalTemporalReaderToleranceTests {
   [NotInParallel]
   public async Task ConfiguringAgainStartsTheAnnouncementsOverAsync() {
     var first = new FakeLogger();
-    CanonicalTemporalFallbacks.Configure(meterFactory: null, logger: first);
+    StoredFormFallbacks.Configure(meterFactory: null, logger: first);
     _read(new CanonicalTemporalJsonConverters.TimeOfDayConverter(), "\"05:06:07\"");
 
     var second = new FakeLogger();
-    CanonicalTemporalFallbacks.Configure(meterFactory: null, logger: second);
+    StoredFormFallbacks.Configure(meterFactory: null, logger: second);
     _read(new CanonicalTemporalJsonConverters.TimeOfDayConverter(), "\"05:06:08\"");
 
     await Assert.That(first.Collector.Count).IsEqualTo(1);
@@ -238,9 +238,59 @@ public class CanonicalTemporalReaderToleranceTests {
   public async Task AConfiguredMeterFactoryCreatesTheMeterAsync() {
     var factory = new RecordingMeterFactory();
 
-    CanonicalTemporalFallbacks.Configure(factory, logger: null);
+    StoredFormFallbacks.Configure(factory, logger: null);
 
-    await Assert.That(factory.Created).Contains(CanonicalTemporalFallbacks.METER_NAME);
+    await Assert.That(factory.Created).Contains(StoredFormFallbacks.METER_NAME);
+  }
+
+  /// <summary>
+  /// An identifier read in its scalar form is counted and announced the same way, on its own
+  /// instrument, tagged by type.
+  /// </summary>
+  /// <remarks>
+  /// A document stored as one value once took its identifiers in the scalar form when the atomic
+  /// path was unavailable and Entity Framework wrote it under the default profile. The persistence
+  /// readers store an identifier as an object and now accept the scalar too; the count is what
+  /// decides when they can stop.
+  /// </remarks>
+  [Test]
+  [NotInParallel]
+  public async Task ReadingAScalarIdentifierIsCountedAndAnnouncedAsync() {
+    var measurements = new List<(long Value, string? Type)>();
+    using var listener = new MeterListener();
+    listener.InstrumentPublished = (instrument, l) => {
+      if (instrument.Meter.Name == StoredFormFallbacks.METER_NAME
+          && instrument.Name == StoredFormFallbacks.IDENTIFIER_INSTRUMENT_NAME) {
+        l.EnableMeasurementEvents(instrument);
+      }
+    };
+    listener.SetMeasurementEventCallback<long>((_, value, tags, _) => {
+      string? type = null;
+      foreach (var tag in tags) {
+        if (tag.Key == "type") {
+          type = tag.Value?.ToString();
+        }
+      }
+      measurements.Add((value, type));
+    });
+    listener.Start();
+    var logger = new FakeLogger();
+    StoredFormFallbacks.Configure(meterFactory: null, logger: logger);
+
+    StoredFormFallbacks.ScalarIdentifierRead("OrderId");
+    StoredFormFallbacks.ScalarIdentifierRead("OrderId");
+    StoredFormFallbacks.ScalarIdentifierRead("CustomerId");
+
+    await Assert.That(measurements.Count).IsEqualTo(3);
+    await Assert.That(string.Join(",", measurements.Select(m => m.Type))).IsEqualTo("OrderId,OrderId,CustomerId");
+    await Assert.That(measurements.All(m => m.Value == 1)).IsTrue();
+
+    var records = logger.Collector.GetSnapshot();
+    await Assert.That(records.Count).IsEqualTo(2)
+      .Because("two types were read in the scalar form, and each is announced exactly once");
+    await Assert.That(records[0].Message).Contains("OrderId");
+    await Assert.That(records[0].Message).Contains(StoredFormFallbacks.IDENTIFIER_INSTRUMENT_NAME);
+    await Assert.That(records[1].Message).Contains("CustomerId");
   }
 
   private sealed class RecordingMeterFactory : IMeterFactory {

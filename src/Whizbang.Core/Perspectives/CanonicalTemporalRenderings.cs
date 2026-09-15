@@ -14,7 +14,7 @@ namespace Whizbang.Core.Perspectives;
 /// never reinterpreted here; a number is the canonical unit and nothing else.
 /// </para>
 /// <para>
-/// Every rendering read is reported to <see cref="CanonicalTemporalFallbacks"/> before it is
+/// Every rendering read is reported to <see cref="StoredFormFallbacks"/> before it is
 /// parsed, so a rendering that fails to parse is still counted as one that was found.
 /// </para>
 /// </remarks>
@@ -27,7 +27,7 @@ internal static class CanonicalTemporalRenderings {
 
   /// <summary>An instant from its rendering, as UTC.</summary>
   public static DateTime Instant(string rendering) {
-    CanonicalTemporalFallbacks.RenderingRead(StoredTemporalKind.Instant);
+    StoredFormFallbacks.RenderingRead(StoredTemporalKind.Instant);
     return rendering switch {
       "" => default,
       INFINITY => DateTime.SpecifyKind(DateTime.MaxValue, DateTimeKind.Utc),
@@ -40,7 +40,7 @@ internal static class CanonicalTemporalRenderings {
 
   /// <summary>An offset instant from its rendering, keeping the offset the rendering carried.</summary>
   public static DateTimeOffset OffsetInstant(string rendering) {
-    CanonicalTemporalFallbacks.RenderingRead(StoredTemporalKind.OffsetInstant);
+    StoredFormFallbacks.RenderingRead(StoredTemporalKind.OffsetInstant);
     return rendering switch {
       "" => default,
       INFINITY => DateTimeOffset.MaxValue,
@@ -53,7 +53,7 @@ internal static class CanonicalTemporalRenderings {
 
   /// <summary>A date from its rendering, or from the rendering of an instant on that date.</summary>
   public static DateOnly Day(string rendering) {
-    CanonicalTemporalFallbacks.RenderingRead(StoredTemporalKind.Day);
+    StoredFormFallbacks.RenderingRead(StoredTemporalKind.Day);
     if (rendering.Length == 0) {
       return default;
     }
@@ -68,7 +68,7 @@ internal static class CanonicalTemporalRenderings {
 
   /// <summary>A time of day from its rendering.</summary>
   public static TimeOnly TimeOfDay(string rendering) {
-    CanonicalTemporalFallbacks.RenderingRead(StoredTemporalKind.TimeOfDay);
+    StoredFormFallbacks.RenderingRead(StoredTemporalKind.TimeOfDay);
     if (rendering.Length == 0) {
       return default;
     }
@@ -80,7 +80,7 @@ internal static class CanonicalTemporalRenderings {
 
   /// <summary>A duration from its rendering.</summary>
   public static TimeSpan Duration(string rendering) {
-    CanonicalTemporalFallbacks.RenderingRead(StoredTemporalKind.Duration);
+    StoredFormFallbacks.RenderingRead(StoredTemporalKind.Duration);
     if (rendering.Length == 0) {
       return default;
     }

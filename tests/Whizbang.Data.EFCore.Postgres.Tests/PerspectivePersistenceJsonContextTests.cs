@@ -113,4 +113,42 @@ public class PerspectivePersistenceJsonContextTests {
     await Assert.That(System.Text.Json.JsonDocument.Parse(written).RootElement.GetProperty("Timestamp").ValueKind)
       .IsEqualTo(System.Text.Json.JsonValueKind.Number);
   }
+
+  /// <summary>
+  /// An identifier stored in the object form reads back, and one stored as the scalar string an
+  /// older row may hold reads back too.
+  /// </summary>
+  /// <remarks>
+  /// A document stored as one value once took its identifiers in the scalar form when the atomic
+  /// path was unavailable and Entity Framework wrote it under the default profile, whose reader
+  /// flattens an identifier to a string. Those rows are still rows. The scalar read is counted, so
+  /// the tolerance can go once the count says nothing needs it.
+  /// </remarks>
+  [Test]
+  public async Task Deserialize_OrderWithEitherIdentifierForm_ReadsTheIdentifierAsync() {
+    var options = PerspectivePersistenceJsonContext.CreateOptions(MessageJsonContext.Default);
+    var typeInfo = options.GetTypeInfo(typeof(Order));
+
+    var fromObject = (Order)JsonSerializer.Deserialize(
+      """{"OrderId":{"Value":"019e244a-6bda-78a9-a08f-a1011c9c31dd"},"Amount":100,"Status":"Created"}""", typeInfo)!;
+    var fromScalar = (Order)JsonSerializer.Deserialize(
+      """{"OrderId":"019e244a-6bda-78a9-a08f-a1011c9c31dd","Amount":100,"Status":"Created"}""", typeInfo)!;
+
+    await Assert.That(fromObject.OrderId.Value).IsEqualTo(Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd"));
+    await Assert.That(fromScalar.OrderId.Value).IsEqualTo(Guid.Parse("019e244a-6bda-78a9-a08f-a1011c9c31dd"))
+      .Because("a row written under the default profile holds the scalar form, and it is still a row");
+  }
+
+  /// <summary>Any other token is refused with a message naming the type and the forms accepted.</summary>
+  [Test]
+  public async Task Deserialize_OrderWithAnotherIdentifierToken_IsRefusedAsync() {
+    var options = PerspectivePersistenceJsonContext.CreateOptions(MessageJsonContext.Default);
+    var typeInfo = options.GetTypeInfo(typeof(Order));
+
+    var error = await Assert.That(() => JsonSerializer.Deserialize(
+      """{"OrderId":42,"Amount":100,"Status":"Created"}""", typeInfo)).Throws<JsonException>();
+
+    await Assert.That(error!.Message).Contains("TestOrderId");
+    await Assert.That(error.Message).Contains("Number");
+  }
 }

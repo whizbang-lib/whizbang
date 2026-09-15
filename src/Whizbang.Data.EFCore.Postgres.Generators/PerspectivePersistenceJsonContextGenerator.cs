@@ -324,45 +324,53 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 
   /// <summary>
   /// Emits the per-WhizbangId factory method pair: object-mode JsonTypeInfo and its nullable counterpart.
-  /// The object-mode form treats the struct as a single-property object with a "Value" property of type Guid,
-  /// producing the JSON shape <c>{"Value":"&lt;guid&gt;"}</c> that EF Core 10's writer expects.
+  /// The object-mode form writes the struct as a single-property object, <c>{"Value":"&lt;guid&gt;"}</c>,
+  /// the JSON shape EF Core 10's writer produces for the same property, and reads that shape or the
+  /// scalar string a row written under the default profile holds.
   /// </summary>
+  /// <remarks>
+  /// A converter rather than object metadata, because object metadata reads the object form and
+  /// nothing else. A document stored as one value once took its identifiers in the scalar form when
+  /// the atomic path was unavailable and Entity Framework wrote it under the default profile; those
+  /// rows are still rows. The scalar read is counted, so the tolerance can go once nothing needs it.
+  /// </remarks>
   private static void _emitWhizbangIdFactory(StringBuilder sb, WhizbangIdInfo info) {
     var fqn = info.FullyQualifiedName;
-    sb.AppendLine($"  private static JsonTypeInfo<{fqn}> _create{info.TypeName}TypeInfo(JsonSerializerOptions options) {{");
-    sb.AppendLine($"    var objectInfo = new JsonObjectInfoValues<{fqn}> {{");
-    sb.AppendLine($"      ObjectCreator = static () => default({fqn}),");
-    sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {fqn}((global::System.Guid)args[0]!),");
-    sb.AppendLine("      ConstructorParameterMetadataInitializer = static () => new JsonParameterInfoValues[] {");
-    sb.AppendLine("        new() {");
-    sb.AppendLine("          Name = \"Value\",");
-    sb.AppendLine("          ParameterType = typeof(global::System.Guid),");
-    sb.AppendLine("          Position = 0,");
-    sb.AppendLine("          HasDefaultValue = false,");
-    sb.AppendLine("          DefaultValue = default!");
-    sb.AppendLine("        }");
-    sb.AppendLine("      },");
-    // PropertyMetadataInitializer takes JsonSerializerContext (per JsonObjectInfoValues<T>),
-    // not JsonSerializerOptions. Discard the parameter and capture the outer `options` instead.
-    sb.AppendLine("      PropertyMetadataInitializer = _ => {");
-    sb.AppendLine("        var properties = new JsonPropertyInfo[1];");
-    sb.AppendLine("        properties[0] = JsonMetadataServices.CreatePropertyInfo<global::System.Guid>(");
-    sb.AppendLine("          options,");
-    sb.AppendLine("          new JsonPropertyInfoValues<global::System.Guid> {");
-    sb.AppendLine("            IsProperty = true,");
-    sb.AppendLine("            IsPublic = true,");
-    sb.AppendLine("            IsVirtual = false,");
-    sb.AppendLine($"            DeclaringType = typeof({fqn}),");
-    sb.AppendLine($"            Getter = static obj => (({fqn})obj!).Value,");
-    sb.AppendLine("            Setter = null,");
-    sb.AppendLine("            JsonPropertyName = \"Value\",");
-    sb.AppendLine("            PropertyName = \"Value\"");
-    sb.AppendLine("          });");
-    sb.AppendLine("        return properties;");
+    sb.AppendLine($"  private sealed class _{info.TypeName}DocumentConverter : JsonConverter<{fqn}> {{");
+    sb.AppendLine($"    public override {fqn} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {{");
+    sb.AppendLine("      if (reader.TokenType == JsonTokenType.String) {");
+    sb.AppendLine($"        global::Whizbang.Core.Perspectives.StoredFormFallbacks.ScalarIdentifierRead(\"{info.TypeName}\");");
+    sb.AppendLine($"        return new {fqn}(reader.GetGuid());");
     sb.AppendLine("      }");
-    sb.AppendLine("    };");
+    sb.AppendLine("      if (reader.TokenType != JsonTokenType.StartObject) {");
+    sb.AppendLine($"        throw new JsonException($\"A stored {info.TypeName} must be an object holding a Value or a string, but the document holds {{reader.TokenType}}\");");
+    sb.AppendLine("      }");
+    sb.AppendLine("      global::System.Guid value = default;");
+    sb.AppendLine("      var found = false;");
+    sb.AppendLine("      while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {");
+    sb.AppendLine("        if (reader.TokenType == JsonTokenType.PropertyName && reader.GetString() == \"Value\") {");
+    sb.AppendLine("          reader.Read();");
+    sb.AppendLine("          value = reader.GetGuid();");
+    sb.AppendLine("          found = true;");
+    sb.AppendLine("        } else {");
+    sb.AppendLine("          reader.Skip();");
+    sb.AppendLine("        }");
+    sb.AppendLine("      }");
+    sb.AppendLine("      if (!found) {");
+    sb.AppendLine($"        throw new JsonException(\"A stored {info.TypeName} object holds no Value\");");
+    sb.AppendLine("      }");
+    sb.AppendLine($"      return new {fqn}(value);");
+    sb.AppendLine("    }");
     sb.AppendLine();
-    sb.AppendLine($"    return JsonMetadataServices.CreateObjectInfo<{fqn}>(options, objectInfo);");
+    sb.AppendLine($"    public override void Write(Utf8JsonWriter writer, {fqn} value, JsonSerializerOptions options) {{");
+    sb.AppendLine("      writer.WriteStartObject();");
+    sb.AppendLine("      writer.WriteString(\"Value\", value.Value);");
+    sb.AppendLine("      writer.WriteEndObject();");
+    sb.AppendLine("    }");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine($"  private static JsonTypeInfo<{fqn}> _create{info.TypeName}TypeInfo(JsonSerializerOptions options) {{");
+    sb.AppendLine($"    return JsonMetadataServices.CreateValueInfo<{fqn}>(options, new _{info.TypeName}DocumentConverter());");
     sb.AppendLine("  }");
     sb.AppendLine();
     sb.AppendLine($"  private static JsonTypeInfo<{fqn}?> _create{info.TypeName}NullableTypeInfo(JsonSerializerOptions options) {{");

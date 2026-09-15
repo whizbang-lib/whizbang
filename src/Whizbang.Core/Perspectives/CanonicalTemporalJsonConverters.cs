@@ -44,7 +44,7 @@ namespace Whizbang.Core.Perspectives;
 /// canonical unit; a reader never guesses whether it is a day count, a tick count or a microsecond
 /// count, because that question is settled by the stored form ledger before any reader sees the
 /// row. A rendering is read as the value it renders, counted and announced through
-/// <see cref="CanonicalTemporalFallbacks"/>, so a row the rewrite did not reach degrades to a
+/// <see cref="StoredFormFallbacks"/>, so a row the rewrite did not reach degrades to a
 /// counted read rather than a stopped feature. The rendering branch goes once the count reads zero
 /// across a release cycle.
 /// </para>

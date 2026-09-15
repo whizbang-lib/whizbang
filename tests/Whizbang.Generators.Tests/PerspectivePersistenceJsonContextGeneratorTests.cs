@@ -45,9 +45,15 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
       """;
 
   /// <summary>
-  /// Test that a [WhizbangId] struct produces an object-mode JsonTypeInfo factory
-  /// with the {"Value":"guid"} shape (parameterized constructor + Value property, no setter).
+  /// Test that a [WhizbangId] struct produces an object-mode type info: written as
+  /// {"Value":"guid"}, read from that shape or from the scalar string an older row may hold.
   /// </summary>
+  /// <remarks>
+  /// A document stored as one value once took its identifiers in the scalar form when the atomic
+  /// path was unavailable and Entity Framework wrote it under the default profile. A converter can
+  /// read both; object metadata could read only the object. The scalar read is counted, so the
+  /// tolerance can be removed once nothing needs it.
+  /// </remarks>
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithWhizbangIdStruct_EmitsObjectModeTypeInfoAsync() {
@@ -63,16 +69,17 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
     await Assert.That(generated).Contains("if (type == typeof(global::MyApp.Domain.ProductId)) {");
     await Assert.That(generated).Contains("return _createProductIdTypeInfo(options);");
 
-    // Object-mode metadata: parameterized constructor over a Guid "Value" parameter
-    await Assert.That(generated).Contains("JsonObjectInfoValues<global::MyApp.Domain.ProductId>");
-    await Assert.That(generated).Contains("ObjectWithParameterizedConstructorCreator = static args => new global::MyApp.Domain.ProductId((global::System.Guid)args[0]!)");
-    await Assert.That(generated).Contains("ConstructorParameterMetadataInitializer");
-    await Assert.That(generated).Contains("ParameterType = typeof(global::System.Guid)");
-
-    // Property metadata: read-only "Value" property (Setter = null, getter reads .Value)
-    await Assert.That(generated).Contains("Getter = static obj => ((global::MyApp.Domain.ProductId)obj!).Value");
-    await Assert.That(generated).Contains("Setter = null");
-    await Assert.That(generated).Contains("JsonPropertyName = \"Value\"");
+    // A converter, not object metadata: the object form on write, either form on read
+    await Assert.That(generated).Contains("private sealed class _ProductIdDocumentConverter : JsonConverter<global::MyApp.Domain.ProductId>");
+    await Assert.That(generated).Contains("return JsonMetadataServices.CreateValueInfo<global::MyApp.Domain.ProductId>(options, new _ProductIdDocumentConverter());");
+    await Assert.That(generated).Contains("writer.WriteString(\"Value\", value.Value);")
+      .Because("the object form is what Entity Framework writes for the same property, and the two writers must agree");
+    await Assert.That(generated).Contains("if (reader.TokenType == JsonTokenType.String) {");
+    await Assert.That(generated).Contains("global::Whizbang.Core.Perspectives.StoredFormFallbacks.ScalarIdentifierRead(\"ProductId\");")
+      .Because("a scalar read is a row the atomic path did not write, and the count decides when the tolerance goes");
+    await Assert.That(generated).Contains("return new global::MyApp.Domain.ProductId(reader.GetGuid());");
+    await Assert.That(generated).DoesNotContain("JsonObjectInfoValues<global::MyApp.Domain.ProductId>")
+      .Because("object metadata reads the object form and nothing else");
   }
 
   /// <summary>
