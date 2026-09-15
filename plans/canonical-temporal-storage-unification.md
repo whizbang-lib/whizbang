@@ -335,6 +335,13 @@ else changes. The pinned test `AFrameworkDocumentIsNotConvertedAsync` is inverte
   the dead-letter recovery design and are referenced from there, not redesigned here.
 - The lifecycle "(continuing)" swallow already logs the exception; it moves to Error when the
   cause is deserialization.
+- Found while building this: the mapped path read a document through Entity Framework's own
+  integer reader, which refused a rendering the serializer's readers took and refused an
+  unexpected token with a generic error nothing could classify. One reader per kind now lives in
+  Core (`CanonicalTemporalReaders`); the serializer's converters and Entity Framework's
+  reader/writers (set by the convention, `CanonicalTemporalJsonReaderWriters`) both call it, so
+  both paths read and refuse the same values in the same words, and the classification is by
+  exception type (`StoredFormUnreadable`) on both.
 
 ### 3.9 Tests: the matrix that was missing
 

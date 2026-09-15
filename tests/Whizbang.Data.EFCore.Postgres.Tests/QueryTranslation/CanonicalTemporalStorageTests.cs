@@ -231,6 +231,73 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
         + "that forgot its null branch would write");
   }
 
+  /// <summary>
+  /// A mapped document still holding renderings reads back as the values they render.
+  /// </summary>
+  /// <remarks>
+  /// The rewrite converts every row before a reader sees it, so this is the row the rewrite did
+  /// not reach: a database the migrator has not finished, or a writer from an older release. The
+  /// serializer's readers tolerated a rendering from the start; Entity Framework's did not, and a
+  /// row that one path could read and the other could not is the split this whole change exists to
+  /// close. Both paths now read through the same reader.
+  /// </remarks>
+  [Test]
+  public async Task ARenderingInAMappedDocumentReadsBackAsync() {
+    await _scalarAsync(
+      $"UPDATE {TABLE} SET data = data || '{{\"OccurredAt\":\"2026-03-04T06:06:07Z\","
+      + "\"RecordedAt\":\"2026-03-04T11:36:07+05:30\",\"Day\":\"2026-03-05\",\"Clock\":\"06:06:07\","
+      + "\"Elapsed\":\"00:01:00.1234560\",\"MaybeAt\":\"2026-03-04T06:06:07Z\"}'::jsonb "
+      + "WHERE data ->> 'Label' = 'row-1'");
+
+    var row = await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .FirstAsync(r => r.Data.Label == "row-1");
+
+    await Assert.That(row.Data.OccurredAt).IsEqualTo(_origin.AddHours(1));
+    await Assert.That(row.Data.RecordedAt).IsEqualTo(new DateTimeOffset(_origin.AddHours(1), TimeSpan.Zero));
+    await Assert.That(row.Data.Day).IsEqualTo(new DateOnly(2026, 3, 5));
+    await Assert.That(row.Data.Clock).IsEqualTo(new TimeOnly(6, 6, 7));
+    await Assert.That(row.Data.Elapsed).IsEqualTo(TimeSpan.FromMinutes(1).Add(TimeSpan.FromTicks(1_234_560)));
+    await Assert.That(row.Data.MaybeAt).IsEqualTo(_origin.AddHours(1));
+  }
+
+  /// <summary>
+  /// A token that is neither a number nor a rendering is refused in the same words on both paths.
+  /// </summary>
+  /// <remarks>
+  /// Entity Framework's own reader refused it with a generic error naming the token and nothing
+  /// else, which nothing downstream could classify as a stored-form failure. The refusal is now
+  /// the serializer's: a <see cref="System.Text.Json.JsonException"/> naming the type, the forms
+  /// accepted and the token found, which is what the worker classifies and the operator reads.
+  /// </remarks>
+  [Test]
+  public async Task AnUnexpectedTokenInAMappedDocumentIsRefusedInTheSameWordsAsync() {
+    await _scalarAsync($"UPDATE {TABLE} SET data = data || '{{\"OccurredAt\":true}}'::jsonb WHERE data ->> 'Label' = 'row-1'");
+
+    var read = async () => await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .FirstAsync(r => r.Data.Label == "row-1");
+
+    var error = await Assert.That(read).Throws<System.Text.Json.JsonException>();
+    await Assert.That(error!.Message).IsEqualTo(
+      "A stored DateTime must be a number (microseconds) or a rendering, but the document holds True")
+      .Because("the reader is the serializer's, so the refusal is the serializer's, on both paths");
+  }
+
+  /// <summary>An optional value stored as absent or null reads back as null, not as a refusal.</summary>
+  /// <remarks>
+  /// The reader refuses a null token, so this pins that Entity Framework settles an optional
+  /// property's null before the reader is asked, on the path that now carries the reader.
+  /// </remarks>
+  [Test]
+  public async Task AnAbsentOptionalValueReadsBackAsNullAsync() {
+    var row = await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .FirstAsync(r => r.Data.Label == "row-0");
+
+    await Assert.That(row.Data.MaybeAt).IsNull();
+  }
+
   /// <summary>The value read back is the value written.</summary>
   [Test]
   public async Task ARowRoundTripsAsync() {

@@ -10,6 +10,7 @@ using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres.Functions;
+using Whizbang.Data.EFCore.Postgres.Perspectives;
 using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -153,6 +154,51 @@ public class CanonicalTemporalConventionTests {
     }
     await Assert.That(temporals.Count).IsEqualTo(expected.Length)
       .Because("the walk is exhaustive: nothing else in this model is temporal");
+  }
+
+  /// <summary>
+  /// Every placement Entity Framework maps inside a document reads through the canonical reader
+  /// for its kind, so a mapped document is read the way an opaque one is.
+  /// </summary>
+  /// <remarks>
+  /// The conversion alone left Entity Framework reading the number with its own reader, which
+  /// refused a rendering and refused an unexpected token with a generic error nothing could
+  /// classify. The reader/writer is what puts the serializer's reader on this path too.
+  /// </remarks>
+  [Test]
+  public async Task EveryTemporalInADocumentReadsThroughTheCanonicalReaderAsync() {
+    using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
+    var readers = new Dictionary<string, Type?>();
+    foreach (var complex in context.Model.FindEntityType(typeof(PerspectiveRow<ReachModel>))!.GetComplexProperties()) {
+      _collectReaders(complex, complex.Name, readers);
+    }
+
+    var expected = new Dictionary<string, Type> {
+      ["Data.OccurredAt"] = typeof(CanonicalTemporalJsonReaderWriters.Instant),
+      ["Data.RecordedAt"] = typeof(CanonicalTemporalJsonReaderWriters.OffsetInstant),
+      ["Data.Window.Opens"] = typeof(CanonicalTemporalJsonReaderWriters.TimeOfDay),
+      ["Data.Window.Length"] = typeof(CanonicalTemporalJsonReaderWriters.Duration),
+      ["Data.Occurrences.Day"] = typeof(CanonicalTemporalJsonReaderWriters.Day),
+      ["Data.Occurrences.MaybeAt"] = typeof(CanonicalTemporalJsonReaderWriters.Instant),
+      ["Metadata.Timestamp"] = typeof(CanonicalTemporalJsonReaderWriters.Instant),
+    };
+    foreach (var (path, reader) in expected) {
+      await Assert.That(readers.GetValueOrDefault(path)).IsEqualTo(reader)
+        .Because($"{path} must read through the canonical reader for its kind, or a rendering there "
+          + "reads on one path and not the other");
+    }
+    await Assert.That(readers.Count).IsEqualTo(expected.Count);
+  }
+
+  private static void _collectReaders(IComplexProperty complex, string path, Dictionary<string, Type?> found) {
+    foreach (var property in complex.ComplexType.GetProperties()) {
+      if (CanonicalTemporalConvention.KindOf(property.ClrType) is not null) {
+        found[$"{path}.{property.Name}"] = property.GetJsonValueReaderWriter()?.GetType();
+      }
+    }
+    foreach (var nested in complex.ComplexType.GetComplexProperties()) {
+      _collectReaders(nested, $"{path}.{nested.Name}", found);
+    }
   }
 
   /// <summary>

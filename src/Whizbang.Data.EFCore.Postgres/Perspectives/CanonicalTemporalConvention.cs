@@ -28,6 +28,12 @@ namespace Whizbang.Data.EFCore.Postgres.Perspectives;
 /// not of the type.
 /// </para>
 /// <para>
+/// Each converted property also reads and writes through the reader/writer for its kind
+/// (<see cref="CanonicalTemporalJsonReaderWriters"/>), so the mapped path reads a document the
+/// way the serializer's converters read an opaque one: a number in the canonical unit or, for
+/// now, a rendering, and a refusal of anything else in the same words on both paths.
+/// </para>
+/// <para>
 /// A conversion the model author configured explicitly wins, because a convention configures at
 /// convention precedence and Entity Framework does not let it override an explicit one.
 /// </para>
@@ -98,9 +104,11 @@ public sealed class CanonicalTemporalConvention : IModelFinalizingConvention {
 
     if (inDocument) {
       foreach (var property in complex.ComplexType.GetProperties()) {
-        var converter = _converterFor(KindOf(property.ClrType));
+        var kind = KindOf(property.ClrType);
+        var converter = _converterFor(kind);
         if (converter is not null) {
           property.Builder.HasConversion(converter, fromDataAnnotation: false);
+          property.SetJsonValueReaderWriterType(CanonicalTemporalJsonReaderWriters.TypeFor(kind), fromDataAnnotation: false);
         }
       }
     }
