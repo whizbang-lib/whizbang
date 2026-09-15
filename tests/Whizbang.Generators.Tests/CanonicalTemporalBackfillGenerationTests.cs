@@ -74,51 +74,53 @@ public class CanonicalTemporalBackfillGenerationTests {
   }
 
   /// <summary>
-  /// The rewrite comes before the index over what it produced.
+  /// The rewrite is emitted as a guarded pre-phase, separate from the perspective's schema.
   /// </summary>
   /// <remarks>
-  /// PostgreSQL evaluates the index expression for every heap tuple that is not yet dead, so an
-  /// index built over a key while a row is still a string refuses to build. The other order would
-  /// leave an index over a column about to change underneath it.
+  /// <para>
+  /// It cannot live with the schema any more. An index over an extraction of a rewritten key needs
+  /// the rewrite committed, the initializer builds its indexes inside one advisory-locked
+  /// transaction, and committing from a second connection while that transaction is open deadlocks
+  /// on catalog rows it has not committed. So the rewrite runs before the transaction opens, which
+  /// means it has to tolerate a table that is not there yet.
+  /// </para>
+  /// <para>
+  /// The guard is asserted, not just the presence of the rewrite: without it a database created by
+  /// this release cannot start at all, because its tables are made later in the same pass.
+  /// </para>
   /// </remarks>
   [Test]
-  public async Task TheRewriteComesBeforeTheIndexAsync() {
+  public async Task TheRewriteIsEmittedAsAGuardedPrePhaseAsync() {
     var output = await _generatedAsync(TEMPORAL_MODEL);
 
-    var rewrite = output.IndexOf("jsonb_typeof(data -> 'OccurredAt') = 'string'",
-      StringComparison.Ordinal);
-    var index = output.IndexOf("'OccurredAt')::bigint", StringComparison.Ordinal);
-
-    await Assert.That(rewrite).IsGreaterThan(-1);
-    await Assert.That(index).IsGreaterThan(-1);
-    await Assert.That(rewrite).IsLessThan(index)
-      .Because("an index over a rewritten key cannot be built before the rewrite that produced it");
+    await Assert.That(output).Contains("GetCanonicalTemporalRewrites", StringComparison.Ordinal)
+      .Because("the rewrites are a phase of their own now, not part of a perspective's schema");
+    await Assert.That(output).Contains("to_regclass(", StringComparison.Ordinal)
+      .Because("running before the tables exist means a missing table has to be the ordinary case");
   }
 
   /// <summary>
-  /// A commit boundary sits between the rewrite and the index built over its result.
+  /// A perspective's own schema no longer carries the rewrite or a commit boundary.
   /// </summary>
   /// <remarks>
-  /// Ordering the two is necessary and not sufficient. A superseded row version stays live until the
-  /// rewrite commits, and the index build evaluates its expression over live tuples, so an index
-  /// built in the rewriting transaction meets the values as they were before it. The rollback then
-  /// undoes the rewrite along with the index and every retry begins from the state that just failed,
-  /// which is a schema that can never finish migrating rather than a startup that failed once.
+  /// Left behind, the rewrite would run inside the locked transaction and the index over it would be
+  /// built in the same transaction, which is the failure this arrangement removes. The marker going
+  /// too is what stops the initializer opening a second connection while that transaction is open.
   /// </remarks>
   [Test]
-  public async Task ACommitBoundarySeparatesTheRewriteFromTheIndexAsync() {
+  public async Task ThePerspectiveEntryNoLongerCarriesTheRewriteAsync() {
     var output = await _generatedAsync(TEMPORAL_MODEL);
 
-    var rewrite = output.IndexOf("jsonb_typeof(data -> 'OccurredAt') = 'string'",
-      StringComparison.Ordinal);
-    var boundary = output.IndexOf(CanonicalTemporalBackfillSql.COMMIT_BOUNDARY,
-      StringComparison.Ordinal);
-    var index = output.IndexOf("'OccurredAt')::bigint", StringComparison.Ordinal);
+    var entries = output.IndexOf("GetPerspectiveEntries", StringComparison.Ordinal);
+    await Assert.That(entries).IsGreaterThan(-1);
 
-    await Assert.That(boundary).IsGreaterThan(rewrite)
-      .Because("the boundary commits the rewrite, so it has to come after it");
-    await Assert.That(boundary).IsLessThan(index)
-      .Because("the index is the statement that needs the rewrite committed");
+    var rewrites = output.IndexOf("GetCanonicalTemporalRewrites", StringComparison.Ordinal);
+    await Assert.That(rewrites).IsGreaterThan(-1);
+
+    await Assert.That(output).DoesNotContain(
+      CanonicalTemporalBackfillSql.COMMIT_BOUNDARY, StringComparison.Ordinal)
+      .Because("nothing may be applied on a second connection while the initializer's transaction "
+        + "is open, so no boundary is emitted at all");
   }
 
   /// <summary>

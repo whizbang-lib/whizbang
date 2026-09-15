@@ -79,12 +79,11 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     var segmentConnectionFactory = Whizbang.Data.EFCore.Postgres.SchemaBoundaryConnections.Resolve(
       dbContext, initConnectionString, serviceProvider);
 
-    // The schema itself has to exist, and be committed, before any of that can run. A connection of
-    // its own cannot see a schema the initializer's own transaction created and has not committed,
-    // so the first statement it sends into a non-default schema fails with 3F000. Creating it here,
-    // before that transaction opens, is what makes the side connection able to address anything:
-    // this instance holds no lock yet, so waiting on another instance's in-flight creation is a
-    // wait rather than a deadlock, and for the default schema it is a no-op.
+    // Everything below runs before the initializer's transaction opens, on connections of their own,
+    // each committed. Nothing may be applied that way once the transaction is open: a second
+    // connection blocks on catalog rows the transaction has not committed, while the transaction
+    // waits for that connection to return, and PostgreSQL cannot break it because one side is
+    // waiting on a client rather than on a lock.
     if (segmentConnectionFactory is not null) {
       try {
         await using var schemaConnection = segmentConnectionFactory();
@@ -103,6 +102,27 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
         logger?.LogWarning(ex,
           "Could not pre-create schema {Schema} on a separate connection; schema SQL needing a "
           + "commit boundary may not be applicable", "__SCHEMA__");
+      }
+    }
+
+    // The stored-format rewrites, committed before the transaction that indexes their result. An
+    // index over an extraction of a rewritten key cannot be built in the transaction that did the
+    // rewriting, because the index build evaluates its expression over row versions the rewrite
+    // superseded and those stay live until it commits.
+    if (segmentConnectionFactory is not null) {
+      foreach (var (name, sql) in GetCanonicalTemporalRewrites()) {
+        try {
+          await Whizbang.Data.Postgres.SchemaCommandBoundary.ApplyAsync(
+            segmentConnectionFactory, _renderFormatBraces(sql), SCHEMA_COMMAND_TIMEOUT_SECONDS,
+            cancellationToken);
+        } catch (Exception ex) {
+          // Not fatal here. A rewrite that did not run leaves rows in the older format, and the
+          // index built over them later fails loudly with its own reason, which is a better place
+          // to read the problem than a startup that stopped before saying what it was doing.
+          logger?.LogWarning(ex,
+            "Could not apply the stored-format rewrite for {Perspective}; an index over the "
+            + "rewritten key will fail until it succeeds", name);
+        }
       }
     }
 
@@ -909,6 +929,22 @@ END $$;
     return new (string Name, string Sql)[] {
       #region PERSPECTIVE_ENTRIES
       // Perspective entries will be embedded here by the source generator
+      #endregion
+    };
+  }
+
+  /// <summary>
+  /// The rewrites that convert a stored format, one entry per perspective that has one.
+  /// </summary>
+  /// <remarks>
+  /// Separate from the perspective entries because they run at a different time: before the
+  /// initializer's transaction opens, each committed on its own. Every statement carries a
+  /// to_regclass guard, because at that point the tables frequently do not exist yet.
+  /// </remarks>
+  private static (string Name, string Sql)[] GetCanonicalTemporalRewrites() {
+    return new (string Name, string Sql)[] {
+      #region CANONICAL_TEMPORAL_REWRITES
+      // Rewrites will be embedded here by the source generator
       #endregion
     };
   }
