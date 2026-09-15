@@ -66,8 +66,25 @@ public static class WhizbangJsonContextInitializer {
     // literals that appear in JSONB columns when DateTimeOffset.MinValue/MaxValue are persisted.
     // Without these, manual JsonSerializer.Deserialize<T> calls on data::text JSONB reads throw
     // JsonException on -infinity strings.
-    JsonContextRegistry.RegisterConverter(new LenientDateTimeOffsetConverter());
-    JsonContextRegistry.RegisterConverter(new LenientNullableDateTimeOffsetConverter());
+    //
+    // Scoped to the default (transport and event-store) profile. A perspective document is the
+    // persistence profile's, where an offset is a number and the canonical converter below answers
+    // for it, renderings included; the serializer takes the first converter that handles a type,
+    // so the lenient one must not be on that profile at all.
+    JsonContextRegistry.RegisterConverter(new LenientDateTimeOffsetConverter(), priority: 0, SerializationProfile.Default);
+    JsonContextRegistry.RegisterConverter(new LenientNullableDateTimeOffsetConverter(), priority: 0, SerializationProfile.Default);
+
+    // The canonical temporal form for every perspective document: a date, a time or a duration is
+    // stored as microseconds so its extraction can carry an index. On the persistence profile's
+    // options rather than per model, so the serializer applies them wherever the type occurs,
+    // inherited, nested, in a collection element or in the framework's own metadata, which is the
+    // same set Entity Framework's convention converts on the way back. Ahead of everything else,
+    // so nothing profile-wide can answer for a temporal first.
+    JsonContextRegistry.RegisterConverter(new Perspectives.CanonicalTemporalJsonConverters.InstantConverter(), priority: 100, SerializationProfile.Persistence);
+    JsonContextRegistry.RegisterConverter(new Perspectives.CanonicalTemporalJsonConverters.OffsetInstantConverter(), priority: 100, SerializationProfile.Persistence);
+    JsonContextRegistry.RegisterConverter(new Perspectives.CanonicalTemporalJsonConverters.DayConverter(), priority: 100, SerializationProfile.Persistence);
+    JsonContextRegistry.RegisterConverter(new Perspectives.CanonicalTemporalJsonConverters.TimeOfDayConverter(), priority: 100, SerializationProfile.Persistence);
+    JsonContextRegistry.RegisterConverter(new Perspectives.CanonicalTemporalJsonConverters.DurationConverter(), priority: 100, SerializationProfile.Persistence);
 
     // Register type name mappings for infrastructure types
     // This enables Azure Service Bus and other transports to deserialize messages by assembly-qualified name

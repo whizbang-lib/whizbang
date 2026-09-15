@@ -243,16 +243,6 @@ public class CanonicalTemporalReaderToleranceTests {
     await Assert.That(factory.Created).Contains(CanonicalTemporalFallbacks.METER_NAME);
   }
 
-  /// <summary>The optional wrapper still hands a rendering through to the underlying reader.</summary>
-  [Test]
-  public async Task TheOptionalWrapperHandsARenderingThroughAsync() {
-    var converter = new CanonicalTemporalJsonConverters.NullableConverter<DateTime>(
-      new CanonicalTemporalJsonConverters.InstantConverter());
-
-    await Assert.That(_read(converter, "\"2026-03-04T05:06:07.89Z\"")).IsEqualTo(_instant);
-    await Assert.That(_read(converter, "null")).IsNull();
-  }
-
   private sealed class RecordingMeterFactory : IMeterFactory {
     public List<string> Created { get; } = [];
 

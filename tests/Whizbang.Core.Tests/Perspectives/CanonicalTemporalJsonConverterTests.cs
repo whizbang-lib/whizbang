@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Serialization;
 
@@ -30,15 +31,6 @@ internal sealed class OptionalShapesModel {
 [JsonSerializable(typeof(OptionalShapesModel))]
 internal sealed partial class OptionalShapesJsonContext : JsonSerializerContext;
 
-/// <summary>A model used only to prove the registry seam, so registering for it is harmless.</summary>
-internal sealed class RegistryProbeModel {
-  public DateTime At { get; init; }
-}
-
-/// <summary>Metadata for the registry probe.</summary>
-[JsonSerializable(typeof(RegistryProbeModel))]
-internal sealed partial class RegistryProbeJsonContext : JsonSerializerContext;
-
 /// <summary>
 /// The model's metadata, source-generated the way a perspective's is.
 /// </summary>
@@ -52,19 +44,22 @@ internal sealed partial class RegistryProbeJsonContext : JsonSerializerContext;
 internal sealed partial class TemporalWriterJsonContext : JsonSerializerContext;
 
 /// <summary>
-/// That the serializer writes a perspective's dates, times and durations in the canonical form.
+/// That the serializer writes a perspective's dates, times and durations in the canonical form,
+/// under the persistence profile, with nothing registered per model.
 /// </summary>
 /// <remarks>
 /// <para>
 /// A perspective document has two writers and only one of them is Entity Framework. A row is written
 /// by the upsert, which serializes the model with System.Text.Json and sends the document as a
-/// parameter; the mapping is what reads it back and what compiles a filter over it. A value
-/// conversion attaches to the mapping, so on its own it changes the reading and not the writing.
+/// parameter; the mapping is what reads it back and what compiles a filter over it. Entity Framework
+/// converts every temporal it maps by convention, so the serializer has to convert every temporal
+/// it writes, or a row written by one is unreadable by the other.
 /// </para>
 /// <para>
-/// If the two disagree the failure is total rather than partial: the writer produces a rendering,
-/// the reader expects a number, and every row written after the change is unreadable by the code
-/// meant to read it. These are the assertions on the writer's half.
+/// So the converters are registered on the persistence profile's options, where the serializer
+/// applies them wherever the type occurs: inherited members, nested objects, collection elements
+/// and the framework's own metadata included. Nothing is discovered per model; there is nothing to
+/// miss.
 /// </para>
 /// <para>
 /// Scoped to the persistence profile deliberately. The default profile is transport and the event
@@ -78,57 +73,17 @@ public class CanonicalTemporalJsonConverterTests {
 
   /// <summary>
   /// The options the upsert resolves, with the model's metadata combined in exactly as the upsert
-  /// combines a caller's.
+  /// combines a caller's. Nothing is added for the model: the profile carries the conversion.
   /// </summary>
-  private static JsonSerializerOptions _optionsFor(SerializationProfile profile) {
+  private static JsonSerializerOptions _optionsFor(SerializationProfile profile, IJsonTypeInfoResolver model) {
     var union = JsonContextRegistry.CreateCombinedOptions(profile);
-    var resolver = JsonTypeInfoResolver.Combine(
-      union.TypeInfoResolver!, TemporalWriterJsonContext.Default);
-
-    // What the generator emits for a perspective: the canonical form applied to this model's own
-    // temporal properties and to nothing else. Applied here rather than registered globally, because
-    // a global registration reaches every date in every document — including the framework's own
-    // PerspectiveMetadata.Timestamp, which is mapped and read with no matching conversion and became
-    // unreadable the moment it was written as a number.
-    if (profile == SerializationProfile.Persistence) {
-      resolver = resolver.WithAddedModifier(info =>
-        CanonicalTemporalJsonConverters.ApplyTo(
-          info, typeof(TemporalWriterModel),
-          "OccurredAt", "RecordedAt", "Day", "Clock", "Elapsed", "MaybeAt"));
-    }
-
-    return new JsonSerializerOptions(union) { TypeInfoResolver = resolver };
-  }
-
-  /// <summary>
-  /// The probe's options, built here rather than in each test so the options are created once per
-  /// call site rather than inline beside the serialization.
-  /// </summary>
-  private static JsonSerializerOptions _probeOptionsFor(SerializationProfile profile) {
-    var union = JsonContextRegistry.CreateCombinedOptions(profile);
-
-    // Mirrors what the upsert does with a caller's options: combine the union with another resolver,
-    // then wrap the finished chain so the modifiers reach what that resolver answers for.
-    var chain = JsonTypeInfoResolver.Combine(
-      union.TypeInfoResolver!, RegistryProbeJsonContext.Default);
-
     return new JsonSerializerOptions(union) {
-      TypeInfoResolver = JsonContextRegistry.WithRegisteredModifiers(chain, profile),
+      TypeInfoResolver = JsonTypeInfoResolver.Combine(union.TypeInfoResolver!, model),
     };
   }
 
-  /// <summary>Options carrying the conversion for every optional shape on the probe model.</summary>
-  private static JsonSerializerOptions _optionalShapesOptions() {
-    var union = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
-    var chain = JsonTypeInfoResolver.Combine(
-      union.TypeInfoResolver!, OptionalShapesJsonContext.Default);
-
-    return new JsonSerializerOptions(union) {
-      TypeInfoResolver = chain.WithAddedModifier(info =>
-        CanonicalTemporalJsonConverters.ApplyTo(
-          info, typeof(OptionalShapesModel), "At", "Offset", "Day", "Clock", "Elapsed", "Label")),
-    };
-  }
+  private static JsonSerializerOptions _writerOptions(SerializationProfile profile) =>
+    _optionsFor(profile, TemporalWriterJsonContext.Default);
 
   private static TemporalWriterModel _model() => new() {
     OccurredAt = _origin,
@@ -144,7 +99,7 @@ public class CanonicalTemporalJsonConverterTests {
   /// than a converter in isolation.
   /// </summary>
   private static JsonElement _written() {
-    var json = JsonSerializer.Serialize(_model(), _optionsFor(SerializationProfile.Persistence));
+    var json = JsonSerializer.Serialize(_model(), _writerOptions(SerializationProfile.Persistence));
     return JsonDocument.Parse(json).RootElement;
   }
 
@@ -159,7 +114,7 @@ public class CanonicalTemporalJsonConverterTests {
     var written = _written();
 
     await Assert.That(written.GetProperty(property).ValueKind).IsEqualTo(JsonValueKind.Number)
-      .Because($"'{property}' is written by the upsert and read by the mapping, and the mapping now "
+      .Because($"'{property}' is written by the upsert and read by the mapping, and the mapping "
         + "expects a number; a rendering here makes every row written unreadable by the reader");
   }
 
@@ -199,7 +154,7 @@ public class CanonicalTemporalJsonConverterTests {
   /// <summary>A round trip through the writer's own options returns what went in.</summary>
   [Test]
   public async Task TheModelRoundTripsAsync() {
-    var options = _optionsFor(SerializationProfile.Persistence);
+    var options = _writerOptions(SerializationProfile.Persistence);
     var json = JsonSerializer.Serialize(_model(), options);
     var restored = JsonSerializer.Deserialize<TemporalWriterModel>(json, options);
 
@@ -227,25 +182,26 @@ public class CanonicalTemporalJsonConverterTests {
   }
 
   /// <summary>
-  /// A date on a framework document is not converted, which is the failure this shape prevents.
+  /// The framework's own document is converted like any other, because it is a document.
   /// </summary>
   /// <remarks>
-  /// <c>PerspectiveMetadata.Timestamp</c> is mapped by the framework with no matching conversion, so
-  /// a canonical number written there is a row the reader cannot parse. A converter registered on the
-  /// options reached it; one applied to a named model's named properties does not. This is the test
-  /// that would have caught that, and it did not exist when the converter was registered globally.
+  /// <c>PerspectiveMetadata.Timestamp</c> was once deliberately left as a rendering, because the
+  /// mapping read it with no matching conversion and a number there was a row nothing could parse.
+  /// The mapping now converts every temporal it maps, the framework's included, so the writer has
+  /// to as well; a rendering here would be the same disagreement from the other side.
   /// </remarks>
   [Test]
-  public async Task AFrameworkDocumentIsNotConvertedAsync() {
-    var options = _optionsFor(SerializationProfile.Persistence);
-    var metadata = new Whizbang.Core.Lenses.PerspectiveMetadata { Timestamp = _origin };
+  public async Task AFrameworkDocumentIsConvertedLikeAnyOtherAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
+    var metadata = new PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = _origin };
 
-    var json = JsonSerializer.Serialize(metadata, options);
+    var json = JsonSerializer.Serialize(metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
     var written = JsonDocument.Parse(json).RootElement;
 
-    await Assert.That(written.GetProperty("Timestamp").ValueKind).IsEqualTo(JsonValueKind.String)
-      .Because("the framework maps and reads this document with no matching conversion, so a number "
-        + "written here is a row nothing can parse");
+    await Assert.That(written.GetProperty("Timestamp").GetInt64())
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_origin))
+      .Because("the mapping converts the framework's timestamp with every other temporal it maps, so "
+        + "the writer has to produce the number the mapping reads");
   }
 
   /// <summary>
@@ -259,81 +215,36 @@ public class CanonicalTemporalJsonConverterTests {
   /// </remarks>
   [Test]
   public async Task TheTransportProfileStillWritesARenderingAsync() {
-    var json = JsonSerializer.Serialize(_model(), _optionsFor(SerializationProfile.Default));
+    var json = JsonSerializer.Serialize(_model(), _writerOptions(SerializationProfile.Default));
     var written = JsonDocument.Parse(json).RootElement;
 
-    await Assert.That(written.GetProperty("OccurredAt").ValueKind).IsEqualTo(JsonValueKind.String)
-      .Because("a date on the wire is read by systems and releases this one does not control, so "
-        + "the canonical form is scoped to the documents this library owns");
+    foreach (var property in new[] { "OccurredAt", "RecordedAt", "Day", "Clock", "Elapsed" }) {
+      await Assert.That(written.GetProperty(property).ValueKind).IsEqualTo(JsonValueKind.String)
+        .Because($"'{property}' on the wire is read by systems and releases this one does not control, "
+          + "so the canonical form is scoped to the documents this library owns");
+    }
   }
 
   /// <summary>
-  /// A modifier registered through the registry reaches the options the writer resolves.
+  /// The framework's own document on the transport profile is a rendering too.
   /// </summary>
-  /// <remarks>
-  /// <para>
-  /// This is the seam the generated code actually uses. The generator emits a
-  /// <c>RegisterTypeInfoModifier</c> call, and the generator test asserts that the call is emitted;
-  /// neither says the registry applies what it was handed. Without this, the text could be perfect
-  /// and the conversion never happen.
-  /// </para>
-  /// <para>
-  /// The modifier names a type declared only for this test, which is what makes registering one
-  /// process-wide harmless: it returns immediately for every other type the serializer resolves,
-  /// exactly as a real perspective's does.
-  /// </para>
-  /// </remarks>
   [Test]
-  public async Task AModifierRegisteredThroughTheRegistryIsAppliedAsync() {
-    JsonContextRegistry.RegisterTypeInfoModifier(
-      info => CanonicalTemporalJsonConverters.ApplyTo(info, typeof(RegistryProbeModel), "At"),
-      SerializationProfile.Persistence);
+  public async Task AFrameworkDocumentOnTheTransportProfileIsARenderingAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Default);
+    var metadata = new PerspectiveMetadata { EventType = "e", EventId = "1", Timestamp = _origin };
 
-    var options = _probeOptionsFor(SerializationProfile.Persistence);
-    var json = JsonSerializer.Serialize(new RegistryProbeModel { At = _origin }, options);
-    var written = JsonDocument.Parse(json).RootElement;
+    var json = JsonSerializer.Serialize(metadata, options.GetTypeInfo(typeof(PerspectiveMetadata)));
 
-    await Assert.That(written.GetProperty("At").ValueKind).IsEqualTo(JsonValueKind.Number)
-      .Because("the generated code registers its conversion this way, so a registry that did not "
-        + "apply what it was handed would leave every emitted call inert");
-    await Assert.That(written.GetProperty("At").GetInt64())
-      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_origin));
+    await Assert.That(JsonDocument.Parse(json).RootElement.GetProperty("Timestamp").ValueKind)
+      .IsEqualTo(JsonValueKind.String);
   }
 
   /// <summary>
-  /// A modifier scoped to one profile does not reach another.
+  /// An optional value that is present round-trips through the wrapper the serializer supplies.
   /// </summary>
-  /// <remarks>
-  /// The scoping is what keeps the perspective's stored form out of the transport payload, so it is
-  /// worth proving rather than trusting: registered for the wrong profile, this change would be a
-  /// wire-format break rather than a storage decision.
-  /// </remarks>
-  [Test]
-  public async Task AModifierDoesNotReachAnotherProfileAsync() {
-    JsonContextRegistry.RegisterTypeInfoModifier(
-      info => CanonicalTemporalJsonConverters.ApplyTo(info, typeof(RegistryProbeModel), "At"),
-      SerializationProfile.Persistence);
-
-    var options = _probeOptionsFor(SerializationProfile.Default);
-    var json = JsonSerializer.Serialize(new RegistryProbeModel { At = _origin }, options);
-    var written = JsonDocument.Parse(json).RootElement;
-
-    await Assert.That(written.GetProperty("At").ValueKind).IsEqualTo(JsonValueKind.String)
-      .Because("a date on the wire is read by systems this release does not control, so a modifier "
-        + "scoped to persistence has to stay out of the transport profile");
-  }
-
-  /// <summary>
-  /// An optional value that is present round-trips through the wrapper that handles it.
-  /// </summary>
-  /// <remarks>
-  /// The model used elsewhere in this file leaves the optional property null, and a null is omitted
-  /// before a converter is reached, so nothing was exercising the wrapper's read path. A value that
-  /// is present is the case a model actually stores.
-  /// </remarks>
   [Test]
   public async Task APresentOptionalValueRoundTripsAsync() {
-    var options = _optionsFor(SerializationProfile.Persistence);
+    var options = _writerOptions(SerializationProfile.Persistence);
     var model = new TemporalWriterModel {
       OccurredAt = _origin,
       RecordedAt = new DateTimeOffset(_origin, TimeSpan.Zero),
@@ -357,12 +268,12 @@ public class CanonicalTemporalJsonConverterTests {
   /// </summary>
   /// <remarks>
   /// A document written before the optional property existed, or by something that writes nulls
-  /// rather than omitting them, still has to read. A wrapper without its null branch would hand the
-  /// underlying converter a null token and get the epoch, which reads back as a real date.
+  /// rather than omitting them, still has to read. The serializer's own nullable wrapper handles the
+  /// null before a converter is reached, and this is the assertion that it does.
   /// </remarks>
   [Test]
   public async Task AnExplicitNullReadsBackAsAbsentAsync() {
-    var options = _optionsFor(SerializationProfile.Persistence);
+    var options = _writerOptions(SerializationProfile.Persistence);
     const string json = """
       {"OccurredAt": 0, "RecordedAt": 0, "Day": 0, "Clock": 0, "Elapsed": 0, "MaybeAt": null}
       """;
@@ -379,13 +290,14 @@ public class CanonicalTemporalJsonConverterTests {
   /// Every optional temporal shape is converted, and a property that is not temporal is not.
   /// </summary>
   /// <remarks>
-  /// One shape per type rather than one test per type, because the thing being checked is the lookup
-  /// that picks a converter: a shape it does not recognize falls through and the property is written
-  /// as whatever it was, which for a date is a rendering the reader cannot parse.
+  /// One shape per type rather than one test per type, because the thing being checked is that the
+  /// profile carries a converter for every kind and that the serializer wraps each for its optional
+  /// form: a shape it does not recognize is written as whatever it was, which for a date is a
+  /// rendering the reader cannot parse.
   /// </remarks>
   [Test]
   public async Task EveryOptionalShapeIsConvertedAsync() {
-    var options = _optionalShapesOptions();
+    var options = _optionsFor(SerializationProfile.Persistence, OptionalShapesJsonContext.Default);
     var model = new OptionalShapesModel {
       At = _origin,
       Offset = new DateTimeOffset(_origin, TimeSpan.Zero),
@@ -399,7 +311,7 @@ public class CanonicalTemporalJsonConverterTests {
 
     foreach (var key in new[] { "At", "Offset", "Day", "Clock", "Elapsed" }) {
       await Assert.That(written.GetProperty(key).ValueKind).IsEqualTo(JsonValueKind.Number)
-        .Because($"'{key}' is temporal, so the lookup has to find a converter for its optional form "
+        .Because($"'{key}' is temporal, so the profile has to carry a converter for its optional form "
           + "as well as its bare one");
     }
 
@@ -416,66 +328,32 @@ public class CanonicalTemporalJsonConverterTests {
   }
 
   /// <summary>
-  /// The optional wrapper writes a null as a null.
+  /// The persistence profile's converters are on the options, ahead of the transport profile's.
   /// </summary>
   /// <remarks>
-  /// Reached directly because the serializer omits a null property before a converter sees it, so
-  /// this branch cannot be exercised through a model. It still has to be right: a document written
-  /// by something that emits nulls rather than omitting them goes through here, and a wrapper that
-  /// handed the null to the underlying converter would write the epoch.
+  /// The serializer takes the first converter that handles a type. The transport profile registers a
+  /// lenient <c>DateTimeOffset</c> reader that writes a rendering; if it reached the persistence
+  /// profile at all, or reached it first, an offset would be written as text there and every other
+  /// kind as a number. The ordering is the registration's priority, and this pins it.
   /// </remarks>
   [Test]
-  public async Task TheOptionalWrapperWritesANullAsANullAsync() {
-    var converter = new CanonicalTemporalJsonConverters.NullableConverter<DateTime>(
-      new CanonicalTemporalJsonConverters.InstantConverter());
+  public async Task ThePersistenceProfileCarriesTheCanonicalConvertersFirstAsync() {
+    var options = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
+    var names = options.Converters.Select(c => c.GetType().Name).ToList();
 
-    await using var buffer = new MemoryStream();
-    await using (var writer = new Utf8JsonWriter(buffer)) {
-      converter.Write(writer, null, JsonSerializerOptions.Default);
+    string[] canonical = [
+      nameof(CanonicalTemporalJsonConverters.InstantConverter),
+      nameof(CanonicalTemporalJsonConverters.OffsetInstantConverter),
+      nameof(CanonicalTemporalJsonConverters.DayConverter),
+      nameof(CanonicalTemporalJsonConverters.TimeOfDayConverter),
+      nameof(CanonicalTemporalJsonConverters.DurationConverter),
+    ];
+    foreach (var name in canonical) {
+      await Assert.That(names).Contains(name);
     }
-
-    await Assert.That(System.Text.Encoding.UTF8.GetString(buffer.ToArray())).IsEqualTo("null");
-  }
-
-  /// <summary>
-  /// A temporal property the conversion was not told about is left alone.
-  /// </summary>
-  /// <remarks>
-  /// <para>
-  /// This is the guarantee the per-property shape exists for. Applied per type, the conversion
-  /// reached every date everywhere and made framework documents unreadable; applied per property, it
-  /// has to touch the names it was given and nothing else, <em>including</em> other temporal
-  /// properties on the very same model.
-  /// </para>
-  /// <para>
-  /// That case is not hypothetical. A model can hold a date the generator deliberately did not
-  /// convert, a nested one being the example, and converting it anyway would store a number where
-  /// the reader expects a rendering.
-  /// </para>
-  /// </remarks>
-  [Test]
-  public async Task ATemporalPropertyNotNamedIsLeftAloneAsync() {
-    var union = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
-    var options = _partiallyNamedOptions(union);
-
-    var model = new OptionalShapesModel { At = _origin, Offset = new DateTimeOffset(_origin, TimeSpan.Zero) };
-    var written = JsonDocument.Parse(JsonSerializer.Serialize(model, options)).RootElement;
-
-    await Assert.That(written.GetProperty("At").ValueKind).IsEqualTo(JsonValueKind.Number)
-      .Because("'At' was named, so it is converted");
-    await Assert.That(written.GetProperty("Offset").ValueKind).IsEqualTo(JsonValueKind.String)
-      .Because("'Offset' is temporal and was NOT named, so it keeps the form the serializer would "
-        + "have given it; converting it anyway is the per-type mistake in miniature");
-  }
-
-  /// <summary>Options naming only one of the model's temporal properties.</summary>
-  private static JsonSerializerOptions _partiallyNamedOptions(JsonSerializerOptions union) {
-    var chain = JsonTypeInfoResolver.Combine(
-      union.TypeInfoResolver!, OptionalShapesJsonContext.Default);
-
-    return new JsonSerializerOptions(union) {
-      TypeInfoResolver = chain.WithAddedModifier(info =>
-        CanonicalTemporalJsonConverters.ApplyTo(info, typeof(OptionalShapesModel), "At")),
-    };
+    await Assert.That(names).DoesNotContain(nameof(LenientDateTimeOffsetConverter))
+      .Because("the lenient reader is the transport profile's; on this profile the canonical one "
+        + "answers for an offset, renderings included");
+    await Assert.That(names).DoesNotContain(nameof(LenientNullableDateTimeOffsetConverter));
   }
 }

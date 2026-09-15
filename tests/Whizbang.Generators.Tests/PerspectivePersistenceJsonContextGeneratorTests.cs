@@ -483,16 +483,18 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
   }
 
   /// <summary>
-  /// A perspective whose model holds dates gets the canonical temporal form registered for it.
+  /// A perspective whose model holds dates is wired like any other, and nothing about its dates is
+  /// named in the generated code.
   /// </summary>
   /// <remarks>
-  /// This is the writer half of the stored format. Two models are declared rather than one because
-  /// the registrations are ordered by model name, and an ordering asserted on a single entry is not
-  /// an ordering: the generated output is what the serializer reads, and a set that shifts between
-  /// builds is a set the incremental pipeline cannot cache.
+  /// The writer half of the stored format used to be emitted here as a per-model list of temporal
+  /// property names, ordered so the output was stable. The list was the partial discovery that
+  /// missed inherited, nested and collection-element temporals, and it is gone: the persistence
+  /// profile's own converters reach every temporal in every document. This pins that the generator
+  /// names no model and no property for it, so the list cannot quietly come back.
   /// </remarks>
   [Test]
-  public async Task Generator_WithTemporalModels_RegistersThemInNameOrderAsync() {
+  public async Task Generator_WithTemporalModels_NamesNothingPerModelAsync() {
     const string source = """
         using System;
         using Whizbang.Core;
@@ -519,17 +521,13 @@ public class PerspectivePersistenceJsonContextGeneratorTests {
 
     var callback = GeneratorTestHelper.GetGeneratedSource(result, "PerspectivePersistenceCallbackInitializer.g.cs");
     await Assert.That(callback).IsNotNull()
-      .Because("a model holding a date needs the canonical form applied to it when it is written");
+      .Because("a perspective is a perspective; its atomic-upsert options are wired whatever it holds");
 
-    await Assert.That(callback).Contains("OccurredAt", StringComparison.Ordinal)
-      .Because("the converter is attached per property, so the property has to be named");
-
-    var alpaca = callback.IndexOf("AlpacaDto", StringComparison.Ordinal);
-    var zebra = callback.IndexOf("ZebraDto", StringComparison.Ordinal);
-    await Assert.That(alpaca).IsGreaterThanOrEqualTo(0);
-    await Assert.That(zebra).IsGreaterThan(alpaca)
-      .Because("registrations are emitted in model-name order so the output is stable between builds, "
-        + "which is what the incremental pipeline caches on");
+    await Assert.That(callback).DoesNotContain("OccurredAt", StringComparison.Ordinal)
+      .Because("a property named here is a list the reader no longer shares");
+    await Assert.That(callback).DoesNotContain("AlpacaDto", StringComparison.Ordinal);
+    await Assert.That(callback).DoesNotContain("ZebraDto", StringComparison.Ordinal);
+    await Assert.That(callback).DoesNotContain("RegisterTypeInfoModifier", StringComparison.Ordinal);
   }
 
 }

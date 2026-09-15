@@ -98,99 +98,49 @@ public class CanonicalTemporalConfigurationTests {
   }
 
   /// <summary>
-  /// The serializer is told about the same properties, so the writer matches the reader.
+  /// The serializer registers nothing per model either: the persistence profile carries the
+  /// conversion for every document.
   /// </summary>
   /// <remarks>
   /// <para>
-  /// A perspective row is written by the upsert, which serializes with System.Text.Json, and read by
-  /// the mapping, which applies the value conversions above. Both sides have to convert the same set
-  /// or a row written by one is unreadable by the other.
+  /// A perspective row is written by the upsert, which serializes with System.Text.Json, and read
+  /// by the mapping, which converts every temporal it maps. The writer used to be told, per model,
+  /// which properties to convert, from the same partial discovery the mapping used; the two agreed
+  /// by construction and were wrong together about every placement the discovery missed.
   /// </para>
   /// <para>
-  /// Emitted per model rather than registered per type, and that distinction is load-bearing. A
-  /// converter on the options reaches every date in every document, including the framework's own
-  /// <c>PerspectiveMetadata.Timestamp</c>, which is mapped and read with no matching conversion: it
-  /// became a number the reader could not parse, and broke every perspective row until the shape
-  /// changed to this one.
+  /// Now the converters sit on the persistence profile's options and the serializer applies them
+  /// wherever the type occurs. There is nothing for a generator to name, and this pins that it
+  /// names nothing: a per-model modifier here would narrow the writer to a subset the reader no
+  /// longer shares.
   /// </para>
   /// </remarks>
   [Test]
-  public async Task TheSerializerIsToldAboutTheSamePropertiesAsync() {
+  public async Task TheSerializerRegistersNoPerModelModifierAsync() {
     var result = GeneratorTestHelper.RunGenerator<
       global::Whizbang.Data.EFCore.Postgres.Generators.PerspectivePersistenceJsonContextGenerator>(MODEL);
     var output = string.Join("\n",
       result.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SourceText.ToString()));
 
-    await Assert.That(output).Contains("RegisterTypeInfoModifier", StringComparison.Ordinal)
-      .Because("the upsert writes the document, so a conversion the mapping alone knows about "
-        + "leaves the writer producing rows the reader cannot parse");
-    await Assert.That(output).Contains("CanonicalTemporalJsonConverters.ApplyTo", StringComparison.Ordinal);
-
-    foreach (var property in new[] { "OccurredAt", "RecordedAt", "Day", "Clock", "Elapsed", "MaybeAt" }) {
-      await Assert.That(output).Contains($"\"{property}\"", StringComparison.Ordinal)
-        .Because($"'{property}' is converted by the mapping, so the writer has to convert it too");
-    }
+    await Assert.That(output).DoesNotContain("RegisterTypeInfoModifier", StringComparison.Ordinal)
+      .Because("a modifier names a subset of the document's temporals, and the subset is exactly "
+        + "what the reader no longer shares");
+    await Assert.That(output).DoesNotContain("CanonicalTemporalJsonConverters", StringComparison.Ordinal);
+    await Assert.That(output).Contains("SerializationProfile.Persistence", StringComparison.Ordinal)
+      .Because("the persistence context still joins the profile whose options carry the conversion");
   }
 
   /// <summary>
-  /// A model with nothing temporal gets no modifier, so nothing is registered for nothing.
-  /// </summary>
-  [Test]
-  public async Task AModelWithNoTemporalPropertyGetsNoModifierAsync() {
-    var result = GeneratorTestHelper.RunGenerator<
-      global::Whizbang.Data.EFCore.Postgres.Generators.PerspectivePersistenceJsonContextGenerator>("""
-      using System;
-      using Microsoft.EntityFrameworkCore;
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
-
-      namespace TestApp;
-
-      public record Occurred : IEvent;
-
-      public record PlainModel {
-        [StreamId]
-        public Guid Id { get; init; }
-        public string Label { get; init; } = string.Empty;
-      }
-
-      public class PlainPerspective : IPerspectiveFor<PlainModel, Occurred> {
-        public PlainModel Apply(PlainModel currentData, Occurred eventData) => currentData;
-      }
-
-      [WhizbangDbContext]
-      public class PlainDbContext : DbContext {
-        public PlainDbContext(DbContextOptions<PlainDbContext> options) : base(options) { }
-      }
-      """);
-
-    var output = string.Join("\n",
-      result.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SourceText.ToString()));
-
-    await Assert.That(output).DoesNotContain("CanonicalTemporalJsonConverters.ApplyTo",
-      StringComparison.Ordinal)
-      .Because("a model with no date has nothing to convert, and a modifier that matches nothing "
-        + "still runs for every type the serializer resolves");
-  }
-
-  /// <summary>
-  /// A computed temporal property is mapped by nobody and converted by the serializer, and the
-  /// mapping does not have to know either of those things.
+  /// A computed temporal property is mapped by nobody, and the mapping does not have to know it.
   /// </summary>
   /// <remarks>
-  /// <para>
   /// A property with no setter and no backing field is a calculation, not storage. Entity Framework
   /// leaves it unmapped by convention, so the convention that converts mapped temporals never sees
   /// it; naming it in the configuration was what used to force Entity Framework to map it and fail
   /// model validation for the whole context at startup. There is nothing to name now.
-  /// </para>
-  /// <para>
-  /// It still appears in the stored document, because the serializer writes read-only properties,
-  /// and it keeps the canonical form its siblings have.
-  /// </para>
   /// </remarks>
   [Test]
-  public async Task AComputedTemporalIsSerializedAndNotMappedAsync() {
+  public async Task AComputedTemporalIsNotMappedAsync() {
     const string SOURCE = """
       using System;
       using Microsoft.EntityFrameworkCore;
@@ -225,14 +175,6 @@ public class CanonicalTemporalConfigurationTests {
     var result = await GeneratorTestHelpers.RunEFCoreGeneratorWithEFCoreReferencesAsync(SOURCE);
     var mapping = string.Join("\n", result.GeneratedSources.Select(s => s.SourceText.ToString()));
 
-    var serialization = GeneratorTestHelper.RunGenerator<
-      global::Whizbang.Data.EFCore.Postgres.Generators.PerspectivePersistenceJsonContextGenerator>(SOURCE);
-    var serialized = string.Join("\n",
-      serialization.Results.SelectMany(r => r.GeneratedSources).Select(g => g.SourceText.ToString()));
-
-    await Assert.That(serialized).Contains("\"Elapsed\"", StringComparison.Ordinal)
-      .Because("the serializer writes read-only properties, so the derived value is in the document "
-        + "and keeps the canonical form the rest of the document uses");
     await Assert.That(mapping).DoesNotContain("p.Elapsed", StringComparison.Ordinal)
       .Because("naming a computed property is what forced Entity Framework to map it and fail at "
         + "startup; the mapping names nothing now");
