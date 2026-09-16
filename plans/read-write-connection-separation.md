@@ -501,7 +501,7 @@ write. Severe, because the notification is a promise the stale read breaks.
 
 ### Making the notification-triggered read correct
 
-Five options, ordered, with the first as the recommendation.
+Six options, ordered, with the first as the recommendation.
 
 **1. Mark the post-notification read fresh-required and route that single read to the primary.**
 Recommended. It is deterministic rather than probabilistic, it needs no lag measurement at all, and
@@ -568,6 +568,102 @@ options 1 and 2 do not cover. This is a well-trodden pattern rather than a new o
 notification delay applied to the read side instead, and that is exactly why it is acceptable: it
 costs no latency in the common case, and when the window is wrong it degrades to a correct read on
 the primary rather than a stale one on the reader.
+
+**6. Hold each tagged notification until the reader has passed the commit that wrote the perspective
+row.** The most complete of the options, and the most machinery. Stamp the held notification with the
+position at commit, maintain the reader's replayed position, and release held notifications in
+position order once the reader has passed them. It replaces guessing a delay with observing a
+position, so it is deterministic where the rejected fixed delay is probabilistic, and the client's
+follow-up read needs no token and no per-query routing decision at all, because **the notification
+itself is the barrier**. Six things decide whether it is buildable as described.
+
+**(a) The barrier is the perspective-row commit, not the event append.** This is a correctness point,
+not a preference. The read a tagged notification triggers is a read of a *perspective*, and the
+append and the apply commit in **different transactions**, with the apply the later one. A reader
+that has replayed past the append has therefore not necessarily replayed the perspective row the
+client is about to read, so stamping the held notification with an event-store position would release
+it too early. The barrier must be the position of the commit that wrote the perspective row.
+
+Capturing it there is both correct and free, because the hook already fires after that commit.
+`_applyDrainModePerspectiveCompletionAsync` runs "immediately after a successful
+`RunWithEventsAsync`" (`src/Whizbang.Core/Workers/PerspectiveWorker.cs:2737-2743`), and the lifecycle
+receptor fans and the completion signal are inside it
+(`src/Whizbang.Core/Workers/PerspectiveWorker.cs:2788-2798`), with tag hooks registered at the
+`PostAllPerspectives` stage (`src/Whizbang.Core/Tags/MessageTagRegistry.cs:27`), which fires once
+after **all** perspectives for an event complete
+(`src/Whizbang.Core/Workers/PerspectiveWorker.cs:316-319`). So the position can be read at the moment
+the notification is raised, with no extra round trip and no new ordering to establish.
+
+**(b) No watermark per perspective is needed, and this is the question worth answering explicitly.**
+The physical replay position is a **single global barrier**: if the reader has replayed past that
+commit, it has replayed that perspective row and every other table, because physical replay is
+ordered and total. One value per reader therefore covers every tag. Keep the two axes separate in
+any implementation, because conflating them is exactly what makes a per-perspective watermark look
+necessary:
+
+- the **barrier** is one physical replay position per reader;
+- the **routing policy** is per lens, which is stage 3's declared default.
+
+**(c) A purely logical watermark stalls, so it is the fallback and not the mechanism.** Reading the
+per-stream, per-perspective cursor rows from the reader would work in an environment where the
+engine replay position is not readable, and it carries two costs the physical position does not: it
+**only advances when events are written**, so in a quiet period the reader is fully current while the
+watermark never reaches the target and held notifications would never release at all; and it needs
+per-perspective bookkeeping that the single physical value gives for free. If it must be used,
+release on **either** condition, position reached or replay timestamp later than the commit time, so
+an idle system cannot deadlock the queue.
+
+**(d) A standby cannot report its own position over the notification channel, so this must poll.**
+PostgreSQL refuses `NOTIFY` during recovery and the notification queue is not replicated, so a
+replica can neither originate a notice about its own progress nor relay one. The mechanism therefore
+has to **poll the reader connection for one value**. Frame that cost accurately, because it sounds
+worse than it is: one scalar, on one connection, per service, debounced, which is the same shape as
+the two statistics collectors the framework already ships
+(`src/Whizbang.Core/Observability/TableStatisticsCollector.cs`,
+`src/Whizbang.Core/Observability/NotifyDebounceStatsCollector.cs`). It is **not** the thing the
+standing preference against polling is about: that concerns a *client* polling for *data*, repeatedly
+and per user. This is one server-side gauge read on a cadence, and stage 6 needs it anyway.
+
+**Permissions confirmed**, since the whole mechanism depends on an ordinary role being able to read
+the position. On PostgreSQL 17.7, `pg_is_in_recovery`, `pg_last_wal_replay_lsn`,
+`pg_last_xact_replay_timestamp`, `pg_current_wal_lsn` and `pg_wal_lsn_diff` all carry the default
+catalog ACL, meaning `EXECUTE` to `PUBLIC`, and a role created `NOSUPERUSER` calls all of them
+successfully with no grant. Two notes from that check: on a primary the two replay functions return
+`NULL`, which doubles as the primary-detection stage 8 needs; and the `NOTIFY`-during-recovery
+refusal above is documented engine behavior that this audit could not exercise locally, because it
+needs a real standby, so it is the one item to confirm against the deployed topology rather than
+taken on trust.
+
+**(e) Bounds it must carry.** Without all three it is a new failure mode rather than a fix:
+
+- a **hold deadline**, after which the notification is released anyway and the read it triggers is
+  routed to the primary instead. A held notification that never releases is a worse outcome than a
+  stale read, because the client is never told anything at all;
+- a **cap on held notifications**, with a defined overflow behavior: collapse to a single coarse
+  "something changed, refresh" rather than dropping silently. Silent dropping is the failure class
+  this whole document is about;
+- **release in position order**, so client-side ordering assumptions continue to hold.
+
+**(f) Several replicas behind one reader endpoint break it.** This is the structural limit. A reader
+endpoint that load-balances across replicas gives no way to know which one will serve the client's
+follow-up query, so releasing correctly would have to wait for the **slowest** replica, which imposes
+the worst replica's lag on every notification. That is the point at which option 2 is simply the
+better mechanism: carrying the position to the query and letting the query wait **binds the wait to
+the connection that actually serves the read**, which is the only binding that is correct under a
+fan-out endpoint.
+
+**The comparison the decision should turn on.** Option 1 achieves the same user-visible correctness
+with none of this machinery: one read, on the primary, deliberately. Option 6's only advantage over
+it is that every read stays on the reader. So option 6 is justified if the notification-triggered
+share of lens reads is large, and is over-engineering if that share is small. **Measure the share
+before building it.**
+
+Nothing present yields that measurement. There is no lens-query instrument at all: the nearest names
+are `whizbang.event_store.query.duration`, which is the event store rather than the lens, and
+`whizbang.perspective.read_failures`, which counts failures. The numerator has a usable proxy in
+`whizbang.lifecycle_coordinator.perspective_completions_signaled`, but there is no denominator to
+divide it by. Stage 7's per-operation naming is what would produce both sides, which is a reason to
+sequence stage 7 before any decision on option 6 rather than after it.
 
 **On polling after the notification.** Re-querying on a timer until the data appears does work, and it
 should still be rejected. It conflicts with the standing engineering preference against polling, and
@@ -1187,6 +1283,10 @@ decision plus tests rather than an obvious edit. Nothing in this branch changes 
   when lag spikes. The same idea on the read side (a per-session write window) is acceptable,
   because its failure mode is a correct read rather than a stale one.
 - **The lag measurement feeds a threshold and an observability signal, never a sleep duration.**
+- **A held-notification barrier, if built, is keyed on the commit that wrote the perspective row**
+  and not on the event append, because those commit in different transactions and the apply is the
+  later one. One physical replay position per reader is the whole barrier; no per-perspective
+  watermark is needed.
 - **The unit of the routing decision is a lens query's call origin**, not the role of the service
   hosting it, so an API-origin read is the reader's natural default and the guard catches the
   in-process exception.
