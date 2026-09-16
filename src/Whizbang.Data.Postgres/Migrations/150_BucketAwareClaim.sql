@@ -8,6 +8,13 @@
 --   of every batch; inside a lane commands stay ahead of events; per-stream order is untouched. claim_work re-offers
 --   the streams an instance holds most urgent bucket first (inbox and perspective), and
 --   claim_orphaned_perspective_events selects the most urgent streams first. Signatures are unchanged.
+--   158: claim_work is priced by the batch it returns, never by what the instance holds: the orphan guards
+--   probe two index heads instead of scanning the pending rows; the outbox re-offer walks the arrival index
+--   to its batch; the inbox and perspective re-offers walk lane indexes one index-only probe per stream,
+--   lane by lane in batch order from a stream id drawn per poll, and stop at the batch, returning a held
+--   stream's oldest row in each lane it appears in rather than every row it holds there; and the inbox
+--   event-store chain runs only for rows it has not stamped (wh_inbox.chain_emitted_at). The indexes and
+--   the column are in 158.
 -- Dependencies: 149_MessagePriority, 148_ActiveStreamLeases, 145_BoundedAcquisitionRewrite
 -- Objects: idx_inbox_pending_interactive, idx_inbox_pending_arrival_standard, idx_inbox_pending_arrival_background, claim_orphaned_inbox, claim_work (result set: + priority, received_at), claim_orphaned_perspective_events
 -- Constants: the double-underscore tokens in this file (for example __EMPTY_UUID__) are substituted from Migrations/constants.txt at apply time (README rule 12).
@@ -708,6 +715,12 @@ BEGIN
     v_inbox_rows INTEGER := 0;
     v_receptor_rows INTEGER := 0;
     v_perspective_rows INTEGER := 0;
+    -- 158: the lane walks that re-offer held inbox and perspective streams.
+    v_bucket INTEGER;
+    v_is_event BOOLEAN;
+    v_start UUID;
+    v_remaining INTEGER;
+    v_rows INTEGER;
   BEGIN
     -- Self-heal this instance's own registration before ranking against it. When a pod's heartbeat
     -- lapses past the stale cutoff (a GC pause, thread-pool starvation, a database failover), the
@@ -751,11 +764,23 @@ BEGIN
     -- Claim orphaned / unowned outbox work — only if any outbox row is unprocessed
     -- AND either unowned or has an expired lease (the orphan predicate matched by
     -- claim_orphaned_outbox's WHERE clause).
+    -- 158: two index probes, not one scan. A single predicate over "unowned or expired" has to examine
+    -- every pending row to prove there is none, which on a busy instance is its whole holdings on
+    -- every poll. Unowned rows are found under instance_id IS NULL through the outstanding-by-instance
+    -- index (123); expired leases are the head of the lease-expiry index (158), so an instance whose
+    -- leases are all live proves it at the first entry.
     IF EXISTS (
       SELECT 1 FROM __SCHEMA__.wh_outbox
       WHERE processed_at IS NULL
         AND coalesce_group IS NULL  -- 115: pending singles are never orphan-claimable
-        AND (instance_id IS NULL OR lease_expiry < v_now)
+        AND instance_id IS NULL
+      LIMIT 1
+    ) OR EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_outbox
+      WHERE lease_expiry < v_now
+        AND processed_at IS NULL
+        AND coalesce_group IS NULL
+        AND instance_id IS NOT NULL
       LIMIT 1
     ) THEN
       -- Bounded for the same reason as the inbox call below: without a limit this acquires the whole
@@ -767,10 +792,17 @@ BEGIN
     END IF;
 
     -- Claim orphaned / unowned inbox work — same predicate shape.
+    -- 158: two index probes; see the outbox guard above.
     IF EXISTS (
       SELECT 1 FROM __SCHEMA__.wh_inbox
       WHERE processed_at IS NULL
-        AND (instance_id IS NULL OR lease_expiry < v_now)
+        AND instance_id IS NULL
+      LIMIT 1
+    ) OR EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_inbox
+      WHERE lease_expiry < v_now
+        AND processed_at IS NULL
+        AND instance_id IS NOT NULL
       LIMIT 1
     ) THEN
       -- p_max_streams bounds ACQUISITION here, not just the re-emission below. Omitting it let this
@@ -788,10 +820,17 @@ BEGIN
 
     -- Claim orphaned perspective events — same predicate shape on
     -- wh_perspective_events.
+    -- 158: two index probes; see the outbox guard above.
     IF EXISTS (
       SELECT 1 FROM __SCHEMA__.wh_perspective_events
       WHERE processed_at IS NULL
-        AND (instance_id IS NULL OR lease_expiry < v_now)
+        AND instance_id IS NULL
+      LIMIT 1
+    ) OR EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_events
+      WHERE lease_expiry < v_now
+        AND processed_at IS NULL
+        AND instance_id IS NOT NULL
       LIMIT 1
     ) THEN
       -- 145 (#719): perspective ACQUISITION has its own bound. The caller passes 0 while its drain channel is
@@ -830,155 +869,211 @@ BEGIN
     -- sub-millisecond. The handler-delay backlog scenario where every event_id
     -- is already in wh_event_store is rare and is more appropriately addressed
     -- on the handler side (composite events) than in the work-pump.
+    -- 158: only rows the chain has never read (idx_inbox_chain_pending). A holder in steady state
+    -- has none, and the poll skips the chain without touching a held row.
     IF EXISTS (
       SELECT 1 FROM __SCHEMA__.wh_inbox i
       WHERE i.instance_id = p_instance_id
         AND i.processed_at IS NULL
         AND i.is_event = true
         AND i.stream_id IS NOT NULL
+        AND i.chain_emitted_at IS NULL
       LIMIT 1
     ) THEN
       PERFORM __SCHEMA__._emit_event_store_chain_for_inbox(p_instance_id, v_lease_expiry, v_now, p_partition_count);
     END IF;
 
-    -- Return outbox work owned by this instance.
-    -- Per-stream rank prevents one busy stream from starving others; global LIMIT bounds the batch.
+    -- Return outbox work owned by this instance, oldest first, a batch of it.
+    -- 158: a walk of idx_outbox_held_arrival that stops at the batch. The previous shape ranked every
+    -- held row per stream with a window function it never read and sorted them all before taking the
+    -- batch, so the poll priced itself by the holdings: a busy instance holds thousands of leased rows
+    -- and polls several times a second. Same rows in the same order, ties broken by message id.
     RETURN QUERY
-    WITH eligible_outbox AS (
-      SELECT
-        o.*,
-        ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.created_at) AS stream_rank
-      FROM __SCHEMA__.wh_outbox o
-      WHERE o.instance_id = p_instance_id
-        AND o.lease_expiry > v_now
-        AND o.processed_at IS NULL
-        AND o.coalesce_group IS NULL  -- 115: matches the narrowed eligible-scan index predicate
-        AND o.published_at IS NULL  -- skip debug-mode forensic rows (production never sets this — row is deleted)
-        AND (o.scheduled_for IS NULL OR o.scheduled_for <= v_now)
-    ),
-    ordered_outbox AS (
-      SELECT eo.*, ROW_NUMBER() OVER (ORDER BY eo.created_at) AS row_num
-      FROM eligible_outbox eo
-      ORDER BY eo.created_at
-      LIMIT p_max_streams
-    )
     -- Per-stream-drain projection (Phase H step 5b): claim_work returns stream_ids only for
     -- outbox. The OutboxDrainWorker consumes WorkBatch.OutboxStreamIds and pulls full payloads
     -- on demand via fetch_outbox_batch. Body columns are NULL — keeps the bytes-on-the-wire
     -- proportional to the active stream set, not the leased-row count × payload size.
     SELECT
       c_source_outbox               AS source,
-      oo.message_id                 AS work_id,
-      oo.stream_id                  AS work_stream_id,
-      oo.partition_number,
+      o.message_id                  AS work_id,
+      o.stream_id                   AS work_stream_id,
+      o.partition_number,
       NULL::VARCHAR(200)            AS destination,
       NULL::VARCHAR(500)            AS message_type,
       NULL::VARCHAR(500)            AS envelope_type,
       NULL::TEXT                    AS message_data,
       NULL::JSONB                   AS metadata,
-      oo.status,
-      oo.attempts,
+      o.status,
+      o.attempts,
       false                         AS is_newly_stored,
       false                         AS is_orphaned,
       NULL::VARCHAR(200)            AS perspective_name,
       NULL::INTEGER                 AS priority,
       NULL::TIMESTAMPTZ             AS received_at
-    FROM ordered_outbox oo;
+    FROM __SCHEMA__.wh_outbox o
+    WHERE o.instance_id = p_instance_id
+      AND o.processed_at IS NULL
+      AND o.coalesce_group IS NULL  -- 115: pending singles; the index predicate
+      AND o.lease_expiry > v_now
+      AND o.published_at IS NULL  -- skip debug-mode forensic rows (production never sets this — row is deleted)
+      AND (o.scheduled_for IS NULL OR o.scheduled_for <= v_now)
+    ORDER BY o.created_at, o.message_id
+    LIMIT p_max_streams;
 
     -- v0.661: track this category's RETURN QUERY rowcount so the drain-mode
     -- hint at function end can be derived from ROW_COUNT instead of a fresh
     -- COUNT(*) scan. See drain-mode hint block below.
     GET DIAGNOSTICS v_outbox_rows = ROW_COUNT;
 
-    -- Return inbox work owned by this instance. Inbox uses handler_name (cast to destination)
-    -- and received_at (cast to created_at). envelope_type is NULL for inbox.
-    RETURN QUERY
-    WITH eligible_inbox AS (
-      SELECT
-        i.*,
-        ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at) AS stream_rank,
-        -- 150: the stream's folded priority over the rows this instance holds (most urgent row wins).
-        MIN(i.priority) OVER (PARTITION BY i.stream_id) AS stream_priority
-      FROM __SCHEMA__.wh_inbox i
-      WHERE i.instance_id = p_instance_id
-        AND i.lease_expiry > v_now
-        AND i.processed_at IS NULL
-    ),
-    -- 126: fresh-work fairness. Strict oldest-first starved real-time work: a 28k-row retry
-    -- backlog means a brand-new single-row stream is guaranteed the last slot, hours out. A
-    -- stream is classified by its HEAD row (stream-FIFO means rows behind a retried head cannot
-    -- dispatch anyway), and the two classes merge by weighted fair queuing: fresh-head streams
-    -- receive p_fresh_share of the batch, retry-head streams the remainder, each class FIFO
-    -- within itself. Work-conserving by construction — an empty class hands its share to the
-    -- other, because the merge key only competes rows that exist.
-    inbox_stream_class AS (
-      SELECT ei.stream_id AS class_stream_id,
-             (ei.attempts = 0) AS is_fresh
-      FROM eligible_inbox ei
-      WHERE ei.stream_rank = 1
-    ),
-    classified_inbox AS (
-      SELECT ei.*, isc.is_fresh
-      FROM eligible_inbox ei
-      JOIN inbox_stream_class isc ON isc.class_stream_id = ei.stream_id
-    ),
-    ranked_inbox AS (
-      SELECT ci.*,
-             -- #568: breadth-first WITHIN a class. Strict received_at FIFO let one bulk
-             -- flood's thousands of FRESH rows starve a later interactive FRESH row — same
-             -- class, so the fresh/retry share could not help. Ranking stream_rank first
-             -- competes every stream's Nth row against other streams' Nth rows: an
-             -- interactive stream's head waits behind the OTHER HEADS, never behind a
-             -- single stream's 45,000-row body. Stream FIFO is untouched (stream_rank is
-             -- per-stream arrival order).
-             ROW_NUMBER() OVER (PARTITION BY ci.is_fresh ORDER BY ci.stream_rank, ci.received_at) AS class_rank
-      FROM classified_inbox ci
-    ),
-    ordered_inbox AS (
-      SELECT ri.*, ROW_NUMBER() OVER (
-               ORDER BY
-                 -- 150 BUCKET LANES: the streams an instance holds are re-offered most urgent bucket first, so
-                 -- the drain dispatches an interactive stream before the standard and background ones it holds.
-                 CASE WHEN ri.stream_priority <= 99 THEN 0 WHEN ri.stream_priority <= 199 THEN 1 ELSE 2 END,
-                 -- 145 COMMAND LANE (#721): commands re-emit ahead of events inside a bucket.
-                 CASE WHEN ri.is_event THEN 1 ELSE 0 END,
-                 CASE WHEN ri.is_fresh
-                      THEN (ri.class_rank - 1)::DOUBLE PRECISION
-                           / GREATEST(LEAST(p_fresh_share, 1.0), 0.000001)
-                      ELSE (ri.class_rank - 1)::DOUBLE PRECISION
-                           / GREATEST(1.0 - LEAST(p_fresh_share, 1.0), 0.000001)
-                 END,
-                 ri.received_at
-             ) AS row_num
-      FROM ranked_inbox ri
-      ORDER BY row_num
-      LIMIT p_max_streams
-    )
-    -- Per-stream-drain projection (Phase H step 5d): inbox follows outbox into stream-ids-only.
-    -- InboxDrainWorker reads stream_ids off IInboxDrainChannel and pulls payloads on demand
-    -- via fetch_inbox_batch. Body columns are NULL — keeps claim_work's bytes-on-the-wire
-    -- proportional to active stream count.
-    SELECT
-      c_source_inbox                AS source,
-      oi.message_id                 AS work_id,
-      oi.stream_id                  AS work_stream_id,
-      oi.partition_number,
-      NULL::VARCHAR(200)            AS destination,
-      NULL::VARCHAR(500)            AS message_type,
-      NULL::VARCHAR(500)            AS envelope_type,
-      NULL::TEXT                    AS message_data,
-      NULL::JSONB                   AS metadata,
-      oi.status,
-      oi.attempts,
-      false                         AS is_newly_stored,
-      false                         AS is_orphaned,
-      NULL::VARCHAR(200)            AS perspective_name,
-      oi.priority                   AS priority,
-      oi.received_at                AS received_at
-    FROM ordered_inbox oi;
+    -- Return inbox work owned by this instance: one row per lane a held stream appears in, a batch
+    -- of them.
+    -- 158: the poll is priced by the batch, never by the holdings. The streams an instance holds are
+    -- enumerated through idx_inbox_held_lanes one index-only probe per stream, lane by lane in the
+    -- order the batch is ordered: most urgent bucket first (150), commands before events inside a
+    -- bucket (145). Inside a lane the fresh and retried classes are walked side by side (126), each
+    -- able to take the whole batch, because the share must not hold a slot empty when the other
+    -- class is: what apportions them is the interleave below, not the walks. A lane's walk starts at
+    -- a stream id drawn per poll and wraps once, so a lane larger than the batch does not enumerate
+    -- the same streams on every poll; a lane no larger than the batch is enumerated whole. One step
+    -- lands on one stream, so a lane costs exactly the streams it enumerates.
+    --
+    -- One row stands for a held stream in a lane: the oldest row the instance holds of it there,
+    -- carrying that row's number, arrival and attempts. A stream whose rows span lanes is returned
+    -- once per lane, exactly as before, and the batch hooks fold those rows to the stream's most
+    -- urgent number and oldest arrival (ClaimedInboxStreamFolder), unchanged. What is no longer
+    -- returned is a stream's further rows inside one lane: the drain consumes stream ids and pulls a
+    -- stream's rows on demand (fetch_inbox_batch), so they carried nothing a caller read, and ranking
+    -- them is what cost the poll. A stream met in both classes of a lane stands as its retried row,
+    -- which is its head -- an attempt is charged at the head and everything older is processed, so a
+    -- stream with a retried row has a retried head, and stream FIFO means the fresh rows behind it
+    -- cannot dispatch anyway (126). The previous shape ranked every held row with three window
+    -- functions on every poll and fetched every held row's heap page to do it, and a busy instance
+    -- holds thousands of rows and polls several times a second.
+    --
+    -- GREATEST drops a NULL, so a NULL batch leaves nothing to fill and the re-offer returns nothing.
+    -- Nothing passes NULL (the parameter defaults to 1000 and the coordinators pass an integer), and
+    -- returning nothing is the safe reading of "no batch size": the previous LIMIT NULL meant no
+    -- bound at all, which is the failure this migration exists to stop.
+    v_remaining := GREATEST(p_max_streams, 0);
+    <<inbox_lanes>>
+    FOR v_bucket IN 0..2 LOOP
+      FOREACH v_is_event IN ARRAY ARRAY[false, true] LOOP
+        EXIT inbox_lanes WHEN v_remaining <= 0;
+        v_start := gen_random_uuid();
+        RETURN QUERY
+        WITH RECURSIVE lanes AS (
+          -- Two walks side by side, one per class, seeded at the drawn point. A seed is a bound and
+          -- not a candidate.
+          SELECT c.fresh_lane, v_start AS stream_id, false AS wrapped, true AS is_seed, 0 AS steps,
+                 NULL::INTEGER AS priority, NULL::UUID AS message_id, NULL::TIMESTAMPTZ AS received_at,
+                 NULL::INTEGER AS attempts, NULL::INTEGER AS partition_number, NULL::INTEGER AS status
+          FROM (VALUES (true), (false)) AS c(fresh_lane)
+          UNION ALL
+          SELECT h.fresh_lane, n.stream_id, n.wrapped, false, h.steps + 1,
+                 n.priority, n.message_id, n.received_at, n.attempts, n.partition_number, n.status
+          FROM lanes h
+          CROSS JOIN LATERAL (
+            -- The lane's next stream after the current one, up to the drawn point once wrapped. The
+            -- index is keyed (holder, bucket, kind, class, stream, arrival, id) and covers every
+            -- column below, so this is one index-only probe: it lands on the stream's oldest row in
+            -- the lane and the next stream is one probe away. The upper bound is written as a CASE
+            -- rather than an OR so it stays an index condition; as a filter the walk would read past
+            -- the drawn point instead of stopping at it.
+            (SELECT i.stream_id, i.priority, i.message_id, i.received_at, i.attempts,
+                    i.partition_number, i.status, h.wrapped AS wrapped
+             FROM __SCHEMA__.wh_inbox i
+             WHERE i.instance_id = p_instance_id
+               AND i.processed_at IS NULL
+               AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = v_bucket
+               AND i.is_event = v_is_event
+               AND (i.attempts = 0) = h.fresh_lane
+               AND i.lease_expiry > v_now
+               AND i.stream_id > h.stream_id
+               AND i.stream_id <= CASE WHEN h.wrapped THEN v_start ELSE __MAX_UUID__::UUID END
+             ORDER BY i.stream_id, i.received_at, i.message_id
+             LIMIT 1)
+            UNION ALL
+            -- ...or, past the lane's last stream, its first one: the walk wraps, once.
+            (SELECT i.stream_id, i.priority, i.message_id, i.received_at, i.attempts,
+                    i.partition_number, i.status, true
+             FROM __SCHEMA__.wh_inbox i
+             WHERE i.instance_id = p_instance_id
+               AND i.processed_at IS NULL
+               AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = v_bucket
+               AND i.is_event = v_is_event
+               AND (i.attempts = 0) = h.fresh_lane
+               AND i.lease_expiry > v_now
+               AND NOT h.wrapped
+               AND i.stream_id <= v_start
+             ORDER BY i.stream_id, i.received_at, i.message_id
+             LIMIT 1)
+            LIMIT 1
+          ) n
+          -- One step, one stream: each class may take the whole batch, and the interleave apportions.
+          WHERE h.steps < v_remaining
+        ),
+        inbox_candidates AS (
+          -- A stream met in both classes stands as its retried row: that row is its head (126).
+          SELECT DISTINCT ON (l.stream_id)
+                 l.stream_id, l.priority, l.message_id, l.received_at, l.attempts,
+                 l.partition_number, l.status
+          FROM lanes l
+          WHERE NOT l.is_seed
+          ORDER BY l.stream_id, l.fresh_lane
+        ),
+        ranked_inbox AS (
+          SELECT c.stream_id, c.priority, c.message_id, c.received_at, c.attempts,
+                 c.partition_number, c.status,
+                 (c.attempts = 0) AS is_fresh,
+                 ROW_NUMBER() OVER (PARTITION BY (c.attempts = 0) ORDER BY c.received_at, c.message_id) AS class_rank
+          FROM inbox_candidates c
+        ),
+        ordered_inbox AS (
+          SELECT ri.stream_id, ri.priority, ri.message_id, ri.received_at, ri.attempts,
+                 ri.partition_number, ri.status
+          FROM ranked_inbox ri
+          ORDER BY
+            -- 126: fresh-head streams receive p_fresh_share of the batch, retried-head streams the
+            -- remainder, each class in arrival order; an empty class hands its share to the other,
+            -- because the key only competes candidates that exist.
+            CASE WHEN ri.is_fresh
+                 THEN (ri.class_rank - 1)::DOUBLE PRECISION / GREATEST(LEAST(p_fresh_share, 1.0), 0.000001)
+                 ELSE (ri.class_rank - 1)::DOUBLE PRECISION / GREATEST(1.0 - LEAST(p_fresh_share, 1.0), 0.000001)
+            END,
+            ri.received_at,
+            ri.message_id
+          LIMIT v_remaining
+        )
+        -- Per-stream-drain projection (Phase H step 5d): inbox follows outbox into stream-ids-only.
+        -- InboxDrainWorker reads stream_ids off IInboxDrainChannel and pulls payloads on demand
+        -- via fetch_inbox_batch. Body columns are NULL -- keeps claim_work's bytes-on-the-wire
+        -- proportional to active stream count.
+        SELECT
+          c_source_inbox                AS source,
+          oi.message_id                 AS work_id,
+          oi.stream_id                  AS work_stream_id,
+          oi.partition_number,
+          NULL::VARCHAR(200)            AS destination,
+          NULL::VARCHAR(500)            AS message_type,
+          NULL::VARCHAR(500)            AS envelope_type,
+          NULL::TEXT                    AS message_data,
+          NULL::JSONB                   AS metadata,
+          oi.status,
+          oi.attempts,
+          false                         AS is_newly_stored,
+          false                         AS is_orphaned,
+          NULL::VARCHAR(200)            AS perspective_name,
+          oi.priority                   AS priority,
+          oi.received_at                AS received_at
+        FROM ordered_inbox oi;
 
-    -- v0.661: see outbox block above.
-    GET DIAGNOSTICS v_inbox_rows = ROW_COUNT;
+        GET DIAGNOSTICS v_rows = ROW_COUNT;
+        v_remaining := v_remaining - v_rows;
+      END LOOP;
+    END LOOP;
+
+    -- v0.661: the category's row count feeds the drain-mode hint at the end.
+    v_inbox_rows := GREATEST(p_max_streams, 0) - v_remaining;
 
     -- Return receptor work owned by this instance.
     -- Receptor work uses `id` as the work_id (not message_id) and `completed_at` as the "done" marker.
@@ -1011,49 +1106,85 @@ BEGIN
     -- v0.661: see outbox block above.
     GET DIAGNOSTICS v_receptor_rows = ROW_COUNT;
 
-    -- Return perspective work as one row per distinct stream owned by this instance.
-    -- Two-tier fairness ordering: small streams (≤ 100 pending events) come first, then
-    -- large streams. Without this, a single large stream with thousands of pending events
-    -- could starve many small streams behind it on every claim cycle. The 100-event tier
-    -- threshold matches the typical perspective batch size.
-    RETURN QUERY
-    WITH stream_counts AS (
+    -- Return perspective work as one row per distinct stream owned by this instance, most urgent
+    -- bucket first, oldest event first within a bucket, a batch of streams.
+    -- 158: the poll is priced by the batch, never by the holdings. The streams an instance holds are
+    -- enumerated through idx_perspective_held_lanes one index-only probe per stream, bucket by bucket,
+    -- most urgent first; the first entry of a stream in its bucket is its oldest held event there,
+    -- which is what orders the streams within the bucket. The walk starts at a stream id drawn per
+    -- poll and wraps once, so a bucket larger than the batch does not enumerate the same streams on
+    -- every poll, and one no larger than the batch is enumerated whole. One step lands on one stream,
+    -- so a bucket costs exactly the streams it enumerates. The previous shape aggregated every held
+    -- event per poll to put streams with a hundred or fewer pending events ahead of larger ones; that
+    -- tier guarded a batch of rows against one large stream, and the drain has been per stream with an
+    -- unbounded channel since Phase H, so a large stream no longer displaces small ones.
+    v_remaining := GREATEST(p_max_streams, 0);
+    FOR v_bucket IN 0..2 LOOP
+      EXIT WHEN v_remaining <= 0;
+      v_start := gen_random_uuid();
+      RETURN QUERY
+      WITH RECURSIVE lane AS (
+        -- Seeded at the drawn point; the seed is not a candidate.
+        SELECT v_start AS stream_id, NULL::UUID AS event_id, false AS wrapped, true AS is_seed, 0 AS steps
+        UNION ALL
+        SELECT n.stream_id, n.event_id, n.wrapped, false, h.steps + 1
+        FROM lane h
+        CROSS JOIN LATERAL (
+          -- The bucket's next stream after the current one, up to the drawn point once wrapped...
+          (SELECT pe.stream_id, pe.event_id, h.wrapped AS wrapped
+           FROM __SCHEMA__.wh_perspective_events pe
+           WHERE pe.instance_id = p_instance_id
+             AND pe.processed_at IS NULL
+             AND (CASE WHEN pe.priority <= 99 THEN 0 WHEN pe.priority <= 199 THEN 1 ELSE 2 END) = v_bucket
+             AND pe.lease_expiry > v_now
+             AND pe.stream_id > h.stream_id
+             AND pe.stream_id <= CASE WHEN h.wrapped THEN v_start ELSE __MAX_UUID__::UUID END
+           ORDER BY pe.stream_id, pe.event_id
+           LIMIT 1)
+          UNION ALL
+          -- ...or, past the bucket's last stream, its first one: the walk wraps.
+          (SELECT pe.stream_id, pe.event_id, true
+           FROM __SCHEMA__.wh_perspective_events pe
+           WHERE pe.instance_id = p_instance_id
+             AND pe.processed_at IS NULL
+             AND (CASE WHEN pe.priority <= 99 THEN 0 WHEN pe.priority <= 199 THEN 1 ELSE 2 END) = v_bucket
+             AND pe.lease_expiry > v_now
+             AND NOT h.wrapped
+             AND pe.stream_id <= v_start
+           ORDER BY pe.stream_id, pe.event_id
+           LIMIT 1)
+          LIMIT 1
+        ) n
+        WHERE h.steps < v_remaining
+      )
       SELECT
-        pe.stream_id,
-        COUNT(*) AS pending_count,
-        MIN(pe.priority) AS stream_priority   -- 150: the stream's folded priority
-      FROM __SCHEMA__.wh_perspective_events pe
-      WHERE pe.instance_id = p_instance_id
-        AND pe.lease_expiry > v_now
-        AND pe.processed_at IS NULL
-      GROUP BY pe.stream_id
-    )
-    SELECT
-      'perspective_stream'::VARCHAR(20) AS source,
-      NULL::UUID                        AS work_id,
-      sc.stream_id                      AS work_stream_id,
-      NULL::INTEGER                     AS partition_number,
-      NULL::VARCHAR(200)                AS destination,
-      NULL::VARCHAR(500)                AS message_type,
-      NULL::VARCHAR(500)                AS envelope_type,
-      NULL::TEXT                        AS message_data,
-      NULL::JSONB                       AS metadata,
-      0::INTEGER                        AS status,
-      0::INTEGER                        AS attempts,
-      false                             AS is_newly_stored,
-      false                             AS is_orphaned,
-      NULL::VARCHAR(200)                AS perspective_name,
-      NULL::INTEGER                     AS priority,
-      NULL::TIMESTAMPTZ                 AS received_at
-    FROM stream_counts sc
-    ORDER BY
-      CASE WHEN sc.stream_priority <= 99 THEN 0 WHEN sc.stream_priority <= 199 THEN 1 ELSE 2 END,  -- 150: bucket first
-      CASE WHEN sc.pending_count <= 100 THEN 0 ELSE 1 END,  -- small streams first
-      sc.pending_count                                       -- within tier, smallest-first
-    LIMIT p_max_streams;
+        'perspective_stream'::VARCHAR(20) AS source,
+        NULL::UUID                        AS work_id,
+        l.stream_id                       AS work_stream_id,
+        NULL::INTEGER                     AS partition_number,
+        NULL::VARCHAR(200)                AS destination,
+        NULL::VARCHAR(500)                AS message_type,
+        NULL::VARCHAR(500)                AS envelope_type,
+        NULL::TEXT                        AS message_data,
+        NULL::JSONB                       AS metadata,
+        0::INTEGER                        AS status,
+        0::INTEGER                        AS attempts,
+        false                             AS is_newly_stored,
+        false                             AS is_orphaned,
+        NULL::VARCHAR(200)                AS perspective_name,
+        NULL::INTEGER                     AS priority,
+        NULL::TIMESTAMPTZ                 AS received_at
+      FROM lane l
+      WHERE NOT l.is_seed
+      ORDER BY l.event_id, l.stream_id
+      LIMIT v_remaining;
 
-    -- v0.661: see outbox block above.
-    GET DIAGNOSTICS v_perspective_rows = ROW_COUNT;
+      GET DIAGNOSTICS v_rows = ROW_COUNT;
+      v_remaining := v_remaining - v_rows;
+    END LOOP;
+
+    -- v0.661: the category's row count feeds the drain-mode hint at the end.
+    v_perspective_rows := GREATEST(p_max_streams, 0) - v_remaining;
 
     -- 130 doorbell debounce: finding work stamps this instance's watermark — the signal
     -- producers use to suppress redundant notifies while this drainer is awake. Rides
@@ -1078,13 +1209,24 @@ BEGIN
        -- stamp's make-up ring, stranding visibility on the adaptive poll cap (issue #677).
        -- The EXISTS runs at most once: the k.kind guard short-circuits it away for the
        -- outbox/inbox VALUES rows.
+       -- 158: the question is asked of a batch of the rows leased longest, not of every held row.
+       -- Over all of them it was priced by the holdings whenever the fence held (#677 is exactly
+       -- that state), joining every leased row to the event store per poll. A held row whose event is
+       -- stamped is found among the oldest leases if it is found at all; when none of them is, the
+       -- watermark stays unarmed and the make-up ring goes through, which is the safe direction.
        OR (k.kind = __CATEGORY_PERSPECTIVE__ AND v_perspective_rows > 0 AND EXISTS (
-             SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
-             JOIN __SCHEMA__.wh_event_store es ON es.event_id = pe.event_id
-             WHERE pe.instance_id = p_instance_id
-               AND pe.lease_expiry > v_now
-               AND pe.processed_at IS NULL
-               AND es.commit_sequence IS NOT NULL))
+             SELECT 1
+             FROM (
+               SELECT pe.event_id
+               FROM __SCHEMA__.wh_perspective_events pe
+               WHERE pe.instance_id = p_instance_id
+                 AND pe.lease_expiry > v_now
+                 AND pe.processed_at IS NULL
+               ORDER BY pe.lease_expiry
+               LIMIT GREATEST(p_max_streams, 1)
+             ) held
+             JOIN __SCHEMA__.wh_event_store es ON es.event_id = held.event_id
+             WHERE es.commit_sequence IS NOT NULL))
     ),
     lockable AS (
       SELECT ns.instance_id, ns.payload_kind
@@ -1140,7 +1282,7 @@ END;
 $$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
 
 COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION, INTEGER, BOOLEAN, INTEGER) IS
-  'Leases work for an instance and re-offers the streams it holds (145: bounded acquisition, command lane, row bound, stealing). 150: the re-offered inbox and perspective streams are ordered most urgent bucket first, folded over the rows the instance holds.';
+  'Leases work for an instance and re-offers the streams it holds (145: bounded acquisition, command lane, row bound, stealing). 150: the re-offered inbox and perspective streams are ordered most urgent bucket first. 158: every re-offer is bounded by the batch it returns rather than by the holdings -- a held stream is re-offered as its oldest row in each lane it appears in, not as every row it holds there -- and the inbox chain reads only rows it has not stamped.';
 
 -- ---------------------------------------------------------------------------------------------
 -- claim_orphaned_perspective_events: last word 148_ActiveStreamLeases.sql; the most urgent streams are selected first.
