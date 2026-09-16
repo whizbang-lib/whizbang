@@ -87,15 +87,19 @@ public static class PerTestDatabaseFactory {
     ArgumentNullException.ThrowIfNull(alreadyDone);
     ArgumentNullException.ThrowIfNull(timeProvider);
 
+    // The bound is in the loop's own condition rather than only in the catch filter below. Written
+    // as an unbounded loop counting down, the one thing stopping it was a filter, so a later change
+    // to what counts as contention would have turned this into a spin against a database that is
+    // already struggling.
     var delay = FirstDelay;
-    for (var remaining = MAX_ATTEMPTS; ; remaining--) {
+    for (var attemptNumber = 1; attemptNumber <= MAX_ATTEMPTS; attemptNumber++) {
       try {
         await attempt().ConfigureAwait(false);
         return;
       } catch (Exception ex) when (alreadyDone(ex)) {
         // An earlier attempt did the work and lost its answer. Nothing left to do.
         return;
-      } catch (Exception ex) when (remaining > 1 && IsContention(ex)) {
+      } catch (Exception ex) when (attemptNumber < MAX_ATTEMPTS && IsContention(ex)) {
         await Task.Delay(delay, timeProvider, cancellationToken).ConfigureAwait(false);
         delay *= 2;
       }

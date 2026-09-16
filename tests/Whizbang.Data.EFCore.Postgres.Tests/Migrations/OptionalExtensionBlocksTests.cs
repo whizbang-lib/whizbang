@@ -104,7 +104,7 @@ public class OptionalExtensionBlocksTests : IAsyncDisposable {
   [Test]
   public async Task SplitReadsTheBlocksAsync() {
     await Assert.That(OptionalExtensionBlocks.HasBlocks("CREATE TABLE t (a int);")).IsFalse();
-    await Assert.That(OptionalExtensionBlocks.HasBlocks(null!)).IsFalse()
+    await Assert.That(OptionalExtensionBlocks.HasBlocks(null)).IsFalse()
       .Because("the question is asked of a script before anything has validated it, and no script "
         + "is no block rather than a throw on the path that decides how to apply one");
     var plain = OptionalExtensionBlocks.Split("CREATE TABLE t (a int);");
