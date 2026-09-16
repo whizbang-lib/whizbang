@@ -47,6 +47,9 @@ This directory contains focused documentation topics to help Claude Code underst
   - **Critical:** When sample needs feature → implement in library first
 
 - **[schema-initialization-connections.md](schema-initialization-connections.md)** - Required before touching schema init: commit boundaries, and where an out-of-band connection comes from
+- **[perspective-stored-forms.md](perspective-stored-forms.md)** - One unit for every stored date, time and duration; the two storage paths and the one reader they share; the ledger and rewrite; what happens when a row cannot be read
+  - **When to use:** Touching the persistence profile, `CanonicalTemporalConvention`, the JSON reader/writers, `CanonicalTemporalRewrite`, or the perspective worker's failure path; reading a "cannot read its stored document" error
+  - **Critical:** Never a second unit, never a reader that reinterprets a number, never a per-property discovery of what to convert
 - **[startup-registration-invariants.md](startup-registration-invariants.md)** - Six invariants for startup and DI registration, each from a shipped defect
   - **When to use:** Touching `AddWhizbangWorkers`, `DbContextInitializationRegistry`, `PostgresDriverExtensions`, `EventSubscriptionDiscovery`, or notification connection resolution
   - **Critical:** Never let the framework silently do less than the consumer asked for; refuse with a reason or log the consequence

@@ -130,8 +130,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Perspective snapshot blobs are now versioned envelopes; pre-existing unversioned snapshots are
   transparently rebuilt from events on first read.
 - Default coordinator tuning: `MaxInboxAttempts = 10`, `NotifyHealthyPollingIntervalMilliseconds = 30000`.
+- **One stored unit for every date, time and duration in a perspective document:** microseconds
+  (an instant since the epoch, a date at its midnight UTC, a time of day since midnight, a duration
+  plain), on both storage paths. The serializer's converters are global to the persistence profile and
+  an EF convention converts every temporal EF maps inside a document, so nothing is generated per
+  property; both paths read through one reader per kind that tolerates a rendering (counted on
+  `whizbang.perspective.temporal_form_fallbacks`) and refuses anything else in the same words. Rows
+  written by an earlier release are converted at startup by a rewrite derived from the readers, gated by
+  the `wh_perspective_forms` ledger (migration 153), on the migrator after the election; a date's index
+  now casts through `bigint` and is renamed for it. Deploy a unit-changing release without a mixed
+  fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **A perspective document one path wrote and the other could not read:** an opaque document was
+  written as canonical numbers under the persistence profile and read through the data source's
+  default-profile options, so every read failed. Opaque columns are now bound to the persistence
+  profile explicitly (`PerspectiveDocumentSerialization`). A row that still cannot be read is
+  classified (`StoredFormUnreadable`), logged at Error once per perspective and stream with the path
+  and the refusal, counted on `whizbang.perspective.read_failures`, reported on the
+  `perspective-stored-forms` health component, and its leased rows are parked with backoff through the
+  failure channel instead of retried every cycle.
+- **The generated message context handed one serializer profile metadata built for another:** its
+  metadata cache was keyed by type alone, so a date the wire profile asked for first was written by
+  the persistence profile as a rendering, intermittently, into a document whose index casts the key to
+  `bigint`. The cache is now keyed by the options the metadata was created for.
+- **Perspective failures reported through the failure channel never matched a row:**
+  `process_perspective_event_failures` read `EventWorkId`/`FailureReason` while the runtime serializes
+  `MessageId`/`Reason`; migration 154 reads both spellings, so failures are recorded, backed off and
+  dead-lettered at the configured threshold.
 - **jsonb polymorphic `$type` round-trip** — jsonb reorders object keys so `$type` is no longer first;
   `AllowOutOfOrderMetadataProperties` is now set in the combined serializer options, so drained
   polymorphic events are no longer silently dropped.

@@ -49,6 +49,13 @@ public sealed class PerspectiveMetrics {
   /// <summary>Polling cycles with no work.</summary>
   public PassiveCounter<long> EmptyBatches { get; }
 
+  /// <summary>
+  /// Rows a perspective could not read. Tags: perspective_name, reason
+  /// (<see cref="Perspectives.StoredFormUnreadable.REASON"/> for a stored form no reader takes).
+  /// </summary>
+  /// <docs>operations/infrastructure/migrations</docs>
+  public PassiveCounter<long> ReadFailures { get; }
+
   // Batch composition
 
   /// <summary>Work items claimed per batch.</summary>
@@ -102,6 +109,7 @@ public sealed class PerspectiveMetrics {
     StreamsUpdated = meter.CreatePassiveCounter<long>("whizbang.perspective.streams_updated", description: "Unique streams updated");
     Errors = meter.CreatePassiveCounter<long>("whizbang.perspective.errors", description: "Processing errors");
     EmptyBatches = meter.CreatePassiveCounter<long>("whizbang.perspective.empty_batches", description: "Polling cycles with no work");
+    ReadFailures = meter.CreatePassiveCounter<long>("whizbang.perspective.read_failures", description: "Rows a perspective could not read, by perspective and reason");
 
     BatchWorkItems = meter.CreateHistogram<int>("whizbang.perspective.batch.work_items", description: "Work items claimed per batch");
     BatchEventCount = meter.CreateHistogram<int>("whizbang.perspective.batch.event_count", description: "Events loaded per batch");

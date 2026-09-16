@@ -91,13 +91,20 @@ public partial class PerspectiveWorker(
   Whizbang.Core.Messaging.WorkCoordinatorGate? gate = null,
   // Collective meters (#738): received, applied and skipped at the sink, since an applied collective
   // leaves no row behind to count.
-  Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null
+  Whizbang.Core.Observability.CompositeMetrics? compositeMetrics = null,
+  // A row a perspective could not read is remembered once per perspective and stream, so the
+  // error fires once and the health endpoint can count it; the rows themselves are parked in the
+  // database through the failure channel. Null gets a private registry: the announcement still
+  // happens once, only the health endpoint does not see it.
+  Whizbang.Core.Perspectives.StoredFormFailureRegistry? storedFormFailures = null
 ) : BackgroundService {
 #pragma warning restore S107
   private const string METRIC_TAG_PERSPECTIVE_NAME = "perspective_name";
 
   private readonly ConcurrentBag<Task> _detachedTasks = [];
   private readonly Whizbang.Core.Observability.CompositeMetrics? _compositeMetrics = compositeMetrics;
+  private readonly Whizbang.Core.Perspectives.StoredFormFailureRegistry _storedFormFailures =
+    storedFormFailures ?? new Whizbang.Core.Perspectives.StoredFormFailureRegistry(timeProvider);
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly WorkCompletionMeter? _completionMeter = completionMeter;
@@ -1158,6 +1165,9 @@ public partial class PerspectiveWorker(
             if (rewindLockSkipped) {
               return;
             }
+            if (result.Status == PerspectiveProcessingStatus.Completed) {
+              _storedFormFailures.Recovered(perspectiveName, streamId);
+            }
 
             _markAffinityPhase(streamId, perspectiveName, "load-processed");
             var processedEvents = await _loadAndLogProcessedEventsAsync(
@@ -1227,7 +1237,12 @@ public partial class PerspectiveWorker(
               _metrics?.EventsProcessed.Add(processedEvents.Count);
             }
           } catch (Exception ex) when (ex is not OperationCanceledException) {
-            LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
+            var storedForm = await _tryRecordStoredFormFailureAsync(
+              ex, streamId, perspectiveName,
+              group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct(), ct);
+            if (storedForm is null) {
+              LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
+            }
             _metrics?.Errors.Add(1);
             if (_syncEventTracker is not null && upcomingEvents is { Count: > 0 }) {
               var failedEventIds = upcomingEvents.Select(e => e.MessageId.Value).ToList();
@@ -1238,7 +1253,7 @@ public partial class PerspectiveWorker(
               PerspectiveName = perspectiveName,
               LastEventId = Guid.Empty,
               Status = PerspectiveProcessingStatus.Failed,
-              Error = ex.Message
+              Error = storedForm ?? ex.Message
             };
             await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
             throw;
@@ -2211,6 +2226,9 @@ public partial class PerspectiveWorker(
         // group is redundant. Only a real runner invocation records here; a pass that cooled
         // everything returned above and left the group unrecorded on purpose (issue #700).
         batchContext.AppliedGroups.TryAdd((streamId, perspectiveName), 0);
+        if (result.Status == PerspectiveProcessingStatus.Completed) {
+          _storedFormFailures.Recovered(perspectiveName, streamId);
+        }
 
         // Slice 29 instrumentation: capture per-drain wall time partitioned into the three
         // dominant phases — runner (read + apply + save), completion (cursor update + lifecycle),
@@ -2293,9 +2311,13 @@ public partial class PerspectiveWorker(
       };
       await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
+      var storedForm = await _tryRecordStoredFormFailureAsync(
+        ex, streamId, perspectiveName, _drainGroupWorkIds(filteredEvents, batchContext, perspectiveName), ct);
+      if (storedForm is null) {
 #pragma warning disable CA1848
-      _logger.LogError(ex, "Drain mode: Error processing perspective {Perspective} for stream {StreamId}", perspectiveName, streamId);
+        _logger.LogError(ex, "Drain mode: Error processing perspective {Perspective} for stream {StreamId}", perspectiveName, streamId);
 #pragma warning restore CA1848
+      }
       _metrics?.Errors.Add(1);
 
       var failure = new PerspectiveCursorFailure {
@@ -2303,11 +2325,79 @@ public partial class PerspectiveWorker(
         PerspectiveName = perspectiveName,
         LastEventId = Guid.Empty,
         Status = PerspectiveProcessingStatus.Failed,
-        Error = ex.Message
+        Error = storedForm ?? ex.Message
       };
       await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
     }
   }
+
+  /// <summary>The leased work rows of one perspective's share of a drain group.</summary>
+  private static IEnumerable<Guid> _drainGroupWorkIds(
+      List<MessageEnvelope<IEvent>> events, DrainBatchContext batchContext, string perspectiveName) =>
+    events
+      .SelectMany(e => batchContext.RawByEventId[e.MessageId.Value])
+      .Where(raw => string.Equals(raw.PerspectiveName, perspectiveName, StringComparison.Ordinal))
+      .Select(raw => raw.EventWorkId)
+      .Where(id => id != Guid.Empty)
+      .Distinct();
+
+  /// <summary>
+  /// Classifies an apply failure as a stored form no reader takes and, when it is one, announces
+  /// it once per perspective and stream, counts it, and parks every leased row of the group.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The read failure used to surface as a generic error per drain cycle with a stack trace as the
+  /// only clue, and the rows were never marked failed: the cursor failure carries no event id, the
+  /// coordinator skips it, the lease lapses, the rows are re-claimed, and the stream fails again on
+  /// the next cycle. Reporting each leased row through the failure channel is what lets the
+  /// database record the failure, schedule the retry with backoff, and dead-letter the row at the
+  /// configured threshold.
+  /// </para>
+  /// <para>
+  /// Returns the classified error for the cursor failure, or null when the exception is not a
+  /// stored-form failure and the caller's generic handling applies.
+  /// </para>
+  /// </remarks>
+  /// <docs>operations/infrastructure/migrations</docs>
+  private async Task<string?> _tryRecordStoredFormFailureAsync(
+      Exception exception, Guid streamId, string perspectiveName, IEnumerable<Guid> workIds, CancellationToken ct) {
+    if (!Whizbang.Core.Perspectives.StoredFormUnreadable.TryClassify(exception, out var unreadable)) {
+      return null;
+    }
+
+    var entry = _storedFormFailures.Record(perspectiveName, streamId, unreadable);
+    var path = unreadable.Path ?? "(path not reported)";
+    if (entry.Failures == 1) {
+      LogStoredFormUnreadable(_logger, exception, perspectiveName, streamId, path, unreadable.Detail);
+    } else {
+      LogStoredFormUnreadableAgain(_logger, perspectiveName, streamId, entry.Failures);
+    }
+    _metrics?.ReadFailures.Add(1,
+      new KeyValuePair<string, object?>(METRIC_TAG_PERSPECTIVE_NAME, perspectiveName),
+      new KeyValuePair<string, object?>("reason", Whizbang.Core.Perspectives.StoredFormUnreadable.REASON));
+
+    var error = $"Stored form unreadable at {path}: {unreadable.Detail}";
+    // Both callers run only on the channel surfaces, which the worker refuses to start without
+    // (see the failure-channel checks at the top of each consumer loop), so the channel is present.
+    foreach (var workId in workIds) {
+      await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
+        MessageId = workId,
+        CompletedStatus = MessageProcessingStatus.None,
+        Error = error,
+        Reason = MessageFailureReason.SerializationError,
+      }, ct).ConfigureAwait(false);
+    }
+    return error;
+  }
+
+  [LoggerMessage(EventId = 65, Level = LogLevel.Error,
+    Message = "Perspective {PerspectiveName} cannot read its stored document for stream {StreamId} at {Path}: {Detail}. The document holds a stored form no reader of this release takes; the stream's events are parked with backoff and retried, and this is logged once per stream until it reads again. See the stored-form rewrite in the migrations documentation.")]
+  static partial void LogStoredFormUnreadable(ILogger logger, Exception ex, string perspectiveName, Guid streamId, string path, string detail);
+
+  [LoggerMessage(EventId = 66, Level = LogLevel.Debug,
+    Message = "Perspective {PerspectiveName} still cannot read its stored document for stream {StreamId} (failure {Failures}); its events are parked again")]
+  static partial void LogStoredFormUnreadableAgain(ILogger logger, string perspectiveName, Guid streamId, int failures);
 
   /// <summary>
   /// Cursor-inversion detector. Returns the earliest event_id in <paramref name="events"/>

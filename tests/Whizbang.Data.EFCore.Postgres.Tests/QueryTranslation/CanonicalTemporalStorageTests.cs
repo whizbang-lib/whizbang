@@ -6,6 +6,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation;
 using Whizbang.Data.EFCore.Postgres.QueryTranslation.Containment;
 using Whizbang.Testing.Containers;
@@ -18,17 +19,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.QueryTranslation;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The generator emits this configuration; those tests assert the text it emits. This asserts that
-/// the text describes something that works. Neither is sufficient alone: a generator test passes on
-/// output that no database would accept, and a hand-written mapping proves nothing about what a
-/// model author actually gets.
-/// </para>
-/// <para>
-/// The seam between them is real and worth naming. The configuration here is written by hand to
-/// mirror what the generator emits, because a value conversion needs a property expression per
-/// property and those exist only at compile time. <c>CanonicalTemporalConfigurationTests</c> pins the
-/// emitted line exactly so the two cannot drift apart quietly; if this file changes shape, that
-/// assertion has to change with it.
+/// Nothing here configures a conversion. The mapping is the shape the generator emits, which names
+/// no temporal property at all; the conversion is applied by the convention every perspective
+/// context carries, which walks the model Entity Framework built and converts whatever it maps.
+/// This asserts that what a model author actually gets works against a real database.
 /// </para>
 /// <para>
 /// The index assertion is the reason any of this happened. A text rendering of a date casts out of
@@ -73,28 +67,9 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
         entity.ToTable(TABLE);
         entity.HasKey(e => e.Id);
         entity.Property(e => e.Id).HasColumnName("id");
-        entity.ComplexProperty(e => e.Data, d => {
-          d.ToJson("data");
-          // Mirrors CanonicalTemporalDiscovery.ConfigurationFor exactly. See the note on the class.
-          d.Property(p => p.OccurredAt).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
-            v => CanonicalTemporalFormat.FromEpochMicroseconds(v));
-          d.Property(p => p.RecordedAt).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToEpochMicroseconds(v),
-            v => CanonicalTemporalFormat.OffsetFromEpochMicroseconds(v));
-          d.Property(p => p.Day).HasConversion<int>(
-            v => CanonicalTemporalFormat.ToEpochDays(v),
-            v => CanonicalTemporalFormat.FromEpochDays(v));
-          d.Property(p => p.Clock).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToMicrosecondsOfDay(v),
-            v => CanonicalTemporalFormat.FromMicrosecondsOfDay(v));
-          d.Property(p => p.Elapsed).HasConversion<long>(
-            v => CanonicalTemporalFormat.ToTicks(v),
-            v => CanonicalTemporalFormat.FromTicks(v));
-          d.Property(p => p.MaybeAt).HasConversion<long?>(
-            v => v == null ? (long?)null : CanonicalTemporalFormat.ToEpochMicroseconds(v.Value),
-            v => v == null ? (DateTime?)null : CanonicalTemporalFormat.FromEpochMicroseconds(v.Value));
-        });
+        // No conversion is named here. The convention every perspective context carries converts
+        // every temporal Entity Framework maps inside the document.
+        entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
         entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
         entity.ComplexProperty(e => e.Scope, s => {
           s.ToJson("scope");
@@ -157,7 +132,7 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
     }
 
     _context = new TemporalDbContext(new DbContextOptionsBuilder<TemporalDbContext>()
-      .UseNpgsql(_connectionString)
+      .UseNpgsql(_connectionString, npgsql => npgsql.UseWhizbangFunctions())
       .UseWhizbangPhysicalFields()
       .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
       .Options);
@@ -256,6 +231,73 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
         + "that forgot its null branch would write");
   }
 
+  /// <summary>
+  /// A mapped document still holding renderings reads back as the values they render.
+  /// </summary>
+  /// <remarks>
+  /// The rewrite converts every row before a reader sees it, so this is the row the rewrite did
+  /// not reach: a database the migrator has not finished, or a writer from an older release. The
+  /// serializer's readers tolerated a rendering from the start; Entity Framework's did not, and a
+  /// row that one path could read and the other could not is the split this whole change exists to
+  /// close. Both paths now read through the same reader.
+  /// </remarks>
+  [Test]
+  public async Task ARenderingInAMappedDocumentReadsBackAsync() {
+    await _scalarAsync(
+      $"UPDATE {TABLE} SET data = data || '{{\"OccurredAt\":\"2026-03-04T06:06:07Z\","
+      + "\"RecordedAt\":\"2026-03-04T11:36:07+05:30\",\"Day\":\"2026-03-05\",\"Clock\":\"06:06:07\","
+      + "\"Elapsed\":\"00:01:00.1234560\",\"MaybeAt\":\"2026-03-04T06:06:07Z\"}'::jsonb "
+      + "WHERE data ->> 'Label' = 'row-1'");
+
+    var row = await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .FirstAsync(r => r.Data.Label == "row-1");
+
+    await Assert.That(row.Data.OccurredAt).IsEqualTo(_origin.AddHours(1));
+    await Assert.That(row.Data.RecordedAt).IsEqualTo(new DateTimeOffset(_origin.AddHours(1), TimeSpan.Zero));
+    await Assert.That(row.Data.Day).IsEqualTo(new DateOnly(2026, 3, 5));
+    await Assert.That(row.Data.Clock).IsEqualTo(new TimeOnly(6, 6, 7));
+    await Assert.That(row.Data.Elapsed).IsEqualTo(TimeSpan.FromMinutes(1).Add(TimeSpan.FromTicks(1_234_560)));
+    await Assert.That(row.Data.MaybeAt).IsEqualTo(_origin.AddHours(1));
+  }
+
+  /// <summary>
+  /// A token that is neither a number nor a rendering is refused in the same words on both paths.
+  /// </summary>
+  /// <remarks>
+  /// Entity Framework's own reader refused it with a generic error naming the token and nothing
+  /// else, which nothing downstream could classify as a stored-form failure. The refusal is now
+  /// the serializer's: a <see cref="System.Text.Json.JsonException"/> naming the type, the forms
+  /// accepted and the token found, which is what the worker classifies and the operator reads.
+  /// </remarks>
+  [Test]
+  public async Task AnUnexpectedTokenInAMappedDocumentIsRefusedInTheSameWordsAsync() {
+    await _scalarAsync($"UPDATE {TABLE} SET data = data || '{{\"OccurredAt\":true}}'::jsonb WHERE data ->> 'Label' = 'row-1'");
+
+    async Task readAsync() => await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .FirstAsync(r => r.Data.Label == "row-1");
+
+    var error = await Assert.That(readAsync).Throws<System.Text.Json.JsonException>();
+    await Assert.That(error!.Message).IsEqualTo(
+      "A stored DateTime must be a number (microseconds) or a rendering, but the document holds True")
+      .Because("the reader is the serializer's, so the refusal is the serializer's, on both paths");
+  }
+
+  /// <summary>An optional value stored as absent or null reads back as null, not as a refusal.</summary>
+  /// <remarks>
+  /// The reader refuses a null token, so this pins that Entity Framework settles an optional
+  /// property's null before the reader is asked, on the path that now carries the reader.
+  /// </remarks>
+  [Test]
+  public async Task AnAbsentOptionalValueReadsBackAsNullAsync() {
+    var row = await _context!.Set<PerspectiveRow<TemporalModel>>()
+      .AsNoTracking()
+      .FirstAsync(r => r.Data.Label == "row-0");
+
+    await Assert.That(row.Data.MaybeAt).IsNull();
+  }
+
   /// <summary>The value read back is the value written.</summary>
   [Test]
   public async Task ARowRoundTripsAsync() {
@@ -267,9 +309,9 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
     await Assert.That(row.Data.Day).IsEqualTo(new DateOnly(2026, 3, 5));
     await Assert.That(row.Data.Clock).IsEqualTo(new TimeOnly(6, 6, 7));
     await Assert.That(row.Data.Elapsed)
-      .IsEqualTo(TimeSpan.FromMinutes(1).Add(TimeSpan.FromTicks(1_234_567)))
-      .Because("a duration is never compared against a PostgreSQL interval, so it keeps full .NET "
-        + "precision where the instants truncate to microseconds");
+      .IsEqualTo(TimeSpan.FromMinutes(1).Add(TimeSpan.FromTicks(1_234_560)))
+      .Because("a duration is microseconds like every other kind, so its seventh digit truncates "
+        + "exactly as an instant's does; keeping it would be a second unit in the same column family");
     await Assert.That(row.Data.MaybeAt).IsEqualTo(_origin.AddHours(1));
   }
 
@@ -528,7 +570,7 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
   [Test]
   [Arguments("OccurredAt", "bigint")]
   [Arguments("RecordedAt", "bigint")]
-  [Arguments("Day", "integer")]
+  [Arguments("Day", "bigint")]
   [Arguments("Clock", "bigint")]
   [Arguments("Elapsed", "bigint")]
   public async Task AnIndexCanBeBuiltOverTheExtractionAsync(string key, string cast) {

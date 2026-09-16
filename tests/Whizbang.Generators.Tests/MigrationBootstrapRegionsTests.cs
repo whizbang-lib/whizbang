@@ -33,11 +33,12 @@ public class MigrationBootstrapRegionsTests {
   /// Pinned as a list because marking another migration is a real decision with a real cost: every
   /// instance applies the subset on every start, before anything is elected.
   /// </remarks>
-  private static readonly string[] _electionClosure = [
+  private static readonly string[] _bootstrapClosure = [
     "000_MigrationTracking.sql",          // the ledger tables, and drop_all_overloads, which 010 calls
     "010_RegisterInstanceHeartbeat.sql",  // how an instance joins the registry
     "106_InstanceEvictionFencing.sql",    // the tombstone table record_capability consults
     "108_InstanceCapabilities.sql",       // record_capability itself
+    "153_PerspectiveForms.sql",           // the stored-form ledger and function the elected migrator's rewrite needs
   ];
 
   /// <summary>The objects an election cannot happen without.</summary>
@@ -165,22 +166,25 @@ public class MigrationBootstrapRegionsTests {
   }
 
   /// <summary>
-  /// The bootstrap subset is the four migrations the election cycle needs, and no others.
+  /// The bootstrap subset is the four migrations the election cycle needs plus the one the elected
+  /// migrator's first act needs, and no others.
   /// </summary>
   /// <remarks>
   /// Pinned deliberately. Marking another migration is a real decision with a real cost — every
   /// instance applies the subset on every start, before anything is elected — so it should take a
-  /// deliberate change to this list rather than happening by accident.
+  /// deliberate change to this list rather than happening by accident. The fifth entry is the
+  /// stored-form ledger and function: the rewrite runs on the migrator right after the election and
+  /// ahead of the migration pass, so what it reads and calls has to exist by then.
   /// </remarks>
   [Test]
-  public async Task TheBootstrapSubsetIsTheFourMigrationsTheCycleNeedsAsync() {
+  public async Task TheBootstrapSubsetIsTheFiveMigrationsStartupNeedsAsync() {
     var marked = _migrations()
       .Where(m => MigrationBootstrapRegions.Extract(m.Sql) is not null)
       .Select(m => m.Name)
       .OrderBy(n => n, StringComparer.Ordinal)
       .ToList();
 
-    await Assert.That(marked).IsEquivalentTo(_electionClosure);
+    await Assert.That(marked).IsEquivalentTo(_bootstrapClosure);
   }
 
   /// <summary>

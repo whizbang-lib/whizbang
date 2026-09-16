@@ -903,7 +903,7 @@ public class EFCorePerspectiveConfigurationGeneratorCoverageTests {
     var generated = GeneratorTestHelper.GetGeneratedSource(result, GENERATED_FILE);
     await Assert.That(generated).IsNotNull();
     await Assert.That(generated).Contains(POLYMORPHIC_CONFIG_MARKER);
-    await Assert.That(generated).Contains("entity.Property(e => e.Data).HasColumnName(\"data\").HasColumnType(\"jsonb\");");
+    await Assert.That(generated).Contains("entity.Property(e => e.Data).HasColumnName(\"data\").HasColumnType(\"jsonb\")");
   }
 
   /// <summary>

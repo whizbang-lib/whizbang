@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// - NOTIFY listener subscribe/coalesce/unsubscribe
 /// - ObjectDisposedException exits the consumer loop gracefully
 /// </summary>
-public class PerspectiveWorkerDeepPathChannelTests {
+public partial class PerspectiveWorkerDeepPathChannelTests {
 
   [Test]
   public async Task ProcessChannelBatchAsync_WithoutCompletionChannel_ThrowsInvalidOperationExceptionAsync() {

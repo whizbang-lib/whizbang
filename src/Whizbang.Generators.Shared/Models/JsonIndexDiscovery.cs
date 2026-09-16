@@ -98,9 +98,10 @@ public static class JsonIndexDiscovery {
       return JsonIndexCast.Uuid;
     }
 
+    // One cast for the whole family, because every kind stores in the same eight-byte unit. A date
+    // once cast through int4 over a day count, which baked a second unit into the schema.
     return CanonicalTemporalDiscovery.KindOf(type) switch {
       CanonicalTemporalKind.None => null,
-      CanonicalTemporalKind.Day => JsonIndexCast.Int4,
       _ => JsonIndexCast.Int8,
     };
   }
@@ -251,6 +252,12 @@ public static class JsonIndexDiscovery {
   }
 
   /// <summary>One declared index, with the capabilities its stored form can actually answer.</summary>
+  /// <remarks>
+  /// A date once cast through <c>integer</c> over a day count, and now casts through <c>bigint</c>
+  /// over microseconds. An index whose expression changed under the same name is never rebuilt, so
+  /// the date's index is the one that carries a superseded cast: its old index is dropped and the
+  /// new one takes a new name.
+  /// </remarks>
   private static JsonIndexInfo _infoFor(
       IPropertySymbol property, JsonIndexCast cast, int kind, bool caseInsensitive, bool text) =>
     new(
@@ -259,7 +266,10 @@ public static class JsonIndexDiscovery {
         Cast: cast,
         Ordered: IncludesOrdered(kind),
         Substring: IncludesSubstring(kind) && text,
-        CaseInsensitive: caseInsensitive);
+        CaseInsensitive: caseInsensitive,
+        Superseded: CanonicalTemporalDiscovery.KindOf(property.Type) == CanonicalTemporalKind.Day
+          ? JsonIndexCast.Int4
+          : JsonIndexCast.None);
 
   /// <summary>
   /// Whether a combined kind includes substring matching.

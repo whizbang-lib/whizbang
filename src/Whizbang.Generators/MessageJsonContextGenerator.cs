@@ -1108,6 +1108,34 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("}");
     sb.AppendLine();
 
+    // A primitive the facade answers for itself defers to a converter registered on the options
+    // before its built-in one. A fixed built-in here meant that whenever this facade came before
+    // the framework's own contexts in a resolver chain, a converter registered for that type never
+    // ran: the persistence profile stores a date as a number through exactly such a converter, and
+    // a document serialized through a facade-first chain was written as a rendering the mapping
+    // could not read. A factory is asked for its converter as the serializer would ask it. No
+    // reflection: the candidates are the options' own list.
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// A value type info using the converter registered on the options for the type, if any, or the built-in one.");
+    sb.AppendLine("/// </summary>");
+    // Oblivious to nullability on purpose: the built-in string converter is JsonConverter<string?>
+    // and the value info is JsonTypeInfo<string>, a difference that is annotation rather than type.
+    sb.AppendLine("#nullable disable");
+    sb.AppendLine("private static JsonTypeInfo<TValue> _registeredOrBuiltIn<TValue>(JsonSerializerOptions options, JsonConverter<TValue> builtIn) {");
+    sb.AppendLine("  foreach (var candidate in options.Converters) {");
+    sb.AppendLine("    if (!candidate.CanConvert(typeof(TValue))) {");
+    sb.AppendLine("      continue;");
+    sb.AppendLine("    }");
+    sb.AppendLine("    var converter = candidate is JsonConverterFactory factory ? factory.CreateConverter(typeof(TValue), options) : candidate;");
+    sb.AppendLine("    if (converter is JsonConverter<TValue> typed) {");
+    sb.AppendLine("      return JsonMetadataServices.CreateValueInfo<TValue>(options, typed);");
+    sb.AppendLine("    }");
+    sb.AppendLine("  }");
+    sb.AppendLine("  return JsonMetadataServices.CreateValueInfo<TValue>(options, builtIn);");
+    sb.AppendLine("}");
+    sb.AppendLine("#nullable restore");
+    sb.AppendLine();
+
     // Shared implementation
     sb.AppendLine("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options) {");
     sb.AppendLine("  // Core Whizbang value objects with custom converters");
@@ -1121,90 +1149,94 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // which would trigger a false "circular reference" error in GetOrCreateTypeInfo.
     sb.AppendLine("  // Primitive types (common property types in messages)");
     sb.AppendLine("  // Create directly using JsonMetadataServices - do NOT use GetOrCreateTypeInfo to avoid false circular reference detection");
-    sb.AppendLine("  if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
-    sb.AppendLine("  if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
-    sb.AppendLine("  if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
-    sb.AppendLine("  if (type == typeof(bool)) return JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
-    sb.AppendLine("  if (type == typeof(Guid)) return JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
-    sb.AppendLine("  if (type == typeof(DateTime)) return JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
-    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
-    sb.AppendLine("  if (type == typeof(TimeSpan)) return JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter);");
-    sb.AppendLine("  if (type == typeof(DateOnly)) return JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter);");
-    sb.AppendLine("  if (type == typeof(TimeOnly)) return JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter);");
-    sb.AppendLine("  if (type == typeof(decimal)) return JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
-    sb.AppendLine("  if (type == typeof(double)) return JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);");
-    sb.AppendLine("  if (type == typeof(float)) return JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);");
-    sb.AppendLine("  if (type == typeof(byte)) return JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter);");
-    sb.AppendLine("  if (type == typeof(sbyte)) return JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter);");
-    sb.AppendLine("  if (type == typeof(short)) return JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter);");
-    sb.AppendLine("  if (type == typeof(ushort)) return JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter);");
-    sb.AppendLine("  if (type == typeof(uint)) return JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter);");
-    sb.AppendLine("  if (type == typeof(ulong)) return JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter);");
-    sb.AppendLine("  if (type == typeof(char)) return JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);");
+    // The built-in string converter is JsonConverter<string?>; the forgiving operator settles an
+    // annotation difference that is not a type difference.
+    sb.AppendLine("  if (type == typeof(string)) return _registeredOrBuiltIn<string>(options, JsonMetadataServices.StringConverter!);");
+    sb.AppendLine("  if (type == typeof(int)) return _registeredOrBuiltIn<int>(options, JsonMetadataServices.Int32Converter);");
+    sb.AppendLine("  if (type == typeof(long)) return _registeredOrBuiltIn<long>(options, JsonMetadataServices.Int64Converter);");
+    sb.AppendLine("  if (type == typeof(bool)) return _registeredOrBuiltIn<bool>(options, JsonMetadataServices.BooleanConverter);");
+    sb.AppendLine("  if (type == typeof(Guid)) return _registeredOrBuiltIn<Guid>(options, JsonMetadataServices.GuidConverter);");
+    sb.AppendLine("  if (type == typeof(DateTime)) return _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return _registeredOrBuiltIn<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    sb.AppendLine("  if (type == typeof(TimeSpan)) return _registeredOrBuiltIn<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter);");
+    sb.AppendLine("  if (type == typeof(DateOnly)) return _registeredOrBuiltIn<DateOnly>(options, JsonMetadataServices.DateOnlyConverter);");
+    sb.AppendLine("  if (type == typeof(TimeOnly)) return _registeredOrBuiltIn<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter);");
+    sb.AppendLine("  if (type == typeof(decimal)) return _registeredOrBuiltIn<decimal>(options, JsonMetadataServices.DecimalConverter);");
+    sb.AppendLine("  if (type == typeof(double)) return _registeredOrBuiltIn<double>(options, JsonMetadataServices.DoubleConverter);");
+    sb.AppendLine("  if (type == typeof(float)) return _registeredOrBuiltIn<float>(options, JsonMetadataServices.SingleConverter);");
+    sb.AppendLine("  if (type == typeof(byte)) return _registeredOrBuiltIn<byte>(options, JsonMetadataServices.ByteConverter);");
+    sb.AppendLine("  if (type == typeof(sbyte)) return _registeredOrBuiltIn<sbyte>(options, JsonMetadataServices.SByteConverter);");
+    sb.AppendLine("  if (type == typeof(short)) return _registeredOrBuiltIn<short>(options, JsonMetadataServices.Int16Converter);");
+    sb.AppendLine("  if (type == typeof(ushort)) return _registeredOrBuiltIn<ushort>(options, JsonMetadataServices.UInt16Converter);");
+    sb.AppendLine("  if (type == typeof(uint)) return _registeredOrBuiltIn<uint>(options, JsonMetadataServices.UInt32Converter);");
+    sb.AppendLine("  if (type == typeof(ulong)) return _registeredOrBuiltIn<ulong>(options, JsonMetadataServices.UInt64Converter);");
+    sb.AppendLine("  if (type == typeof(char)) return _registeredOrBuiltIn<char>(options, JsonMetadataServices.CharConverter);");
     sb.AppendLine();
     sb.AppendLine("  // Nullable primitive types - create underlying type info first, then wrap with nullable converter");
-    sb.AppendLine("  if (type == typeof(int?)) { var u = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(long?)) { var u = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(bool?)) { var u = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(Guid?)) { var u = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(DateTime?)) { var u = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(DateTimeOffset?)) { var u = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(TimeSpan?)) { var u = JsonMetadataServices.CreateValueInfo<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter); return JsonMetadataServices.CreateValueInfo<TimeSpan?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(DateOnly?)) { var u = JsonMetadataServices.CreateValueInfo<DateOnly>(options, JsonMetadataServices.DateOnlyConverter); return JsonMetadataServices.CreateValueInfo<DateOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(TimeOnly?)) { var u = JsonMetadataServices.CreateValueInfo<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter); return JsonMetadataServices.CreateValueInfo<TimeOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(decimal?)) { var u = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(double?)) { var u = JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter); return JsonMetadataServices.CreateValueInfo<double?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(float?)) { var u = JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter); return JsonMetadataServices.CreateValueInfo<float?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(byte?)) { var u = JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter); return JsonMetadataServices.CreateValueInfo<byte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(sbyte?)) { var u = JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter); return JsonMetadataServices.CreateValueInfo<sbyte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(short?)) { var u = JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter); return JsonMetadataServices.CreateValueInfo<short?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(ushort?)) { var u = JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter); return JsonMetadataServices.CreateValueInfo<ushort?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(uint?)) { var u = JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter); return JsonMetadataServices.CreateValueInfo<uint?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(ulong?)) { var u = JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter); return JsonMetadataServices.CreateValueInfo<ulong?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
-    sb.AppendLine("  if (type == typeof(char?)) { var u = JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter); return JsonMetadataServices.CreateValueInfo<char?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(int?)) { var u = _registeredOrBuiltIn<int>(options, JsonMetadataServices.Int32Converter); return JsonMetadataServices.CreateValueInfo<int?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(long?)) { var u = _registeredOrBuiltIn<long>(options, JsonMetadataServices.Int64Converter); return JsonMetadataServices.CreateValueInfo<long?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(bool?)) { var u = _registeredOrBuiltIn<bool>(options, JsonMetadataServices.BooleanConverter); return JsonMetadataServices.CreateValueInfo<bool?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(Guid?)) { var u = _registeredOrBuiltIn<Guid>(options, JsonMetadataServices.GuidConverter); return JsonMetadataServices.CreateValueInfo<Guid?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateTime?)) { var u = _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter); return JsonMetadataServices.CreateValueInfo<DateTime?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    // The optional form falls back to the same lenient reader the required form does; a strict
+    // built-in here refused the renderings the required form accepts.
+    sb.AppendLine("  if (type == typeof(DateTimeOffset?)) { var u = _registeredOrBuiltIn<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter()); return JsonMetadataServices.CreateValueInfo<DateTimeOffset?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(TimeSpan?)) { var u = _registeredOrBuiltIn<TimeSpan>(options, JsonMetadataServices.TimeSpanConverter); return JsonMetadataServices.CreateValueInfo<TimeSpan?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(DateOnly?)) { var u = _registeredOrBuiltIn<DateOnly>(options, JsonMetadataServices.DateOnlyConverter); return JsonMetadataServices.CreateValueInfo<DateOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(TimeOnly?)) { var u = _registeredOrBuiltIn<TimeOnly>(options, JsonMetadataServices.TimeOnlyConverter); return JsonMetadataServices.CreateValueInfo<TimeOnly?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(decimal?)) { var u = _registeredOrBuiltIn<decimal>(options, JsonMetadataServices.DecimalConverter); return JsonMetadataServices.CreateValueInfo<decimal?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(double?)) { var u = _registeredOrBuiltIn<double>(options, JsonMetadataServices.DoubleConverter); return JsonMetadataServices.CreateValueInfo<double?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(float?)) { var u = _registeredOrBuiltIn<float>(options, JsonMetadataServices.SingleConverter); return JsonMetadataServices.CreateValueInfo<float?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(byte?)) { var u = _registeredOrBuiltIn<byte>(options, JsonMetadataServices.ByteConverter); return JsonMetadataServices.CreateValueInfo<byte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(sbyte?)) { var u = _registeredOrBuiltIn<sbyte>(options, JsonMetadataServices.SByteConverter); return JsonMetadataServices.CreateValueInfo<sbyte?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(short?)) { var u = _registeredOrBuiltIn<short>(options, JsonMetadataServices.Int16Converter); return JsonMetadataServices.CreateValueInfo<short?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(ushort?)) { var u = _registeredOrBuiltIn<ushort>(options, JsonMetadataServices.UInt16Converter); return JsonMetadataServices.CreateValueInfo<ushort?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(uint?)) { var u = _registeredOrBuiltIn<uint>(options, JsonMetadataServices.UInt32Converter); return JsonMetadataServices.CreateValueInfo<uint?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(ulong?)) { var u = _registeredOrBuiltIn<ulong>(options, JsonMetadataServices.UInt64Converter); return JsonMetadataServices.CreateValueInfo<ulong?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
+    sb.AppendLine("  if (type == typeof(char?)) { var u = _registeredOrBuiltIn<char>(options, JsonMetadataServices.CharConverter); return JsonMetadataServices.CreateValueInfo<char?>(options, JsonMetadataServices.GetNullableConverter(u)); }");
     sb.AppendLine();
 
     // List<primitive> types - needed for nested collections like List<List<string>>
     // When List<List<string>> is created, it needs JsonTypeInfo for List<string> as element type
     sb.AppendLine("  // List<primitive> types - enables nested collections like List<List<string>>");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<string>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<string>(options, JsonMetadataServices.StringConverter!);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<string>, string>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<string>> { ObjectCreator = static () => new global::System.Collections.Generic.List<string>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<int>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<int>(options, JsonMetadataServices.Int32Converter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<int>, int>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<int>> { ObjectCreator = static () => new global::System.Collections.Generic.List<int>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<long>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<long>(options, JsonMetadataServices.Int64Converter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<long>, long>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<long>> { ObjectCreator = static () => new global::System.Collections.Generic.List<long>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<bool>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<bool>(options, JsonMetadataServices.BooleanConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<bool>, bool>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<bool>> { ObjectCreator = static () => new global::System.Collections.Generic.List<bool>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<Guid>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<Guid>(options, JsonMetadataServices.GuidConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<Guid>, Guid>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<Guid>> { ObjectCreator = static () => new global::System.Collections.Generic.List<Guid>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<DateTime>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<DateTime>, DateTime>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<DateTime>> { ObjectCreator = static () => new global::System.Collections.Generic.List<DateTime>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<DateTimeOffset>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<DateTimeOffset>(options, new global::Whizbang.Core.Serialization.LenientDateTimeOffsetConverter());");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<DateTimeOffset>, DateTimeOffset>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<DateTimeOffset>> { ObjectCreator = static () => new global::System.Collections.Generic.List<DateTimeOffset>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<decimal>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<decimal>(options, JsonMetadataServices.DecimalConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<decimal>, decimal>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<decimal>> { ObjectCreator = static () => new global::System.Collections.Generic.List<decimal>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<double>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<double>(options, JsonMetadataServices.DoubleConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<double>, double>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<double>> { ObjectCreator = static () => new global::System.Collections.Generic.List<double>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<float>)) {");
-    sb.AppendLine("    var elementInfo = JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);");
+    sb.AppendLine("    var elementInfo = _registeredOrBuiltIn<float>(options, JsonMetadataServices.SingleConverter);");
     sb.AppendLine("    return JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<float>, float>(options, new JsonCollectionInfoValues<global::System.Collections.Generic.List<float>> { ObjectCreator = static () => new global::System.Collections.Generic.List<float>(), ElementInfo = elementInfo });");
     sb.AppendLine("  }");
     sb.AppendLine();
@@ -1648,7 +1680,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Create JsonTypeInfo and CACHE IT IMMEDIATELY before returning
     // This is critical for self-referencing types
     sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateObjectInfo(options, objectInfo);");
-    sb.AppendLine($"  TypeInfoCache[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
+    sb.AppendLine($"  TypeInfoCacheFor(options)[typeof({message.FullyQualifiedName})] = jsonTypeInfo;");
     sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
     sb.AppendLine("  return jsonTypeInfo;");
     sb.AppendLine("}");
