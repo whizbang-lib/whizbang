@@ -164,19 +164,59 @@ public class CanonicalTemporalRewriteWiringTests {
     var wait = output.IndexOf("SchemaMigrationDeferral.DeferAsync(", StringComparison.Ordinal);
     var takeover = output.IndexOf("Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone", wait, StringComparison.Ordinal);
     var ddl = output.IndexOf("var retryAttempt = 0;", StringComparison.Ordinal);
-    var rewriteOnMigrator = output.IndexOf("await rewriteStoredFormsAsync(", StringComparison.Ordinal);
-    var rewriteOnTakeover = output.IndexOf("await rewriteStoredFormsAsync(", wait, StringComparison.Ordinal);
+    var rewrite = output.IndexOf("await rewriteStoredFormsAsync(", StringComparison.Ordinal);
 
     await Assert.That(wait).IsGreaterThan(-1);
     await Assert.That(takeover).IsGreaterThan(wait)
       .Because("the takeover is decided by how the wait ended");
-    await Assert.That(rewriteOnMigrator).IsGreaterThan(-1).And.IsLessThan(wait)
-      .Because("the migrator rewrites before any waiter can be released");
-    await Assert.That(rewriteOnTakeover).IsGreaterThan(takeover).And.IsLessThan(ddl)
-      .Because("a waiter taking over rewrites first, before the transaction that indexes the result");
+    await Assert.That(rewrite).IsGreaterThan(takeover).And.IsLessThan(ddl)
+      .Because("whoever does the schema work rewrites after the wait has decided that it does, and "
+        + "before the transaction that indexes the result");
+    await Assert.That(rewrite)
+      .IsEqualTo(output.LastIndexOf("await rewriteStoredFormsAsync(", StringComparison.Ordinal))
+      .Because("one call site: the migrator, an instance that could not be staged, and a waiter taking "
+        + "over all reach the rewrite through it");
+    await Assert.That(output).Contains(
+      "doesTheWork = !isWaiter || waitOutcome == Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone;",
+      StringComparison.Ordinal)
+      .Because("a waiter rewrites only when it takes the work over; any other instance rewrites once its wait ends");
     await Assert.That(output.IndexOf("CanonicalTemporalRewritePhase.ApplyAsync(", StringComparison.Ordinal))
       .IsEqualTo(output.LastIndexOf("CanonicalTemporalRewritePhase.ApplyAsync(", StringComparison.Ordinal))
       .Because("both paths share one body, so a change to one cannot drift from the other");
+  }
+
+  /// <summary>
+  /// An instance that would rewrite while another session holds the schema lock watches that lock
+  /// instead, and rewrites when the wait ends.
+  /// </summary>
+  /// <remarks>
+  /// The rewrite phase waits for the schema lock rather than skipping, for up to its whole command
+  /// budget, because the holder may be a sibling's bootstrap that converts nothing. That budget is
+  /// ten minutes. An instance that could not be staged and started while a migrator held the lock
+  /// for a long migration therefore sat inside the rewrite for the length of it, logging nothing
+  /// about deferring, and never reached the deferral that watches the lock and reports it. The
+  /// probe below sends such an instance into the same wait a waiter uses, on the schema lock, and
+  /// the rewrite follows the wait: a settled no-op under a schema someone else brought up to date,
+  /// the real thing over a schema whose holder released it still behind.
+  /// </remarks>
+  [Test]
+  public async Task AnInstanceThatWouldRewriteBehindAHeldSchemaLockWaitsOnTheLockFirstAsync() {
+    var output = await _generatedAsync(TEMPORAL_MODEL);
+
+    var probe = output.IndexOf(
+      "Whizbang.Data.Postgres.AdvisoryLockProbe.IsHeldElsewhereAsync(waitConnection, lockId, cancellationToken)",
+      StringComparison.Ordinal);
+    var wait = output.IndexOf("SchemaMigrationDeferral.DeferAsync(", StringComparison.Ordinal);
+    var rewrite = output.IndexOf("await rewriteStoredFormsAsync(", StringComparison.Ordinal);
+
+    await Assert.That(probe).IsGreaterThan(-1)
+      .Because("a schema lock held by another session is what sends an instance that would rewrite into the wait");
+    await Assert.That(probe).IsLessThan(wait)
+      .Because("the probe decides whether there is anything to wait for");
+    await Assert.That(wait).IsLessThan(rewrite)
+      .Because("the rewrite follows the wait rather than sitting inside its own for the whole budget");
+    await Assert.That(output).Contains("var watchedKey = isWaiter", StringComparison.Ordinal)
+      .Because("a waiter watches the duty lock and everyone else watches the schema lock, through one wait");
   }
 
   /// <summary>

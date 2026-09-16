@@ -153,7 +153,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A migrator killed mid-rewrite left the remaining tables unconverted for the same reason: every
   replacement instance was a waiter, and the rewrite sat before the wait behind a "not a waiter"
   guard. A waiter whose deferral ends with the migrator gone now runs the rewrite before it contends
-  for the DDL lock, through the same body the migrator runs.
+  for the DDL lock, through the same body the migrator runs. The wait covers a race, not a queue: an
+  instance that finds the key already held when it is about to rewrite watches the key through the
+  same deferral a waiter uses, rather than sitting inside the rewrite for the whole ten-minute budget
+  behind a migration, and rewrites when the wait ends.
 - **The rewrite said nothing on success:** each table's DO block now raises a notice on every exit
   (converted with its update count, settled and skipped, or table absent) and the phase relays it at
   Information, followed by a one-line summary of the pass; a table that fails is still a warning

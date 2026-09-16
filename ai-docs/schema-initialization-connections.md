@@ -176,6 +176,20 @@ the waiter's takeover path) share one body, `rewriteStoredFormsAsync`, so they c
 `CanonicalTemporalRewriteWiringTests.AWaiterThatTakesOverRunsTheRewriteBeforeTheDdlAsync` are the
 guards.
 
+The wait covers the race, not the queue. The budget is the schema command timeout, ten minutes, and
+an instance that could not be staged and started while a migrator held the key for a long migration
+sat inside the rewrite for the length of it: it logged nothing about deferring and never reached the
+deferral that watches the key and reports it, and the three `SchemaInitializationConcurrencyTests`
+deferral cases timed out on exactly that. So the generated initializer probes the key before it
+rewrites (`AdvisoryLockProbe.IsHeldElsewhereAsync`), and an instance that finds it held goes into the
+same `SchemaMigrationDeferral.DeferAsync` a waiter uses, watching the schema key instead of the duty
+key. When that wait ends it rewrites either way: a settled no-op under a schema someone else brought
+up to date, and the fast path exits; the real thing over a schema whose holder released it still
+behind, and the loop then contends for the DDL lock as it always did. The phase's own wait still
+absorbs the race where a sibling takes the key between the probe and the rewrite.
+`CanonicalTemporalRewriteWiringTests.AnInstanceThatWouldRewriteBehindAHeldSchemaLockWaitsOnTheLockFirstAsync`
+pins the order; the deferral cases are the behavior.
+
 ### Reassembling the key is not optional
 
 PostgreSQL splits a single-bigint advisory key across `classid` (high 32 bits) and `objid` (low 32).

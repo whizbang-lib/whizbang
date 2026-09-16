@@ -472,6 +472,7 @@ Kept current as slices land. One branch, one PR, one release.
 | S8b | Per-table outcome (converted with count, settled, absent) as notices relayed at Information, and a one-line pass summary | done |
 | S8c | Consumer-owned objects over temporal keys documented: read the number, the transition-safe `CASE` shape | done |
 | S8d | A waiter that takes over from a dead migrator runs the rewrite before the DDL, through the body the migrator runs | done |
+| S8e | An instance that would rewrite behind a held schema key watches the key through the deferral first, instead of waiting inside the rewrite for the whole budget; the three deferral cases in `SchemaInitializationConcurrencyTests` timed out on S8a's wait | done |
 | PR 2 | S8 against develop; CI, gate, docs site PR #619 updated | in review |
 
 ## 7. Decisions requested
