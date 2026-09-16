@@ -202,4 +202,44 @@ public class PollSignalSourceTests {
     await Assert.That(sink.Received).IsEqualTo(1)
       .Because("once detection succeeds again the source resumes raising the signal");
   }
+
+  /// <summary>
+  /// A transient database failure in a tick, the kind a deadlock or a dropped connection raises, is
+  /// handed to the source and the schedule survives: the next tick detects and raises as before.
+  /// </summary>
+  [Test]
+  public async Task Tick_TransientDatabaseFailure_IsHandedToOnTickErrorAndTheScheduleSurvivesAsync() {
+    var clock = new FakeTimeProvider();
+    var source = new RecordingPollSource(clock, TimeSpan.FromSeconds(1)) { NextDetectException = Workers.FakeDbException.WithSqlState("40P01") };
+    var sink = new CountingSink();
+    await source.StartAsync(sink);
+
+    clock.Advance(TimeSpan.FromSeconds(1));
+    await Task.Yield();
+
+    await Assert.That(source.Errors).Count().IsEqualTo(1);
+    await Assert.That(source.Errors[0]).IsTypeOf<Workers.FakeDbException>();
+    await Assert.That(sink.Received).IsEqualTo(0);
+
+    clock.Advance(TimeSpan.FromSeconds(1));
+    await Task.Yield();
+
+    await Assert.That(source.DetectCallCount).IsEqualTo(2)
+      .Because("a tick that hit a transient database failure must not take the schedule down");
+    await Assert.That(sink.Received).IsEqualTo(1);
+  }
+
+  private sealed class RecordingPollSource(FakeTimeProvider clock, TimeSpan interval)
+    : BasePollSignalSource<PollProbe>(clock, interval) {
+    public int DetectCallCount { get; private set; }
+    public Exception? NextDetectException { get; set; }
+    public List<Exception> Errors { get; } = [];
+    protected override ValueTask<bool> DetectAsync(CancellationToken cancellationToken) {
+      DetectCallCount++;
+      var failure = NextDetectException;
+      NextDetectException = null;
+      return failure is not null ? throw failure : ValueTask.FromResult(true);
+    }
+    protected override void OnTickError(Exception ex) => Errors.Add(ex);
+  }
 }
