@@ -86,19 +86,18 @@ public static class SchemaBootstrapPhase {
     await connection.OpenAsync(cancellationToken);
 
     var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
-    var closure = new List<(string Name, string Sql)>(scripts);
-    var closureHash = ClosureHash(closure);
+    var closure = BootstrapClosure.Of(scripts);
 
-    if (await _isClosureRecordedAsync(connection, target, closureHash, cancellationToken).ConfigureAwait(false)) {
+    if (await _isClosureRecordedAsync(connection, target, closure.Hash, cancellationToken).ConfigureAwait(false)) {
       // The closure this instance carries is the one the database already holds. Applying it again
       // would take a share lock per statement on tables the running instances write, for nothing;
       // an instance starting under load deadlocked on exactly that.
-      SchemaBootstrapLog.ClosureCurrent(log, closureHash, target);
+      SchemaBootstrapLog.ClosureCurrent(log, closure.Hash, target);
     } else {
       // Its own method so the transaction is closed before the probe below, which has to read
       // committed state. That ordering is the reason this is not inlined here.
       await _applyUnderTheLockAsync(
-        connection, lockId, closure, closureHash, target, commandTimeoutSeconds, log, cancellationToken)
+        connection, lockId, closure, target, commandTimeoutSeconds, log, cancellationToken)
         .ConfigureAwait(false);
     }
 
@@ -117,7 +116,8 @@ public static class SchemaBootstrapPhase {
   /// </summary>
   /// <param name="connection">An open connection with no transaction of its own.</param>
   /// <param name="lockId">The schema initialization lock key.</param>
-  /// <param name="scripts">The scripts, named for reporting.</param>
+  /// <param name="closure">The scripts, named for reporting, and the hash recorded once they land.</param>
+  /// <param name="schema">The target schema, which holds the record table.</param>
   /// <param name="commandTimeoutSeconds">The timeout for one script.</param>
   /// <param name="log">Where to report; never null.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -137,8 +137,7 @@ public static class SchemaBootstrapPhase {
   private static async Task _applyUnderTheLockAsync(
       NpgsqlConnection connection,
       long lockId,
-      IEnumerable<(string Name, string Sql)> scripts,
-      string closureHash,
+      BootstrapClosure closure,
       string schema,
       int commandTimeoutSeconds,
       ILogger log,
@@ -155,7 +154,7 @@ public static class SchemaBootstrapPhase {
         return;
       }
 
-      foreach (var (name, sql) in scripts) {
+      foreach (var (name, sql) in closure.Scripts) {
         applying = name;
         await using var command = new NpgsqlCommand(sql, connection) {
           CommandTimeout = commandTimeoutSeconds,
@@ -169,12 +168,12 @@ public static class SchemaBootstrapPhase {
       await using (var record = new NpgsqlCommand(
           $"INSERT INTO {_quoteIdentifier(schema)}.wh_bootstrap_closure (closure_hash) VALUES ($1) ON CONFLICT DO NOTHING",
           connection)) {
-        record.Parameters.AddWithValue(closureHash);
+        record.Parameters.AddWithValue(closure.Hash);
         await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       }
 
       await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-      SchemaBootstrapLog.ClosureApplied(log, closureHash, schema);
+      SchemaBootstrapLog.ClosureApplied(log, closure.Hash, schema);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Reported and carried on from, never rethrown. A bootstrap that cannot be applied costs the
       // election; the caller then migrates under the advisory lock, which is what every instance
@@ -309,6 +308,17 @@ public static class SchemaBootstrapPhase {
 
   private static string _quoteIdentifier(string identifier) =>
     "\"" + identifier.Replace("\"", "\"\"") + "\"";
+
+  /// <summary>The scripts a bootstrap applies, and the hash that names exactly that set.</summary>
+  /// <param name="Scripts">The scripts, in the order they apply.</param>
+  /// <param name="Hash">Their <see cref="ClosureHash"/>.</param>
+  private sealed record BootstrapClosure(IReadOnlyList<(string Name, string Sql)> Scripts, string Hash) {
+    /// <summary>Materializes <paramref name="scripts"/> once and hashes them.</summary>
+    public static BootstrapClosure Of(IEnumerable<(string Name, string Sql)> scripts) {
+      var list = new List<(string Name, string Sql)>(scripts);
+      return new BootstrapClosure(list, ClosureHash(list));
+    }
+  }
 
   /// <summary>
   /// Takes the schema lock for the life of the caller's transaction, without waiting.

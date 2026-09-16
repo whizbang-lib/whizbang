@@ -71,18 +71,18 @@ public static class CanonicalTemporalRewritePhase {
       ILogger? logger = null,
       CancellationToken cancellationToken = default) =>
     ApplyAsync(
-      connectionFactory, lockId, rewrites, commandTimeoutSeconds,
-      TimeSpan.FromSeconds(commandTimeoutSeconds), TimeProvider.System, logger, cancellationToken);
+      connectionFactory, lockId, rewrites, commandTimeoutSeconds, TimeProvider.System, logger, cancellationToken);
 
   /// <summary>
-  /// Takes the schema lock, waiting up to <paramref name="lockWait"/> for it, and applies every
-  /// rewrite under it.
+  /// Takes the schema lock, waiting up to the command timeout for it on the given clock, and
+  /// applies every rewrite under it.
   /// </summary>
   /// <param name="connectionFactory">Produces the connection the lock and the rewrites share.</param>
   /// <param name="lockId">The schema initialization lock key, the same one the DDL phase uses.</param>
   /// <param name="rewrites">The rewrites, named for reporting.</param>
-  /// <param name="commandTimeoutSeconds">The timeout for one rewrite, which scans a whole table.</param>
-  /// <param name="lockWait">How long to keep trying for a lock another instance holds.</param>
+  /// <param name="commandTimeoutSeconds">
+  /// The timeout for one rewrite, which scans a whole table, and the budget for taking the lock.
+  /// </param>
   /// <param name="timeProvider">The clock the wait is measured on.</param>
   /// <param name="logger">Optional logger.</param>
   /// <param name="cancellationToken">Cancellation token.</param>
@@ -95,7 +95,6 @@ public static class CanonicalTemporalRewritePhase {
       long lockId,
       IEnumerable<(string Name, string Sql)> rewrites,
       int commandTimeoutSeconds,
-      TimeSpan lockWait,
       TimeProvider timeProvider,
       ILogger? logger = null,
       CancellationToken cancellationToken = default) {
@@ -117,7 +116,7 @@ public static class CanonicalTemporalRewritePhase {
 
     var started = timeProvider.GetTimestamp();
     await using var transaction = await _acquireAsync(
-      connection, lockId, lockWait, timeProvider, log, cancellationToken);
+      connection, lockId, TimeSpan.FromSeconds(commandTimeoutSeconds), timeProvider, log, cancellationToken);
     if (transaction is null) {
       return false;
     }

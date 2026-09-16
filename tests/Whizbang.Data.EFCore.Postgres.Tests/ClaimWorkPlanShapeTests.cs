@@ -87,8 +87,8 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
         (stream_id, perspective_name, event_id, status, attempts, created_at, instance_id, lease_expiry)
       SELECT gen_random_uuid(), 'TestPerspective', gen_random_uuid(), 0, 0, NOW(), @holder, {lease}
       FROM generate_series(1, @n);";
-    fill.Parameters.AddWithValue("holder", (object?)holder ?? DBNull.Value);
-    fill.Parameters["holder"].NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid;
+    fill.Parameters.AddWithValue(nameof(holder), (object?)holder ?? DBNull.Value);
+    fill.Parameters[nameof(holder)].NpgsqlDbType = NpgsqlTypes.NpgsqlDbType.Uuid;
     fill.Parameters.AddWithValue("n", ROWS_PER_TABLE);
     fill.CommandTimeout = 300;
     await fill.ExecuteNonQueryAsync();

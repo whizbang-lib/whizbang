@@ -166,8 +166,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
     var released = false;
 
     var run = CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("after-the-wait"), TIMEOUT_SECONDS,
-      TimeSpan.FromSeconds(30), time, log);
+      _connect, LOCK_ID, _rewrites("after-the-wait"), TIMEOUT_SECONDS, time, log);
 
     var ran = await _stepUntilDoneAsync(run, time, async () => {
       // The lock goes back only once the phase has said it is waiting, so the test proves a wait
@@ -198,9 +197,9 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
     var time = new FakeTimeProvider();
     var log = new ListLogger();
 
+    // The budget for the lock is the command timeout: two seconds here, on the fake clock.
     var run = CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS,
-      TimeSpan.FromSeconds(2), time, log);
+      _connect, LOCK_ID, _rewrites("should-not-run"), commandTimeoutSeconds: 2, time, log);
     var ran = await _stepUntilDoneAsync(run, time);
 
     await Assert.That(ran).IsFalse();
@@ -222,8 +221,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
     using var cts = new CancellationTokenSource();
 
     var run = CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS,
-      TimeSpan.FromSeconds(30), time, log, cts.Token);
+      _connect, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS, time, log, cts.Token);
 
     await Assert.That(async () => await _stepUntilDoneAsync(run, time, () => {
       // Canceled once the phase is in its wait, which is where a shutdown finds it.
@@ -235,6 +233,42 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
 
     await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("0");
     await _releaseLockAsync(holder);
+  }
+
+  /// <summary>
+  /// A connection that fails while the lock is being taken propagates the failure and holds nothing.
+  /// </summary>
+  /// <remarks>
+  /// The transaction opened for the try-lock is ended on the way out, so what the caller sees is
+  /// the connection's failure, and no lock stays with a session about to be discarded. The backend
+  /// behind the phase's connection is terminated the moment the connection opens, from another
+  /// session, so the first statement the phase sends, the try-lock, is the one that fails.
+  /// </remarks>
+  [Test]
+  public async Task AFailureWhileTakingTheLockPropagatesAndHoldsNothingAsync() {
+    var log = new ListLogger();
+
+    NpgsqlConnection doomed() {
+      var connection = _connect();
+      connection.StateChange += (_, e) => {
+        if (e.CurrentState == System.Data.ConnectionState.Open) {
+          using var killer = _connect();
+          killer.Open();
+          using var kill = new NpgsqlCommand("SELECT pg_terminate_backend(@pid)", killer);
+          kill.Parameters.AddWithValue("pid", connection.ProcessID);
+          kill.ExecuteScalar();
+        }
+      };
+      return connection;
+    }
+
+    await Assert.That(async () => await CanonicalTemporalRewritePhase.ApplyAsync(
+        doomed, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS, log))
+      .Throws<NpgsqlException>()
+      .Because("a failure taking the lock is the caller's to report; the phase has nothing to apply it to");
+
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("0");
+    await Assert.That(await _lockHoldersAsync()).IsEqualTo("0");
   }
 
   /// <summary>
@@ -320,7 +354,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
       _connect, LOCK_ID, null!, TIMEOUT_SECONDS)).Throws<ArgumentNullException>();
 
     await Assert.That(async () => await CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("x"), TIMEOUT_SECONDS, TimeSpan.FromSeconds(1), null!))
+      _connect, LOCK_ID, _rewrites("x"), TIMEOUT_SECONDS, timeProvider: null!))
       .Throws<ArgumentNullException>();
   }
 

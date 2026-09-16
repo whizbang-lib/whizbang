@@ -42,7 +42,7 @@ public static class TagPayloadSizeConfigurationBinder {
   public static void Apply(TagOptions tagOptions, IConfiguration? configuration) {
     ArgumentNullException.ThrowIfNull(tagOptions);
     var section = configuration?.GetSection(CONFIGURATION_SECTION);
-    if (section is null || !section.Exists()) {
+    if (section?.Exists() != true) {
       return;
     }
 

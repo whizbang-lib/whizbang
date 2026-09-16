@@ -37,6 +37,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
   private const string PERSPECTIVE_CURSORS_TABLE = "wh_perspective_cursors";
+  private const string OUTBOX_TABLE = "wh_outbox";
   private const string PARAM_INSTANCE_ID = "p_instance_id";
 
   // Slice 5 of zero-idle-polling — opportunistic heartbeat update inside
@@ -236,7 +237,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var inbox = BuildSchemaQualifiedName(schema, "wh_inbox");
-    var outbox = BuildSchemaQualifiedName(schema, "wh_outbox");
+    var outbox = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
     var perspectiveEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
 
     await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
@@ -3601,7 +3602,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       var count = reader.GetInt64(1);
       switch (name) {
         case "wh_inbox": inbox = count; break;
-        case "wh_outbox": outbox = count; break;
+        case OUTBOX_TABLE: outbox = count; break;
         case "wh_active_streams": active = count; break;
       }
     }
@@ -3801,7 +3802,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var tableName = BuildSchemaQualifiedName(schema, "wh_outbox");
+    var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -3840,7 +3841,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var tableName = BuildSchemaQualifiedName(schema, "wh_outbox");
+    var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
     await using var __scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -3920,7 +3921,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var functionName = BuildSchemaQualifiedName(schema, "store_outbox_messages");
-    var tableName = BuildSchemaQualifiedName(schema, "wh_outbox");
+    var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
 #pragma warning disable S2077 // Schema-qualified names built from validated schema constant
     var storeSql = $"SELECT * FROM {functionName}({{0}}::jsonb, NULL::uuid, NULL::timestamptz, {{1}}, {{2}})";
@@ -3958,7 +3959,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var tableName = BuildSchemaQualifiedName(schema, "wh_outbox");
+    var tableName = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
 
 #pragma warning disable S2077 // Schema-qualified table name built from validated schema constant
     // The deadline degrade: clearing group + floor moves the row into the eligible-scan index,
@@ -5222,7 +5223,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       IReadOnlyList<string> messageTypeNames,
       CancellationToken cancellationToken = default)
     => _discardPendingAsync(
-      "wh_outbox", _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
+      OUTBOX_TABLE, _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
 
   /// <summary>
   /// The maintenance sweep behind "a feature that is off leaves nothing behind", for one table.

@@ -65,8 +65,8 @@ public class DigestEpochLaneIndexTests : EFCoreTestBase {
     var definition = await cmd.ExecuteScalarAsync() as string;
 
     await Assert.That(definition).IsNotNull().Because("the lane probe has no other index to use");
-    await Assert.That(definition!).Contains("(origin_service_id, origin_commit_sequence", StringComparison.Ordinal);
-    await Assert.That(definition!).Contains("WHERE (origin_service_id IS NOT NULL)", StringComparison.Ordinal)
+    await Assert.That(definition).Contains("(origin_service_id, origin_commit_sequence", StringComparison.Ordinal);
+    await Assert.That(definition).Contains("WHERE (origin_service_id IS NOT NULL)", StringComparison.Ordinal)
       .Because("own-lane rows are served by the commit_sequence index and would only widen this one");
   }
 
