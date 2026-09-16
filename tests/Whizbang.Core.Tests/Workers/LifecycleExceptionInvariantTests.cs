@@ -46,7 +46,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// for follow-up; not blocking Slice 8's regression-lock.</para>
 /// </summary>
 /// <docs>operations/dead-letter-queue/internal-dlq</docs>
-public class LifecycleExceptionInvariantTests {
+public partial class LifecycleExceptionInvariantTests {
 
   // --- shared fakes ---
 

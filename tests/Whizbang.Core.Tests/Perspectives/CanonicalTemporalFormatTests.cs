@@ -116,16 +116,69 @@ public class CanonicalTemporalFormatTests {
       .Because("equality compares instants, so the stored form has to as well");
   }
 
-  /// <summary>A date without a time is days since the epoch, which sorts and ranges the same way.</summary>
+  /// <summary>
+  /// A date without a time is microseconds since the epoch at midnight UTC of that day.
+  /// </summary>
+  /// <remarks>
+  /// The same unit as an instant, so a date and an instant order against one another with the same
+  /// cast. Stored as a day count it could not: a day count and a microsecond count are both
+  /// integers, and nothing in a document says which one a number is.
+  /// </remarks>
   [Test]
-  [Arguments("2026-03-04", 20516)]
-  [Arguments("1970-01-01", 0)]
-  [Arguments("1969-12-31", -1)]
-  public async Task ADateOnlyIsDaysSinceTheEpochAsync(string iso, int expected) {
+  [Arguments("2026-03-04", 1772582400000000L)]
+  [Arguments("1970-01-01", 0L)]
+  [Arguments("1969-12-31", -86400000000L)]
+  public async Task ADateOnlyIsMicrosecondsAtMidnightUtcAsync(string iso, long expected) {
     var value = DateOnly.Parse(iso, System.Globalization.CultureInfo.InvariantCulture);
 
-    await Assert.That(CanonicalTemporalFormat.ToEpochDays(value)).IsEqualTo(expected);
-    await Assert.That(CanonicalTemporalFormat.FromEpochDays(expected)).IsEqualTo(value);
+    await Assert.That(CanonicalTemporalFormat.ToEpochMicroseconds(value)).IsEqualTo(expected);
+    await Assert.That(CanonicalTemporalFormat.DayFromEpochMicroseconds(expected)).IsEqualTo(value);
+  }
+
+  /// <summary>A date's stored number is exactly an instant's at midnight of that date.</summary>
+  [Test]
+  public async Task ADateOnlyIsTheInstantAtItsMidnightAsync() {
+    var day = new DateOnly(2026, 3, 4);
+    var midnight = new DateTime(2026, 3, 4, 0, 0, 0, DateTimeKind.Utc);
+
+    await Assert.That(CanonicalTemporalFormat.ToEpochMicroseconds(day))
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(midnight))
+      .Because("one unit across the kinds is what lets a date be compared with an instant at all");
+    await Assert.That(CanonicalTemporalFormat.ToEpochMicroseconds(day))
+      .IsLessThan(CanonicalTemporalFormat.ToEpochMicroseconds(midnight.AddSeconds(1)));
+    await Assert.That(CanonicalTemporalFormat.ToEpochMicroseconds(day))
+      .IsGreaterThan(CanonicalTemporalFormat.ToEpochMicroseconds(midnight.AddTicks(-1)));
+  }
+
+  /// <summary>
+  /// A number that falls inside a day reads as that day, on either side of the epoch.
+  /// </summary>
+  /// <remarks>
+  /// The writer only ever stores midnight, so this is about what a reader does with a number it did
+  /// not write: an instant compared against a date column, say. Rounding toward zero would put a
+  /// value late on the last day of 1969 into 1970; flooring keeps it where the calendar puts it.
+  /// </remarks>
+  [Test]
+  public async Task ANumberInsideADayReadsAsThatDayAsync() {
+    var lateOnTheFourth = CanonicalTemporalFormat.ToEpochMicroseconds(
+      new DateTime(2026, 3, 4, 23, 59, 59, DateTimeKind.Utc));
+    var lateInSixtyNine = CanonicalTemporalFormat.ToEpochMicroseconds(
+      new DateTime(1969, 12, 31, 23, 59, 59, DateTimeKind.Utc));
+
+    await Assert.That(CanonicalTemporalFormat.DayFromEpochMicroseconds(lateOnTheFourth))
+      .IsEqualTo(new DateOnly(2026, 3, 4));
+    await Assert.That(CanonicalTemporalFormat.DayFromEpochMicroseconds(lateInSixtyNine))
+      .IsEqualTo(new DateOnly(1969, 12, 31))
+      .Because("a value before the epoch is negative, and truncation toward zero would call it 1970");
+  }
+
+  /// <summary>The extremes of a date are ordinary numbers too.</summary>
+  [Test]
+  public async Task TheExtremesOfADateRoundTripAsync() {
+    await Assert.That(CanonicalTemporalFormat.DayFromEpochMicroseconds(
+      CanonicalTemporalFormat.ToEpochMicroseconds(DateOnly.MaxValue))).IsEqualTo(DateOnly.MaxValue);
+    await Assert.That(CanonicalTemporalFormat.DayFromEpochMicroseconds(
+      CanonicalTemporalFormat.ToEpochMicroseconds(DateOnly.MinValue))).IsEqualTo(DateOnly.MinValue);
   }
 
   /// <summary>A time of day is microseconds since midnight.</summary>
@@ -137,20 +190,69 @@ public class CanonicalTemporalFormatTests {
     await Assert.That(CanonicalTemporalFormat.FromMicrosecondsOfDay(18367000000L)).IsEqualTo(value);
   }
 
+  /// <summary>A time of day is the duration since midnight, in the same unit as a duration.</summary>
+  [Test]
+  public async Task ATimeOnlyIsADurationFromMidnightAsync() {
+    var value = new TimeOnly(5, 6, 7, 123);
+
+    await Assert.That(CanonicalTemporalFormat.ToMicrosecondsOfDay(value))
+      .IsEqualTo(CanonicalTemporalFormat.ToMicroseconds(value.ToTimeSpan()));
+  }
+
   /// <summary>
-  /// A duration is its tick count, which needs no truncation because nothing renders it.
+  /// A duration is microseconds, the same unit as everything else, at the cost of its seventh digit.
   /// </summary>
   /// <remarks>
-  /// Unlike the others this keeps full .NET precision, because a duration is not compared against a
-  /// PostgreSQL interval: it is a number on both sides. The awkward rendering that ruled it out of
-  /// the eligible set, a day count only sometimes present and a trimmed fraction, stops existing.
+  /// Stored as ticks it kept a digit no other kind had and could not be added to an instant without a
+  /// conversion nobody would remember to write. A microsecond is what a PostgreSQL interval holds, so
+  /// the digit given up is one the database could never have compared against anyway.
   /// </remarks>
   [Test]
-  public async Task ATimeSpanIsItsTickCountAsync() {
+  public async Task ATimeSpanIsMicrosecondsAsync() {
     var value = new TimeSpan(2, 5, 6, 7, 123);
 
-    await Assert.That(CanonicalTemporalFormat.ToTicks(value)).IsEqualTo(value.Ticks);
-    await Assert.That(CanonicalTemporalFormat.FromTicks(value.Ticks)).IsEqualTo(value);
+    await Assert.That(CanonicalTemporalFormat.ToMicroseconds(value)).IsEqualTo(191167123000L);
+    await Assert.That(CanonicalTemporalFormat.DurationFromMicroseconds(191167123000L)).IsEqualTo(value);
+  }
+
+  /// <summary>A duration finer than a microsecond truncates, like an instant does.</summary>
+  [Test]
+  public async Task ADurationFinerThanAMicrosecondTruncatesAsync() {
+    var second = TimeSpan.FromSeconds(1);
+
+    await Assert.That(CanonicalTemporalFormat.ToMicroseconds(second.Add(TimeSpan.FromTicks(1_234_567))))
+      .IsEqualTo(CanonicalTemporalFormat.ToMicroseconds(second.Add(TimeSpan.FromTicks(1_234_560))));
+  }
+
+  /// <summary>A negative duration keeps its sign.</summary>
+  [Test]
+  public async Task ANegativeDurationKeepsItsSignAsync() {
+    var value = TimeSpan.FromMinutes(-3);
+
+    await Assert.That(CanonicalTemporalFormat.ToMicroseconds(value)).IsEqualTo(-180000000L);
+    await Assert.That(CanonicalTemporalFormat.DurationFromMicroseconds(-180000000L)).IsEqualTo(value);
+  }
+
+  /// <summary>
+  /// Every kind shares one unit, so an instant plus a duration is arithmetic on the stored numbers.
+  /// </summary>
+  /// <remarks>
+  /// This is the property the unit change buys and the reason the kinds could not keep three units.
+  /// With a duration in ticks and a date in days, the same arithmetic in SQL was wrong by a factor
+  /// nobody would see until a report was.
+  /// </remarks>
+  [Test]
+  public async Task EveryKindSharesOneUnitAsync() {
+    var start = new DateTime(2026, 3, 4, 5, 6, 7, DateTimeKind.Utc);
+    var length = new TimeSpan(1, 2, 3, 4, 567);
+    var day = new DateOnly(2026, 3, 4);
+    var clock = new TimeOnly(5, 6, 7);
+
+    await Assert.That(CanonicalTemporalFormat.ToEpochMicroseconds(start) + CanonicalTemporalFormat.ToMicroseconds(length))
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(start + length));
+    await Assert.That(CanonicalTemporalFormat.ToEpochMicroseconds(day) + CanonicalTemporalFormat.ToMicrosecondsOfDay(clock))
+      .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(day.ToDateTime(clock, DateTimeKind.Utc)))
+      .Because("a date plus a time of day is an instant, and the numbers have to say so");
   }
 
   /// <summary>

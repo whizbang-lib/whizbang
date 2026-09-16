@@ -65,36 +65,14 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   public static Func<JsonSerializerOptions>? PathOnePersistenceOptionsProvider { get; set; }
 
   /// <summary>
-  /// Persistence serialization options, sourced from the cross-assembly union
-  /// (<see cref="JsonContextRegistry.CreateCombinedOptions(SerializationProfile)"/> under the
-  /// <see cref="SerializationProfile.Persistence"/> profile — object-mode WhizbangId for EF Core 10's
-  /// jsonb byte format, aggregated across every assembly), combined with any user-supplied options from
-  /// <see cref="PathOnePersistenceOptionsProvider"/> as a fallback resolver. Rebuilt per call so late
-  /// assembly registrations and test-supplied options are always reflected — replacing the prior
-  /// process-wide single-slot snapshot that only ever held one assembly's view (and raced across tests).
+  /// Persistence serialization options: the one set every perspective document is written and read
+  /// with, from <see cref="Perspectives.PerspectiveDocumentSerialization"/>, with any user-supplied
+  /// options from <see cref="PathOnePersistenceOptionsProvider"/> folded in as a fallback resolver.
+  /// Reused until the registry changes, so late assembly registrations are reflected without
+  /// rebuilding the serializer's metadata cache on every upsert.
   /// </summary>
-  private static JsonSerializerOptions _resolvePersistenceOptions(Func<JsonSerializerOptions>? userProvider) {
-    var union = JsonContextRegistry.CreateCombinedOptions(SerializationProfile.Persistence);
-    var user = userProvider?.Invoke();
-    if (user?.TypeInfoResolver is null) {
-      return union;
-    }
-
-    // Union first (object-mode WhizbangId + all registered persistence contexts), user options as a
-    // fallback for anything the union doesn't cover. User converters are intentionally NOT copied — the
-    // Persistence profile deliberately omits the scalar WhizbangId converters so object-mode wins.
-    //
-    // The finished chain is re-wrapped with the registered modifiers. The union already carries them,
-    // but they were attached to the union's own resolver: a type the user's resolver is the first to
-    // answer for would be serialized unconverted, and for the canonical temporal form that is not a
-    // formatting difference but a row the reader cannot parse.
-    var chain = JsonTypeInfoResolver.Combine(union.TypeInfoResolver!, user.TypeInfoResolver);
-
-    return new JsonSerializerOptions(union) {
-      TypeInfoResolver = JsonContextRegistry.WithRegisteredModifiers(
-        chain, SerializationProfile.Persistence)
-    };
-  }
+  private static JsonSerializerOptions _resolvePersistenceOptions(Func<JsonSerializerOptions>? userProvider) =>
+    Perspectives.PerspectiveDocumentSerialization.Resolve(userProvider);
 
   /// <inheritdoc/>
   public Task UpsertPerspectiveRowAsync<TModel>(

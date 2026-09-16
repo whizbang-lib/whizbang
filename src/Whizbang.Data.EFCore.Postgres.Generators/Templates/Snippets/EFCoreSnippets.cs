@@ -49,11 +49,13 @@ public class EFCoreSnippets {
       //   2. PerspectiveScope.Extensions uses List<ScopeExtension> instead of Dictionary
       //   3. Custom principal filtering translators for AllowedPrincipals queries
       //
+      // Dates, times and durations inside the document store as numbers rather than renderings, so
+      // their extraction reaches an immutable cast and can carry an index. Nothing is configured
+      // for that here: the convention every generated context carries converts every temporal
+      // Entity Framework maps, inherited, nested and collection-element ones included. See
+      // CanonicalTemporalConvention.
       entity.ComplexProperty(e => e.Data, d => {
         d.ToJson("data");
-        // Dates, times and durations store as numbers rather than renderings, so their extraction
-        // reaches an immutable cast and can carry an index. See CanonicalTemporalFormat.
-        __TEMPORAL_CONVERTER_CONFIGS__
       });
       entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
       entity.ComplexProperty(e => e.Scope, s => {
@@ -129,9 +131,17 @@ __PHYSICAL_FIELD_CONFIGS__
       // For type-based queries, use physical discriminator columns marked with
       // [PolymorphicDiscriminator] for efficient indexed queries.
       //
-      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb");
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
-      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
+      // Bound to the persistence profile explicitly, through the same options the upsert writes
+      // with. Left to the data source's JSON options the document would be read under the default
+      // profile, whose date reader takes a rendering, and every row holding a canonical number
+      // would be unreadable. The data source cannot change profile: the outbox, inbox and event
+      // store metadata read through it in the wire's form. See PerspectiveDocumentSerialization.
+      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<__MODEL_TYPE__>());
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<global::Whizbang.Core.Lenses.PerspectiveMetadata>());
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb")
+        .HasConversion(global::Whizbang.Data.EFCore.Postgres.Perspectives.PerspectiveDocumentSerialization.ConverterFor<global::Whizbang.Core.Lenses.PerspectiveScope>());
 
       // System fields
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();

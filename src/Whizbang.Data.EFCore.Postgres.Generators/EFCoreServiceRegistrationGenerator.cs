@@ -534,7 +534,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: keys,
         PhysicalFields: physicalFields,
         JsonIndexes: _reachableJsonIndexes(modelType as INamedTypeSymbol),
-        TemporalProperties: CanonicalTemporalDiscovery.From(modelType as INamedTypeSymbol),
         CoalesceBody: _buildDataCoalesceStatements(modelType)
     );
   }
@@ -586,7 +585,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         Keys: candidate.Keys,
         PhysicalFields: candidate.PhysicalFields,
         JsonIndexes: candidate.JsonIndexes,
-        TemporalProperties: candidate.TemporalProperties,
         CoalesceBody: candidate.CoalesceBody
     );
   }
@@ -1283,6 +1281,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine();
       sb.AppendLine("    // Call user's extended configuration");
       sb.AppendLine("    OnModelCreatingExtended(modelBuilder);");
+      sb.AppendLine();
+      sb.AppendLine("    // Convert every date, time and duration the model maps inside a document, whatever options");
+      sb.AppendLine("    // this context was built with: a lens context built from a plain connection string carries no");
+      sb.AppendLine("    // convention plugin, and the rows it reads were written as numbers. After the extension, so");
+      sb.AppendLine("    // the walk sees what the consumer configured too.");
+      sb.AppendLine("    global::Whizbang.Data.EFCore.Postgres.Perspectives.CanonicalTemporalConvention.Apply(modelBuilder);");
       sb.AppendLine("  }");
       sb.AppendLine();
       sb.AppendLine(XML_DOC_SUMMARY_OPEN_INDENTED);
@@ -2165,10 +2169,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__PERSPECTIVE_TABLES_SCHEMA__", perspectiveTablesSchema);
       // Replace PERSPECTIVE_ENTRIES region with per-perspective (name, sql) tuples for hash tracking
       template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_ENTRIES", perspectiveEntriesCode);
-      // The rewrites are their own phase, run and committed before the initializer's transaction.
-      template = TemplateUtilities.ReplaceRegion(
-        template, "CANONICAL_TEMPORAL_REWRITES",
-        _generateCanonicalTemporalRewritesCode(matchingPerspectives, dbContext.Schema));
+      // No stored-form rewrite is generated. The template derives it at runtime from the model
+      // Entity Framework built and the serializer's metadata, the two things that read a document.
 
       // Replace MIGRATIONS region with embedded migration scripts
       template = TemplateUtilities.ReplaceRegion(
@@ -2459,6 +2461,34 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Records a table this release creates in the microsecond stored form, settled, before it is
+  /// created.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Only at that moment can "fresh" be told from "upgraded". A table an older release created has
+  /// no ledger row and rows in the mixed-unit form; recording it as converted here would make the
+  /// rewrite skip it forever, so it is left to the rewrite, which records it after converting it.
+  /// A database without the ledger yet is left alone.
+  /// </para>
+  /// <para>
+  /// Inside a DO block, because a statement naming a table is planned when its branch first runs:
+  /// named directly, an INSERT into a ledger that is not there would fail before any guard ran.
+  /// </para>
+  /// </remarks>
+  private static void _appendFormLedgerRow(StringBuilder sb, PerspectiveModelInfo perspective, string quotedSchema) {
+    sb.AppendLine("DO $wb$");
+    sb.AppendLine("BEGIN");
+    sb.AppendLine($"  IF to_regclass('{quotedSchema}.{perspective.TableName}') IS NULL AND to_regclass('{quotedSchema}.wh_perspective_forms') IS NOT NULL THEN");
+    sb.AppendLine($"    INSERT INTO {quotedSchema}.wh_perspective_forms (table_name, temporal_form, applied_at, settled_at)");
+    sb.AppendLine($"    VALUES ('{perspective.TableName}', 2, now(), now())");
+    sb.AppendLine("    ON CONFLICT (table_name) DO NOTHING;");
+    sb.AppendLine("  END IF;");
+    sb.AppendLine("END");
+    sb.AppendLine("$wb$;");
+  }
+
+  /// <summary>
   /// Appends CREATE TABLE SQL for a single perspective table.
   /// </summary>
   private static void _appendCreateTableSql(
@@ -2468,6 +2498,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       string quotedSchema) {
     // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
     sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {TypeNameUtilities.GetSimpleName(perspective.ModelTypeName)})");
+    _appendFormLedgerRow(sb, perspective, quotedSchema);
     sb.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
     sb.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
     sb.AppendLine("  data JSONB NOT NULL,");
@@ -2636,35 +2667,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// the DDL. A perspective with nothing to convert contributes nothing.
   /// </para>
   /// </remarks>
-  private static string _generateCanonicalTemporalRewritesCode(
-      List<PerspectiveModelInfo> perspectives,
-      string schema) {
-    var quotedSchema = _quotePostgresIdentifier(schema);
-    var entries = new List<string>();
-
-    foreach (var perspective in perspectives
-        .GroupBy(p => p.TableName)
-        .Select(g => g.First())
-        .OrderBy(p => p.TableName)) {
-      var statements = CanonicalTemporalBackfillSql.GuardedStatements(
-        perspective.TemporalProperties, $"{quotedSchema}.{perspective.TableName}").ToList();
-      if (statements.Count == 0) {
-        continue;
-      }
-
-      var escapedSql = string.Join("\n", statements)
-          .Replace("\"", "\"\"")
-          .Replace("{", "{{")
-          .Replace("}", "}}");
-      var perspectiveName = TypeNameUtilities.GetSimpleName(perspective.ModelTypeName);
-      entries.Add($"      (\"{perspectiveName}\", @\"{escapedSql}\")");
-    }
-
-    return entries.Count == 0
-      ? "// No stored format to convert for this DbContext"
-      : string.Join(",\n", entries);
-  }
-
   private static string _generatePerspectiveEntriesCode(
       List<PerspectiveModelInfo> perspectives,
       string schema) {
@@ -2686,7 +2688,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var perspSql = new StringBuilder();
 
       // No rewrite here. It runs as its own committed phase before the initializer's transaction
-      // opens; see _generateCanonicalTemporalRewritesCode.
+      // opens, derived at runtime by CanonicalTemporalRewrite from the model and the serializer.
       _generatePerspectiveTableSql(perspSql, perspective, quotedSchema);
       _generatePerspectiveIndexSql(perspSql, perspective, quotedSchema);
 
@@ -2708,6 +2710,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   private static void _generatePerspectiveTableSql(
       StringBuilder perspSql, PerspectiveModelInfo perspective, string quotedSchema) {
+    // See _appendFormLedgerRow: a table this release creates is recorded as converted at creation.
+    _appendFormLedgerRow(perspSql, perspective, quotedSchema);
     perspSql.AppendLine($"CREATE TABLE IF NOT EXISTS {quotedSchema}.{perspective.TableName} (");
     perspSql.AppendLine("  id UUID NOT NULL PRIMARY KEY,");
     perspSql.AppendLine("  data JSONB NOT NULL,");
@@ -2958,7 +2962,6 @@ internal sealed record PerspectiveModelInfo(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
-    ImmutableArray<CanonicalTemporalProperty> TemporalProperties,
     string CoalesceBody);
 
 /// <summary>
@@ -2986,7 +2989,6 @@ internal sealed record PerspectiveModelCandidate(
     string[] Keys,
     ImmutableArray<PhysicalFieldInfo> PhysicalFields,
     ImmutableArray<JsonIndexInfo> JsonIndexes,
-    ImmutableArray<CanonicalTemporalProperty> TemporalProperties,
     string CoalesceBody);
 
 /// <summary>

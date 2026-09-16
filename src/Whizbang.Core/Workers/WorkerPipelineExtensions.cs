@@ -108,6 +108,11 @@ public static class WorkerPipelineExtensions {
     services.AddWhizbangManagedHealth();
     services.AddWhizbangHealthSource<Health.SchemaHealthSource>();
     services.AddWhizbangHealthSource<Health.WorkerHealthSource>();
+    // A row a perspective could not read is remembered per perspective and stream: the worker
+    // records into the registry, the source counts it. The rows themselves are parked in the
+    // database, so this is what the process knows, not the state of the queue.
+    services.TryAddSingleton<Whizbang.Core.Perspectives.StoredFormFailureRegistry>();
+    services.AddWhizbangHealthSource<Health.StoredFormHealthSource>();
 
     // Transport managed-resource health: a REAL probe when a transport is registered — the driver's
     // ITransport.CheckConnectivityAsync (RabbitMQ IConnection.IsOpen / Service Bus !IsClosed) detects a

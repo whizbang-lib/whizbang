@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata.Conventions.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure;
+using Whizbang.Data.EFCore.Postgres.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres.Functions;
 
@@ -12,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres.Functions;
 /// <docs>fundamentals/security/security#principal-filtering</docs>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_TenantScoped_AffectsAllRowsInScopeOnlyAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Collective/CollectiveDispatcherEFCoreIntegrationTests.cs:DispatchAsync_BumpsStoreManagedUpdatedAtAndVersionAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CanonicalTemporalConventionTests.cs</tests>
 public static class WhizbangDbContextOptionsExtensions {
   /// <summary>
   /// Adds Whizbang's custom PostgreSQL function translators to the Npgsql provider.
@@ -59,6 +62,11 @@ internal sealed class WhizbangOptionsExtension : IDbContextOptionsExtension {
     // Add our translator plugin to the collection (alongside Npgsql's built-in plugins)
     // Must be scoped because it depends on NpgsqlSqlExpressionFactory which is scoped
     services.AddScoped<IMethodCallTranslatorPlugin, WhizbangMethodCallTranslatorPlugin>();
+
+    // The canonical temporal form rides here rather than in generated configuration, so that what
+    // Entity Framework converts is decided by the model it built and not by a generator's partial
+    // discovery of it. Every generated perspective context carries this extension.
+    services.AddSingleton<IConventionSetPlugin, CanonicalTemporalConventionSetPlugin>();
   }
 
   public void Validate(IDbContextOptions options) {

@@ -520,7 +520,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
     } catch (Exception ex) {
       // Deserialize is now best-effort at the top of dispatch; per-stage code logs lifecycle
       // errors but a fail here would silently skip ALL stages. Surface it once.
-      LogLifecycleError(_logger, work.MessageId, "Deserialize", ex);
+      _logLifecycleError(work.MessageId, "Deserialize", ex);
       return null;
     }
   }
@@ -953,7 +953,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
           } catch (OperationCanceledException) when (detachedCt.IsCancellationRequested) {
             // graceful shutdown
           } catch (Exception ex) {
-            LogLifecycleError(_logger, work.MessageId, stageName + "Detached", ex);
+            _logLifecycleError(work.MessageId, stageName + "Detached", ex);
             // Slice 7 of release/v0.645.0-alpha.1 — mirrors Slice 1's outbox fix:
             // route the lifecycle exception through IFailureChannel so
             // process_inbox_failures populates wh_inbox.error with the full
@@ -984,7 +984,7 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
       // consumer catches this and ends its loop, leaving the row for the next claim cycle.
       throw;
     } catch (Exception ex) {
-      LogLifecycleError(_logger, work.MessageId, stageName, ex);
+      _logLifecycleError(work.MessageId, stageName, ex);
       // Slice 7 of release/v0.645.0-alpha.1 — mirrors Slice 1's outbox fix:
       // route the lifecycle exception through IFailureChannel so
       // process_inbox_failures populates wh_inbox.error with the full
@@ -1083,6 +1083,22 @@ public sealed partial class InboxDispatchWorker : BackgroundService {
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Warning, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing)")]
   static partial void LogLifecycleError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  [LoggerMessage(EventId = 74, Level = LogLevel.Error, Message = "InboxDispatchWorker lifecycle '{Stage}' failed for message {MessageId} (continuing): the payload could not be deserialized, which a retry will not change")]
+  static partial void LogLifecycleDeserializationError(ILogger logger, Guid messageId, string stage, Exception ex);
+
+  /// <summary>
+  /// The "(continuing)" swallow's log line: a Warning for a receptor that threw, since the message
+  /// is retried and the receptor is the consumer's; an Error when the cause is deserialization,
+  /// since a payload that did not deserialize will not deserialize on the retry either.
+  /// </summary>
+  private void _logLifecycleError(Guid messageId, string stage, Exception ex) {
+    if (Whizbang.Core.Perspectives.StoredFormUnreadable.TryClassify(ex, out _)) {
+      LogLifecycleDeserializationError(_logger, messageId, stage, ex);
+    } else {
+      LogLifecycleError(_logger, messageId, stage, ex);
+    }
+  }
 
   [LoggerMessage(EventId = 26, Level = LogLevel.Warning, Message = "InboxDispatchWorker composite fan-out failed for message {MessageId}: {Reason} — {Detail}; dead-lettering composite row")]
   static partial void LogCompositeFanoutFailed(ILogger logger, Guid messageId, string reason, string detail);

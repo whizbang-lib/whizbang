@@ -138,10 +138,19 @@ public class SchemaCommandBoundaryTests : IAsyncDisposable {
   private const string OLD_RENDERING = "2026-04-21T22:38:17.357886+00:00";
   private const int SEEDED_ROWS = 200;
 
-  /// <summary>The one property, in the shape that carries the dependency.</summary>
-  private static readonly ImmutableArray<CanonicalTemporalProperty> _properties = [
-    new("OccurredAt", CanonicalTemporalKind.Instant, false),
-  ];
+  /// <summary>
+  /// A rewrite of the one property: the statement whose committed effect the index needs to see.
+  /// </summary>
+  /// <remarks>
+  /// Written out rather than taken from the runtime rewrite, because the thing under test is the
+  /// boundary between a rewrite and an index, not the rewrite itself.
+  /// </remarks>
+  private const string REWRITE = $"""
+    UPDATE {TABLE}
+    SET data = data || jsonb_build_object('OccurredAt',
+          (EXTRACT(EPOCH FROM (data ->> 'OccurredAt')::timestamptz) * 1000000)::bigint)
+    WHERE jsonb_typeof(data -> 'OccurredAt') = 'string';
+    """;
 
   /// <summary>The declaration that puts an index over the rewritten key.</summary>
   private static readonly JsonIndexInfo _index =
@@ -213,9 +222,7 @@ public class SchemaCommandBoundaryTests : IAsyncDisposable {
   private static string _perspectiveSchema() {
     var script = new System.Text.StringBuilder();
 
-    foreach (var statement in CanonicalTemporalBackfillSql.Statements(_properties, TABLE)) {
-      script.AppendLine(statement);
-    }
+    script.AppendLine(REWRITE);
 
     script.AppendLine(SchemaCommandBoundary.MARKER);
 
@@ -333,23 +340,6 @@ public class SchemaCommandBoundaryTests : IAsyncDisposable {
     await Assert.That(await _scalarAsync(
       $"SELECT string_agg(DISTINCT data ->> 'OccurredAt', ',') FROM {TABLE}")).IsEqualTo(afterFirst);
     await Assert.That(await _indexCountAsync()).IsEqualTo("1");
-  }
-
-  /// <summary>
-  /// The marker the generator writes is the marker the runtime reads.
-  /// </summary>
-  /// <remarks>
-  /// The two are separate declarations because the generator's copy ships only to generators, so
-  /// nothing but this stops them drifting. Drifting would be silent: the runtime would apply the
-  /// script whole, which is the behavior the boundary exists to prevent.
-  /// </remarks>
-  [Test]
-  public async Task TheGeneratorAndTheRuntimeAgreeOnTheMarkerAsync() {
-    // Asserted through the behavior rather than by comparing the two constants, so what is pinned
-    // is the thing that matters: a script written with the generator's marker gets split.
-    var script = $"SELECT 1;\n{CanonicalTemporalBackfillSql.COMMIT_BOUNDARY}\nSELECT 2;";
-
-    await Assert.That(SchemaCommandBoundary.Segments(script).Length).IsEqualTo(2);
   }
 
   /// <summary>
