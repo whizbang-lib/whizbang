@@ -476,6 +476,104 @@ outstanding' and 'nobody looked' are the same value and opposite facts"
 `src/Whizbang.Core/Messaging/IWorkCoordinator.cs:184-187`). A reader introduces a third case with the
 same value and yet another opposite fact: a plausible wrong number. The null guard cannot see it.
 
+### The concrete read-after-write a user would actually see
+
+Everything above is a framework-internal read. This one is the user-visible case, and it is the
+strongest argument for the read-your-writes half of mechanism 3.
+
+A common refresh pattern, which the framework supplies the pieces for
+(`src/Whizbang.Core/Notifications/AppSignals/IAppSignalChannel.cs:11`), runs: a mutation, then the
+event, then the perspective apply, then a tagged notification pushed to the client, then the client
+re-queries. That final re-query is an **API-origin lens read arriving immediately after a write**,
+which is exactly the read the design would route to the reader by default. And the notification is
+emitted *because* the perspective was applied on the primary, so the client is being told, with
+authority, that new data exists.
+
+If that re-query lands on a reader that has not caught up, the client is told to refresh and is then
+shown the old data. **That is worse than not refreshing at all**: the user asked for the new state,
+was told it was ready, and got the previous one, with no error anywhere. A UI that had simply not
+refreshed would at least be consistently stale rather than confidently wrong, and a user who has just
+acted is the least willing audience for a stale answer.
+
+Note the shape: the notification is what makes this case both likely and severe. Likely, because the
+notification deliberately triggers the read at the worst possible moment, microseconds after the
+write. Severe, because the notification is a promise the stale read breaks.
+
+### Making the notification-triggered read correct
+
+Five options, ordered, with the first as the recommendation.
+
+**1. Mark the post-notification read fresh-required and route that single read to the primary.**
+Recommended. It is deterministic rather than probabilistic, it needs no lag measurement at all, and
+the reads that pay the primary's cost are exactly the ones that need it: a client that was just told
+to refresh. It is also the smallest possible change, because it is mechanism 1's call-site override
+(stage 3) used in the tightening direction, which the design already requires to exist. Nothing new
+is needed beyond the override itself.
+
+**2. Carry the commit position in the notification and let the follow-up read use it**: wait briefly
+for the reader to reach that position, fall back to the primary, or answer honestly that it is not at
+that version yet. Stronger than option 1 in that it can still serve the read from the reader, and
+correspondingly more machinery. This is not invention; it is the standard shape of causal
+consistency, and the precedents are worth naming so it is not argued from first principles:
+MongoDB's `afterClusterTime` token, Vitess tracking replication position per shard, Aurora's session
+consistency mode, and explicit read timestamps in Spanner and CockroachDB.
+
+**Does the framework already have the value that would be carried? Yes, from `commit_sequence`
+stamping, and the comparison pair already exists as a designed pair.** Specifically:
+
+- `PerspectiveMetadata.CommitSequence` (`src/Whizbang.Core/Lenses/PerspectiveMetadata.cs:70`) sits on
+  the row the lens reads, and is in the `Lenses` namespace, so it is already part of the lens-facing
+  surface. A read can therefore check the position on the row it is about to return, with no separate
+  lag query.
+- `MessageEnvelope.LocalCommitSequence` (`src/Whizbang.Core/Observability/MessageEnvelope.cs:127-134`)
+  is documented as the value "the perspective runner's idempotency filter compares against
+  `Lenses.PerspectiveMetadata.CommitSequence`". The comparison this option needs is already
+  implemented, for a different purpose, on the same two fields.
+- It is the right token rather than a convenient one: `commit_sequence` is used in preference to the
+  event id precisely because "UUIDv7 event_ids can invert under concurrent emission while
+  commit_sequence cannot" (`src/Whizbang.Core/Lenses/PerspectiveMetadata.cs:65-66`).
+- Availability is not a problem on this path. `LocalCommitSequence` is null for rows the stamper has
+  not reached, but `get_stream_events` refuses unstamped rows
+  (`src/Whizbang.Data.Postgres/Migrations/058_GetStreamEventsUnstampedGate.sql:79,113`), so an apply
+  can only have run on a stamped row, and the value is therefore non-null exactly when a
+  post-apply notification would be emitted.
+
+**The existing sync awaiter does not give the value.** `SyncResult` carries an outcome, counts and an
+elapsed time, and no position at all
+(`src/Whizbang.Core/Perspectives/Sync/SyncResult.cs:14-20`), and `IsCaughtUpAsync` returns a bare
+`bool` (`src/Whizbang.Core/Perspectives/Sync/IPerspectiveSyncAwaiter.cs:48`). It answers "has the
+apply completed", which is the timing, not "to what position", which is the token. So the awaiter is
+the wrong source and the stamp is the right one.
+
+The one genuinely missing piece is transport: `LocalCommitSequence` is `[JsonIgnore]` and documented
+as "NOT serialized, derived from the local row at read time"
+(`src/Whizbang.Core/Observability/MessageEnvelope.cs:133-134`). Carrying it to a client means adding
+it to the notification payload deliberately, not flipping a serialization flag on an envelope field
+that is intentionally local.
+
+**3. Push the changed projection with the notification** so no re-read happens at all. Removes the
+race by removing the read. Two costs to name: the payload grows with the projection rather than
+staying a tag, and the push has to be authorized per subscriber, because a notification fan-out that
+carries data has to answer the same scope and tenant questions the lens query answers with its scope
+filters (`src/Whizbang.Data.EFCore.Postgres/EFCorePostgresLensQuery.cs:113-144`). A tag needs no such
+check; a payload does.
+
+**4. Optimistic client-side update with reconciliation.** Workable, and a client concern rather than a
+framework one. Recorded so the list is complete, not as something the framework would supply.
+
+**5. A per-session write window**: for a few seconds after a session writes, route that session's
+reads to the primary. Worth having as a net for the reads that *no* notification triggered, which
+options 1 and 2 do not cover. This is a well-trodden pattern rather than a new one: Rails ships it as
+`ActiveRecord::Middleware::DatabaseSelector` with a configurable delay. Note that it is the rejected
+notification delay applied to the read side instead, and that is exactly why it is acceptable: it
+costs no latency in the common case, and when the window is wrong it degrades to a correct read on
+the primary rather than a stale one on the reader.
+
+**On polling after the notification.** Re-querying on a timer until the data appears does work, and it
+should still be rejected. It conflicts with the standing engineering preference against polling, and
+more to the point it spends repeated round trips to paper over a read that could simply have been
+correct the first time. Option 1 is the answer to that impulse: one read, on the primary, deliberately.
+
 ### A process note that makes class 1 harder to catch
 
 Two of the read-only SQL functions are declared `LANGUAGE plpgsql` with no volatility marker and do
@@ -509,101 +607,60 @@ their own merits: the framework cannot measure replication lag or report connect
 regardless of whether a reader is ever adopted, so they are worth doing even if the answer to the
 gating question is no.
 
-### How much is actually on the table
+### How much is actually on the table, and what the unit of the decision is
 
-Two framings, and they give different answers. **Counting code paths sizes the framework; counting
-query volume sizes a deployment.** The inventory above is a path count, which is the right method for
-asking what the framework may safely move, and the wrong method for asking what a given service
-would save. A path count treats the lens read side as one row among 112. In a service whose API
-surface is lens reads, that one row is most of the queries the service issues. Both numbers are
-true, and the volume one is the one that decides whether this is worth building.
+**The unit of the decision is the call origin of a lens query, not the role of the service that
+hosts it.** That is the reframing that makes the rest of this tractable, and it follows from what the
+lens actually is: a read-only design. Its documentation says so, its interface exposes no write, and
+this audit found that the implementation matches the claim.
 
-So the payoff is a function of the deployment profile, not of the framework.
+A lens query issued from the API layer, where the application is explicitly reading, has no write in
+scope. That is the natural default for the reader connection. A lens query reached from inside a
+receptor, a perspective apply, or an open transaction is the exception, and it is exactly what the
+ambient write-scope guard keys on. So the design is: **default the API-origin lens read surface to
+the reader, and let the guard rather than the developer catch the in-process exception.**
 
-#### Which profiles the split pays for
+Framing it by call origin rather than by service role matters because the same lens type is reached
+both ways inside one host, so no service-level switch can be correct. It also puts the burden in the
+right place: a developer declaring a read model's default does not have to reason about every call
+site that might ever reach it, because the guard is what makes an aggressive default safe.
 
-Shares below are shapes rather than measurements: they describe where a profile's query volume sits,
-not a figure taken from any particular system. The last column is what a replica would actually
-absorb, which is the read-eligible share **after** the write-scope guard has forced back what it must.
+#### Why that surface is cheap to move
 
-| Profile | Where its query volume sits | Read-eligible share | Verdict |
-|---|---|---|---|
-| **Backend-for-frontend over perspectives** | API surface is almost entirely lens reads; the write machinery runs in-process but is not the API | dominant | **Pays materially.** The case this is worth building for |
-| **Mixed transactional API** (commands and queries on one surface) | split between lens reads and command handling, with many lens reads issued inside receptors | partial, and the guard forces a real fraction of it back | **Pays something**, less than it looks |
-| **Consumer or projector with no API** | claim, apply, cursor, complete. No lens surface at all | near zero | **Pays nothing** |
-| **Producer or ingestion service** | append and outbox, with lens reads incidental | near zero | **Pays nothing** |
+Three findings from this audit, and together they say the API-origin lens surface needs a different
+data source and nothing else:
 
-The framework cannot know which profile it is running in, which is why routing has to be declared
-(stage 3) rather than inferred, and why the framework default must stay on the primary.
+- **It already tracks nothing.** Every lens read is `AsNoTracking()`
+  (`src/Whizbang.Data.EFCore.Postgres/EFCorePostgresLensQuery.cs:161,185`;
+  `src/Whizbang.Data.EFCore.Postgres/EFCoreFilterableLensQuery.cs:82,174,198`;
+  `src/Whizbang.Data.EFCore.Postgres/MultiModelScopedAccess.cs:23`), and no context anywhere sets
+  `QueryTrackingBehavior`. There is no change-tracking work to do.
+- **It already resolves through a factory that opens a fresh scope.** Every generated lens
+  registration takes `IDbContextFactory<TDbContext>` and calls `CreateDbContext()`
+  (`src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Snippets/EFCoreSnippets.cs:329-337`;
+  `src/Whizbang.Data.EFCore.Postgres/ScopedDbContextFactory.cs:52-57`), so it is already decoupled
+  from the request context the writers use. That one call is the whole seam.
+- **Its raw-SQL escape hatch is dead code**, so the read surface is genuinely closed to `IQueryable`
+  and `GetByIdAsync`. All three escape-hatch methods require the internal `IDbContextAccessor` and no
+  production lens implements it (`src/Whizbang.Data.EFCore.Postgres/LensQueryConnectionExtensions.cs:77,110,140,171`).
+  Nothing can reach around the seam for a connection.
 
-#### The backend-for-frontend profile, and why it is first-class
+The one exception to guard against is the legacy `RegisterPerspectiveModel` shape, which registers
+`ILensQuery<TModel>` scoped over the *request* `DbContext`
+(`src/Whizbang.Data.EFCore.Postgres/EFCoreInfrastructureRegistration.cs:53-54`). No generator emits
+it, but a host wiring lenses that way has put its lens reads on the write context, and must not be
+moved.
 
-This is not a hypothetical shape the framework merely tolerates; it is one the framework explicitly
-supports and ships a sample for. In that sample the BFF exposes nine read endpoints against one
-write endpoint (`samples/ECommerce/ECommerce.BFF.API/Endpoints/`), and every one of the reads goes
-through a lens over a perspective
-(`samples/ECommerce/ECommerce.BFF.API/Lenses/`: order, product catalog, inventory levels). For a
-service of that shape the lens read side is the query workload, and the replica split is worth
-materially more than a path count suggests.
+#### The framework-general list
 
-That does not change the framework-general verdict above. It adds a profile in which the first of
-the four paths below is not one item on a list but the whole point.
-
-#### Three things that must go with the profile
-
-**1. A read-mostly API is not a read-mostly database workload.** The same sample makes this concrete:
-that BFF also declares its own perspectives (`samples/ECommerce/ECommerce.BFF.API/Perspectives/`),
-so it consumes events on the inbox, applies them, moves cursors, claims and leases work, and has
-commit order stamped for it. Every one of those is a write or a read inside a write, and all of them
-stay on the primary. The asymmetry is larger than it sounds: a read-mostly service of this shape,
-observed during a bulk import, emitted its own events in the tens of thousands while consuming fewer
-than it emitted, because applying a perspective fans out into further events. The write machinery is
-far from idle in a service whose API is read-only.
-
-**2. Therefore the split is per seam inside one process, and never per service.** The obvious wrong
-conclusion from the profile above is "the BFF is read-only, point it at the replica", and someone
-will draw it. **Do not.** A service pointed wholly at a reader loses its inbox and its apply path,
-and the inventory says how it loses them: the current-row read behind the lost-update guard, the
-runner's idempotency filter, the cursor reads that drive the inversion detector, and the
-outstanding-work count are all in the silently-wrong class. A whole-service switch does not fail at
-startup; it corrupts perspectives quietly while the API keeps answering. What moves is the lens seam
-inside the process. The workers in that same process keep the writer connection, which is precisely
-why stage 2 puts the reader on a separate context factory rather than on the registered context.
-
-**3. This is the case the ambient write-scope guard exists for.** One process serving replica-routed
-lens queries while its own workers run on the primary is exactly the mixed shape stage 4 is built
-around, so the profile strengthens that mechanism rather than needing a new one. Two notes on its
-coverage:
-
-- The guard must cover a lens query issued from **inside a receptor or a perspective apply**, not
-  only one inside an open transaction. That is how a read-mostly service would most plausibly trip
-  it, because reading a lens from a receptor is a supported pattern and a BFF has both halves in one
-  process.
-- Forcing rather than refusing is what makes the profile usable. A BFF can declare the reader as the
-  default for its read models and still be correct when the same lens is called from its own apply
-  path, which is the only way a per-model default is safe to set aggressively.
-
-#### How a consumer finds its own share
-
-The framework cannot supply this number, but a consumer can measure it, and the method is already
-written down. Snapshot `pg_stat_statements` before and after a representative window and diff it
-rather than reading cumulative counters, and sample `pg_stat_activity` across the window as well,
-because a thrashing statement cache hides the heaviest work and a statement still running at the end
-of the window appears in no diff at all (`ai-docs/load-under-bulk-import.md:11-27`). Grouping the
-diff into lens reads against work-coordination traffic gives the read-eligible share directly.
-Stage 7's per-operation naming is what would make that grouping trivial instead of manual.
-
-#### The framework-general list, unchanged
-
-Independently of profile, four paths carry essentially all of the value the framework itself can
+Independently of call origin, four paths carry essentially all of the value the framework itself can
 move, and three of them are cheap:
 
 1. **The lens read side.** The only genuinely high-volume read surface in the framework, and the one
    the read/write split exists for. It needs no change-tracking work (it is already
    `AsNoTracking()` throughout), it already resolves its context through a factory that opens a
    fresh scope, and its read surface is closed to `IQueryable` and `GetByIdAsync`. It is also the one
-   path whose staleness is a **product** question rather than a framework one, and the one whose
-   value depends entirely on the profile.
+   path whose staleness is a **product** question rather than a framework one.
 2. **The work-statistics gauge.** Four unbounded `COUNT(*)` over the queue tables and the active-stream
    table on a periodic cadence, feeding one gauge, inside a catch-everything block. These are the
    last unbounded counts in the hot set, so this is the largest single load item that is also
@@ -618,10 +675,10 @@ move, and three of them are cheap:
    `pg_stat_user_tables` half of the table-statistics provider must stay (risk class 2 below).
 
 Everything else on the `R` list is a one-shot startup reconciler or a log sentinel, and moving those
-buys nothing measurable. So the honest summary, in two sentences rather than one: **across the
-framework, one path is worth real money, three are worth a measurable amount, and a long tail is
-worth nothing. In a backend-for-frontend deployment that one path is most of the query volume, which
-is what makes the feature worth building at all.** Note also that the framework already spent
+buys nothing measurable. So the honest summary is: **one path is worth real money, three are worth
+a measurable amount, and a long tail is worth nothing.** The one worth real money is the API-origin
+lens surface, which is why the whole design above is built around its call origin rather than around
+a connection-string key. Note also that the framework already spent
 optimization effort on this problem in a different direction, by decomposing the poll and bounding
 it by the batch it returns rather than the backlog it scans
 (`ai-docs/load-under-bulk-import.md:40-62`), and by pinning the hot worker connections off the pooler
@@ -745,6 +802,29 @@ holes, either of which is disqualifying:
 
 Staleness is bounded by measuring it (mechanism 3), never by guessing which rows are fresh.
 
+#### Also rejected: delaying a notification by the measured lag
+
+The other tempting shortcut, and it will be proposed again because it sounds cheap: when a
+perspective apply triggers a notification that makes a client re-read, delay that notification by
+the measured replication lag so the follow-up read is likely to find the reader caught up. **Do not
+build this either.** Three reasons, and the third is the one that decides it:
+
+- **Lag is a distribution, not a value.** Delaying by the mean is wrong about half the time, which
+  is a coin flip on correctness. Delaying by the tail imposes the tail on every notification, so the
+  common case pays for the rare one.
+- **The measured figure is about a different transaction.** A replay position describes where the
+  reader has got to on some other commit; it says nothing about when *this* commit will land there.
+  Timing a delay off it is using a number that does not answer the question.
+- **It degrades worst at the worst moment.** The delay grows exactly when lag spikes, which is under
+  bulk load, so the user-visible refresh latency is worst precisely when the system is already
+  struggling. It trades latency in the common case for a partial reduction of a failure in the rare
+  one, and it never fully removes the failure.
+
+The same idea applied to the **read** side instead is acceptable, and appears below as option 5,
+because it costs no latency in the common case and its failure mode is a correct read rather than a
+stale one. The asymmetry is the whole point: delay the notification and everyone waits; route the
+read and only the affected reads pay.
+
 ### Stage 3: declared intent, per lens and per call site
 
 Status: `Not started`.
@@ -770,6 +850,13 @@ The override belongs on the scoped-access seam the lens API already funnels ever
 (`src/Whizbang.Core/Lenses/IScopedLensAccess.cs:18,27`), so it composes with the scope selection
 that is already expressed there rather than becoming a second, parallel fluent chain.
 
+**The tightening direction is load-bearing, not symmetry for its own sake.** It is what option 1 of
+"Making the notification-triggered read correct" is built from: a client that was just told to
+refresh marks its follow-up read fresh-required, and that single read goes to the primary. That is the
+recommended answer to the one user-visible read-after-write in this document, and it needs nothing
+beyond this override, which is the strongest reason to ship both directions in the same stage rather
+than deferring one.
+
 ### Stage 4: the ambient write-scope guard, and the allow-list
 
 Status: `Not started`.
@@ -791,12 +878,12 @@ reader-default lenses never actually reach the reader, and fix the composition i
 The guard also makes the per-lens default safe to set aggressively, which is what makes mechanism 1
 worth having at all.
 
-**The mixed single process is the case this exists for**, not an edge of it. A backend-for-frontend
-serving replica-routed lens queries while its own perspective workers run on the primary has both
-halves in one process, so the same lens type is reached from a controller and from an apply within
-the same host (see the profile in "How much is actually on the table"). The receptor and apply
-conditions above are therefore load-bearing rather than defensive: a guard that covered only the
-open-transaction case would miss the composition a read-mostly service is most likely to have.
+**Call origin is the reason this exists**, not an edge case for it. The same lens type is reached
+from the API layer and from an apply inside one host, so the difference between a safe read and an
+unsafe one is where the call came from, not which service it is in (see "How much is actually on the
+table"). The receptor and apply conditions above are therefore load-bearing rather than defensive: a
+guard covering only the open-transaction case would miss the two origins that most often reach a
+lens without one.
 
 **Beyond the guard, an allow-list decides which framework-internal components may hold a reader at
 all.** "Must be the primary" is a property of the component, not of the query, and there are three
@@ -894,6 +981,21 @@ Status: `Not started`.
 `pg_last_xact_replay_timestamp`, `pg_last_wal_replay_lsn`, or `pg_current_wal_lsn` anywhere; the
 repo-wide search for any of them returns nothing. Mechanism 3 has no input until this exists, which
 is why it is a stage of its own rather than a detail of stage 5.
+
+**What the measurement is for, and the one thing it must never be used for.** Two purposes only:
+
+1. It feeds the **bounded-staleness circuit breaker** in stage 5. The reader is used while the lag is
+   inside the budget and the primary is used while it is outside, so the measurement gates a binary
+   routing decision rather than a duration.
+2. It is an **observability signal**, so an operator can see that a configured reader is permanently
+   over budget and is therefore buying nothing.
+
+**It must not be used to time a delay.** Neither to delay a notification, which is rejected above,
+nor to sleep before a read in the hope that the reader will have caught up. A lag figure supports the
+question "is the reader currently fit to serve", which is a threshold comparison against a
+distribution's current position. It does not support "how long until this particular commit arrives",
+which is what a delay would need and what the figure cannot answer. Reviewers should treat any use of
+this value as a sleep duration as a defect.
 
 Both useful measurements are available from the reader endpoint itself, and both are worth having
 because they answer different questions:
@@ -1054,10 +1156,10 @@ decision plus tests rather than an obvious edit. Nothing in this branch changes 
    product decision, not the framework's. If the answer is no for any consumer, the default must be
    the primary and the reader must be opt-in per lens. Note that this is answered per read model
    rather than once, which is why stage 3 puts the default on the model and not on a global switch.
-3. **Whether the backend-for-frontend profile is a supported configuration or the motivating one.**
-   The sizing section treats it as the profile that makes the feature worth building. If it is
-   instead one shape among several, stages 3 to 5 are harder to justify on their own, because no
-   other profile recovers their cost.
+3. **Whether an API-origin lens read may default to the reader, or must opt in.** The design
+   recommends defaulting it, on the grounds that the guard makes an aggressive default safe and that
+   a default nobody sets is a feature nobody gets. The opposite choice is defensible and costs only
+   adoption, so it is the owner's.
 4. **Whether the sync-aware lens path may ever use a reader.** The recommendation is no by default:
    the fence it advertises would stop working silently (stage 5), so it should stay on the primary
    unless the caller opts into the read-your-writes form that compares the reader against a captured
@@ -1080,6 +1182,14 @@ decision plus tests rather than an obvious edit. Nothing in this branch changes 
   would be fed by a signal that degrades to polling under exactly the load that worsens lag, and a
   per-process cache cannot see a peer's writes. Bound staleness by measuring it, never by guessing
   which rows are fresh.
+- **Delaying a notification by the measured lag is rejected**: lag is a distribution rather than a
+  value, the figure describes another transaction's replay position, and the delay grows exactly
+  when lag spikes. The same idea on the read side (a per-session write window) is acceptable,
+  because its failure mode is a correct read rather than a stale one.
+- **The lag measurement feeds a threshold and an observability signal, never a sleep duration.**
+- **The unit of the routing decision is a lens query's call origin**, not the role of the service
+  hosting it, so an API-origin read is the reader's natural default and the guard catches the
+  in-process exception.
 - **Routing is decided by three layered mechanisms and no others**: declared intent, the ambient
   write-scope guard, and bounded staleness.
 - **`application_name` keeps its exact value on the notification connection**, and the seventeen
