@@ -142,6 +142,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **The stored-form rewrite skipped when it lost the schema lock, and nothing ran it later:** the
+  phase took the schema-init key with a single `pg_try_advisory_lock` and skipped at Debug on a lost
+  attempt, on the assumption that the holder was another rewriter. The holder is often a sibling's
+  bootstrap or DDL transaction, which converts nothing, and a sibling staged to wait for the migrator
+  never rewrites, so two instances starting together left every table of the schema unconverted with
+  nothing above debug level to say so. The phase now waits for the key (poll with backoff, up to the
+  schema command timeout), holds it at transaction scope in a transaction of its own with a savepoint
+  per table, logs once at Information that it is waiting, and gives up with a warning naming the key.
+  A migrator killed mid-rewrite left the remaining tables unconverted for the same reason: every
+  replacement instance was a waiter, and the rewrite sat before the wait behind a "not a waiter"
+  guard. A waiter whose deferral ends with the migrator gone now runs the rewrite before it contends
+  for the DDL lock, through the same body the migrator runs.
+- **The rewrite said nothing on success:** each table's DO block now raises a notice on every exit
+  (converted with its update count, settled and skipped, or table absent) and the phase relays it at
+  Information, followed by a one-line summary of the pass; a table that fails is still a warning
+  naming it. `SchemaCommandBoundary.ApplyOnAsync`, whose only caller was the phase, is removed.
 - **A perspective document one path wrote and the other could not read:** an opaque document was
   written as canonical numbers under the persistence profile and read through the data source's
   default-profile options, so every read failed. Opaque columns are now bound to the persistence

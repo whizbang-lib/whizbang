@@ -155,6 +155,27 @@ first and the poll that lands there reads "released", concludes the migrator die
 redo a migration with nothing in it, on every replica, on every startup. It is not incorrect, which
 is exactly why it would never be noticed.
 
+### The stored-form rewrite waits for the key; it never skips
+
+The rewrite phase (`CanonicalTemporalRewritePhase`) takes the same schema-init key before the DDL
+transaction opens, and it is the one place where a lost `pg_try_advisory_xact_lock` means **wait**,
+not defer and not take over. The reasoning is the reverse of Trap 3's: here the instance already
+knows it is the one responsible (it won the migrator duty, could not be staged, or is a waiter whose
+migrator died), and the holder of the key is not necessarily doing the rewrite. A sibling's
+bootstrap holds it for the length of its bootstrap transaction and converts nothing; a sibling's DDL
+holds it and converts nothing; and a sibling staged as a waiter never rewrites at all. "Skip, the
+holder will do it" was therefore a fleet-wide no-op whenever two instances started together, and it
+said so only at debug level.
+
+So the phase polls the try-lock with backoff for up to the schema command timeout, in a transaction
+of its own (transaction scope for the reason the next section gives), logs once at Information that
+it is waiting, and gives up with a warning naming the key. Giving up is safe: every reader tolerates
+the older forms, and the next start tries again. The two generated call sites (the migrator path and
+the waiter's takeover path) share one body, `rewriteStoredFormsAsync`, so they cannot drift.
+`CanonicalTemporalRewritePhaseTests.AnInstanceWaitsForTheLockAndAppliesOnceItIsReleasedAsync` and
+`CanonicalTemporalRewriteWiringTests.AWaiterThatTakesOverRunsTheRewriteBeforeTheDdlAsync` are the
+guards.
+
 ### Reassembling the key is not optional
 
 PostgreSQL splits a single-bigint advisory key across `classid` (high 32 bits) and `objid` (low 32).
@@ -307,6 +328,10 @@ which no row count and no absence of an exception can establish.
 0c. **Did a migration gain a dependency?** If anything in a bootstrap region now references a new
    object, that object joins the closure. `AnEmptyDatabaseCanElectAfterTheBootstrapAsync` is what
    catches it; the migration headers are not reliable and three of them are already wrong.
+0d. **Does it run before the DDL transaction and need the schema key?** Then a lost try-lock means
+   wait, not skip: the holder may be a sibling's bootstrap or DDL, which does not do your work, and a
+   sibling staged as a waiter never will. Test it with two instances, one holding the key in an open
+   transaction, and assert something above debug level is logged on the path that did not run.
 1. **Does it need a connection of its own?** Call `SchemaBoundaryConnections.Resolve`. Never open one
    from `GetConnectionString()`.
 2. **Does one statement depend on another's committed effect?** Ordering is not enough. Emit a
