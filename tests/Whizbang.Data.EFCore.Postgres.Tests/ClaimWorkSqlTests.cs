@@ -377,14 +377,19 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
-  /// Two-tier perspective fairness: streams with ≤ 100 pending events come BEFORE streams
-  /// with > 100 pending events in the claim_work return. Without this, a single huge stream
-  /// could starve many small streams behind it on every claim cycle. This test seeds one
-  /// large stream (200 events) and one small stream (1 event), then asserts the small one
-  /// is returned first.
+  /// A large held stream does not displace a small one from the re-offer, and within a priority the
+  /// stream with the oldest held event comes first.
   /// </summary>
+  /// <remarks>
+  /// The re-offer once ranked every held event to put streams with a hundred or fewer pending
+  /// events ahead of larger ones. That tier guarded a batch of rows against one large stream; the
+  /// drain has been per stream with an unbounded channel since Phase H, so a large stream no longer
+  /// displaces small ones, and the aggregate cost the tier paid on every poll was most of a busy
+  /// instance's poll (158). The re-offer now enumerates held streams most urgent first and, within a
+  /// priority, by their oldest held event.
+  /// </remarks>
   [Test]
-  public async Task ClaimWork_PerspectiveTwoTierFairness_SmallStreamReturnsBeforeLargeAsync() {
+  public async Task ClaimWork_Perspective_ALargeStreamDoesNotDisplaceASmallOne_OldestEventFirstAsync() {
     await using var dbContext = CreateDbContext();
     var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
@@ -404,22 +409,27 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await hb.ExecuteNonQueryAsync();
     }
 
-    // Seed 200 events on the large stream + 1 event on the small stream, all owned by us.
+    // 200 events on the large stream, then one on the small stream, all held by us. Event ids are
+    // time-ordered (v7) as they are in production, so the large stream's events are the older ones.
+    var largeEventIds = Enumerable.Range(0, 200).Select(_ => Guid.CreateVersion7()).ToArray();
+    var smallEventId = Guid.CreateVersion7();
     await using (var bulk = connection.CreateCommand()) {
       bulk.CommandText = @"
         INSERT INTO wh_perspective_events
           (event_work_id, event_id, stream_id, perspective_name, status, attempts, created_at,
            instance_id, lease_expiry)
-        SELECT gen_random_uuid(), gen_random_uuid(), @largeStream, 'TestPerspective', 0, 0, NOW(),
+        SELECT gen_random_uuid(), e, @largeStream, 'TestPerspective', 0, 0, NOW(),
                @inst, NOW() + INTERVAL '5 minutes'
-        FROM generate_series(1, 200);
+        FROM unnest(@largeEvents) AS e;
 
         INSERT INTO wh_perspective_events
           (event_work_id, event_id, stream_id, perspective_name, status, attempts, created_at,
            instance_id, lease_expiry)
-        VALUES (gen_random_uuid(), gen_random_uuid(), @smallStream, 'TestPerspective', 0, 0, NOW(),
+        VALUES (gen_random_uuid(), @smallEvent, @smallStream, 'TestPerspective', 0, 0, NOW(),
                 @inst, NOW() + INTERVAL '5 minutes');";
       bulk.Parameters.AddWithValue("largeStream", largeStreamId);
+      bulk.Parameters.AddWithValue("largeEvents", largeEventIds);
+      bulk.Parameters.AddWithValue("smallEvent", smallEventId);
       bulk.Parameters.AddWithValue("smallStream", smallStreamId);
       bulk.Parameters.AddWithValue("inst", instanceId);
       await bulk.ExecuteNonQueryAsync();
@@ -447,13 +457,11 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       }
     }
 
-    var smallIdx = perspectiveStreams.IndexOf(smallStreamId);
-    var largeIdx = perspectiveStreams.IndexOf(largeStreamId);
-
-    await Assert.That(smallIdx).IsGreaterThanOrEqualTo(0)
-      .Because("Small stream must appear in the result set");
-    await Assert.That(smallIdx).IsLessThan(largeIdx == -1 ? int.MaxValue : largeIdx)
-      .Because("Two-tier fairness — small stream must come BEFORE large stream");
+    await Assert.That(perspectiveStreams).Contains(smallStreamId)
+      .Because("a held stream is re-offered whatever else the instance holds; the large stream does not displace it");
+    await Assert.That(perspectiveStreams).Contains(largeStreamId);
+    await Assert.That(perspectiveStreams.IndexOf(largeStreamId)).IsLessThan(perspectiveStreams.IndexOf(smallStreamId))
+      .Because("within a priority the stream with the oldest held event is re-offered first");
   }
 
   /// <summary>
