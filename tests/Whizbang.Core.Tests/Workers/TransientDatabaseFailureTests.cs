@@ -106,6 +106,29 @@ public class TransientDatabaseFailureTests {
     await Assert.That(TransientDatabaseFailure.IsTransient(new AggregateException())).IsFalse()
       .Because("a loop must get an answer for whatever shape it caught, including an empty one");
 
+  /// <summary>
+  /// An inner chain that holds neither a timeout nor a socket failure leaves the failure the
+  /// database's own answer, which here is "not transient".
+  /// </summary>
+  /// <remarks>
+  /// The walk down the inner exceptions exists for the providers that bury a command timeout or a
+  /// dropped socket under an exception of their own. Reaching the end of that chain having found
+  /// neither has to mean "not the database's doing": were the walk to answer transient for any
+  /// wrapped exception, a defect wrapped by a provider would read as transient and a loop would
+  /// back off over it for ever, reporting a database problem nobody can fix.
+  /// </remarks>
+  [Test]
+  public async Task AnInnerChainWithoutATimeoutOrASocketFailureIsNotTransientAsync() {
+    var db = FakeDbException.WithSqlState(
+      "42601", isTransient: false, message: "syntax error", inner: new InvalidOperationException("a defect"));
+
+    var found = TransientDatabaseFailure.TryClassify(db, out var failure);
+
+    await Assert.That(found).IsFalse()
+      .Because("the SQLSTATE names no transient class and the chain holds nothing the walk looks for");
+    await Assert.That(failure).IsNull();
+  }
+
   [Test]
   public async Task AConstraintViolation_IsNotTransientAsync() {
     await Assert.That(TransientDatabaseFailure.IsTransient(FakeDbException.WithSqlState("23505"))).IsFalse();

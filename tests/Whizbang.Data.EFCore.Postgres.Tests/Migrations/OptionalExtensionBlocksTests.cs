@@ -131,6 +131,26 @@ public class OptionalExtensionBlocksTests : IAsyncDisposable {
     await Assert.That(names).IsEquivalentTo(["idx_optional_thing_a_trgm", "idx_optional_thing_b_trgm"]);
   }
 
+  /// <summary>Only index statements become names, so the warning lists indexes and nothing else.</summary>
+  /// <remarks>
+  /// A block carries whatever the generator put between its markers, and a comment or a session
+  /// setting sitting beside the indexes is ordinary. The warning exists for an operator to read
+  /// which indexes the service is running without, so anything that is not one of them has no
+  /// business in that list.
+  /// </remarks>
+  [Test]
+  public async Task OnlyIndexStatementsBecomeNamesAsync() {
+    var names = OptionalExtensionBlocks.IndexNames(
+      "-- the indexes that need the extension\n"
+      + "\n"
+      + "SET statement_timeout = 0;\n"
+      + "CREATE INDEX IF NOT EXISTS idx_named_once ON optional_thing USING gin (a gin_trgm_ops);\n");
+
+    await Assert.That(names).IsEquivalentTo(["idx_named_once"])
+      .Because("a comment, a blank line and a session setting are not indexes an operator is "
+        + "running without, and naming them would misreport what was skipped");
+  }
+
   /// <summary>The three ways a server refuses an extension are the three that skip.</summary>
   [Test]
   public async Task TheRefusalStatesAreRecognizedAsync() {
