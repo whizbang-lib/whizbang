@@ -13,7 +13,11 @@ public static class CollidingFirst {
     [StreamId]
     public Guid Id { get; set; }
 
-    /// <summary>A label.</summary>
+    /// <summary>
+    /// A label, matched by substring, which is what puts an optional-extension block in this
+    /// table's generated schema and so runs the perspective pass down the block path.
+    /// </summary>
+    [Indexed(IndexKinds.Substring)]
     public string Label { get; set; } = string.Empty;
   }
 }
