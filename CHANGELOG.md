@@ -148,6 +148,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matched, and every start still applied the bootstrap DDL under the lock. The schema builders no
   longer stamp the clock, and the hash covers statements only: comment-only lines and line endings
   take no part, so a header or a note cannot turn one release into two closures.
+- **The perspective-table pass re-applied its DDL on every start of a schema whose models share a
+  type name:** the per-perspective hash rows were keyed by the model's simple name, so models nested
+  under feature holders (`Order.Model`, `Invoice.Model`, or several `SagaModel`s) shared one row;
+  whichever wrote last owned it, the one compared first read as changed on every start, the slow
+  path ran, and `CREATE TABLE` and `CREATE INDEX ... IF NOT EXISTS` took relation locks on hot
+  tables for nothing, which is what deadlocked an instance starting under load. The rows are keyed
+  by table name now, which is unique within a schema. The first start on this release records the
+  new keys (one ordinary perspective pass); the rows under the old keys stay behind, inert.
+- **A refused `pg_trgm` extension failed the whole perspective pass:** every substring index emitted
+  its own `CREATE EXTENSION IF NOT EXISTS pg_trgm;`, and on a server that refuses the extension
+  (not allow-listed, no privilege, not installed) that statement failed the pass, so a service with
+  one substring index paid a failed startup attempt on every start and never got the index either
+  way. The extension is now created once per table script inside a marked block, and the schema
+  pass applies the block under a savepoint: a refusal (`0A000`, `42501`, `58P01`) skips the trigram
+  indexes with one warning naming them and lets the pass complete; substring queries scan until an
+  operator provides the extension. Both of the scripts the generator writes carry the block: the
+  hash-tracked one per table, and the single script the pass falls back to when it cannot read the
+  tracking tables. A trigram index left outside the block that creates the extension is the worse
+  half of the same defect, because it reaches a server with no `gin_trgm_ops` operator class as an
+  ordinary statement and fails the pass with nothing to skip.
 - **The stored-form rewrite skipped when it lost the schema lock, and nothing ran it later:** the
   phase took the schema-init key with a single `pg_try_advisory_lock` and skipped at Debug on a lost
   attempt, on the assumption that the holder was another rewriter. The holder is often a sibling's

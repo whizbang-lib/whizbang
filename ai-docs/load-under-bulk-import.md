@@ -103,6 +103,37 @@ endings before hashing, so a header or a note added later cannot split one relea
 closures. Script names and order still take part, because a region moved or renamed is a different
 closure.
 
+The same rollout showed a second reason DDL ran on every start, this one inside the initializer's
+own transaction: the phase summary read `PerspectiveTables=(completed)` beside `skipped (hash match)`
+for every other phase. The per-perspective hash rows (`perspective:<name>` in
+`wh_schema_migrations`) were keyed by the model's simple type name, and a service that nests its
+models under feature holders has many models with one simple name (`Order.Model`, `Invoice.Model`,
+several `SagaModel`s). Those models shared one row: whichever wrote last owned it, the one compared
+first read as changed on every start, the fast path was refused, and the perspective pass re-applied
+`CREATE TABLE` and `CREATE INDEX ... IF NOT EXISTS` for the colliding tables under the schema lock.
+`IF NOT EXISTS` still takes a relation lock before finding nothing to do, and that lock is what an
+instance starting under load deadlocked on. The entries are keyed by table name now, the one name
+unique to a perspective within its schema. The rule: any key that gates a startup phase must be
+unique for what it gates; a simple type name is not a key.
+
+A third finding from the same start: a server that refuses `CREATE EXTENSION pg_trgm` (a managed
+server that does not allow-list it answers `0A000`; a role without the privilege `42501`; a build
+without it `58P01`) failed the whole perspective pass, because every substring index emitted its
+own extension statement as ordinary DDL inside the initializer's transaction. Every start paid a
+failed attempt and the trigram indexes were never built. The generator now emits the extension once
+per table script inside an optional-extension block (`-- @whizbang:optional-extension pg_trgm` to
+`-- @whizbang:optional-extension-end`), and `OptionalExtensionBlocks.ApplyAsync` creates the
+extension under a savepoint, skips the block with one warning naming the extension and the indexes
+when the server refuses, and applies everything else. The generator writes the perspective schema
+twice, once per table for the hash-tracked pass and once as a single script for the fallback the
+pass takes when it cannot read the tracking tables, and the block has to be in both: a trigram index
+emitted outside the block that creates the extension reaches a server with no `gin_trgm_ops`
+operator class as an ordinary statement and fails the pass with nothing to skip, which is a worse
+outcome than the defect it replaced. `NoTrigramIndexIsEmittedOutsideABlockAsync` reads every script
+the generator writes rather than one of them, for that reason. The rule: an index family a server
+may refuse is optional by construction; a declaration must never be the reason a service fails to
+start.
+
 ## Finding 5: the idle cost is polling and connection churn
 
 With every queue empty the two busiest databases committed 122 and 182 transactions a second. The
