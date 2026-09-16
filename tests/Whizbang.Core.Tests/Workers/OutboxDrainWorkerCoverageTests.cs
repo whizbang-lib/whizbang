@@ -31,7 +31,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <docs>fundamentals/work-coordinator/per-stream-drain</docs>
 [NotInParallel("WhizbangBackgroundServiceTests")]
-public class OutboxDrainWorkerCoverageTests {
+public partial class OutboxDrainWorkerCoverageTests {
 
   // --- fakes: channels / instance provider ---
 
