@@ -910,6 +910,13 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     public ConcurrentQueue<PerspectiveCursorCompletion> Completions { get; } = new();
     public ConcurrentQueue<PerspectiveCursorFailure> Failures { get; } = new();
 
+    /// <summary>When set, the lease release fails with this — a store that cannot release, or one
+    /// asked while the database that just failed is still failing.</summary>
+    public Exception? ReleaseException { get; init; }
+
+    /// <summary>The perspective streams each release named, in order.</summary>
+    public ConcurrentQueue<List<Guid>> PerspectiveLeaseReleases { get; } = new();
+
     public int GetStreamEventsCallCount => Volatile.Read(ref _streamEventsCallCount);
     public int GetCursorsBatchCallCount => Volatile.Read(ref _cursorsBatchCallCount);
     public int GetPerspectiveCursorCallCount => Volatile.Read(ref _cursorCallCount);
@@ -966,6 +973,15 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       Failures.Enqueue(failure);
       _firstFailure.TrySetResult();
       return Task.CompletedTask;
+    }
+
+    public Task<UnstartedLeaseRelease> ReleaseUnstartedLeasesAsync(
+        Guid instanceId, IReadOnlyList<Guid> inboxStreamIds, IReadOnlyList<Guid> perspectiveStreamIds,
+        CancellationToken cancellationToken = default) {
+      PerspectiveLeaseReleases.Enqueue([.. perspectiveStreamIds]);
+      return ReleaseException is not null
+        ? Task.FromException<UnstartedLeaseRelease>(ReleaseException)
+        : Task.FromResult(new UnstartedLeaseRelease(0, perspectiveStreamIds.Count));
     }
 
     public Task StoreInboxMessagesAsync(InboxMessage[] messages, int partitionCount = 2, CancellationToken cancellationToken = default) => Task.CompletedTask;

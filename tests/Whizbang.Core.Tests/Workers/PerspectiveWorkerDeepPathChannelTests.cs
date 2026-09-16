@@ -903,6 +903,16 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public Task FirstCompletion => _firstCompletion.Task;
     public Task FirstFailure => _firstFailure.Task;
 
+    /// <summary>Thrown by the next cursor read only, then cleared: one failed batch, then service.</summary>
+    public Exception? NextCursorException {
+      get => Volatile.Read(ref _nextCursorException);
+      set => Volatile.Write(ref _nextCursorException, value);
+    }
+    private Exception? _nextCursorException;
+
+    /// <summary>The perspective streams each lease release named, in order.</summary>
+    public ConcurrentQueue<List<Guid>> PerspectiveLeaseReleases { get; } = new();
+
     public Task WaitForCompletionsAsync(int count, TimeSpan timeout) {
       var tcs = _completionWaiters.GetOrAdd(count, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
       if (Volatile.Read(ref _completionCount) >= count) {
@@ -934,10 +944,21 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
     public Task DeregisterInstanceAsync(Guid instanceId, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<PerspectiveCursorInfo?> GetPerspectiveCursorAsync(Guid streamId, string perspectiveName, CancellationToken cancellationToken = default) {
+      var failure = Interlocked.Exchange(ref _nextCursorException, null);
+      if (failure is not null) {
+        return Task.FromException<PerspectiveCursorInfo?>(failure);
+      }
       if (CursorOverrides.TryGetValue((perspectiveName, streamId), out var cursor)) {
         return Task.FromResult<PerspectiveCursorInfo?>(cursor);
       }
       return Task.FromResult<PerspectiveCursorInfo?>(null);
+    }
+
+    public Task<UnstartedLeaseRelease> ReleaseUnstartedLeasesAsync(
+        Guid instanceId, IReadOnlyList<Guid> inboxStreamIds, IReadOnlyList<Guid> perspectiveStreamIds,
+        CancellationToken cancellationToken = default) {
+      PerspectiveLeaseReleases.Enqueue([.. perspectiveStreamIds]);
+      return Task.FromResult(new UnstartedLeaseRelease(0, perspectiveStreamIds.Count));
     }
   }
 
