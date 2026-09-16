@@ -243,6 +243,19 @@ that the other could not read stopped a feature in a deployed service. The file 
 rule (one unit, microseconds), why nothing per property may be generated, what the ledger and the
 rewrite do, and the two failure-path defects found underneath, one of them fixed and one deferred.
 
+### 📖 **[load-under-bulk-import.md](ai-docs/load-under-bulk-import.md)** - CRITICAL
+**Read when**:
+- Touching `claim_work`, the housekeeping gate, `ServiceBacklog`, the commit-order stamper,
+  `SchemaBootstrapPhase`, or a store-backed poll source
+- Investigating database CPU or a backlog that grows under load
+- Measuring anything with `pg_stat_statements` or `pg_stat_user_tables`
+
+**Why critical**: a bulk load pegged a shared database server with every document index in place,
+and each cause was a rule the code did not state: the poll priced itself by the backlog, the sweep
+measured settledness on one table of four, the stamper sorted before it checked, the bootstrap ran
+DDL it did not need. The file records the measurements, the rules, and the way to measure that does
+not mislead (snapshot and diff; sample sessions; a thrashing statement cache hides the heaviest work).
+
 ### 📖 **[type-naming.md](ai-docs/type-naming.md)** - CRITICAL
 **Read when**:
 - Writing or comparing a type name that is a key (`clr_type_name`, `event_type`, perspective names, registry JSON)

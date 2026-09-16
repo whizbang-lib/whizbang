@@ -67,13 +67,24 @@ the polling loops (`count_outstanding_work`, due-schedule counts, existence prob
 |---|---|---|
 | L1 | `claim_work` bounded by the batch, not the backlog: candidate selection through the partial claiming indexes with a LIMIT before ordering, and plans that cannot be cached against an empty table (`plan_cache_mode` or a statement shape the planner re-plans) | not started |
 | L2 | Index `(origin_service_id, origin_commit_sequence, created_at)` on the event store for the digest-epoch lane probes; bound probes per tick | not started |
-| L3 | Maintenance busy check counts outbox and perspective-event backlog too, and epoch closure and purges defer while any is non-trivial (bounded, as today) | not started |
+| L3 | Maintenance busy check counts outbox and perspective-event backlog too, and epoch closure and purges defer while any is non-trivial (bounded, as today); a deferred sweep is logged at Information with every count | done |
 | L4 | Stamper: batch size and interval tuned so it stays under a tenth of a core at peak; skip when nothing is unstamped without the CTE | not started |
 | L5 | Bootstrap phase skips DDL when the recorded schema hash is current, so a scaled-out instance starting under load takes no relation locks | not started |
-| L6 | Poll loops back off when idle and read settings from a cached snapshot | not started |
+| L6 | Store-backed pull sources back off when idle: after three empty ticks the interval doubles per tick to a ceiling of one minute, and a hit or a push-transport flip restores the base cadence | done |
+| L7 | Outbox and inbox failure functions read the element the runtime writes (`MessageId`, `Reason`) as well as the older names, as the perspective function already does, so `failure_reason` stops reading Unknown for every row | not started |
+| L8 | A drain-path apply failure of any kind parks each leased row through the failure channel, as the stored-form path does, so the rows back off and dead-letter instead of being re-claimed forever behind a cursor failure that names no row | done |
+| L9 | Tag payload-size thresholds bind from configuration under `Whizbang:Tags` (`PayloadSizeWarningThresholdBytes`, `PayloadSizeErrorThresholdBytes`, and per tag under `...ByTag:{tag}`); the processor resolves the per-tag value first, then the global one | done |
 
 Ordering: L1 removes most of the peak; L2 and L3 remove the maintenance load from the peak; L5 is a
-correctness item (deadlocks); L4 and L6 are efficiency.
+correctness item (deadlocks); L4 and L6 are efficiency; L7 and L8 were deferred from the stored-form
+work and change what a failed row records; L9 was found alongside (six warnings per message on a
+tag whose payloads are legitimately wide, with no configuration to raise the line).
+
+The settings-snapshot idea from the first draft of L6 was dropped on the numbers: the settings reads
+cost a tenth of a millisecond each. The transaction rate at idle is connection churn (a `DISCARD ALL`
+per pooled connection returned, several hundred a second per database) and the probes themselves;
+the backoff addresses the probes, and the churn is a consumer connection-string decision
+(`No Reset On Close`) recorded in the migrations documentation.
 
 ## 3. Consumer-side items found alongside
 

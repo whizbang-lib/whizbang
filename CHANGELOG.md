@@ -158,6 +158,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (converted with its update count, settled and skipped, or table absent) and the phase relays it at
   Information, followed by a one-line summary of the pass; a table that fails is still a warning
   naming it. `SchemaCommandBoundary.ApplyOnAsync`, whose only caller was the phase, is removed.
+- **Maintenance ran at the peak of a bulk load:** the housekeeping gate measured settledness from
+  unprocessed inbox rows and live leases alone, so a producer whose load sat in its outbox and a
+  consumer whose load sat in its perspective events both read as idle, and the purges and the
+  digest-epoch closure occupied two to three database backends for the length of the load.
+  `ServiceBacklog` now carries bounded counts of pending outbox rows and pending perspective events,
+  `IsSettled` requires all four measures to be zero, and a deferred sweep is logged at Information
+  with every count rather than at Debug.
+- **Store-backed pull sources polled an idle store at full cadence:** with every queue empty the
+  poll loops alone committed over a hundred transactions a second per busy database. A
+  `BasePollSignalSource` given a `PollIdleBackoff` stretches its interval after a run of empty ticks
+  (doubling per tick up to a ceiling) and returns to the base interval on the first hit or on any
+  reschedule; the work-available and due-schedule sources use three empty ticks and a one-minute
+  ceiling.
+- **A drain-path apply failure of any other kind parked nothing:** the cursor failure the drain
+  path reported named no event, so the coordinator recorded nothing against the rows; the lease
+  lapsed, the rows were re-claimed, and the same failure repeated every cycle with no backoff and no
+  dead-letter. Every failure now parks each leased row of the group through the failure channel
+  (reason Unknown, the exception's message as the error), the way the stored-form failure already
+  did, so the rows back off and dead-letter at the configured threshold.
+- **Tag payload-size thresholds could not be raised for one tag, or from configuration:** the
+  warning threshold defaulted to 8 KiB, nothing bound either threshold from configuration, and a tag
+  whose payloads are legitimately wide produced a warning per hook per message. `TagOptions` now
+  takes per-tag thresholds (`UsePayloadSizeThresholds`), the processor resolves the tag's value before
+  the global one, and `TagPayloadSizeConfigurationBinder` reads both, globally and per tag, from
+  `Whizbang:Tags` without reflection; an empty value disables a threshold and a non-numeric value
+  fails startup naming the key.
 - **A perspective document one path wrote and the other could not read:** an opaque document was
   written as canonical numbers under the persistence profile and read through the data source's
   default-profile options, so every read failed. Opaque columns are now bound to the persistence

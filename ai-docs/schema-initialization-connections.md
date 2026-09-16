@@ -253,6 +253,24 @@ The consumer that would have hit this is one with no `-init` connection configur
 `SchemaBoundaryConnections.Resolve` falls through to the context's own data source and that points
 at the pooler. `AFailedBootstrapLeavesTheLockFreeForTheDdlPhaseAsync` is the guard.
 
+### A current closure is applied nowhere, because idempotent DDL still locks
+
+Every instance start used to apply the closure. Every statement in it is idempotent, and idempotent
+is not free: `CREATE INDEX IF NOT EXISTS` on an index that exists takes a share lock on its table
+before it finds nothing to do, and the core-tables script carries dozens of them over the hot
+tables. An instance an autoscaler started under a bulk load ran that against tables the running
+instances were writing and deadlocked with the maintenance sweep and the poll sources inside two
+seconds (`40P01`, four of them).
+
+So the closure is recorded. The transaction that applies it also writes the SHA-256 of the scripts it
+ran (names and text) to `wh_bootstrap_closure`, a table migration 000's bootstrap region creates, and
+an instance starting later computes the same hash over the closure it carries, finds it recorded, and
+returns without a statement, a lock, or a wait. A changed closure has a different hash and runs in
+full once. The three properties above hold: the ledger is still untouched (`wh_bootstrap_closure` is
+not the ledger), the election is still probed rather than assumed, and a record that cannot be read
+falls through to applying, never to skipping. `ACurrentClosureIsNotAppliedAgainAsync` and
+`AChangedClosureIsAppliedAsync` are the guards.
+
 ### The closure is not what the migration headers say
 
 Three of the four headers are wrong or incomplete, so derive it from the SQL and never the comments:
