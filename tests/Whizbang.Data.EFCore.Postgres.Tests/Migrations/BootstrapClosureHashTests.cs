@@ -18,6 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Unit")]
+[Category("Shard1")]
 public class BootstrapClosureHashTests {
   private static readonly (string Name, string Sql)[] _scripts = [
     ("core", "CREATE TABLE IF NOT EXISTS wh_a (id uuid);\nCREATE INDEX IF NOT EXISTS ix_a ON wh_a (id);"),
