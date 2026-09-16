@@ -195,13 +195,23 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       .Because("a stream that reads again is released, so a later failure is announced again");
   }
 
-  /// <summary>Any other failure keeps its generic error and parks nothing here.</summary>
+  /// <summary>
+  /// Any other failure keeps its generic error, is not counted as a stored-form failure, and still
+  /// parks the leased rows it failed on.
+  /// </summary>
+  /// <remarks>
+  /// The cursor failure the drain path reported carried no event id, so the coordinator recorded
+  /// nothing against the rows: the lease lapsed, the rows were re-claimed, and the same failure
+  /// repeated every cycle without backoff and without ever reaching the dead-letter threshold.
+  /// The stored-form path parked its rows; every other failure parks its rows the same way.
+  /// </remarks>
   [Test]
-  public async Task DrainMode_OtherFailure_IsNotClassifiedAsStoredFormAsync() {
+  public async Task DrainMode_OtherFailure_IsNotClassifiedAsStoredFormButParksItsRowsAsync() {
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
+    var workId = Guid.CreateVersion7();
     var coordinator = new DrainWorkCoordinator();
-    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, Guid.CreateVersion7())]);
+    coordinator.EnqueueStreamEvents([_raw(streamId, eventId, workId)]);
     var eventStore = new DrainEventStore();
     eventStore.EnqueueDeserialized([_envelope(eventId, new DrainDeepEvent("other"))]);
     var (runner, registry) = _storedFormRunner();
@@ -215,6 +225,7 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await worker.StartAsync(cts.Token);
     await harness.EnqueueDrainStreamAsync(streamId, cts.Token);
     await coordinator.FirstFailure.WaitAsync(TimeSpan.FromSeconds(10));
+    await harness.FailureCapture.WaitForCountAsync(1, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
 
@@ -222,7 +233,14 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await Assert.That(records.Any(r => r.Id.Id == STORED_FORM_UNREADABLE_EVENT_ID)).IsFalse();
     await Assert.That(records.Any(r => r.Level == Microsoft.Extensions.Logging.LogLevel.Error
       && r.Message.Contains("Error processing perspective", StringComparison.Ordinal))).IsTrue();
-    await Assert.That(harness.FailureCapture.Items).IsEmpty();
     await Assert.That(failures.Count).IsEqualTo(0);
+
+    var (category, parked) = harness.FailureCapture.Items.Single();
+    await Assert.That(category).IsEqualTo(WorkCategory.PerspectiveEvent);
+    await Assert.That(parked.MessageId).IsEqualTo(workId)
+      .Because("the failure is recorded against the leased row so the database backs it off and dead-letters it; "
+        + "a cursor failure with no event id records nothing and the row is re-claimed forever");
+    await Assert.That(parked.Reason).IsEqualTo(MessageFailureReason.Unknown);
+    await Assert.That(parked.Error).Contains("apply failed for another reason", StringComparison.Ordinal);
   }
 }
