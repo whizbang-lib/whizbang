@@ -103,6 +103,51 @@ public class CountServiceBacklogSqlTests : EFCoreTestBase {
   }
 
   [Test]
+  public async Task QueuedOutboxWorkMakesTheServiceUnsettledAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_outbox
+          (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number)
+        SELECT gen_random_uuid(), 'topic', 'TestEvent', '{}', '{}', 0, 0, NOW(), gen_random_uuid(), 0
+        FROM generate_series(1, 4)";
+      await ins.ExecuteNonQueryAsync();
+    }
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var backlog = await coordinator.CountServiceBacklogAsync();
+
+    await Assert.That(backlog!.PendingOutboxRows).IsEqualTo(4)
+      .Because("a producer's load sits in its outbox; a gate that reads only the inbox sees it as idle "
+             + "and runs the sweep at the peak");
+    await Assert.That(backlog.IsSettled).IsFalse();
+  }
+
+  [Test]
+  public async Task QueuedPerspectiveEventsMakeTheServiceUnsettledAsync() {
+    await using var ctx = CreateDbContext();
+    var conn = await _openAsync(ctx);
+    await using (var ins = conn.CreateCommand()) {
+      ins.CommandText = @"
+        INSERT INTO wh_perspective_events
+          (stream_id, perspective_name, event_id, status, attempts, created_at)
+        SELECT gen_random_uuid(), 'TestPerspective', gen_random_uuid(), 0, 0, NOW()
+        FROM generate_series(1, 3)";
+      await ins.ExecuteNonQueryAsync();
+    }
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(
+      ctx, Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
+    var backlog = await coordinator.CountServiceBacklogAsync();
+
+    await Assert.That(backlog!.PendingPerspectiveRows).IsEqualTo(3)
+      .Because("a consumer mid-drain has stored its inbox and queued everything as perspective events");
+    await Assert.That(backlog.IsSettled).IsFalse();
+  }
+
+  [Test]
   public async Task ProcessedRowsDoNotHoldTheServiceUnsettledAsync() {
     await using var ctx = CreateDbContext();
     var conn = await _openAsync(ctx);
