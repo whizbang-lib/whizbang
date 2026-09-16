@@ -507,7 +507,7 @@ Six options, ordered, with the first as the recommendation.
 Recommended. It is deterministic rather than probabilistic, it needs no lag measurement at all, and
 the reads that pay the primary's cost are exactly the ones that need it: a client that was just told
 to refresh. It is also the smallest possible change, because it is mechanism 1's call-site override
-(stage 3) used in the tightening direction, which the design already requires to exist. Nothing new
+(stage 4) used in the tightening direction, which the design already requires to exist. Nothing new
 is needed beyond the override itself.
 
 **2. Carry the commit position in the notification and let the follow-up read use it**: wait briefly
@@ -602,7 +602,7 @@ any implementation, because conflating them is exactly what makes a per-perspect
 necessary:
 
 - the **barrier** is one physical replay position per reader;
-- the **routing policy** is per lens, which is stage 3's declared default.
+- the **routing policy** is per lens, which is stage 4's declared default.
 
 **(c) A purely logical watermark stalls, so it is the fallback and not the mechanism.** Reading the
 per-stream, per-perspective cursor rows from the reader would work in an environment where the
@@ -622,14 +622,14 @@ the two statistics collectors the framework already ships
 (`src/Whizbang.Core/Observability/TableStatisticsCollector.cs`,
 `src/Whizbang.Core/Observability/NotifyDebounceStatsCollector.cs`). It is **not** the thing the
 standing preference against polling is about: that concerns a *client* polling for *data*, repeatedly
-and per user. This is one server-side gauge read on a cadence, and stage 6 needs it anyway.
+and per user. This is one server-side gauge read on a cadence, and stage 7 needs it anyway.
 
 **Permissions confirmed**, since the whole mechanism depends on an ordinary role being able to read
 the position. On PostgreSQL 17.7, `pg_is_in_recovery`, `pg_last_wal_replay_lsn`,
 `pg_last_xact_replay_timestamp`, `pg_current_wal_lsn` and `pg_wal_lsn_diff` all carry the default
 catalog ACL, meaning `EXECUTE` to `PUBLIC`, and a role created `NOSUPERUSER` calls all of them
 successfully with no grant. Two notes from that check: on a primary the two replay functions return
-`NULL`, which doubles as the primary-detection stage 8 needs; and the `NOTIFY`-during-recovery
+`NULL`, which doubles as the primary detection stage 2 needs; and the `NOTIFY`-during-recovery
 refusal above is documented engine behavior that this audit could not exercise locally, because it
 needs a real standby, so it is the one item to confirm against the deployed topology rather than
 taken on trust.
@@ -662,8 +662,8 @@ Nothing present yields that measurement. There is no lens-query instrument at al
 are `whizbang.event_store.query.duration`, which is the event store rather than the lens, and
 `whizbang.perspective.read_failures`, which counts failures. The numerator has a usable proxy in
 `whizbang.lifecycle_coordinator.perspective_completions_signaled`, but there is no denominator to
-divide it by. Stage 7's per-operation naming is what would produce both sides, which is a reason to
-sequence stage 7 before any decision on option 6 rather than after it.
+divide it by. Stage 8's per-operation naming is what would produce both sides, which is a reason to
+sequence stage 8 before any decision on option 6 rather than after it.
 
 **On polling after the notification.** Re-querying on a timer until the data appears does work, and it
 should still be rejected. It conflicts with the standing engineering preference against polling, and
@@ -676,7 +676,7 @@ Two of the read-only SQL functions are declared `LANGUAGE plpgsql` with no volat
 no writes, so they would **execute successfully on a hot standby** and simply return stale numbers:
 `count_outstanding_work` (`src/Whizbang.Data.Postgres/Migrations/123_CountOutstandingWork.sql:82`)
 and `resolve_sync_inquiries`. "Does it raise `25006`?" is therefore not a safe heuristic for what may
-be routed. Any routing must work from an explicit allow-list, which is what stage 3 below proposes.
+be routed. Any routing must work from an explicit allow-list, which is what stage 4 below proposes.
 
 ---
 
@@ -688,17 +688,22 @@ so that the cost is on the record rather than guessed at.
 
 | Stage | What it delivers | Size | Status |
 |---|---|---|---|
-| 1 | Resolve a `-readonly` sibling key, falling back to the pooled key so a consumer without a replica is unchanged | small | `Not started` |
-| 2 | A reader data source behind a marker interface plus a reader context factory, wired into the lens path only | medium | `Not started` |
-| 3 | Mechanism 1: declared intent, as a per-lens default plus a call-site override in both directions | medium | `Not started` |
-| 4 | Mechanism 2: the ambient write-scope guard, plus the deny-by-default allow-list as a registry test and a connection-role assertion at the coordinator's connection acquisition | medium | `Not started` |
-| 5 | Mechanism 3: bounded staleness, as a lag budget with a primary fallback, plus the read-your-writes option | medium | `Not started` |
-| 6 | Replication-lag measurement (time and byte lag) as a provider, collector, meter gauges, and a health source. **Stage 5 has no input without this** | medium | `Not started` |
-| 7 | Connection observability: role-tagged pool gauges and an operation name on every database call | medium | `Not started` |
-| 7a | Prerequisite tidying: migrate the twelve remaining `application_name` literals onto the constant that already exists | small | `Not started` |
-| 8 | Startup detection and a one-line Information log when the reader key points at the primary | small | `Not started` |
+| 1 | **Resolution**: resolve a `-readonly` sibling key, falling back to the pooled key so a consumer without a replica is unchanged | small | `Not started` |
+| 2 | **Activation**: the gate. Three cases (absent, equivalent to the primary, probed as the primary), the free string check before the authoritative probe, the probe repeated for failover, and everything off in all three. **Every later stage depends on this** | medium | `Not started` |
+| 3 | A reader data source behind a marker interface plus a reader context factory, wired into the lens path only. Created only when stage 2 says on | medium | `Not started` |
+| 4 | Mechanism 1: declared intent, as a per-model default plus a call-site override in both directions | medium | `Not started` |
+| 5 | Mechanism 2: the ambient write-scope guard, plus the deny-by-default allow-list as a registry test and a connection-role assertion at the coordinator's connection acquisition | medium | `Not started` |
+| 6 | Mechanism 3: bounded staleness, as a lag budget with a primary fallback, plus the read-your-writes option | medium | `Not started` |
+| 7 | Replication-lag measurement (time and byte lag) as a provider, collector, meter gauges, and a health source, whose one query also answers stage 2's recovery check. **Stage 6 has no input without this** | medium | `Not started` |
+| 8 | Connection observability: role-tagged pool gauges and an operation name on every database call | medium | `Not started` |
+| 8a | Prerequisite tidying: migrate the twelve remaining `application_name` literals onto the constant that already exists | small | `Not started` |
+| 9 | The migration path for consumers, which is a no-op by construction | small | `Not started` |
 
-Stages 1 to 5 and 8 are gated on the first item in "Not decided" below. Stages 6, 7 and 7a stand on
+Stage 2 is the load-bearing one and the reason the order matters: without it, every other stage can
+be made to run against the primary by a copied connection string, and the failure is silent. It is
+second rather than later because stage 3 must not create a data source the gate has not approved.
+
+Stages 1 to 6 and 9 are gated on the first item in "Not decided" below. Stages 7, 8 and 8a stand on
 their own merits: the framework cannot measure replication lag or report connection saturation today
 regardless of whether a reader is ever adopted, so they are worth doing even if the answer to the
 gating question is no.
@@ -804,7 +809,135 @@ one key convention silently diverged once and the notification workers ended up 
 connection while EF used a different one
 (`src/Whizbang.Core/Naming/WhizbangNamingConvention.cs:8-27`).
 
-### Stage 2: how the read side would use it in EF Core 10
+### Stage 2: activation, which is not the same thing as resolution
+
+Status: `Not started`. **Every later stage depends on this one, which is why it is second.**
+
+The requirement: **all replica-specific machinery is off when there is no read replica, and it must
+not be possible to run it against the primary by accident because the connection string happens to
+be the same.** The harm is not only wasted work. A reader data source pointed at the primary opens a
+**second connection pool against that same server for no benefit**, which is a real cost behind a
+pooler with a connection budget, where the documented topology already accounts for every connection
+per instance.
+
+#### Resolution and activation are different decisions, and conflating them is the bug
+
+Stage 1 resolves a connection string and **falls back to the pooled key**, so reads keep working in
+an environment with no replica. Activation asks whether the resolved endpoint is actually a standby
+and **does not fall back at all**. Keeping them apart is precisely what stops the machinery running
+against the primary: the fallback is what makes the feature safe to ship, and if activation inherited
+it, the fallback would be what turns the feature into a second pool on the writer.
+
+#### Three cases, each caught by a different means, and what each detector misses
+
+| Case | Detected by | What that detector misses | Outcome |
+|---|---|---|---|
+| **1. Key absent** | configuration, no I/O | nothing | Off, **silent** |
+| **2a. Key present, equivalent to the primary** | normalized string comparison at startup, before any connection is opened | an alias, a managed reader endpoint assigned to the primary, or a failover, none of which change the string | Off, **Warning once at startup** |
+| **2b. Key present, string differs, endpoint is still the primary** | the recovery probe, repeated on a cadence | nothing, but only because it repeats; a single probe at startup misses a later failover | Off, **Warning once per transition** |
+| **3. Key present and the endpoint is a standby** | the same recovery probe | nothing | **On** |
+
+**Case 2a: the free check, first.** Compare **host, port and database only**, normalized, ignoring
+credentials and incidental parameters such as pool size, timeouts, and application name, because a
+copied connection string commonly differs in exactly those while naming the same server. This costs
+no I/O, runs before any connection is opened, and works even where the recovery probe is unavailable
+or not permitted. It catches the likely misconfiguration, which is someone copying the pooled string
+and editing nothing.
+
+**Case 2b: the authoritative check, second, and repeated.** No string comparison can see this one.
+The causes are an alias that resolves to the primary, a managed reader endpoint assigned to the
+primary, and a failover that promoted the very replica being pointed at. Only asking the connection
+whether it is in recovery answers it, and only if the question is asked more than once, because the
+answer can change under a running process.
+
+So the gate is ordered: **the free string check first, the authoritative probe second, the probe
+repeated.**
+
+#### The probe, and confirmation that an ordinary role can run it
+
+`SELECT pg_is_in_recovery()` is true on a standby and false on a primary. **Confirmed callable by an
+ordinary role**, which the whole gate depends on: on PostgreSQL 17.7 the function carries the default
+catalog ACL, meaning `EXECUTE` to `PUBLIC`, and a role created `NOSUPERUSER` calls it successfully
+with no grant. The same is true of `pg_last_wal_replay_lsn`, `pg_last_xact_replay_timestamp`,
+`pg_current_wal_lsn` and `pg_wal_lsn_diff`, so nothing in stage 7 needs elevated rights either.
+Neither `pg_is_in_recovery` nor `transaction_read_only` is queried anywhere in the framework today,
+so this is new code rather than a change.
+
+**An explicit off switch** must exist alongside the detection, for a consumer that has a replica and
+does not want the behavior. Detection answers "can this work"; the switch answers "should it".
+
+**Fail safe, and say which direction that is.** If the probe errors, times out, or returns anything
+ambiguous, treat it as **no replica** and route everything to the primary. The asymmetry is
+deliberate: being wrong toward the primary costs latency, and being wrong toward a reader costs
+correctness, and this document is a catalog of how expensively.
+
+#### Log levels, deliberately different across the three states
+
+| State | Level | Cadence |
+|---|---|---|
+| Absent | **silent** | never |
+| Equivalent to the primary (2a) | **Warning** | once, at startup |
+| Probed as the primary (2b) | **Warning** | once per transition, not once per poll |
+
+**Why absent is silent and 2a is a Warning**, since the asymmetry is the point: an absent key is the
+normal configuration for an environment without a replica, and warning about it would train operators
+to ignore the warning that matters. A configured-but-inert split is different in kind. It is a
+**silent loss of an intended property**, and the presence of the configuration is evidence that
+someone meant to have it.
+
+Case 2a is a source-generated `LoggerMessage` with its own `EventId`, emitted once during
+initialization, following the pattern the notification stack already uses for its own
+misconfiguration warning
+(`src/Whizbang.Data.Postgres/Notifications/PgSharedNotifyConnection.cs:702-706`, which warns that a
+pooled fallback makes LISTEN/NOTIFY inoperative and names the key and the fix). It must contain three
+things:
+
+1. that the reader key resolves to the same server as the primary, naming **host, port and database,
+   never credentials**;
+2. that read and write separation is therefore inert;
+3. the action: point the key at a replica, or remove it.
+
+Case 2b emits when detected, which may be at startup or much later, after a failover promotes the
+endpoint being pointed at. Once per transition rather than once per poll, so a long-lived process
+does not repeat it on a cadence.
+
+#### Re-checking, because failover happens
+
+A promotion can make the former replica the primary, and a managed reader endpoint can follow it. So
+activation is not a startup decision that stands for the life of the process.
+
+The cadence already exists: **have stage 7's watermark poll return both the recovery state and the
+replay position in one query**, rather than adding a second poller for the gate. One round trip
+answers both questions, and the two answers are needed at the same moment anyway.
+
+When the endpoint stops being a standby, the feature disables itself and case 2b's warning fires.
+**What happens to notifications held at that moment**, if option 6 was built: release them all
+immediately, in position order, and route the reads they trigger to the primary. Do not wait for a
+barrier that can no longer advance, and do not drop them. The endpoint that was going to satisfy the
+barrier is now the primary, so the reads are trivially correct there; holding them would be waiting
+forever for a condition that has become meaningless.
+
+#### What goes quiet when it is off
+
+All of it, and each for a stated reason:
+
+- **the held-notification barrier** (option 6), so notifications fire immediately with no added
+  latency. An inert barrier that still delays is the worst of both;
+- **the watermark poller**, so no cadence runs against an endpoint whose answer nobody uses;
+- **the lag gauge and its health component**, which otherwise report **no lag, forever**, and give
+  false confidence that a split is working when none is active. This is the most insidious of the
+  four, because a dashboard showing zero lag is indistinguishable from a healthy replica;
+- **the reader data source itself** (stage 3), so no second pool exists against the writer. This is
+  the concrete harm named at the top of this stage.
+
+**The health component must report which of the three states it is in**, not merely whether it is
+healthy. An inert configuration must never read as an active one, which is the same requirement the
+codebase already applies elsewhere when it insists that "nothing outstanding" and "nobody looked" are
+different facts (`src/Whizbang.Core/Messaging/IWorkCoordinator.cs:184-187`). Off-because-absent,
+off-because-inert, and on are three different operational situations and the surface has to say
+which.
+
+### Stage 3: how the read side would use it in EF Core 10
 
 Status: `Not started`.
 
@@ -868,11 +1001,11 @@ Two caveats that must ship with it:
 
 Routing is decided by exactly three layered mechanisms, in this order. Each is a stage below.
 
-1. **Declared intent** (stage 3): a per-lens default, plus a call-site override in both directions.
-2. **The ambient write-scope guard** (stage 4): the primary is forced whenever the query runs inside
+1. **Declared intent** (stage 4): a per-lens default, plus a call-site override in both directions.
+2. **The ambient write-scope guard** (stage 5): the primary is forced whenever the query runs inside
    a write scope, so a lens whose default is the reader cannot be silently wrong when it is called
    from inside a transaction, a receptor, or a perspective apply.
-3. **Bounded staleness** (stage 5): measured replication lag against a budget, falling back to the
+3. **Bounded staleness** (stage 6): measured replication lag against a budget, falling back to the
    primary while the budget is exceeded, plus a read-your-writes option for callers that need one.
 
 #### Rejected, so nobody proposes it again: a recency cache of written streams
@@ -921,7 +1054,7 @@ because it costs no latency in the common case and its failure mode is a correct
 stale one. The asymmetry is the whole point: delay the notification and everyone waits; route the
 read and only the affected reads pay.
 
-### Stage 3: declared intent, per lens and per call site
+### Stage 4: declared intent, per lens and per call site
 
 Status: `Not started`.
 
@@ -953,7 +1086,7 @@ recommended answer to the one user-visible read-after-write in this document, an
 beyond this override, which is the strongest reason to ship both directions in the same stage rather
 than deferring one.
 
-### Stage 4: the ambient write-scope guard, and the allow-list
+### Stage 5: the ambient write-scope guard, and the allow-list
 
 Status: `Not started`.
 
@@ -1014,7 +1147,7 @@ already the single place where the "pinned versus fresh" connection decision is 
 every coordinator read and write on both drivers in one place. This is cheap and it turns a silent
 class of bug into a loud one.
 
-### Stage 5: bounded staleness, and why the existing fence does not cover it
+### Stage 6: bounded staleness, and why the existing fence does not cover it
 
 Status: `Not started`.
 
@@ -1039,7 +1172,7 @@ So bounded staleness has to be measured, and it has two halves.
 
 **A lag budget, with the primary as the fallback.** Each reader-eligible read carries a maximum
 tolerable lag, defaulting from a framework-wide setting and overridable per lens. The router
-compares it against the lag measurement from stage 6. While the measured lag is inside the budget,
+compares it against the lag measurement from stage 7. While the measured lag is inside the budget,
 the read goes to the reader. While it is outside, or while the measurement is missing or stale, the
 read goes to the primary. Note the direction carefully: **an unavailable measurement must route to
 the primary, not to the reader.** That is the same asymmetry the codebase already applies to its
@@ -1069,22 +1202,33 @@ it to this codebase:
   (`src/Whizbang.Core/Lenses/ISyncAwareLensQuery.cs:44-50`), so the precedent for the timeout
   semantics exists; what it lacks is any awareness of which endpoint the following query runs on.
 
-### Stage 6: measuring replication lag
+### Stage 7: measuring replication lag
 
 Status: `Not started`.
 
 **The framework cannot measure this today.** Nothing queries `pg_is_in_recovery`,
 `pg_last_xact_replay_timestamp`, `pg_last_wal_replay_lsn`, or `pg_current_wal_lsn` anywhere; the
 repo-wide search for any of them returns nothing. Mechanism 3 has no input until this exists, which
-is why it is a stage of its own rather than a detail of stage 5.
+is why it is a stage of its own rather than a detail of stage 6.
 
-**What the measurement is for, and the one thing it must never be used for.** Two purposes only:
+**One query, three answers.** The poll returns the recovery state alongside both lag figures, so
+stage 2's repeated activation check and this stage's measurement share a single round trip rather
+than running two pollers against the same endpoint. That is also what lets the feature disable itself
+on a failover: the value that says "still a standby" arrives on the same cadence as the value that
+says "and this far behind", and they are needed at the same moment. A reader that reports it is no
+longer in recovery makes the lag figures meaningless, so the collector must publish the state change
+rather than a lag of zero.
 
-1. It feeds the **bounded-staleness circuit breaker** in stage 5. The reader is used while the lag is
+**What the measurement is for, and the one thing it must never be used for.** Three purposes, and the
+third is stage 2's:
+
+1. It feeds the **bounded-staleness circuit breaker** in stage 6. The reader is used while the lag is
    inside the budget and the primary is used while it is outside, so the measurement gates a binary
    routing decision rather than a duration.
 2. It is an **observability signal**, so an operator can see that a configured reader is permanently
    over budget and is therefore buying nothing.
+3. Its recovery-state column is stage 2's repeated activation check, which is what catches a failover
+   that promoted the endpoint being read from.
 
 **It must not be used to time a delay.** Neither to delay a notification, which is rejected above,
 nor to sleep before a read in the hope that the reader will have caught up. A lag figure supports the
@@ -1120,7 +1264,7 @@ severity: a lagging reader must **not** make the service unhealthy, because the 
 are still correct. Degraded is the honest state, and the reason has to say so, or a lag spike becomes
 an outage that the fallback had already handled.
 
-### Stage 7: connection observability, and the `application_name` constraint
+### Stage 8: connection observability, and the `application_name` constraint
 
 Status: `Not started`.
 
@@ -1141,7 +1285,7 @@ Two proposals:
   and a fifth role later costs no new instrument.
 - **An operation name on every database call.** The gauges say a pool is saturated; the operation name
   says by what. This is the difference between "the reader pool is full" and "the reader pool is full
-  of one reporting query", and it is also what makes the fallback counter in stage 5 actionable.
+  of one reporting query", and it is also what makes the fallback counter in stage 6 actionable.
 
 **The constraint to be careful about.** Seventeen predicates across fourteen shipped migrations match
 `pg_stat_activity.application_name` with **equality** against `'whizbang-' || instance_id`, and they
@@ -1181,31 +1325,21 @@ remaining literals onto the placeholder that already exists, so the prefix has o
 than thirteen. That is a mechanical change with a clear invariant to test, and it is the prerequisite
 for ever touching the prefix at all.
 
-### Stage 8: migration path, and a reader that is really the primary
+### Stage 9: the migration path for consumers
 
 Status: `Not started`.
 
-Migration is a no-op by construction: with the stage-1 fallback, a consumer that configures nothing
-keeps today's behavior exactly, and a consumer that configures `-readonly` moves only the paths
-stage 4's allow-list names.
+Migration is a no-op by construction, and that is the whole of this stage. With stage 1's fallback a
+consumer that configures nothing keeps today's behavior exactly, and with stage 2's gate a consumer
+that configures a reader key pointing at the primary also keeps today's behavior, loudly. A consumer
+that configures a real replica moves only the paths stage 5's allow-list names.
 
-The one thing the framework must do is refuse to be quietly misconfigured. A `-readonly` key
-pointing at the primary is the common case in practice (it is what a consumer writes first, and what
-a failover leaves behind), and it is indistinguishable from a working replica by every symptom. The
-framework can tell the difference in one round trip:
+What a consumer has to do, in order: add the key, watch for the stage 2 warning that says it is
+inert, and only then set a per-model default (stage 4). Nothing is required of a consumer that does
+not want the feature, and nothing silently changes for one that has not asked for it.
 
-- `SELECT pg_is_in_recovery()` is true on a standby and false on a primary. Neither it nor
-  `transaction_read_only` is queried anywhere in the framework today, so this is new code, not a
-  change.
-- A reader that reports `false` is the primary. That is not an error, and must not be treated as one:
-  it is a supported configuration (it is what the fallback produces), and refusing to start over it
-  would be the "never migrating needs a human to clear" failure the schema work already warns about
-  (`ai-docs/schema-initialization-connections.md:356-362`). Log it once at Information, naming the
-  key and the consequence: reads are on the primary, the reader key bought nothing.
-- A reader that reports `true` and is also the endpoint the writes go to cannot happen; writes would
-  fail loudly on it.
-
-Probe at startup, once, and re-probe on a reconnect. Do not probe per query.
+The framework's obligation is the one stage 2 discharges: never run the machinery against the
+primary, and never let an inert configuration look active.
 
 ---
 
@@ -1251,13 +1385,13 @@ decision plus tests rather than an obvious edit. Nothing in this branch changes 
    cannot answer it: whether a user-facing grid may be a few seconds behind is the consumer's
    product decision, not the framework's. If the answer is no for any consumer, the default must be
    the primary and the reader must be opt-in per lens. Note that this is answered per read model
-   rather than once, which is why stage 3 puts the default on the model and not on a global switch.
+   rather than once, which is why stage 4 puts the default on the model and not on a global switch.
 3. **Whether an API-origin lens read may default to the reader, or must opt in.** The design
    recommends defaulting it, on the grounds that the guard makes an aggressive default safe and that
    a default nobody sets is a feature nobody gets. The opposite choice is defensible and costs only
    adoption, so it is the owner's.
 4. **Whether the sync-aware lens path may ever use a reader.** The recommendation is no by default:
-   the fence it advertises would stop working silently (stage 5), so it should stay on the primary
+   the fence it advertises would stop working silently (stage 6), so it should stay on the primary
    unless the caller opts into the read-your-writes form that compares the reader against a captured
    write position. Whether to offer that form on the sync-aware seam at all, or to keep the two
    mechanisms separate, is the decision.
@@ -1290,7 +1424,13 @@ decision plus tests rather than an obvious edit. Nothing in this branch changes 
 - **The unit of the routing decision is a lens query's call origin**, not the role of the service
   hosting it, so an API-origin read is the reader's natural default and the guard catches the
   in-process exception.
+- **Resolution falls back to the pooled key; activation does not fall back at all.** A reader key
+  that resolves to the primary leaves the feature off, because otherwise the fallback that makes the
+  feature safe to ship becomes a second connection pool against the writer.
+- **An absent reader key is silent; a configured-but-inert one is a Warning.** Warning about the
+  normal configuration would train operators to ignore the warning that matters, and an inert split
+  is a silent loss of a property the configuration says someone intended.
 - **Routing is decided by three layered mechanisms and no others**: declared intent, the ambient
   write-scope guard, and bounded staleness.
 - **`application_name` keeps its exact value on the notification connection**, and the seventeen
-  equality predicates across fourteen migrations stay equality predicates (stage 7).
+  equality predicates across fourteen migrations stay equality predicates (stage 8).
