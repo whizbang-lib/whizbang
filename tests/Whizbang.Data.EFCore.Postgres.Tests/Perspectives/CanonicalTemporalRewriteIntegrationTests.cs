@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -117,9 +118,9 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
     return CanonicalTemporalRewrite.ForModel(context.Model, PerspectiveDocumentSerialization.Options, "public");
   }
 
-  private async Task<bool> _runAsync(IEnumerable<(string Name, string Sql)>? rewrites = null) =>
+  private async Task<bool> _runAsync(IEnumerable<(string Name, string Sql)>? rewrites = null, ILogger? logger = null) =>
     await CanonicalTemporalRewritePhase.ApplyAsync(
-      () => new NpgsqlConnection(_connectionString), LOCK_ID, rewrites ?? _rewrites(), TIMEOUT_SECONDS);
+      () => new NpgsqlConnection(_connectionString), LOCK_ID, rewrites ?? _rewrites(), TIMEOUT_SECONDS, logger);
 
   private static string _micros(DateTime utc) =>
     CanonicalTemporalFormat.ToEpochMicroseconds(utc).ToString(CultureInfo.InvariantCulture);
@@ -135,8 +136,13 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
     await _seedAsync("wh_per_mapped", mixedUnits,
       $$"""{"OccurredAt":{{_micros(_at)}},"RecordedAt":{{_micros(_at)}},"Window":{"Opens":34200000000,"Length":54000000000},"Occurrences":[{"Day":20517,"MaybeAt":{{_micros(_at)}}}]}""",
       $$"""{"Timestamp":{{_micros(_at)}}}""");
+    var log = new ListLogger();
 
-    await Assert.That(await _runAsync()).IsTrue();
+    await Assert.That(await _runAsync(logger: log)).IsTrue();
+
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Information && e.Message.Contains("wh_per_mapped: converted, ")))
+      .IsTrue()
+      .Because("the statement's own account of the table, with its update count, reaches the startup log");
 
     var converted = JsonDocument.Parse(await _scalarAsync($"SELECT data::text FROM wh_per_mapped WHERE id = '{renderings}'")).RootElement;
     await Assert.That(converted.GetProperty("OccurredAt").GetInt64()).IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_at));
@@ -271,5 +277,22 @@ public class CanonicalTemporalRewriteIntegrationTests : IAsyncDisposable {
     await Assert.That(async () => await _executeAsync(
         "CREATE INDEX ix_probe_after ON wh_per_mapped (((data ->> 'OccurredAt')::bigint))"))
       .ThrowsNothing();
+  }
+
+  /// <summary>Keeps every entry, so a test can ask what was said and at what level.</summary>
+  private sealed class ListLogger : ILogger {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (Entries) {
+        Entries.Add((logLevel, formatter(state, exception)));
+      }
+    }
   }
 }

@@ -1,3 +1,6 @@
+using System.Globalization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -8,18 +11,22 @@ using Whizbang.Testing.Containers;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
-/// That one instance rewrites a stored format, not every instance that starts.
+/// That one instance rewrites a stored format, and that the instance responsible for it waits for
+/// its turn rather than assuming whoever holds the schema lock will do the work.
 /// </summary>
 /// <remarks>
 /// <para>
 /// The rewrites run before the initializer's transaction opens, which is also outside the
-/// transaction-scoped advisory lock that makes one instance do the schema work. Taken at session
-/// scope here instead, over the connection that runs them.
+/// transaction-scoped advisory lock that makes one instance do the schema work. The phase takes the
+/// same key in a transaction of its own, so a connection pooler cannot separate the lock from the
+/// statements it guards, and nothing stays held if the instance dies mid-pass.
 /// </para>
 /// <para>
-/// The statements are idempotent, so concurrent instances would still reach the right answer. What
-/// they would also do is scan the same tables many times over and risk deadlocking each other: two
-/// full-table updates over the same rows take row locks in whatever order they meet them.
+/// The key is shared with the bootstrap and DDL phases of every sibling instance. A sibling that
+/// holds it is not necessarily rewriting: it may be bootstrapping, and a sibling that then waits
+/// for the migrator never rewrites at all. So losing the lock once means "wait", never "skip".
+/// A fleet that started together once left every table unconverted that way, without a line above
+/// debug level to say so.
 /// </para>
 /// </remarks>
 /// <docs>operations/infrastructure/migrations#statements-that-need-a-commit-between-them</docs>
@@ -93,64 +100,201 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   private async Task<string> _lockHoldersAsync() =>
     await _scalarAsync($"SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = {LOCK_ID}");
 
-  /// <summary>The holder applies every rewrite and gives the lock back.</summary>
+  /// <summary>Takes the schema lock at session scope on a connection the test keeps open.</summary>
+  private async Task<NpgsqlConnection> _holdLockAsync() {
+    var holder = _connect();
+    await holder.OpenAsync();
+    await using var take = new NpgsqlCommand($"SELECT pg_advisory_lock({LOCK_ID})", holder);
+    await take.ExecuteScalarAsync();
+    return holder;
+  }
+
+  private static async Task _releaseLockAsync(NpgsqlConnection holder) {
+    await using var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({LOCK_ID})", holder);
+    await release.ExecuteScalarAsync();
+  }
+
+  /// <summary>
+  /// Steps the clock until the phase returns, so no outcome depends on scheduling.
+  /// </summary>
+  /// <param name="run">The phase.</param>
+  /// <param name="time">Its clock.</param>
+  /// <param name="onEachStep">Runs between steps; a test uses it to react to what the phase logs.</param>
+  private static async Task<bool> _stepUntilDoneAsync(
+      Task<bool> run, FakeTimeProvider time, Func<Task>? onEachStep = null) {
+    while (!run.IsCompleted) {
+      if (onEachStep is not null) {
+        await onEachStep();
+      }
+      time.Advance(TimeSpan.FromMilliseconds(1));
+      await Task.Yield();
+    }
+
+    return await run;
+  }
+
+  /// <summary>The holder applies every rewrite, gives the lock back, and says what it did.</summary>
   [Test]
   public async Task TheRewritesRunUnderTheSchemaLockAsync() {
+    var log = new ListLogger();
+
     var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("first", "second"), TIMEOUT_SECONDS);
+      _connect, LOCK_ID, _rewrites("first", "second"), TIMEOUT_SECONDS, log);
 
     await Assert.That(ran).IsTrue();
     await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("2");
     await Assert.That(await _lockHoldersAsync()).IsEqualTo("0")
       .Because("a lock still held after the phase would stall every other instance's rewrite");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Information && e.Message.Contains("2 of 2")))
+      .IsTrue()
+      .Because("an operator reads what a startup converted from the log, not from a debug trace");
   }
 
   /// <summary>
-  /// An instance that cannot take the lock applies nothing.
+  /// An instance that cannot take the lock waits for it and applies once it is free.
   /// </summary>
   /// <remarks>
-  /// The expected outcome for every instance but one. The holder commits the rewrite, and the
-  /// losers' own index builds then read converted rows, so doing nothing is correct rather than a
-  /// failure to report loudly.
+  /// The holder may be a sibling's bootstrap or DDL transaction, which converts nothing, and a
+  /// sibling staged as a waiter never rewrites. Skipping would leave the table in the old form with
+  /// no one left to change it.
   /// </remarks>
   [Test]
-  public async Task AnInstanceThatCannotTakeTheLockAppliesNothingAsync() {
-    await using var holder = _connect();
-    await holder.OpenAsync();
-    await using (var take = new NpgsqlCommand($"SELECT pg_advisory_lock({LOCK_ID})", holder)) {
-      await take.ExecuteScalarAsync();
-    }
+  public async Task AnInstanceWaitsForTheLockAndAppliesOnceItIsReleasedAsync() {
+    await using var holder = await _holdLockAsync();
+    var time = new FakeTimeProvider();
+    var log = new ListLogger();
+    var released = false;
 
-    var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS);
+    var run = CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID, _rewrites("after-the-wait"), TIMEOUT_SECONDS,
+      TimeSpan.FromSeconds(30), time, log);
+
+    var ran = await _stepUntilDoneAsync(run, time, async () => {
+      // The lock goes back only once the phase has said it is waiting, so the test proves a wait
+      // happened rather than a lucky first attempt.
+      if (!released && log.Entries.Any(e => e.Message.Contains("waiting"))) {
+        await _releaseLockAsync(holder);
+        released = true;
+      }
+    });
+
+    await Assert.That(ran).IsTrue();
+    await Assert.That(released).IsTrue()
+      .Because("the phase must report the wait at a level an operator sees");
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("1");
+    await Assert.That(await _lockHoldersAsync()).IsEqualTo("0");
+  }
+
+  /// <summary>
+  /// A lock that stays held past the budget is reported as a warning and the phase gives up.
+  /// </summary>
+  /// <remarks>
+  /// The table stays in the old form and the next start tries again. Silence here is what turned
+  /// one lost race into a fleet that never converted.
+  /// </remarks>
+  [Test]
+  public async Task AnInstanceGivesUpWhenTheLockStaysHeldAsync() {
+    await using var holder = await _holdLockAsync();
+    var time = new FakeTimeProvider();
+    var log = new ListLogger();
+
+    var run = CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS,
+      TimeSpan.FromSeconds(2), time, log);
+    var ran = await _stepUntilDoneAsync(run, time);
 
     await Assert.That(ran).IsFalse();
     await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("0");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Warning
+        && e.Message.Contains(LOCK_ID.ToString(CultureInfo.InvariantCulture))))
+      .IsTrue()
+      .Because("giving up is a warning naming the lock, not a debug line");
 
-    await using var release = new NpgsqlCommand($"SELECT pg_advisory_unlock({LOCK_ID})", holder);
-    await release.ExecuteScalarAsync();
+    await _releaseLockAsync(holder);
+  }
+
+  /// <summary>Cancellation during the wait ends it with the cancellation, nothing applied.</summary>
+  [Test]
+  public async Task CancellationDuringTheWaitThrowsAsync() {
+    await using var holder = await _holdLockAsync();
+    var time = new FakeTimeProvider();
+    var log = new ListLogger();
+    using var cts = new CancellationTokenSource();
+
+    var run = CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS,
+      TimeSpan.FromSeconds(30), time, log, cts.Token);
+
+    await Assert.That(async () => await _stepUntilDoneAsync(run, time, () => {
+      // Canceled once the phase is in its wait, which is where a shutdown finds it.
+      if (log.Entries.Any(e => e.Message.Contains("waiting"))) {
+        cts.Cancel();
+      }
+      return Task.CompletedTask;
+    })).Throws<OperationCanceledException>();
+
+    await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("0");
+    await _releaseLockAsync(holder);
   }
 
   /// <summary>
   /// A rewrite that fails is reported, the rest still run, and the lock comes back.
   /// </summary>
   /// <remarks>
-  /// A lock leaked on the failure path is worse than the failure: every later instance would skip
-  /// its rewrite forever while believing another instance was doing it.
+  /// A lock leaked on the failure path is worse than the failure: every later instance would wait
+  /// out its budget and give up, start after start.
   /// </remarks>
   [Test]
   public async Task AFailedRewriteStillReleasesTheLockAsync() {
+    var log = new ListLogger();
+
     var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
       _connect,
       LOCK_ID,
       [("broken", "INSERT INTO table_that_does_not_exist (x) VALUES (1);"),
        ("good", "INSERT INTO marker (note) VALUES ('after-the-failure');")],
-      TIMEOUT_SECONDS);
+      TIMEOUT_SECONDS,
+      log);
 
     await Assert.That(ran).IsTrue();
     await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("1")
       .Because("one rewrite failing must not stop the others, which convert different tables");
     await Assert.That(await _lockHoldersAsync()).IsEqualTo("0");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Warning && e.Message.Contains("broken")))
+      .IsTrue();
+  }
+
+  /// <summary>A failure after a success keeps the success: each rewrite stands on its own.</summary>
+  [Test]
+  public async Task AFailureAfterASuccessKeepsTheSuccessAsync() {
+    var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect,
+      LOCK_ID,
+      [("good", "INSERT INTO marker (note) VALUES ('before-the-failure');"),
+       ("broken", "INSERT INTO table_that_does_not_exist (x) VALUES (1);")],
+      TIMEOUT_SECONDS);
+
+    await Assert.That(ran).IsTrue();
+    await Assert.That(await _scalarAsync("SELECT note FROM marker")).IsEqualTo("before-the-failure")
+      .Because("a later table's failure must not roll back an earlier table's conversion");
+  }
+
+  /// <summary>What a rewrite says about itself reaches the log.</summary>
+  /// <remarks>
+  /// The statement knows how many rows it touched and whether it skipped a settled table; the
+  /// phase only knows that it ran. The statement raises a notice and the phase relays it.
+  /// </remarks>
+  [Test]
+  public async Task ANoticeRaisedByARewriteIsReportedAsync() {
+    var log = new ListLogger();
+
+    await CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID,
+      [("talkative", "DO $$ BEGIN RAISE NOTICE 'wh_per_thing: 3 row(s) converted'; END $$;")],
+      TIMEOUT_SECONDS, log);
+
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Information && e.Message.Contains("3 row(s) converted")))
+      .IsTrue();
   }
 
   /// <summary>Nothing to rewrite takes no lock and opens no connection.</summary>
@@ -166,7 +310,7 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
       .Because("a database with nothing to convert should pay nothing for this phase");
   }
 
-  /// <summary>A missing factory or rewrite list is a caller error.</summary>
+  /// <summary>A missing factory, rewrite list or clock is a caller error.</summary>
   [Test]
   public async Task MissingArgumentsAreRefusedAsync() {
     await Assert.That(async () => await CanonicalTemporalRewritePhase.ApplyAsync(
@@ -174,5 +318,26 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
 
     await Assert.That(async () => await CanonicalTemporalRewritePhase.ApplyAsync(
       _connect, LOCK_ID, null!, TIMEOUT_SECONDS)).Throws<ArgumentNullException>();
+
+    await Assert.That(async () => await CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID, _rewrites("x"), TIMEOUT_SECONDS, TimeSpan.FromSeconds(1), null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  /// <summary>Keeps every entry, so a test can ask what was said and at what level.</summary>
+  private sealed class ListLogger : ILogger {
+    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter) {
+      lock (Entries) {
+        Entries.Add((logLevel, formatter(state, exception)));
+      }
+    }
   }
 }

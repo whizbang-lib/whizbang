@@ -148,6 +148,38 @@ public class CanonicalTemporalRewriteWiringTests {
   }
 
   /// <summary>
+  /// A waiter that takes over from a migrator that died runs the rewrite before it contends for
+  /// the DDL lock, through the same body the migrator runs.
+  /// </summary>
+  /// <remarks>
+  /// A migrator killed mid-rewrite leaves the remaining tables unconverted, and every replacement
+  /// instance is a waiter. Their wait ends with the holder gone and they run the DDL loop, but the
+  /// rewrite used to sit before the wait behind a "not a waiter" guard, so nothing converted the
+  /// rest until a later start happened to elect a migrator.
+  /// </remarks>
+  [Test]
+  public async Task AWaiterThatTakesOverRunsTheRewriteBeforeTheDdlAsync() {
+    var output = await _generatedAsync(TEMPORAL_MODEL);
+
+    var wait = output.IndexOf("SchemaMigrationDeferral.DeferAsync(", StringComparison.Ordinal);
+    var takeover = output.IndexOf("Whizbang.Data.Postgres.SchemaDeferralOutcome.MigratingInstanceGone", wait, StringComparison.Ordinal);
+    var ddl = output.IndexOf("var retryAttempt = 0;", StringComparison.Ordinal);
+    var rewriteOnMigrator = output.IndexOf("await rewriteStoredFormsAsync(", StringComparison.Ordinal);
+    var rewriteOnTakeover = output.IndexOf("await rewriteStoredFormsAsync(", wait, StringComparison.Ordinal);
+
+    await Assert.That(wait).IsGreaterThan(-1);
+    await Assert.That(takeover).IsGreaterThan(wait)
+      .Because("the takeover is decided by how the wait ended");
+    await Assert.That(rewriteOnMigrator).IsGreaterThan(-1).And.IsLessThan(wait)
+      .Because("the migrator rewrites before any waiter can be released");
+    await Assert.That(rewriteOnTakeover).IsGreaterThan(takeover).And.IsLessThan(ddl)
+      .Because("a waiter taking over rewrites first, before the transaction that indexes the result");
+    await Assert.That(output.IndexOf("CanonicalTemporalRewritePhase.ApplyAsync(", StringComparison.Ordinal))
+      .IsEqualTo(output.LastIndexOf("CanonicalTemporalRewritePhase.ApplyAsync(", StringComparison.Ordinal))
+      .Because("both paths share one body, so a change to one cannot drift from the other");
+  }
+
+  /// <summary>
   /// The migrator names the other releases alive in the fleet before it rewrites, at Warning.
   /// </summary>
   /// <remarks>

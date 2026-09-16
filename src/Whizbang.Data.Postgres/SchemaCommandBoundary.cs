@@ -124,34 +124,6 @@ public static class SchemaCommandBoundary {
   }
 
   /// <summary>
-  /// Applies <paramref name="sql"/> piece by piece on a connection the caller owns.
-  /// </summary>
-  /// <param name="connection">An open connection with no transaction of its own.</param>
-  /// <param name="sql">The script, with or without markers.</param>
-  /// <param name="commandTimeoutSeconds">The timeout for each piece.</param>
-  /// <param name="cancellationToken">Cancellation token.</param>
-  /// <remarks>
-  /// For a caller holding something across the pieces that a new connection would not share, such as
-  /// a session-level advisory lock. Each piece still commits on its own, because the connection
-  /// carries no transaction.
-  /// </remarks>
-  public static async Task ApplyOnAsync(
-      NpgsqlConnection connection,
-      string sql,
-      int commandTimeoutSeconds,
-      CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(connection);
-    ArgumentNullException.ThrowIfNull(sql);
-
-    foreach (var segment in Segments(sql)) {
-      await using var command = new NpgsqlCommand(segment, connection) {
-        CommandTimeout = commandTimeoutSeconds,
-      };
-      await command.ExecuteNonQueryAsync(cancellationToken);
-    }
-  }
-
-  /// <summary>
   /// Applies <paramref name="sql"/> piece by piece, opening each piece's connection from
   /// <paramref name="connectionString"/>.
   /// </summary>

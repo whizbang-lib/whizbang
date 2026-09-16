@@ -198,6 +198,35 @@ public class CanonicalTemporalRewriteTests {
       .Because("the ledger is written after every update in the same transaction");
   }
 
+  /// <summary>
+  /// The statement says what became of the table on every exit, so a startup log shows what a pass
+  /// converted, skipped, or could not find.
+  /// </summary>
+  /// <remarks>
+  /// Only the statement knows how many rows it touched and why it stopped early. A pass that was
+  /// silent on success once left a fleet unable to tell "converted" from "never ran".
+  /// </remarks>
+  [Test]
+  public async Task TheStatementReportsEveryOutcomeAsANoticeAsync() {
+    var paths = ImmutableArray.Create(
+      new TemporalPath("metadata", ["Timestamp"], StoredTemporalKind.Instant));
+
+    var sql = CanonicalTemporalRewrite.StatementFor("svc", "wh_per_thing", paths);
+
+    await Assert.That(sql).Contains(
+      "RAISE NOTICE USING MESSAGE = format('%s: table absent, nothing to convert', 'wh_per_thing');")
+      .Because("a table the model names but the database lacks is worth a line, not silence");
+    await Assert.That(sql).Contains(
+      "RAISE NOTICE USING MESSAGE = format('%s: settled, skipped', 'wh_per_thing');")
+      .Because("a settled table is skipped without a scan, and the log says so");
+    await Assert.That(sql).Contains(
+      "RAISE NOTICE USING MESSAGE = format('%s: converted, %s row update(s)', 'wh_per_thing', v_touched);")
+      .Because("the count is the evidence an operator reads; one update per row and path");
+    await Assert.That(sql.IndexOf("row update(s)", StringComparison.Ordinal))
+      .IsGreaterThan(sql.IndexOf("ON CONFLICT (table_name) DO UPDATE", StringComparison.Ordinal))
+      .Because("the count is reported once the ledger row that records it is written");
+  }
+
   /// <summary>A quote in a name is escaped rather than trusted.</summary>
   [Test]
   public async Task NamesAreQuotedAndEscapedAsync() {
