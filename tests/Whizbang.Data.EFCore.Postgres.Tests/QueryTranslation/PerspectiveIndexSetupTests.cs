@@ -42,17 +42,9 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _databaseName = $"index_setup_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
-
-    _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-      Database = _databaseName,
-      Timezone = "UTC",
-    }.ConnectionString;
+    var database = await PerTestDatabaseFactory.CreateAsync("index_setup");
+    _databaseName = database.Name;
+    _connectionString = database.ConnectionString;
 
     await _executeAsync($"""
       CREATE TABLE {TABLE} (
@@ -67,15 +59,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   [After(Test)]
   public async ValueTask DisposeAsync() {
     if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await using var drop = new NpgsqlCommand(
-          $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-        await drop.ExecuteNonQueryAsync();
-      } catch (NpgsqlException) {
-        // The container outlives the run; a leftover database costs nothing.
-      }
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
     GC.SuppressFinalize(this);

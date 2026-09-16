@@ -39,16 +39,9 @@ public class CollidingModelNameInitializationTests {
   [Before(Test)]
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
-    _databaseName = $"colliding_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
-    _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-      Database = _databaseName,
-      Timezone = "UTC",
-    }.ConnectionString;
+    var database = await PerTestDatabaseFactory.CreateAsync("colliding");
+    _databaseName = database.Name;
+    _connectionString = database.ConnectionString;
   }
 
   [After(Test)]
@@ -56,14 +49,7 @@ public class CollidingModelNameInitializationTests {
     if (_databaseName is null) {
       return;
     }
-    try {
-      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await admin.OpenAsync();
-      await using var drop = new NpgsqlCommand($"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-      await drop.ExecuteNonQueryAsync();
-    } catch (NpgsqlException) {
-      // The container goes with the run; a database left behind costs nothing.
-    }
+    await PerTestDatabaseFactory.DropAsync(_databaseName);
   }
 
   private CollidingNamesDbContext _context() =>

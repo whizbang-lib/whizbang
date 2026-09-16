@@ -163,17 +163,12 @@ public class SchemaCommandBoundaryTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _databaseName = $"boundary_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
-
-    _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-      Database = _databaseName,
-      Timezone = "UTC",
-    }.ConnectionString;
+    // Through the factory rather than a CREATE DATABASE of its own: this fixture lost that race
+    // against its siblings and reported it as this test failing in 130ms, before an assertion had
+    // run. See PerTestDatabaseFactory.
+    var database = await PerTestDatabaseFactory.CreateAsync("boundary");
+    _databaseName = database.Name;
+    _connectionString = database.ConnectionString;
 
     // fillfactor leaves no free space in a page, so a rewrite cannot place the new row version
     // beside the old one. That matters: an update that fits in its own page is done in place, the
@@ -201,15 +196,7 @@ public class SchemaCommandBoundaryTests : IAsyncDisposable {
   [After(Test)]
   public async ValueTask DisposeAsync() {
     if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await using var drop = new NpgsqlCommand(
-          $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-        await drop.ExecuteNonQueryAsync();
-      } catch (NpgsqlException) {
-        // The container is torn down with the run; a database left behind costs nothing.
-      }
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
     GC.SuppressFinalize(this);

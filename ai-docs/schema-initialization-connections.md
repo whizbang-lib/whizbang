@@ -414,6 +414,29 @@ Two things about this are easy to get wrong:
 | `OptionalExtensionBlocksTests.ADefectInsideABlockStillFailsAsync` | the skip widening into a catch-all that hides real failures |
 | `OptionalExtensionBlocksTests.TheReaderReadsTheGeneratorsOwnScriptAsync` | the generator and the reader drifting on the marker text |
 
+## A fixture does not create its own database
+
+Every test here wants a database of its own, and dozens of fixtures in one shard ask for one at the
+same time against one container. `CREATE DATABASE` copies a template under a lock, so those calls
+serialize and a loser fails outright rather than waiting; `DROP DATABASE ... WITH (FORCE)` from a
+class finishing at that moment contends with it. The failure lands in `[Before(Test)]`, which the
+runner reports as **the test** failing, in a few milliseconds, before a single assertion has run. It
+reads as a defect in whichever test happened to hold the slot, and it is not one.
+
+So call `PerTestDatabaseFactory.CreateAsync("prefix")` and `DropAsync(name)` rather than issuing the
+statements. They retry the contention with a bounded backoff on a `TimeProvider`, ask
+`TransientDatabaseFailure` (the classifier the worker loops use) what is worth retrying, add the one
+state specific to creating a database (`55006`, the template being read by another creator), and
+treat `42P04` as an attempt of their own having already won. A drop that cannot win is abandoned
+rather than raised, because a teardown that throws turns a passing test red for tidying up.
+
+**A new database-creating fixture uses the factory.** One that issues its own statement is one more
+entrant in the race, and the next author copies whatever is nearest.
+
+The duration is the tell, and it is worth remembering for the next one of these: if a test fails far
+faster than the work it describes could possibly take, it failed before its body ran, and the fixture
+is where to look rather than the assertions.
+
 ## Checklist for a change in this area
 
 0. **Does more than one instance reach it at startup?** The advisory lock elects one migrator; the

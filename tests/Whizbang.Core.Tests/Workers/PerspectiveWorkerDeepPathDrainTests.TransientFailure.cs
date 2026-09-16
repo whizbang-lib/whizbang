@@ -136,6 +136,11 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
     await Assert.That(coordinator.PerspectiveLeaseReleases).IsEmpty()
       .Because("there is nothing to hand back, and the database that just failed is not worth a "
              + "round-trip to say so");
+    // No batch, rather than an empty one, is a caller defect: the recovery builds this list from the
+    // batch it was carrying, so a null says the recovery itself is wrong and must not be swallowed
+    // on the path that keeps the loop alive.
+    await Assert.That(async () => await worker.ReleaseFailedBatchLeasesAsync(null!, CancellationToken.None))
+      .Throws<ArgumentNullException>();
   }
 
   [Test]
