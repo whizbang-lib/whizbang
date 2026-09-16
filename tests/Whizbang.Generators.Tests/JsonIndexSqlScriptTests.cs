@@ -1,7 +1,11 @@
+extern alias shared;
+
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Generators.Shared.Models;
+using JsonIndexCast = shared::Whizbang.Generators.Shared.Models.JsonIndexCast;
+using JsonIndexInfo = shared::Whizbang.Generators.Shared.Models.JsonIndexInfo;
+using JsonIndexSql = shared::Whizbang.Generators.Shared.Models.JsonIndexSql;
 
 namespace Whizbang.Generators.Tests;
 
