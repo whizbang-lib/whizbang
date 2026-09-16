@@ -107,5 +107,14 @@ internal static class WorkAvailablePollDefaults {
   // notifies + drive when NOTIFY is unavailable. Tightening happens with a follow-on adaptive
   // interval when we wire the health gate through the poll sources.
   public const int INTERVAL_MILLISECONDS = 5_000;
+  // Idle backoff: after this many empty ticks at the base cadence the interval doubles per empty
+  // tick up to the ceiling, and a hit or a gate flip restores the base. With every queue empty the
+  // poll loops alone were committing over a hundred transactions a second per busy database.
+  public const int IDLE_BACKOFF_AFTER_TICKS = 3;
+  public const int IDLE_CEILING_MILLISECONDS = 60_000;
 #pragma warning restore CA1707
+
+  /// <summary>The backoff every store-backed pull source polls with.</summary>
+  public static readonly PollIdleBackoff IdleBackoff =
+    new(IDLE_BACKOFF_AFTER_TICKS, TimeSpan.FromMilliseconds(IDLE_CEILING_MILLISECONDS));
 }
