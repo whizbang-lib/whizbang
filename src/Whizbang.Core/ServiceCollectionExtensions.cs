@@ -82,6 +82,12 @@ public static class ServiceCollectionExtensions {
     foreach (var declaration in incoming.PriorityDeclarations) {
       existing.UsePriorityDeclaration(declaration.Key, declaration.Value);
     }
+    foreach (var threshold in incoming.PayloadSizeWarningThresholdBytesByTag) {
+      existing.SetPayloadSizeWarningThreshold(threshold.Key, threshold.Value);
+    }
+    foreach (var threshold in incoming.PayloadSizeErrorThresholdBytesByTag) {
+      existing.SetPayloadSizeErrorThreshold(threshold.Key, threshold.Value);
+    }
   }
 
   /// <summary>
@@ -212,6 +218,10 @@ public static class ServiceCollectionExtensions {
     // Register MessageTagProcessor as Singleton (only if not already registered)
     services.TryAddSingleton<IMessageTagProcessor>(sp => {
       var tagOptions = sp.GetRequiredService<TagOptions>();
+      // Payload-size thresholds bound from configuration (Whizbang:Tags:PayloadSize...) win over
+      // the code defaults, so an operator can raise the line for a wide-by-design tag without a
+      // redeploy. Idempotent; the startup validator applies the same binder, whichever runs first.
+      TagPayloadSizeConfigurationBinder.Apply(tagOptions, sp.GetService<IConfiguration>());
       var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
       return new MessageTagProcessor(tagOptions, scopeFactory);
     });

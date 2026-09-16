@@ -154,8 +154,10 @@ public sealed class MessageTagProcessor : IMessageTagProcessor {
       JsonElement payload,
       MessageTagRegistration registration,
       Type messageType) {
-    var warningThreshold = _options.PayloadSizeWarningThresholdBytes;
-    var errorThreshold = _options.PayloadSizeErrorThresholdBytes;
+    // The tag's own thresholds first, then the global ones: a tag whose payloads are wide by
+    // design raises its own line without loosening the check for every other tag.
+    var warningThreshold = _options.ResolvePayloadSizeWarningThreshold(registration.Tag);
+    var errorThreshold = _options.ResolvePayloadSizeErrorThreshold(registration.Tag);
     if (warningThreshold is null && errorThreshold is null) {
       return true;
     }
