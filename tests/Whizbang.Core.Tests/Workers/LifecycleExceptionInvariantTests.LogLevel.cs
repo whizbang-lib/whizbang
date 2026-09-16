@@ -70,7 +70,7 @@ public partial class LifecycleExceptionInvariantTests {
       LifecycleStage.PreInboxDetached, LifecycleStage.PreInboxInline,
       "PreInbox", CancellationToken.None);
 
-    return logger.Collector.GetSnapshot().Where(r => r.Message.Contains("lifecycle", StringComparison.Ordinal)).ToList();
+    return [.. logger.Collector.GetSnapshot().Where(r => r.Message.Contains("lifecycle", StringComparison.Ordinal))];
   }
 
   private static JsonException _deserializationFailure() {

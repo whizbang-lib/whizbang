@@ -38,7 +38,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
   public async Task Worker_RunnerRefusesTheStoredForm_AnnouncesOnceAndParksTheRowAsync() {
     // The standard path rethrows after reporting, and the rethrow surfaces as an unobserved task
     // exception on the consumer loop; observe exactly that one.
-    void handler(object? s, UnobservedTaskExceptionEventArgs e) {
+    static void handler(object? s, UnobservedTaskExceptionEventArgs e) {
       if (e.Exception.InnerException is JsonException) {
         e.SetObserved();
       }
@@ -72,6 +72,7 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         instanceProvider: instanceProvider,
         scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
         options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         tracingOptions: null,
         completionStrategy: new InstantCompletionStrategy(),
         eventTypeProvider: new ListEventTypeProvider([typeof(DeepChannelEvent)]),
@@ -80,7 +81,6 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
         perspectiveCompletionChannel: harness.CompletionCapture,
         failureChannel: harness.FailureCapture,
         perspectiveDrainChannel: harness.DrainChannel,
-        schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
         storedFormFailures: failures);
 
       using var cts = new CancellationTokenSource();

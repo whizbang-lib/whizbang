@@ -132,7 +132,7 @@ public class CanonicalTemporalConventionTests {
   /// <remarks>No database: building the model needs a provider, not a connection.</remarks>
   [Test]
   public async Task EveryTemporalInADocumentIsConvertedAsync() {
-    using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
+    await using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
     var temporals = _temporals(context.Model, typeof(PerspectiveRow<ReachModel>));
 
     string[] expected = [
@@ -167,7 +167,7 @@ public class CanonicalTemporalConventionTests {
   /// </remarks>
   [Test]
   public async Task EveryTemporalInADocumentReadsThroughTheCanonicalReaderAsync() {
-    using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
+    await using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
     var readers = new Dictionary<string, Type?>();
     foreach (var complex in context.Model.FindEntityType(typeof(PerspectiveRow<ReachModel>))!.GetComplexProperties()) {
       _collectReaders(complex, complex.Name, readers);
@@ -204,12 +204,12 @@ public class CanonicalTemporalConventionTests {
   /// </remarks>
   [Test]
   public async Task AGeneratedContextConvertsWithoutTheOptionsExtensionAsync() {
-    using var context = new WorkCoordinationDbContext(new DbContextOptionsBuilder<WorkCoordinationDbContext>()
+    await using var context = new WorkCoordinationDbContext(new DbContextOptionsBuilder<WorkCoordinationDbContext>()
       .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p")
       .Options);
 
     var row = context.Model.FindEntityType(typeof(PerspectiveRow<Order>))!;
-    var metadata = row.FindComplexProperty(nameof(PerspectiveRow<Order>.Metadata))!.ComplexType;
+    var metadata = row.FindComplexProperty(nameof(PerspectiveRow<>.Metadata))!.ComplexType;
     var timestamp = metadata.FindProperty(nameof(PerspectiveMetadata.Timestamp))!;
 
     await Assert.That(timestamp.GetValueConverter()?.ProviderClrType).IsEqualTo(typeof(long))
@@ -269,10 +269,10 @@ public class CanonicalTemporalConventionTests {
   /// </remarks>
   [Test]
   public async Task ATemporalOutsideADocumentIsLeftAloneAsync() {
-    using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
+    await using var context = _context("Host=localhost;Database=probe;Username=u;Password=p");
 
     var row = context.Model.FindEntityType(typeof(PerspectiveRow<ReachModel>))!;
-    await Assert.That(row.FindProperty(nameof(PerspectiveRow<ReachModel>.CreatedAt))!.GetValueConverter()).IsNull()
+    await Assert.That(row.FindProperty(nameof(PerspectiveRow<>.CreatedAt))!.GetValueConverter()).IsNull()
       .Because("a timestamp column is typed for what it holds and needs no conversion");
 
     var columns = _temporals(context.Model, typeof(ColumnRow));

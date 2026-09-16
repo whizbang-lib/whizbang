@@ -274,11 +274,11 @@ public class CanonicalTemporalStorageTests : IAsyncDisposable {
   public async Task AnUnexpectedTokenInAMappedDocumentIsRefusedInTheSameWordsAsync() {
     await _scalarAsync($"UPDATE {TABLE} SET data = data || '{{\"OccurredAt\":true}}'::jsonb WHERE data ->> 'Label' = 'row-1'");
 
-    var read = async () => await _context!.Set<PerspectiveRow<TemporalModel>>()
+    async Task readAsync() => await _context!.Set<PerspectiveRow<TemporalModel>>()
       .AsNoTracking()
       .FirstAsync(r => r.Data.Label == "row-1");
 
-    var error = await Assert.That(read).Throws<System.Text.Json.JsonException>();
+    var error = await Assert.That(readAsync).Throws<System.Text.Json.JsonException>();
     await Assert.That(error!.Message).IsEqualTo(
       "A stored DateTime must be a number (microseconds) or a rendering, but the document holds True")
       .Because("the reader is the serializer's, so the refusal is the serializer's, on both paths");

@@ -45,6 +45,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
 #pragma warning restore S1144
 
   private const string WHIZBANG_ID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
+  private const string CLOSE_BRACE_INDENT_4 = "    }";
+  private const string CLOSE_BRACE_INDENT_6 = "      }";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover all [WhizbangId] struct declarations in the compilation.
@@ -197,10 +199,10 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
         var fqn = info.FullyQualifiedName;
         sb.AppendLine($"    if (type == typeof({fqn})) {{");
         sb.AppendLine($"      return _create{info.TypeName}TypeInfo(options);");
-        sb.AppendLine("    }");
+        sb.AppendLine(CLOSE_BRACE_INDENT_4);
         sb.AppendLine($"    if (type == typeof({fqn}?)) {{");
         sb.AppendLine($"      return _create{info.TypeName}NullableTypeInfo(options);");
-        sb.AppendLine("    }");
+        sb.AppendLine(CLOSE_BRACE_INDENT_4);
       }
       sb.AppendLine("    return null;");
     }
@@ -222,8 +224,8 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("    if (additionalResolvers != null) {");
     sb.AppendLine("      for (int i = 0; i < additionalResolvers.Length; i++) {");
     sb.AppendLine("        resolvers[i + 1] = additionalResolvers[i];");
-    sb.AppendLine("      }");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
+    sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine("    return new JsonSerializerOptions(global::Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions(global::Whizbang.Core.Serialization.SerializationProfile.Persistence)) {");
     sb.AppendLine("      TypeInfoResolver = JsonTypeInfoResolver.Combine(resolvers),");
     sb.AppendLine("      DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull");
@@ -341,10 +343,10 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("      if (reader.TokenType == JsonTokenType.String) {");
     sb.AppendLine($"        global::Whizbang.Core.Perspectives.StoredFormFallbacks.ScalarIdentifierRead(\"{info.TypeName}\");");
     sb.AppendLine($"        return new {fqn}(reader.GetGuid());");
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine("      if (reader.TokenType != JsonTokenType.StartObject) {");
     sb.AppendLine($"        throw new JsonException($\"A stored {info.TypeName} must be an object holding a Value or a string, but the document holds {{reader.TokenType}}\");");
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine("      global::System.Guid value = default;");
     sb.AppendLine("      var found = false;");
     sb.AppendLine("      while (reader.Read() && reader.TokenType != JsonTokenType.EndObject) {");
@@ -355,18 +357,18 @@ public class PerspectivePersistenceJsonContextGenerator : IIncrementalGenerator 
     sb.AppendLine("        } else {");
     sb.AppendLine("          reader.Skip();");
     sb.AppendLine("        }");
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine("      if (!found) {");
     sb.AppendLine($"        throw new JsonException(\"A stored {info.TypeName} object holds no Value\");");
-    sb.AppendLine("      }");
+    sb.AppendLine(CLOSE_BRACE_INDENT_6);
     sb.AppendLine($"      return new {fqn}(value);");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine();
     sb.AppendLine($"    public override void Write(Utf8JsonWriter writer, {fqn} value, JsonSerializerOptions options) {{");
     sb.AppendLine("      writer.WriteStartObject();");
     sb.AppendLine("      writer.WriteString(\"Value\", value.Value);");
     sb.AppendLine("      writer.WriteEndObject();");
-    sb.AppendLine("    }");
+    sb.AppendLine(CLOSE_BRACE_INDENT_4);
     sb.AppendLine("  }");
     sb.AppendLine();
     sb.AppendLine($"  private static JsonTypeInfo<{fqn}> _create{info.TypeName}TypeInfo(JsonSerializerOptions options) {{");

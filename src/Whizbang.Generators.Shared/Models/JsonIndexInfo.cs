@@ -224,6 +224,6 @@ public static class JsonIndexSql {
   /// </remarks>
   private static string _schemaOf(string qualifiedTable) {
     var dot = qualifiedTable.IndexOf('.');
-    return dot > 0 ? qualifiedTable.Substring(0, dot + 1) : string.Empty;
+    return dot > 0 ? qualifiedTable[..(dot + 1)] : string.Empty;
   }
 }

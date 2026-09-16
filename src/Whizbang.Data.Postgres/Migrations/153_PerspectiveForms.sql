@@ -37,9 +37,9 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_perspective_forms (
 );
 
 COMMENT ON TABLE __SCHEMA__.wh_perspective_forms IS
-'Which stored form each perspective table is in. temporal_form 1 = the mixed-unit form (a date as
-a day count, a duration as ticks); 2 = microseconds for every kind. A table absent here is at 1.
-settled_at is set once a pass at form 2 converts nothing, so later startups skip the table.';
+  'Which stored form each perspective table is in. temporal_form 1 = the mixed-unit form (a date as '
+  'a day count, a duration as ticks); 2 = microseconds for every kind. A table absent here is at 1. '
+  'settled_at is set once a pass at form 2 converts nothing, so later startups skip the table.';
 
 -- The canonical number for one stored value: a rendering parsed, a mixed-unit number converted,
 -- anything else returned as it was. Renderings without a zone are UTC, whatever the session says.
@@ -119,9 +119,9 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__._wh_canonical_leaf(JSONB, SMALLINT, SMALLINT) IS
-'The canonical number for one stored temporal value of the given kind (0 instant, 1 offset
-instant, 2 day, 3 time of day, 4 duration): a rendering parsed as UTC, a number in the mixed-unit
-form (from_form 1) converted to microseconds, anything else returned unchanged.';
+  'The canonical number for one stored temporal value of the given kind (0 instant, 1 offset '
+  'instant, 2 day, 3 time of day, 4 duration): a rendering parsed as UTC, a number in the mixed-unit '
+  'form (from_form 1) converted to microseconds, anything else returned unchanged.';
 
 -- One path of one document, walking nested objects and, at a segment written '[]', every element
 -- of a collection. A missing key, a value of another type or a collection that is not one is
@@ -176,9 +176,9 @@ END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.wh_canonicalize_temporal(JSONB, TEXT[], SMALLINT, SMALLINT) IS
-'Rewrites one temporal path of a perspective document into the canonical microsecond form. The
-path walks nested objects and, at a segment written [], every element of a collection; the kind is
-the ordinal of the runtime StoredTemporalKind; from_form is the table''s ledger form (1 converts
-day counts and tick counts, 2 leaves numbers alone). Idempotent over its own output.';
+  'Rewrites one temporal path of a perspective document into the canonical microsecond form. The '
+  'path walks nested objects and, at a segment written [], every element of a collection; the kind is '
+  'the ordinal of the runtime StoredTemporalKind; from_form is the table''s ledger form (1 converts '
+  'day counts and tick counts, 2 leaves numbers alone). Idempotent over its own output.';
 
 -- @whizbang:bootstrap-end

@@ -62,7 +62,7 @@ public static class FleetVersions {
     }
 
     await using var command = new NpgsqlCommand(
-      $"SELECT DISTINCT coalesce(metadata ->> 'Version', $3) AS release "
+      "SELECT DISTINCT coalesce(metadata ->> 'Version', $3) AS release "
       + $"FROM {quoted}.wh_service_instances "
       + "WHERE instance_id <> $1 AND last_heartbeat_at > now() - $2 "
       + "ORDER BY release", connection);

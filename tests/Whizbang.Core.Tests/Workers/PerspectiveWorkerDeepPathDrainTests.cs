@@ -861,10 +861,12 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       instanceProvider: instanceProvider,
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: useBatchedStrategy ? null : new InstantCompletionStrategy(),
       eventTypeProvider: registry,
       logger: logger,
+      metrics: metrics,
       timeProvider: timeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
@@ -873,8 +875,6 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       recentlyProcessedEventCache: cooldownCache,
       leaseHandleOptions: leaseHandleOptions,
       leaseRenewalOptions: leaseRenewalOptions,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      metrics: metrics,
       storedFormFailures: storedFormFailures);
     return (worker, harness, provider);
   }

@@ -20,10 +20,11 @@ namespace Whizbang.Core.Perspectives;
 /// so the registry does not grow with every such stream for the life of the process.
 /// </para>
 /// </remarks>
+/// <param name="timeProvider">The clock, or the system clock.</param>
 /// <docs>operations/infrastructure/migrations</docs>
 /// <tests>tests/Whizbang.Core.Tests/Perspectives/StoredFormFailureRegistryTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerDeepPathDrainTests.StoredForm.cs</tests>
-public sealed class StoredFormFailureRegistry {
+public sealed class StoredFormFailureRegistry(TimeProvider? timeProvider = null) {
   /// <summary>What is remembered about one perspective and stream.</summary>
   /// <param name="PerspectiveName">The perspective that could not read.</param>
   /// <param name="StreamId">The stream whose document it could not read.</param>
@@ -40,13 +41,7 @@ public sealed class StoredFormFailureRegistry {
     DateTimeOffset LastFailedAt);
 
   private readonly ConcurrentDictionary<(string PerspectiveName, Guid StreamId), Entry> _entries = new();
-  private readonly TimeProvider _time;
-
-  /// <summary>Creates the registry.</summary>
-  /// <param name="timeProvider">The clock, or the system clock.</param>
-  public StoredFormFailureRegistry(TimeProvider? timeProvider = null) {
-    _time = timeProvider ?? TimeProvider.System;
-  }
+  private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
 
   /// <summary>How long a stream nothing has been heard of stays in the registry. Default one hour.</summary>
   public TimeSpan ForgetAfter { get; init; } = TimeSpan.FromHours(1);

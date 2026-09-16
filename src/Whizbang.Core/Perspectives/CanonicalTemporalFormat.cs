@@ -85,6 +85,17 @@ public static class CanonicalTemporalFormat {
   public static long ToEpochMicroseconds(DateTimeOffset value) =>
     (value.UtcTicks - _epochTicks) / TICKS_PER_MICROSECOND;
 
+  /// <summary>A date as microseconds since the Unix epoch, at midnight UTC of that date.</summary>
+  /// <param name="value">The date.</param>
+  /// <returns>Microseconds since the epoch, negative before it.</returns>
+  /// <remarks>
+  /// The same number an instant at that midnight has, which is what lets a date be compared with an
+  /// instant at all. A day count could not: a day count and a microsecond count are both integers,
+  /// and nothing in a document says which one a number is.
+  /// </remarks>
+  public static long ToEpochMicroseconds(DateOnly value) =>
+    (value.DayNumber - _epochDayNumber) * MICROSECONDS_PER_DAY;
+
   /// <summary>The instant that many microseconds after the epoch.</summary>
   /// <param name="microseconds">Microseconds since the epoch.</param>
   /// <returns>The instant, as UTC.</returns>
@@ -96,17 +107,6 @@ public static class CanonicalTemporalFormat {
   /// <returns>The instant, with no offset.</returns>
   public static DateTimeOffset OffsetFromEpochMicroseconds(long microseconds) =>
     new(FromEpochMicroseconds(microseconds), TimeSpan.Zero);
-
-  /// <summary>A date as microseconds since the Unix epoch, at midnight UTC of that date.</summary>
-  /// <param name="value">The date.</param>
-  /// <returns>Microseconds since the epoch, negative before it.</returns>
-  /// <remarks>
-  /// The same number an instant at that midnight has, which is what lets a date be compared with an
-  /// instant at all. A day count could not: a day count and a microsecond count are both integers,
-  /// and nothing in a document says which one a number is.
-  /// </remarks>
-  public static long ToEpochMicroseconds(DateOnly value) =>
-    (value.DayNumber - _epochDayNumber) * MICROSECONDS_PER_DAY;
 
   /// <summary>The date that a number of microseconds since the epoch falls on.</summary>
   /// <param name="microseconds">Microseconds since the epoch.</param>

@@ -68,6 +68,7 @@ public class CanonicalTemporalRewriteTests {
 
   private static RewriteContext _context() {
     OpaqueDocumentFixture.EnsureRegistered();
+    OpaqueNodeFixture.EnsureRegistered();
     return new RewriteContext(new DbContextOptionsBuilder<RewriteContext>()
       .UseNpgsql("Host=localhost;Database=probe;Username=u;Password=p", npgsql => npgsql.UseWhizbangFunctions())
       .Options);
@@ -82,7 +83,7 @@ public class CanonicalTemporalRewriteTests {
   /// <summary>Every placement the model maps is a path, and nothing that is not temporal is.</summary>
   [Test]
   public async Task AMappedDocumentYieldsEveryPlacementTheModelMapsAsync() {
-    using var context = _context();
+    await using var context = _context();
     var row = context.Model.FindEntityType(typeof(PerspectiveRow<MappedModel>))!;
 
     var paths = CanonicalTemporalRewrite.PathsOf(row, PerspectiveDocumentSerialization.Options);
@@ -105,7 +106,7 @@ public class CanonicalTemporalRewriteTests {
   /// </summary>
   [Test]
   public async Task AnOpaqueDocumentYieldsEveryPlacementTheSerializerReadsAsync() {
-    using var context = _context();
+    await using var context = _context();
     var row = context.Model.FindEntityType(typeof(PerspectiveRow<OpaqueDocument>))!;
 
     var paths = CanonicalTemporalRewrite.PathsOf(row, PerspectiveDocumentSerialization.Options);
@@ -119,10 +120,32 @@ public class CanonicalTemporalRewriteTests {
         + "serializer reads, so it is one the rewrite converts");
   }
 
+  /// <summary>
+  /// A member that refers to its own type is walked once; the rewrite names the placements it can
+  /// reach without following the cycle.
+  /// </summary>
+  /// <remarks>
+  /// A document may nest itself, a node with a next node. Following the reference forever would
+  /// never finish, so the walk visits a type once per path and stops where it would revisit one.
+  /// The placements past that point are left to the readers, which take a rendering and count it.
+  /// </remarks>
+  [Test]
+  public async Task ASelfReferencingOpaqueMemberIsWalkedOnceAsync() {
+    await using var context = _context();
+    var row = context.Model.FindEntityType(typeof(PerspectiveRow<OpaqueNode>))!;
+
+    var paths = CanonicalTemporalRewrite.PathsOf(row, PerspectiveDocumentSerialization.Options);
+
+    await Assert.That(_rendered(paths)).IsEqualTo(
+      "data:At:Instant\n"
+      + "metadata:Timestamp:Instant")
+      .Because("the walk stops where it would revisit the node's own type, and finishes");
+  }
+
   /// <summary>A model with no temporal yields nothing, and no statement is named for its table.</summary>
   [Test]
   public async Task AModelWithNothingTemporalIsNotNamedAsync() {
-    using var context = _context();
+    await using var context = _context();
 
     var plain = CanonicalTemporalRewrite.PathsOf(
       context.Model.FindEntityType(typeof(PerspectiveRow<PlainModel>))!, PerspectiveDocumentSerialization.Options);
@@ -131,7 +154,7 @@ public class CanonicalTemporalRewriteTests {
     await Assert.That(plain.Length).IsEqualTo(1)
       .Because("even a plain model carries the framework's metadata timestamp");
     await Assert.That(string.Join("\n", rewrites.Select(r => r.Name)))
-      .IsEqualTo("wh_per_mapped\nwh_per_opaque\nwh_per_plain")
+      .IsEqualTo("wh_per_mapped\nwh_per_opaque\nwh_per_opaque_node\nwh_per_plain")
       .Because("every table holds at least the metadata timestamp, and the entries come in table order");
   }
 
@@ -196,7 +219,25 @@ public class CanonicalTemporalRewriteTests {
   }
 }
 
-/// <summary>Two mapped shapes side by side and one opaque, as the generator maps them.</summary>
+/// <summary>An opaque document that nests its own type, so the serializer's walk meets a cycle.</summary>
+public sealed record OpaqueNode(Guid Id, DateTime At, OpaqueNode? Next);
+
+/// <summary>Source-generated metadata for <see cref="OpaqueNode"/>.</summary>
+[JsonSerializable(typeof(OpaqueNode))]
+public sealed partial class OpaqueNodeJsonContext : JsonSerializerContext;
+
+/// <summary>Registers the self-referencing document's metadata with the registry once.</summary>
+public static class OpaqueNodeFixture {
+  private static readonly Lazy<bool> _registered = new(() => {
+    Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(OpaqueNodeJsonContext.Default);
+    return true;
+  });
+
+  /// <summary>Ensures the document resolves through the registry's union.</summary>
+  public static void EnsureRegistered() => _ = _registered.Value;
+}
+
+/// <summary>Two mapped shapes side by side and two opaque, as the generator maps them.</summary>
 internal sealed class RewriteContext(DbContextOptions<RewriteContext> options) : DbContext(options) {
   protected override void OnModelCreating(ModelBuilder modelBuilder) {
     modelBuilder.Entity<PerspectiveRow<CanonicalTemporalRewriteTests.MappedModel>>(entity => {
@@ -233,6 +274,20 @@ internal sealed class RewriteContext(DbContextOptions<RewriteContext> options) :
       entity.Property(e => e.Id).HasColumnName("id");
       entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb")
         .HasConversion(PerspectiveDocumentSerialization.ConverterFor<OpaqueDocument>());
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb")
+        .HasConversion(PerspectiveDocumentSerialization.ConverterFor<PerspectiveMetadata>());
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb")
+        .HasConversion(PerspectiveDocumentSerialization.ConverterFor<PerspectiveScope>());
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at");
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+      entity.Property(e => e.Version).HasColumnName("version");
+    });
+    modelBuilder.Entity<PerspectiveRow<OpaqueNode>>(entity => {
+      entity.ToTable("wh_per_opaque_node");
+      entity.HasKey(e => e.Id);
+      entity.Property(e => e.Id).HasColumnName("id");
+      entity.Property(e => e.Data).HasColumnName("data").HasColumnType("jsonb")
+        .HasConversion(PerspectiveDocumentSerialization.ConverterFor<OpaqueNode>());
       entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb")
         .HasConversion(PerspectiveDocumentSerialization.ConverterFor<PerspectiveMetadata>());
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb")

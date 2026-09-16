@@ -34,7 +34,7 @@ public class PerspectiveDocumentSerializationTests {
   private static readonly DateTime _startedAt = new(2026, 3, 4, 5, 6, 7, 890, DateTimeKind.Utc);
 
   [Before(Test)]
-  public void SetupAsync() {
+  public void Setup() {
     OpaqueDocumentFixture.EnsureRegistered();
     BaseUpsertStrategy.PathOnePersistenceOptionsProvider = null;
   }
@@ -107,7 +107,7 @@ public class PerspectiveDocumentSerializationTests {
       .IsEqualTo(CanonicalTemporalFormat.ToEpochMicroseconds(_startedAt));
 
     var storedScope = (string)scope.ConvertToProvider(new PerspectiveScope())!;
-    await Assert.That(((PerspectiveScope)scope.ConvertFromProvider(storedScope)!)).IsNotNull();
+    await Assert.That((PerspectiveScope)scope.ConvertFromProvider(storedScope)!).IsNotNull();
   }
 
   /// <summary>A rendering an older release wrote reads through the converter too.</summary>
