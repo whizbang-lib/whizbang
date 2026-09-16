@@ -71,16 +71,22 @@ public class ClaimWorkerCoverageTests {
     /// <summary>When set, RecordHeartbeatAsync throws this instead of succeeding.</summary>
     public Exception? HeartbeatException { get; set; }
 
+    /// <summary>Thrown by the next claim only, then cleared: one failed tick, then normal service.</summary>
+    public Exception? NextClaimException { get; set; }
+
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
       WorkBatch batch;
+      Exception? failure;
       lock (_lock) {
         CallCount++;
         LastMaxStreams = req.MaxStreams;
         if (req.MaxStreams > PeakMaxStreams) { PeakMaxStreams = req.MaxStreams; }
         batch = _batchToReturn;
+        failure = NextClaimException;
+        NextClaimException = null;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
-      return Task.FromResult(batch);
+      return failure is not null ? Task.FromException<WorkBatch>(failure) : Task.FromResult(batch);
     }
 
     public Task WaitForCallsAsync(int n, TimeSpan timeout) {
@@ -152,7 +158,8 @@ public class ClaimWorkerCoverageTests {
       ISchemaReadyGate? schemaGate = null,
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
-      ClaimChurnFeedback? churnFeedback = null) {
+      ClaimChurnFeedback? churnFeedback = null,
+      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
@@ -162,7 +169,7 @@ public class ClaimWorkerCoverageTests {
       new NoOpWorkNotificationListener(),
       schemaGate ?? SchemaReadyGate.AlreadyReady(),
       Options.Create(options),
-      NullLogger<ClaimWorker>.Instance,
+      logger ?? NullLogger<ClaimWorker>.Instance,
       outboxChannel: outboxChannel,
       perspectiveChannel: perspectiveChannel,
       churnFeedback: churnFeedback);
@@ -182,11 +189,37 @@ public class ClaimWorkerCoverageTests {
       ClaimWorkerOptions options,
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
-      ClaimChurnFeedback? churnFeedback = null) {
-    var (worker, _) = _build(coord, options, outboxChannel: outboxChannel, perspectiveChannel: perspectiveChannel, churnFeedback: churnFeedback);
+      ClaimChurnFeedback? churnFeedback = null,
+      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
+    var (worker, _) = _build(coord, options, outboxChannel: outboxChannel, perspectiveChannel: perspectiveChannel, churnFeedback: churnFeedback, logger: logger);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);
+  }
+
+  /// <summary>
+  /// A deadlock inside one claim is the database's business, not the loop's: the tick is reported
+  /// with the classified reason and the next tick runs. The loop already survived every exception;
+  /// what an operator could not tell from the line was whether it was a passing failure or a defect.
+  /// </summary>
+  [Test]
+  public async Task ClaimTick_TransientDatabaseFailure_IsReportedWithItsReasonAndTheNextTickRunsAsync() {
+    var coord = new RecordingCoordinator { NextClaimException = FakeDbException.WithSqlState("40P01", message: "deadlock detected") };
+    var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<ClaimWorker>();
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 10,
+      PollingMaxIntervalMilliseconds = 50,
+    }, logger: logger);
+
+    await coord.WaitForCallsAsync(2, TimeSpan.FromSeconds(10));
+
+    var reported = logger.Collector.GetSnapshot()
+      .Where(e => e.Id.Id == ClaimWorker.TRANSIENT_FAILURE_EVENT_ID).ToList();
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+    await Assert.That(reported[0].Message).Contains(TransientDatabaseFailure.DEADLOCK, StringComparison.Ordinal);
+    await Assert.That(reported[0].Message).Contains("40P01", StringComparison.Ordinal);
+    await Assert.That(reported[0].Exception).IsTypeOf<FakeDbException>();
   }
 
   // ============================================================

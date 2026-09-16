@@ -24,7 +24,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// </summary>
 /// <docs>fundamentals/work-coordinator/inbox-drain</docs>
 [NotInParallel("WhizbangBackgroundServiceTests")]
-public class InboxDrainWorkerCoverageTests {
+public partial class InboxDrainWorkerCoverageTests {
 
   // --- fakes ---
 

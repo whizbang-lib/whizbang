@@ -36,8 +36,9 @@ public partial class PerspectiveWorkerDeepPathChannelTests {
 
   [Test]
   public async Task Worker_RunnerRefusesTheStoredForm_AnnouncesOnceAndParksTheRowAsync() {
-    // The standard path rethrows after reporting, and the rethrow surfaces as an unobserved task
-    // exception on the consumer loop; observe exactly that one.
+    // The standard path rethrows after reporting. The consumer loop now contains that rethrow (it
+    // reports the batch as a defect and carries on), so nothing should reach here any more; the
+    // handler stays as a belt so a regression of the containment cannot fail an unrelated test.
     static void handler(object? s, UnobservedTaskExceptionEventArgs e) {
       if (e.Exception.InnerException is JsonException) {
         e.SetObserved();

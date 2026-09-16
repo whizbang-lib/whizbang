@@ -202,6 +202,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moot. `ClaimWorkPlanShapeTests` asserts both ceilings -- blocks touched and tuples examined, per
   table -- at a full budget of holdings and again at double it, because blocks alone would not catch
   an index-only pass over the whole holdings.
+- **A transient database failure inside one perspective batch stopped the whole host:** the channel
+  consumer loop rethrew after logging, the exception left `ExecuteAsync`, and the host's default
+  `BackgroundServiceExceptionBehavior` (`StopHost`) shut the process down over a deadlock that would
+  have passed on the next attempt — which also made every perspective apply failure a potential host
+  stop, since the per-group catch reports, parks the row, and rethrows into that same loop. Two new
+  types carry the fix: `TransientDatabaseFailure` classifies what a loop caught (deadlock,
+  serialization failure, statement canceled, lock timeout, connection lost, insufficient resources, a
+  wrapped command timeout, or the provider's own transient flag) from `DbException.SqlState` and
+  `DbException.IsTransient` alone, wrappers and aggregates included, so Core still references no
+  provider; `WorkerLoopRecovery` is the single place a loop decides what to do about it, picking
+  between the worker's own two report lines and waiting a bounded backoff on the worker's
+  `TimeProvider` (250 ms doubling to 30 s, reset by the next good iteration). The perspective consumer
+  loop and its drain pass now report each failed batch once at Error with the reason, the SQLSTATE and
+  the batch's stream ids, release those streams' unstarted rows so a sibling can take them instead of
+  waiting out the lease, back off and continue; a failure that is not the database's is reported as a
+  defect under its own event id and the loop still continues. The audit behind it also found the
+  outbox drain worker's batch body guarded by a `finally` with no `catch`, so anything from the
+  identity lookup, the security-context establishment or the publish flush ended the worker: it now
+  has the same per-batch guard its inbox mirror always had. The claim poll and the inbox drain name
+  the classification on the lines they already wrote.
 - **The stored-form rewrite skipped when it lost the schema lock, and nothing ran it later:** the
   phase took the schema-init key with a single `pg_try_advisory_lock` and skipped at Debug on a lost
   attempt, on the assumption that the holder was another rewriter. The holder is often a sibling's

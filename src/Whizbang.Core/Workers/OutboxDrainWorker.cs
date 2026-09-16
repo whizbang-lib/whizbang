@@ -258,6 +258,19 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
           if (distinctStreams.Count > 0) {
             await _drainStreamBatchAsync([.. distinctStreams], stoppingToken);
           }
+        } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+          throw;
+        } catch (Exception ex) {
+          // The mirror of InboxDrainWorker's batch guard, which this worker never had: the per-stream
+          // path isolates its own failures, but the batch envelope around it — the identity lookup,
+          // the fetch, the publish flush in its own finally — did not, and anything from there left
+          // ExecuteAsync and stopped the host under the default StopHost behavior. Outbox rows are
+          // durable and the claim backstop re-offers the streams, so reporting and continuing loses
+          // nothing; the classifier decides whether the line names the database or a defect.
+          WorkerLoopRecovery.Report(ex,
+            (transient, cause) => LogTransientBatchDrainFailed(
+              _logger, transient.Reason, transient.SqlState ?? "none", cause),
+            cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           // Active → idle: batch done. If more stream_ids arrived during processing the
           // next batcher iteration will rapidly flip us back to active — the fixture's
@@ -1375,6 +1388,23 @@ public sealed partial class OutboxDrainWorker : BackgroundService {
   [LoggerMessage(EventId = 47, Level = LogLevel.Debug,
     Message = "OutboxDrainWorker._publishOneAsync: PublishOneAsync RETURNED msg={MessageId} success={Success}")]
   static partial void LogPublishOneReturned(ILogger logger, Guid messageId, bool success);
+
+  /// <summary>The event id of a drain batch lost to a database failure that passes of its own accord.</summary>
+  internal const int TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID = 53;
+
+  /// <summary>The event id of a drain batch lost to a failure that is this framework's own defect.</summary>
+  internal const int BATCH_DRAIN_FAILURE_EVENT_ID = 54;
+
+  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+    Message = "Outbox drain batch failed on a transient database failure ({Reason}, SQLSTATE {SqlState}); "
+            + "the streams re-offer via the claim backstop")]
+  static partial void LogTransientBatchDrainFailed(
+    ILogger logger, string reason, string sqlState, Exception exception);
+
+  [LoggerMessage(EventId = BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+    Message = "Outbox drain batch failed; the streams re-offer via the claim backstop, but this failure "
+            + "is not the database's and wants fixing")]
+  static partial void LogBatchDrainFailed(ILogger logger, Exception exception);
 }
 
 /// <summary>Configuration for <see cref="OutboxDrainWorker"/>.</summary>
