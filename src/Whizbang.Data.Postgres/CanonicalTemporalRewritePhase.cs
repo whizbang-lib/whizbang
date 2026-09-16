@@ -210,19 +210,26 @@ public static class CanonicalTemporalRewritePhase {
   private static async Task<NpgsqlTransaction?> _tryBeginLockedAsync(
       NpgsqlConnection connection, long lockId, CancellationToken cancellationToken) {
     var transaction = await connection.BeginTransactionAsync(cancellationToken);
-    var held = false;
+    bool held;
     try {
       await using var command = new NpgsqlCommand("SELECT pg_try_advisory_xact_lock($1)", connection);
       command.Parameters.AddWithValue(lockId);
       held = await command.ExecuteScalarAsync(cancellationToken) is true;
-      return held ? transaction : null;
-    } finally {
-      if (!held) {
-        // Ends the empty transaction so the connection is clean for the next attempt. A transaction
-        // disposed without a commit is rolled back.
-        await transaction.DisposeAsync();
-      }
+    } catch {
+      // The failure the caller sees is the connection's own, not a later "transaction already
+      // open" on the next attempt over the same connection.
+      await transaction.DisposeAsync();
+      throw;
     }
+
+    if (held) {
+      return transaction;
+    }
+
+    // Ends the empty transaction so the connection is clean for the next attempt. A transaction
+    // disposed without a commit is rolled back.
+    await transaction.DisposeAsync();
+    return null;
   }
 }
 
