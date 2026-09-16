@@ -184,6 +184,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the global one, and `TagPayloadSizeConfigurationBinder` reads both, globally and per tag, from
   `Whizbang:Tags` without reflection; an empty value disables a threshold and a non-numeric value
   fails startup naming the key.
+- **The claim poll priced itself by the backlog, not the batch:** measured under a bulk load, one
+  `claim_work` call read tens of thousands of blocks and the queue tables were scanned whole several
+  times per poll on every instance, so the poll alone took most of the database's cores and the
+  backlog grew because of it. Two causes. The outbox acquisition sorted every pending row to keep a
+  batch and the perspective acquisition aggregated every claimable event to choose its streams;
+  migration 157 adds an arrival-order covering index for the outbox and an urgency-order one for
+  perspective events, and `claim_orphaned_perspective_events` (150) now chooses streams from a bounded
+  window of the most urgent events while still capturing a selected stream in full. And a session
+  that polled while the tables were empty kept generic plans made for empty tables, which scanned
+  them whole once they filled; `claim_work` now runs under `plan_cache_mode = force_custom_plan`, so
+  the poll and everything it calls plan for the tables as they are. `ClaimWorkPlanShapeTests`
+  reproduces both shapes and asserts the tuples one poll reads stay within a few batches.
+- **The digest-epoch lane probes scanned the event store whole:** the closure and verification
+  probes for a foreign lane filter on `origin_service_id` and `origin_commit_sequence`, and no index
+  covered those columns, so each probe was a parallel sequential scan of the event store, about
+  twenty per maintenance tick. Migration 155 adds `idx_event_store_origin_lane`, partial on the rows
+  that have a lane.
+- **The commit-order stamper sorted every unstamped row on every wake:** the eligibility query
+  ordered the unstamped set by transaction id before taking a batch and ran whether or not anything
+  was unstamped, about half a core per busy database on the backstop tick. The leader now asks the
+  partial index whether any row is unstamped and runs the stamp only when the answer is yes; a wake
+  that finds nothing raises `OnStampSkipped`.
+- **Every instance start applied the bootstrap closure, and idempotent DDL still locks:**
+  `CREATE INDEX IF NOT EXISTS` on an existing index takes a share lock on the table before it finds
+  nothing to do, and an instance an autoscaler started under load deadlocked against the maintenance
+  sweep and the poll sources. The transaction that applies the closure now records a hash of its
+  scripts in `wh_bootstrap_closure` (created by the closure itself, in migration 000), and an
+  instance whose closure is recorded applies nothing: no statement, no lock, no wait. A changed
+  closure runs in full once; the migration ledger is untouched.
+- **Outbox and inbox failure reasons were always Unknown:** `process_outbox_failures` and
+  `process_inbox_failures` read the reason from a `FailureReason` element that nothing writes, so
+  the dead-letter decision could not tell a lease that lapsed from a handler that threw. Migration
+  156 reads `Reason` and `FailureReason` alike, as 154 did for perspective events.
 - **A perspective document one path wrote and the other could not read:** an opaque document was
   written as canonical numbers under the persistence profile and read through the data source's
   default-profile options, so every read failed. Opaque columns are now bound to the persistence

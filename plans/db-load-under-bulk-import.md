@@ -65,13 +65,13 @@ the polling loops (`count_outstanding_work`, due-schedule counts, existence prob
 
 | Stage | Change | Status |
 |---|---|---|
-| L1 | `claim_work` bounded by the batch, not the backlog: candidate selection through the partial claiming indexes with a LIMIT before ordering, and plans that cannot be cached against an empty table (`plan_cache_mode` or a statement shape the planner re-plans) | not started |
-| L2 | Index `(origin_service_id, origin_commit_sequence, created_at)` on the event store for the digest-epoch lane probes; bound probes per tick | not started |
+| L1 | `claim_work` bounded by the batch, not the backlog: an arrival-order covering index for the outbox acquisition and an urgency-order one for perspective events (157), the perspective acquisition choosing streams from a bounded window of the most urgent events (150), and `plan_cache_mode = force_custom_plan` on the poll so no session keeps plans made for empty tables | done |
+| L2 | Index `(origin_service_id, origin_commit_sequence, created_at)` on the event store for the digest-epoch lane probes (155); the closure's own per-tick bound already exists | done |
 | L3 | Maintenance busy check counts outbox and perspective-event backlog too, and epoch closure and purges defer while any is non-trivial (bounded, as today); a deferred sweep is logged at Information with every count | done |
-| L4 | Stamper: batch size and interval tuned so it stays under a tenth of a core at peak; skip when nothing is unstamped without the CTE | not started |
-| L5 | Bootstrap phase skips DDL when the recorded schema hash is current, so a scaled-out instance starting under load takes no relation locks | not started |
+| L4 | Stamper: a wake with nothing unstamped skips the stamp entirely (the partial-index probe decides), reported through `OnStampSkipped`; batch size and intervals unchanged, since the cost was the sort running when there was nothing to sort | done |
+| L5 | The bootstrap records the hash of the closure it applied in `wh_bootstrap_closure` (created by 000's region) and an instance whose closure is recorded applies nothing: no statement, no lock, no wait | done |
 | L6 | Store-backed pull sources back off when idle: after three empty ticks the interval doubles per tick to a ceiling of one minute, and a hit or a push-transport flip restores the base cadence | done |
-| L7 | Outbox and inbox failure functions read the element the runtime writes (`MessageId`, `Reason`) as well as the older names, as the perspective function already does, so `failure_reason` stops reading Unknown for every row | not started |
+| L7 | Outbox and inbox failure functions read the element the runtime writes (`MessageId`, `Reason`) as well as the older names, as the perspective function already does, so `failure_reason` stops reading Unknown for every row (156) | done |
 | L8 | A drain-path apply failure of any kind parks each leased row through the failure channel, as the stored-form path does, so the rows back off and dead-letter instead of being re-claimed forever behind a cursor failure that names no row | done |
 | L9 | Tag payload-size thresholds bind from configuration under `Whizbang:Tags` (`PayloadSizeWarningThresholdBytes`, `PayloadSizeErrorThresholdBytes`, and per tag under `...ByTag:{tag}`); the processor resolves the per-tag value first, then the global one | done |
 

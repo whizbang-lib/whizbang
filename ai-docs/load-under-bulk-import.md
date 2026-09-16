@@ -30,15 +30,33 @@ In a 561-second window `claim_work` consumed 1,594 s on the producer's database 
 databases spent 2,837 s inside the poll in 561 s: five of eight cores. The outbox was scanned whole
 8,344 times for 105 million tuples, the perspective-event table 3,320 times, the inbox 3,621 times.
 
-The queue tables are empty between loads. A session that polls while they are empty carries plans
-made for empty tables, and once the tables fill those plans scan them whole on every poll. Every
-instance polls several times a second, so a backlog saturates the server and grows itself; scaling the
-producer out made the run slower.
+Every instance polls several times a second, so a backlog saturates the server and grows itself;
+scaling the producer out made the run slower. Two causes, both reproduced with `auto_explain` on the
+test container (nested statements on, so the plans inside the function are logged):
+
+- **Two of the three acquisitions were bounded by the backlog.** The inbox acquisition had been
+  bounded by 138, 145 and 150. `claim_orphaned_outbox` orders its candidates by `created_at` and
+  stops at the row bound, but no index carried that order over the pending rows, so the planner
+  scanned every pending row, sorted them all, and kept a batch. `claim_orphaned_perspective_events`
+  chose its most urgent streams by aggregating every claimable event. Migration 157 adds
+  `idx_outbox_pending_arrival` (arrival order, covering, partial on pending singles) and
+  `idx_perspective_event_urgency` (priority order, covering, partial on pending), and 150's
+  perspective acquisition now takes its candidate streams from a bounded window of the most urgent
+  events (`LIMIT GREATEST(p_max_streams, 1) * 8` walked from that index) while a `selected_streams`
+  join still captures a chosen stream in full, so per-stream ordering is unchanged.
+- **Plans made for empty tables outlived the empty tables.** The queue tables are empty between
+  loads. plpgsql caches a generic plan after a few executions, and a session that polled while the
+  tables were empty kept plans made for empty tables, which scanned them whole, nested, once they
+  filled: the same poll that takes well under a second on fresh plans did not finish inside the
+  command timeout. `claim_work` now carries `SET plan_cache_mode = force_custom_plan`, which applies
+  to everything it calls, so every poll plans for the tables as they are. (A `SET` clause alone does
+  not re-apply a migration; the prosrc comparison needs a body change, so 150 carries a comment.)
 
 **Rule:** the poll's cost is bounded by the batch it returns, never by the backlog it polls over,
-and a plan the function caches must not be able to stick to an empty-table shape.
-`ClaimWorkPlanShapeTests` reproduces the pathology (poll empty, fill with wide rows leased
-elsewhere, poll again on the same session) and asserts the tuples read stay within a few batches.
+and no plan the poll runs may be one made for a table of a different size. `ClaimWorkPlanShapeTests`
+reproduces both shapes (poll empty, fill with wide rows, poll again on the same session; once with
+the rows leased elsewhere, once unowned) and asserts the tuples one poll reads stay within a few
+batches per table.
 
 ## Finding 2: maintenance ran at the peak
 
