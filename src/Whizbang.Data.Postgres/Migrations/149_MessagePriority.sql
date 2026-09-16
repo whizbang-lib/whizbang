@@ -752,6 +752,9 @@ COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain(UUID[], UUID, TIMESTAMPTZ
 
 -- ---------------------------------------------------------------------------------------------
 -- _emit_event_store_chain_for_inbox: last word 146_DoorbellsRingAfterCommit.sql; perspective rows inherit the inbox row's priority.
+-- 158: reads only rows without chain_emitted_at and stamps the rows it read. An inbox event leased at
+-- store time gets its event-store row and its perspective work here, on the first poll after it is
+-- stored; before this stamp every held event was re-read against the event store on every poll.
 -- ---------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(
   p_instance_id UUID,
@@ -793,6 +796,9 @@ BEGIN
       AND i.processed_at IS NULL
       AND i.is_event = true
       AND i.stream_id IS NOT NULL
+      -- 158: only rows this chain has never read (idx_inbox_chain_pending); every held row was read
+      -- against the event store on every poll before, twice.
+      AND i.chain_emitted_at IS NULL
       AND NOT EXISTS (
         SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
       )
@@ -827,6 +833,7 @@ BEGIN
       AND i.processed_at IS NULL
       AND i.is_event = true
       AND i.stream_id IS NOT NULL
+      AND i.chain_emitted_at IS NULL  -- 158: see the lock pass above
       AND NOT EXISTS (
         SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
       )
@@ -942,6 +949,26 @@ BEGIN
   SELECT array_agg(event_id) INTO v_stored_event_ids FROM stored_events;
   v_stored_event_ids := COALESCE(v_stored_event_ids, '{}');
   v_count := cardinality(v_stored_event_ids);
+
+  -- 158: stamp the held rows the chain is finished with, so the next poll reads none of them.
+  -- "Finished" is the row's event being in the event store: either this pass inserted it, or it was
+  -- already there and the pass above excluded the row for exactly that reason. A row whose insert hit
+  -- ON CONFLICT DO NOTHING has no event-store row, so it stays unstamped and the next poll re-attempts
+  -- it with a fresh version snapshot, which is the contract that conflict clause states. The stamp runs
+  -- before the nothing-was-stored return below, because that return is the steady state of a busy
+  -- instance (every held event already chained) and the case the stamp exists for. The stamp and the
+  -- inserts share this transaction, so a failure leaves both undone.
+  UPDATE __SCHEMA__.wh_inbox i
+  SET chain_emitted_at = p_now
+  WHERE i.instance_id = p_instance_id
+    AND i.lease_expiry > p_now
+    AND i.processed_at IS NULL
+    AND i.is_event = true
+    AND i.stream_id IS NOT NULL
+    AND i.chain_emitted_at IS NULL
+    AND EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = i.message_id
+    );
 
   IF v_count = 0 THEN
     RETURN 0;
@@ -1077,5 +1104,5 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__._emit_event_store_chain_for_inbox(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER) IS
-  'Copies leased inbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the inbox row''s priority.';
+  'Copies leased inbox events into the event store and creates their perspective work (146). 149: the perspective rows inherit the inbox row''s priority. 158: reads only rows the chain has not stamped, and stamps the ones whose event is in the event store, so a held row is read once instead of on every poll.';
 

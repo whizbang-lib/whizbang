@@ -2578,14 +2578,14 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Declared indexes over JSON-only fields. The GIN index above answers containment and nothing
     // else, so a field filtered by a range or used as a sort key is read by scanning until it has one
     // of these. Emitted here so it is created once through the normal schema path.
-    foreach (var index in perspective.JsonIndexes) {
-      foreach (var statement in JsonIndexSql.CreateStatements(
-          index, $"{quotedSchema}.{perspective.TableName}", shortName)) {
-        sb.AppendLine(statement);
-      }
-
-      sb.AppendLine();
-    }
+    // This is the fallback script the perspective pass applies when it cannot read the tracking
+    // tables, and it carries the same trigram indexes as the hash-tracked one, so it needs the same
+    // block: one CREATE EXTENSION per table, inside markers the pass can skip as a whole. Emitted
+    // outside a block, a trigram index reaches a server with no gin_trgm_ops operator class as an
+    // ordinary statement and fails the pass with nothing to skip.
+    JsonIndexSql.AppendScript(
+      sb, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
+    sb.AppendLine();
   }
 
   /// <summary>
@@ -2697,7 +2697,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           .Replace("{", "{{")
           .Replace("}", "}}");
 
-      var perspectiveName = TypeNameUtilities.GetSimpleName(perspective.ModelTypeName);
+      // The entry name is the per-perspective hash key the initializer records and compares
+      // (perspective:<name> in wh_schema_migrations). The table is the one name unique to a
+      // perspective within its schema: models nested under feature holders share simple names
+      // (Order.Model, Invoice.Model), and keyed by simple name they shared one hash row, so the one
+      // compared first always read as changed and every start re-applied the DDL under the lock.
+      var perspectiveName = perspective.TableName;
 
       sb.Append($"      (\"{perspectiveName}\", @\"{escapedSql}\")");
       if (i < uniqueTables.Count - 1) {
@@ -2778,13 +2783,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
 
     // See _appendStandardIndexes: a declared index is what makes a range or an ordering on a
-    // JSON-only field a lookup rather than a scan.
-    foreach (var index in perspective.JsonIndexes) {
-      foreach (var statement in JsonIndexSql.CreateStatements(
-          index, $"{quotedSchema}.{perspective.TableName}", shortName)) {
-        perspSql.AppendLine(statement);
-      }
-    }
+    // JSON-only field a lookup rather than a scan. The trigram indexes go inside one
+    // optional-extension block, which creates the extension once, and the schema pass skips that
+    // whole block with one warning on a server that refuses the extension.
+    JsonIndexSql.AppendScript(perspSql, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
 
     foreach (var field in perspective.PhysicalFields) {
       if (field.IsIndexed) {

@@ -58,6 +58,88 @@ reproduces both shapes (poll empty, fill with wide rows, poll again on the same 
 the rows leased elsewhere, once unowned) and asserts the tuples one poll reads stay within a few
 batches per table.
 
+## Finding 1, round two: with acquisition bounded, the poll still cost what the instance held
+
+Acquisition was only half of a poll. The other half is the re-offer: a busy instance holds as many
+leased rows as its budget allows, has already handed most of them to a drain, and polls several
+times a second to re-offer the streams it holds so the drain keeps its work list current. Every part
+of that re-offer priced itself by the holdings. Measured again over a 339 to 346 second window with
+157 in place, `claim_work` was still the top statement on every database by an order of magnitude:
+1,278 calls at 401 ms and about 7,450 shared blocks each on the producer's database for 29 rows a
+call, and 659 calls at 780 ms and about 19,000 blocks each on the largest consumer's for 128 rows a
+call. Blocks to return a row, not blocks to find one.
+
+Reproduced on a container with `auto_explain` (`log_nested_statements` on, so the plans inside the
+function are logged) and per-table `pg_statio` / `pg_stat_user_indexes` deltas around one poll. Five
+causes, each priced by the holdings and none by the batch:
+
+- **The orphan guards.** Each of the three read `WHERE processed_at IS NULL AND (instance_id IS NULL
+  OR lease_expiry < now)`. A disjunction has no index order, so proving that nothing is orphaned
+  examined every pending row: on a busy instance, its whole holdings, three times a poll. They now
+  probe twice: unowned rows under `instance_id IS NULL` through the outstanding-by-instance indexes
+  (123), and expired leases at the head of a lease-expiry index per queue table (158). An instance
+  whose leases are all live proves it at the first entry of each.
+- **The outbox re-offer** ranked every held row per stream with a window function whose result the
+  query never read, then sorted them all and kept a batch. It now walks
+  `idx_outbox_held_arrival` (holder, arrival, id, covering, partial on pending singles) and stops
+  at the batch.
+- **The inbox re-offer** ranked every held row with three window functions and, because it selected
+  `i.*`, fetched every held row's heap page to do it. With payloads wide enough that rows are not
+  updated in place, that is one page per held row per poll.
+- **The perspective re-offer** aggregated every held event to put streams with a hundred or fewer
+  pending events ahead of larger ones. That tier guarded a batch of *rows* against one large stream;
+  the drain has been per stream with an unbounded channel since Phase H, so a large stream no longer
+  displaces small ones, and the tier is gone with the reason for it.
+- **The inbox event-store chain**, which is how an inbox event leased at store time gets its
+  event-store row and its perspective work, re-checked every held event against the event store on
+  every poll, twice (a lock pass and an insert pass), when all but the newest had been chained long
+  ago.
+
+Both re-offers now enumerate the streams an instance holds through a lane index, one index-only
+probe per stream, lane by lane in the order the batch is ordered (bucket, and for the inbox kind and
+fresh-or-retried class as well), each lane's walk starting at a stream id drawn per poll, wrapping
+once, and stopping at the batch. A recursive CTE with a `LIMIT 1` lateral per step is what makes
+that one probe per stream rather than a scan; the upper bound of each step has to be written as a
+`CASE` and not an `OR`, or it degrades from an index condition to a filter and the walk reads past
+its stopping point. A held stream is re-offered as its oldest row in each lane it appears in instead
+of as every row it holds there. The drain consumes stream ids and pulls a stream's rows on demand,
+and the batch hooks fold a stream's returned rows to one number and one arrival, so the further rows
+inside one lane carried nothing a caller read and ranking them was the whole cost. The chain now
+reads only rows without `wh_inbox.chain_emitted_at` and stamps the ones whose event it finds in the
+event store; a row whose insert hit `ON CONFLICT DO NOTHING` stays unstamped, because that clause's
+contract is that the next poll re-attempts it.
+
+One steady-state poll, returning 300 rows out of a batch of 100 per category, summed over the
+outbox, inbox, perspective-event and event-store tables and their indexes:
+
+| Held rows per table | Blocks before | Tuples before | Blocks after | Tuples after |
+|---|---|---|---|---|
+| 5,000 | 5,425 | 35,012 | 700 | 305 |
+| 10,000 | 10,705 | 70,012 | 912 | 305 |
+| 40,000 | 42,388 | 280,012 | 925 | 304 |
+
+Eight times the holdings cost eight times as much before and 1.3 times as much after, and the
+tuples a poll examines no longer depend on the holdings at all. Per row returned: 18, 36 and 141
+blocks before against 2.3, 3.0 and 3.1 after.
+
+**Rule:** a poll is priced by the batch it returns. Every part of it, the guards that decide
+whether to call an acquisition, the re-offers and the bookkeeping at the end, has to reach its
+answer through an index whose key order is the answer's order, with the `LIMIT` before any join or
+sort, and must never read a row of a stream it is not going to return. Two ceilings hold it, and
+neither is enough alone: blocks per call catches the heap fetches, and tuples examined per row
+returned catches an index-only pass over the whole holdings, which is cheap in blocks and still
+grows with the backlog. `ClaimWorkPlanShapeTests` asserts both, per table, once at a full budget of
+holdings and again at double it.
+
+**Two things deliberately left alone.** `count_outstanding_work` rides the claim's round trip and is
+index-only: 159 blocks at 40,000 held rows per table, 11 percent of the fixed poll and about 1
+percent of the broken one. It examines every held row in tuples, but migration 123 records why it
+cannot be truncated or estimated (the budget would be reading its own output), so it stays exact
+and the measurement is recorded here instead. And the block counters in `pg_statio_user_tables` are
+cluster-wide, not per backend: autovacuum's reads of the pages a fill just wrote land inside a
+measured window and read as poll cost. Vacuum the fill before measuring, or the number is not the
+poll's. Tuple counters do not have this problem.
+
 ## Finding 2: maintenance ran at the peak
 
 `close_digest_epochs` occupied about two backends on the consumer and one on the producer for a
@@ -94,6 +176,46 @@ applied in `wh_bootstrap_closure` (created by the closure itself, in migration 0
 whose closure is recorded applies nothing: no statement, no lock. See
 `schema-initialization-connections.md`, trap 4.
 
+The hash is a function of the statements and nothing else. The first rollout of the record found
+every instance of one release computing a different hash, because the infrastructure schema script
+began with a comment stamping the current time, so no instance ever skipped. The rule that came out
+of it: a schema builder must not write anything per call into the SQL it returns (no clock, no host,
+no process), and `SchemaBootstrapPhase.ClosureHash` drops comment-only lines and normalizes line
+endings before hashing, so a header or a note added later cannot split one release into two
+closures. Script names and order still take part, because a region moved or renamed is a different
+closure.
+
+The same rollout showed a second reason DDL ran on every start, this one inside the initializer's
+own transaction: the phase summary read `PerspectiveTables=(completed)` beside `skipped (hash match)`
+for every other phase. The per-perspective hash rows (`perspective:<name>` in
+`wh_schema_migrations`) were keyed by the model's simple type name, and a service that nests its
+models under feature holders has many models with one simple name (`Order.Model`, `Invoice.Model`,
+several `SagaModel`s). Those models shared one row: whichever wrote last owned it, the one compared
+first read as changed on every start, the fast path was refused, and the perspective pass re-applied
+`CREATE TABLE` and `CREATE INDEX ... IF NOT EXISTS` for the colliding tables under the schema lock.
+`IF NOT EXISTS` still takes a relation lock before finding nothing to do, and that lock is what an
+instance starting under load deadlocked on. The entries are keyed by table name now, the one name
+unique to a perspective within its schema. The rule: any key that gates a startup phase must be
+unique for what it gates; a simple type name is not a key.
+
+A third finding from the same start: a server that refuses `CREATE EXTENSION pg_trgm` (a managed
+server that does not allow-list it answers `0A000`; a role without the privilege `42501`; a build
+without it `58P01`) failed the whole perspective pass, because every substring index emitted its
+own extension statement as ordinary DDL inside the initializer's transaction. Every start paid a
+failed attempt and the trigram indexes were never built. The generator now emits the extension once
+per table script inside an optional-extension block (`-- @whizbang:optional-extension pg_trgm` to
+`-- @whizbang:optional-extension-end`), and `OptionalExtensionBlocks.ApplyAsync` creates the
+extension under a savepoint, skips the block with one warning naming the extension and the indexes
+when the server refuses, and applies everything else. The generator writes the perspective schema
+twice, once per table for the hash-tracked pass and once as a single script for the fallback the
+pass takes when it cannot read the tracking tables, and the block has to be in both: a trigram index
+emitted outside the block that creates the extension reaches a server with no `gin_trgm_ops`
+operator class as an ordinary statement and fails the pass with nothing to skip, which is a worse
+outcome than the defect it replaced. `NoTrigramIndexIsEmittedOutsideABlockAsync` reads every script
+the generator writes rather than one of them, for that reason. The rule: an index family a server
+may refuse is optional by construction; a declaration must never be the reason a service fails to
+start.
+
 ## Finding 5: the idle cost is polling and connection churn
 
 With every queue empty the two busiest databases committed 122 and 182 transactions a second. The
@@ -104,6 +226,62 @@ closes a pooled connection and the driver's reset (`DISCARD ALL`) is a transacti
 several hundred a second per database. That is a consumer connection-string decision
 (`No Reset On Close`) and is documented on the claim-loop page, not something the framework can
 decide for a consumer.
+
+## Finding 6: one deadlock in a worker loop stopped the host
+
+An instance added to a fleet under load started up and ran schema DDL under the lock (Finding 4).
+The already-running instance's perspective consumer loop deadlocked against it inside the drain
+fetch, the loop logged and rethrew, the exception left `ExecuteAsync`, and
+`HostOptions.BackgroundServiceExceptionBehavior` (the default, `StopHost`) shut the process down.
+The orchestrator restarted it: an instance gone for the length of a restart plus a schema
+initialization, in the middle of the import, over a failure that would have passed on the next
+attempt. The same rethrow made every perspective apply failure a potential host stop, because the
+per-group catch reports, parks the row, and then rethrows into the same loop.
+
+The rule: **no failure inside one batch or one tick may end a worker loop.** Two types carry it:
+
+- `TransientDatabaseFailure.TryClassify` says what a caught exception is — deadlock, serialization
+  failure, statement canceled, lock timeout, connection lost, insufficient resources, a command
+  timeout the provider wrapped, or the provider's own transient flag. It reads `DbException.SqlState`
+  and `DbException.IsTransient` only, so Core references no provider, and it walks
+  `InnerException` and `AggregateException` the way `StoredFormUnreadable` does. A timeout or a lost
+  socket counts only beneath a database exception: a wait that elapsed in application code is not the
+  database failing.
+- `WorkerLoopRecovery` is the one place a loop decides what to do with it. `Report` picks between the
+  caller's two `LoggerMessage` methods — each worker keeps its own event ids and wording — and
+  `RecoverAsync` adds a bounded backoff on the caller's `TimeProvider` (250 ms doubling to 30 s,
+  snapped back by `Recovered()` on the next good iteration) for a loop that has no cadence of its own.
+
+The perspective consumer loop and its drain pass now report each failed batch once at Error with the
+reason, the SQLSTATE and the batch's stream ids, release those streams' unstarted rows through
+`ReleaseUnstartedLeasesAsync` so a sibling takes them instead of waiting out the lease, back off, and
+continue; the drain pass is guarded separately so a failed fetch does not cost the claimed per-event
+work sharing its batch. A failure that is not the database's is reported as a defect under its own
+event id and the loop still continues, because a stopped host reports nothing at all.
+`BackgroundServiceExceptionBehavior` stays at its default on purpose: the loops are correct on their
+own, and a worker that genuinely cannot run (a missing dependency at startup) should still stop the
+host.
+
+Audit of every `BackgroundService` in `Whizbang.Core` and `Whizbang.Data.Postgres` at the time of the
+fix. Two let a failure out of `ExecuteAsync`:
+
+- the perspective worker's consumer loop (logged, then `throw;`), now guarded;
+- the outbox drain worker's batch body, which had a `finally` and no `catch` — the per-stream path
+  isolates its own failures and the batched fetch degrades to per-stream fetches, but the batch
+  envelope around them did not: the identity lookup, the security-context establishment, and the
+  publish flush that ships the remainder from that same `finally`. It now has the guard its mirror,
+  `InboxDrainWorker`, always had.
+
+Everything else already caught per iteration and continued: the claim, dispatch, inbox drain, publish,
+maintenance, heartbeat, dead-letter, integrity, schedule, stamper, durable-signal and flush workers;
+the poll sources hand a failed tick to `OnTickError` and keep their timer; the batch flushers retry
+inside `BatchFlusher` and drop with a line. Three residual notes worth a later pass: a
+`when (ex is not OperationCanceledException)` filter used as a loop's *only* general handler still
+lets a non-shutdown cancellation out (a statement the server canceled arrives as one) — the two
+statistics collectors have that shape, and the perspective loop's own arms were rewritten to name
+shutdown explicitly instead; `BacklogAgeWorker` *returns* on a cancellation rather than retrying; and
+`InboxDispatchWorker`'s per-item catch itself writes to a channel, which can throw once the flusher
+is disposed.
 
 ## Two consumer-side findings, recorded because the framework cannot detect them
 

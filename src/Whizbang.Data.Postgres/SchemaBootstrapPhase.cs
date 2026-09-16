@@ -269,9 +269,18 @@ public static class SchemaBootstrapPhase {
   /// <param name="scripts">The scripts, in the order they apply.</param>
   /// <returns>Sixty-four lowercase hex characters.</returns>
   /// <remarks>
+  /// <para>
   /// Names take part so that the same text under a different region name, or a region moved to a
   /// different position, reads as a different closure; the point of the record is that an equal
   /// hash means the database holds exactly what this instance would apply.
+  /// </para>
+  /// <para>
+  /// Only statements take part. A line that is nothing but a comment, a blank line, and the line
+  /// ending convention are dropped before hashing, because none of them changes what is applied
+  /// and any of them can differ between two instances of one release: a header a builder writes,
+  /// a note an author adds, or a stamp of the clock. One such stamp once made every instance
+  /// compute its own closure, so the record never matched and every start applied the DDL.
+  /// </para>
   /// </remarks>
   public static string ClosureHash(IEnumerable<(string Name, string Sql)> scripts) {
     ArgumentNullException.ThrowIfNull(scripts);
@@ -279,10 +288,25 @@ public static class SchemaBootstrapPhase {
     foreach (var (name, sql) in scripts) {
       sha.AppendData(System.Text.Encoding.UTF8.GetBytes(name));
       sha.AppendData("\n"u8);
-      sha.AppendData(System.Text.Encoding.UTF8.GetBytes(sql));
+      foreach (var line in _statementLines(sql)) {
+        sha.AppendData(System.Text.Encoding.UTF8.GetBytes(line));
+        sha.AppendData("\n"u8);
+      }
       sha.AppendData("\n"u8);
     }
     return Convert.ToHexStringLower(sha.GetHashAndReset());
+  }
+
+  /// <summary>The lines of a script that carry a statement: not blank, not a comment on its own.</summary>
+  private static IEnumerable<string> _statementLines(string sql) {
+    foreach (var raw in sql.Split('\n')) {
+      var line = raw.TrimEnd('\r');
+      var content = line.AsSpan().Trim();
+      if (content.IsEmpty || content.StartsWith("--", StringComparison.Ordinal)) {
+        continue;
+      }
+      yield return line;
+    }
   }
 
   /// <summary>Whether the database records <paramref name="closureHash"/> as applied.</summary>

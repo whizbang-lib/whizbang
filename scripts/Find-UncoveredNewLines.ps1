@@ -13,6 +13,11 @@
     reported. Test projects, tools and generated files are outside src/ or excluded by the coverage
     filters, so they never appear.
 
+    src/Whizbang.Testing is excluded from the diff side as well, because the coverage settings exclude
+    that assembly from instrumentation: its lines are unmeasurable here, and counting them would let
+    this script report "every added library line is covered" over lines it cannot see. See L12 in
+    plans/db-load-under-bulk-import.md.
+
     Standard practice: every new line is covered before a PR opens. Run this against the CI artifacts
     (`gh run download <run> -n coverage-unit -D coverage/unit`, and the same for every coverage-*
     artifact) or against a local coverage run.
@@ -98,8 +103,17 @@ foreach ($report in $reports) {
   }
 }
 
-# 2. Lines this branch adds under src/.
-$diff = git diff -U0 "$BaseRef...HEAD" -- src
+# 2. Lines this branch adds under src/, less the projects the coverage side cannot see.
+#
+# codecoverage.config excludes test-infrastructure assemblies from instrumentation
+# (`.*\.Testing\.dll$`, under "Include only Whizbang production assemblies in coverage"), so no
+# report ever carries a line from src/Whizbang.Testing/. Counting those lines here would have this
+# script claim coverage over lines it cannot measure: they would read as covered whether or not a
+# test executed them, and the gate would be green either way. Excluding them keeps the claim honest
+# and narrow, which is the decision recorded as L12 in plans/db-load-under-bulk-import.md. The two
+# lists are one project each today and must stay in step: a new project excluded there belongs here.
+$excludedFromDiff = @(':(exclude)src/Whizbang.Testing/**')
+$diff = git diff -U0 "$BaseRef...HEAD" -- src $excludedFromDiff
 if ($LASTEXITCODE -ne 0) { Write-Error "git diff against '$BaseRef' failed." }
 $added = @{}
 $current = $null

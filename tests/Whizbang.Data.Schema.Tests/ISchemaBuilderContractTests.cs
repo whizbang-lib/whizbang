@@ -216,10 +216,27 @@ public abstract class ISchemaBuilderContractTests {
     var sql1 = builder.BuildInfrastructureSchema(config);
     var sql2 = builder.BuildInfrastructureSchema(config);
 
-    // Assert - Same config should produce identical SQL (strip timestamp to avoid race across second boundary)
-    string Normalize(string sql) => string.Join('\n',
-      sql.Split('\n').Where(line => !line.StartsWith("-- Generated:", StringComparison.Ordinal)));
-    await Assert.That(Normalize(sql1)).IsEqualTo(Normalize(sql2));
+    // Assert - Same config produces byte-identical SQL. Two instances of one release hash this
+    // script to decide whether the bootstrap is already applied, so nothing in it may vary per call.
+    await Assert.That(sql1).IsEqualTo(sql2);
+  }
+
+  /// <summary>
+  /// The infrastructure script carries no clock stamp.
+  /// </summary>
+  /// <remarks>
+  /// The script is the first thing the schema bootstrap hashes to recognize a closure it has
+  /// already applied. A stamp of the current time made every instance of one release compute a
+  /// different hash, so the record never matched and every start applied the DDL under the lock.
+  /// </remarks>
+  [Test]
+  public async Task BuildInfrastructureSchema_CarriesNoClockStampAsync() {
+    var builder = CreateBuilder();
+
+    var sql = builder.BuildInfrastructureSchema(new SchemaConfiguration());
+
+    await Assert.That(sql).DoesNotContain("-- Generated:")
+      .Because("the closure hash must be a function of the statements a release applies, never of when it started");
   }
 
   [Test]

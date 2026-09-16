@@ -119,8 +119,12 @@ public sealed partial class InboxDrainWorker(
           // A transient infrastructure failure (pool exhaustion, a DB blip) must never fault
           // this worker: the host default (StopHost) would turn it into a full service outage.
           // Inbox rows are durable and the claim backstop re-offers the streams — log and
-          // continue loses nothing.
-          LogBatchDrainFailed(_logger, ex);
+          // continue loses nothing. The shared classifier decides which of the two lines it is, so
+          // a deadlock that will pass and a defect that will not read differently in a log.
+          WorkerLoopRecovery.Report(ex,
+            (transient, cause) => LogTransientBatchDrainFailed(
+              _logger, transient.Reason, transient.SqlState ?? "none", cause),
+            cause => LogBatchDrainFailed(_logger, cause));
         } finally {
           _setIdleState(active: false);
         }
@@ -581,8 +585,18 @@ public sealed partial class InboxDrainWorker(
   static partial void LogDrainError(ILogger logger, Guid streamId, Exception ex);
 
   [LoggerMessage(EventId = 6, Level = LogLevel.Error,
-    Message = "Inbox drain batch failed on a transient error; the streams re-offer via the claim backstop")]
+    Message = "Inbox drain batch failed; the streams re-offer via the claim backstop, but this failure "
+            + "is not the database's and wants fixing")]
   static partial void LogBatchDrainFailed(ILogger logger, Exception exception);
+
+  /// <summary>The event id of a drain batch lost to a database failure that passes of its own accord.</summary>
+  internal const int TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID = 7;
+
+  [LoggerMessage(EventId = TRANSIENT_BATCH_DRAIN_FAILURE_EVENT_ID, Level = LogLevel.Error,
+    Message = "Inbox drain batch failed on a transient database failure ({Reason}, SQLSTATE {SqlState}); "
+            + "the streams re-offer via the claim backstop")]
+  static partial void LogTransientBatchDrainFailed(
+    ILogger logger, string reason, string sqlState, Exception exception);
 
   [LoggerMessage(EventId = 61, Level = LogLevel.Warning,
     Message = "Poison admission gate would have deferred ALL {RowCount} fetched row(s); admitting "

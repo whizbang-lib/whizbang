@@ -78,17 +78,9 @@ public class SchemaBootstrapPhaseTests {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _databaseName = $"bootstrap_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
-
-    _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-      Database = _databaseName,
-      Timezone = "UTC",
-    }.ConnectionString;
+    var database = await PerTestDatabaseFactory.CreateAsync("bootstrap");
+    _databaseName = database.Name;
+    _connectionString = database.ConnectionString;
   }
 
   [After(Test)]
@@ -97,15 +89,7 @@ public class SchemaBootstrapPhaseTests {
       return;
     }
 
-    try {
-      await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-      await admin.OpenAsync();
-      await using var drop = new NpgsqlCommand(
-        $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-      await drop.ExecuteNonQueryAsync();
-    } catch (NpgsqlException) {
-      // The container goes with the run; a database left behind costs nothing.
-    }
+    await PerTestDatabaseFactory.DropAsync(_databaseName);
   }
 
   private NpgsqlConnection _connect() => new(_connectionString);
@@ -314,6 +298,36 @@ public class SchemaBootstrapPhaseTests {
       .IsEqualTo(1L)
       .Because("the closure offered is the closure recorded; running its statements again takes DDL "
         + "locks on hot tables for nothing, which is what deadlocked a start under load");
+  }
+
+  /// <summary>
+  /// A closure whose scripts differ only in comment lines is the recorded closure.
+  /// </summary>
+  /// <remarks>
+  /// Two instances of one release build their scripts independently. A header line a builder
+  /// writes, or a clock stamp, is not a statement; if it took part in the hash, no second instance
+  /// would ever find the record, and every start would apply the DDL under the lock, which is the
+  /// deadlock the record exists to prevent.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AClosureThatDiffersOnlyInCommentsIsCurrentAsync(CancellationToken cancellationToken) {
+    var scripts = _bootstrapScripts();
+    scripts.Add(("marker",
+      "CREATE TABLE IF NOT EXISTS bootstrap_marker (note TEXT NOT NULL); "
+      + "INSERT INTO bootstrap_marker (note) VALUES ('applied');"));
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    var commented = scripts.ConvertAll(
+      s => (s.Name, "-- Generated: 2026-01-02 03:04:05 UTC\n" + s.Sql + "\n-- a note that changes no statement"));
+    var again = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, commented, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    await Assert.That(again).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker"))
+      .IsEqualTo(1L)
+      .Because("comment lines carry no statement, so a closure that differs only there is the one already recorded");
   }
 
   /// <summary>A closure that changed is applied, and the record moves with it.</summary>

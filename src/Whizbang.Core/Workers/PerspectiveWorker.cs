@@ -268,6 +268,12 @@ public partial class PerspectiveWorker(
   private readonly IPerspectiveDrainChannel? _perspectiveDrainChannel = perspectiveDrainChannel;
   private readonly RecentlyProcessedEventCache? _recentlyProcessedEventCache = recentlyProcessedEventCache;
   private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+  // Shared by every consumer loop on purpose: the backoff after a failed batch is a statement about
+  // the database, so all of this worker's loops slow together and recover together.
+  private readonly WorkerLoopRecovery _loopRecovery = new(timeProvider ?? TimeProvider.System);
+  // How many batch failures this worker has contained, so a consumer loop can tell a batch that ran
+  // clean from one that recovered from a failure inside itself.
+  private int _containedBatchFailures;
   private readonly LeaseHandleOptions _leaseHandleOptions = leaseHandleOptions?.Value ?? new LeaseHandleOptions();
   private readonly LeaseRegistry? _leaseRegistry = leaseRegistry;
   private readonly Whizbang.Core.Notifications.IWorkNotificationListener? _perspectiveNotificationListener = perspectiveNotificationListener;
@@ -666,16 +672,107 @@ public partial class PerspectiveWorker(
           drainReader, drainStreamIds, drainBatcherOpts, stoppingToken).ConfigureAwait(false);
       }
 
+      var containedBefore = Volatile.Read(ref _containedBatchFailures);
       try {
         await ProcessChannelBatchAsync(workBatch, drainStreamIds, stoppingToken).ConfigureAwait(false);
         _periodicStaleTrackingCleanup();
         await _periodicGatherStatisticsAsync(stoppingToken).ConfigureAwait(false);
+        if (Volatile.Read(ref _containedBatchFailures) == containedBefore) {
+          // A batch that reached the end having contained nothing is the evidence that the database
+          // is answering again. A batch whose drain pass was recovered mid-flight is not, so the
+          // backoff keeps growing rather than resetting on the half of the batch that worked.
+          _loopRecovery.Recovered();
+        }
       } catch (ObjectDisposedException) {
         break;
-      } catch (Exception ex) when (ex is not OperationCanceledException) {
-        LogErrorProcessingCheckpoints(_logger, ex);
-        throw;
+      } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) {
+        break;
+      } catch (Exception ex) {
+        // Whatever the batch failed on, the loop survives it. Letting the exception out of here ends
+        // the loop, and the host's default BackgroundServiceExceptionBehavior (StopHost) then stops
+        // the process: one deadlock against a sibling instance's schema DDL used to cost a fleet an
+        // instance for the length of a restart, over a failure the next attempt would have won.
+        //
+        // Deliberately unfiltered now that shutdown has an arm of its own above: a statement the
+        // server canceled arrives as an OperationCanceledException with nothing cancelled here, and
+        // a filter of `ex is not OperationCanceledException` let exactly that one out.
+        try {
+          await _recoverFailedBatchAsync(
+            ex, _batchStreamIds(workBatch, drainStreamIds), stoppingToken).ConfigureAwait(false);
+        } catch (OperationCanceledException) {
+          break;   // the host asked to stop while the loop was backing off
+        }
       }
+    }
+  }
+
+  /// <summary>Every stream a batch was carrying, from both of its sources, without repeats.</summary>
+  private static List<Guid> _batchStreamIds(List<PerspectiveWork> workItems, List<Guid> drainStreamIds) {
+    var streamIds = new HashSet<Guid>(drainStreamIds);
+    foreach (var item in workItems) {
+      streamIds.Add(item.StreamId);
+    }
+    return [.. streamIds];
+  }
+
+  /// <summary>
+  /// The one treatment every failed batch gets: the batch's leases handed back so a sibling can take
+  /// the work, one report naming the classification and the streams that were lost with the batch,
+  /// and a bounded backoff on the worker's clock before the loop tries again.
+  /// </summary>
+  /// <remarks>
+  /// Used by the consumer loop for a batch of any shape and by the drain pass for its own fetch, so
+  /// the two failures read the same way in a log and neither can end the loop.
+  /// </remarks>
+  private async Task _recoverFailedBatchAsync(
+      Exception exception, List<Guid> streamIds, CancellationToken cancellationToken) {
+    Interlocked.Increment(ref _containedBatchFailures);
+    await ReleaseFailedBatchLeasesAsync(streamIds, cancellationToken).ConfigureAwait(false);
+    var streams = string.Join(", ", streamIds);
+    await _loopRecovery.RecoverAsync(
+      exception,
+      (transient, cause) => LogTransientBatchFailure(
+        _logger, transient.Reason, transient.SqlState ?? "none", streamIds.Count, streams, cause),
+      cause => LogUnexpectedBatchFailure(_logger, streamIds.Count, streams, cause),
+      cancellationToken).ConfigureAwait(false);
+  }
+
+  /// <summary>
+  /// Hands the failed batch's leased rows back to the unassigned pool so a sibling instance can take
+  /// them now rather than after the lease lapses.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Best effort by design: a store that does not implement the release, and a release that fails
+  /// against the same database that just failed, both leave the rows to their leases, which is what
+  /// happened before this existed. Neither may raise out of the recovery path, because the recovery
+  /// path is what keeps the loop alive.
+  /// </para>
+  /// <para>
+  /// Internal for the same reason <see cref="ProcessChannelBatchAsync(List{PerspectiveWork}, CancellationToken)"/>
+  /// is: the empty-batch arm cannot be driven through the consumer loop, which skips a cycle
+  /// carrying neither work nor a drain signal, so both recovery call sites always hand this a
+  /// non-empty list. It is a precondition on the store call rather than dead code, and it is
+  /// asserted directly.
+  /// </para>
+  /// </remarks>
+  internal async Task ReleaseFailedBatchLeasesAsync(
+      List<Guid> streamIds, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(streamIds);
+    if (streamIds.Count == 0) {
+      // Nothing to hand back, and an empty release is still a round-trip to the database that just
+      // failed.
+      return;
+    }
+
+    try {
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
+      var released = await workCoordinator.ReleaseUnstartedLeasesAsync(
+        _instanceProvider.InstanceId, [], streamIds, cancellationToken).ConfigureAwait(false);
+      LogFailedBatchLeasesReleased(_logger, released.PerspectiveReleased, streamIds.Count);
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogFailedBatchLeasesNotReleased(_logger, streamIds.Count, ex);
     }
   }
 
@@ -1057,9 +1154,20 @@ public partial class PerspectiveWorker(
     // lapsed, were re-claimed, and were discarded again (issue #700).
     var drainAppliedGroups = new ConcurrentDictionary<(Guid StreamId, string PerspectiveName), byte>();
     if (workBatch.PerspectiveStreamIds.Count > 0) {
-      await _processDrainModeStreamsAsync(
-        scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, batchIsNewByEventId,
-        lifecycleCoordinator, drainAppliedGroups, cancellationToken).ConfigureAwait(false);
+      try {
+        await _processDrainModeStreamsAsync(
+          scope, workBatch.PerspectiveStreamIds, batchProcessedEvents, batchIsNewByEventId,
+          lifecycleCoordinator, drainAppliedGroups, cancellationToken).ConfigureAwait(false);
+      } catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {
+        throw;
+      } catch (Exception ex) {
+        // The drain pass opens with one statement against the work table for every leased stream,
+        // and that is the statement a sibling instance's schema DDL deadlocked. Its failure costs the
+        // drained streams their leases and nothing else: the claimed per-event work that shares this
+        // batch still runs below, and the loop that owns this batch keeps going either way.
+        await _recoverFailedBatchAsync(
+          ex, [.. workBatch.PerspectiveStreamIds], cancellationToken).ConfigureAwait(false);
+      }
       if (!drainAppliedGroups.IsEmpty) {
         groupedWork = [.. groupedWork.Where(g => !drainAppliedGroups.ContainsKey(g.Key))];
       }
@@ -4300,12 +4408,34 @@ public partial class PerspectiveWorker(
   )]
   static partial void LogInitialCheckpointProcessingComplete(ILogger logger);
 
-  [LoggerMessage(
-    EventId = 8,
-    Level = LogLevel.Error,
-    Message = "Error processing perspective cursors"
-  )]
-  static partial void LogErrorProcessingCheckpoints(ILogger logger, Exception ex);
+  /// <summary>The event id of a batch lost to a database failure that passes of its own accord.</summary>
+  internal const int TRANSIENT_BATCH_FAILURE_EVENT_ID = 67;
+
+  /// <summary>The event id of a batch lost to a failure that is this framework's own defect.</summary>
+  internal const int UNEXPECTED_BATCH_FAILURE_EVENT_ID = 68;
+
+  // Event id 8 ("Error processing perspective cursors") retired with the rethrow it accompanied: it
+  // named no stream, said nothing about what had failed, and the line after it was the host stopping.
+  [LoggerMessage(EventId = TRANSIENT_BATCH_FAILURE_EVENT_ID, Level = LogLevel.Error,
+    Message = "Perspective batch lost to a transient database failure ({Reason}, SQLSTATE {SqlState}); "
+            + "{StreamCount} stream(s) go back for a sibling to take and the loop backs off and continues: {StreamIds}")]
+  static partial void LogTransientBatchFailure(
+    ILogger logger, string reason, string sqlState, int streamCount, string streamIds, Exception ex);
+
+  [LoggerMessage(EventId = UNEXPECTED_BATCH_FAILURE_EVENT_ID, Level = LogLevel.Error,
+    Message = "Perspective batch lost to a failure that is not the database's: {StreamCount} stream(s) "
+            + "go back for a sibling to take and the loop backs off and continues, but this one is a "
+            + "defect and wants fixing: {StreamIds}")]
+  static partial void LogUnexpectedBatchFailure(
+    ILogger logger, int streamCount, string streamIds, Exception ex);
+
+  [LoggerMessage(EventId = 69, Level = LogLevel.Debug,
+    Message = "Released {ReleasedRows} unstarted row(s) across {StreamCount} stream(s) of the lost batch")]
+  static partial void LogFailedBatchLeasesReleased(ILogger logger, int releasedRows, int streamCount);
+
+  [LoggerMessage(EventId = 70, Level = LogLevel.Warning,
+    Message = "The lost batch's {StreamCount} stream(s) could not be released; their leases lapse instead")]
+  static partial void LogFailedBatchLeasesNotReleased(ILogger logger, int streamCount, Exception ex);
 
   [LoggerMessage(
     EventId = 9,

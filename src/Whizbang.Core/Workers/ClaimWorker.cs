@@ -475,7 +475,13 @@ public sealed partial class ClaimWorker : BackgroundService {
       } catch (OperationCanceledException) {
         break;
       } catch (Exception ex) {
-        LogError(_logger, ex);
+        // A deadlock, a canceled statement or a dropped connection inside one claim says something
+        // about the database at that moment, not about this loop; the shared classifier names it so
+        // an operator can tell a passing failure from a defect. This loop already had a cadence of
+        // its own, so it reports and lets the empty-poll backoff below carry the waiting.
+        WorkerLoopRecovery.Report(ex,
+          (transient, cause) => LogTransientFailure(_logger, transient.Reason, transient.SqlState ?? "none", cause),
+          cause => LogError(_logger, cause));
         Interlocked.Increment(ref _consecutiveEmptyPolls);  // back off after errors too
       }
 
@@ -1094,6 +1100,13 @@ public sealed partial class ClaimWorker : BackgroundService {
 
   [LoggerMessage(EventId = 2, Level = LogLevel.Warning, Message = "ClaimWorker tick failed; will back off and retry")]
   static partial void LogError(ILogger logger, Exception ex);
+
+  /// <summary>The event id of the tick failure a <see cref="TransientDatabaseFailure"/> explains.</summary>
+  internal const int TRANSIENT_FAILURE_EVENT_ID = 19;
+
+  [LoggerMessage(EventId = TRANSIENT_FAILURE_EVENT_ID, Level = LogLevel.Warning,
+    Message = "ClaimWorker tick hit a transient database failure ({Reason}, SQLSTATE {SqlState}); will back off and retry")]
+  static partial void LogTransientFailure(ILogger logger, string reason, string sqlState, Exception ex);
 
   [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "ClaimWorker stopped")]
   static partial void LogStopped(ILogger logger);

@@ -1,14 +1,14 @@
 # Schema initialization: connections, transactions, and who migrates
 
 Read this before changing anything in `DbContextSchemaExtensionTemplate.cs`, `SchemaCommandBoundary`,
-`SchemaBoundaryConnections`, `SchemaMigrationDeferral`, `AdvisoryLockProbe`, or the SQL the
-perspective pass emits.
+`SchemaBoundaryConnections`, `SchemaMigrationDeferral`, `AdvisoryLockProbe`,
+`OptionalExtensionBlocks`, or the SQL the perspective pass emits.
 
-Traps 1 and 2 each shipped once, and each passed every local test first. Trap 3 is the one that
-looks solved and is not: the lock has always excluded correctly, so nothing fails, and the cost is
-paid quietly by every replica on every startup.
+Traps 1, 2 and 6 each shipped once, and each passed every local test first. Traps 3 and 5 are the
+ones that look solved and are not: the lock has always excluded correctly and the hashes have always
+been compared, so nothing fails, and the cost is paid quietly by every replica on every startup.
 
-None of the three is discoverable by reading the code, which is why they are written down here.
+None of the six is discoverable by reading the code, which is why they are written down here.
 
 ---
 
@@ -348,6 +348,95 @@ which no row count and no absence of an exception can establish.
 
 ---
 
+## Trap 5: a key that gates a phase is only a gate if it is unique for what it gates
+
+The perspective pass hash-checks each table on its own and records the result as
+`perspective:<name>` in `wh_schema_migrations`. The name was the model's simple type name, and a
+service that nests its models under feature holders has many models with one simple name
+(`Order.Model`, `Invoice.Model`, several `SagaModel`s). Those models shared one row: whichever wrote
+last owned it, so the one compared first read as changed on **every** start, `perspChanged` came back
+true, and the pass re-applied `CREATE TABLE` and `CREATE INDEX ... IF NOT EXISTS` for every
+perspective under the schema lock. The phase summary said so and nothing else did:
+`PerspectiveTables=(completed)` beside `skipped (hash match)` for every other phase.
+
+That is the same cost as Trap 4's closure, for the same reason: idempotent DDL still takes a relation
+lock before it finds nothing to do, and an instance an autoscaler starts under load takes it against
+tables the running instances are writing. It deadlocked (`40P01`).
+
+The entries are keyed by **table name** now, the one name unique to a perspective within its schema.
+The first start on this release records the new keys in one ordinary pass; the rows under the old
+keys stay behind, inert. The rule generalizes: a key that gates a startup phase must be unique for
+the thing it gates, and a simple type name is not unique. `PerspectiveEntryKeyTests` is the
+generator side, `CollidingModelNameInitializationTests` the live one, and the live one is the test
+that matters, because the generator can emit two distinct keys while the initializer still collapses
+them.
+
+## Trap 6: an index family the server may refuse must not be able to fail the pass
+
+`CREATE EXTENSION` is not a statement every server will run. A managed server that does not
+allow-list the extension answers `0A000`, a role without the privilege `42501`, a build without the
+extension's files `58P01`. Emitted as ordinary DDL inside the initializer's transaction, any of the
+three failed the whole perspective pass, so a service with one substring index logged "Failed to
+create perspective table" and paid a failed startup attempt on every start, and the indexes were
+never built either way.
+
+So a family of indexes that needs an extension is emitted inside a block, opened by
+`-- @whizbang:optional-extension <name>` and closed by `-- @whizbang:optional-extension-end`, with
+one `CREATE EXTENSION` per block rather than one per index. `OptionalExtensionBlocks.ApplyAsync`
+creates the extension under a savepoint (a failed statement otherwise poisons the transaction the
+rest of the pass runs in), applies the block when that succeeds, and on a refusal skips the block
+with one Warning naming the extension and the indexes and applies everything else. Anything but
+those three states is a defect and propagates.
+
+Two things about this are easy to get wrong:
+
+- **Both scripts need the block.** The generator writes the perspective schema per table for the
+  hash-tracked pass and once more as a single script for the fallback the pass takes when it cannot
+  read the tracking tables. A trigram index emitted outside the block that creates the extension is
+  worse than the defect it replaced: it reaches a server with no `gin_trgm_ops` operator class as an
+  ordinary statement and fails the pass with nothing to skip.
+- **A block and a commit boundary are exclusive per script.** The block is applied on the
+  initializer's own connection, under a savepoint; a boundary needs each piece on a connection of
+  its own (Trap 1). `_applySchemaSqlAsync` tests for a block first, so a script carrying both would
+  lose the boundary, and a rewrite followed by an index in one transaction cannot succeed on any
+  retry. Nothing emits a boundary into perspective SQL today and two tests keep that true. If a
+  boundary is ever needed in the same script as a block, the boundary's segments have to be applied
+  **through** the block reader; do not simply reorder the two tests.
+
+| Guard | What it catches |
+|---|---|
+| `PerspectiveEntryKeyTests.EntriesAreKeyedByTableAsync` | two models with one simple name sharing a hash row |
+| `CollidingModelNameInitializationTests.ASecondStartWithCollidingModelNamesTakesTheFastPathAsync` | the pass re-applying DDL under the lock on a current schema |
+| `OptionalExtensionWiringTests.NoTrigramIndexIsEmittedOutsideABlockAsync` | an index that needs the extension in a script whose block does not cover it |
+| `OptionalExtensionWiringTests.EachBlockCreatesTheExtensionOnceAsync` | one extension statement per index coming back |
+| `OptionalExtensionWiringTests.NoScriptCarriesBothABoundaryAndABlockAsync` | the block path silently dropping a commit boundary |
+| `OptionalExtensionBlocksTests.ARefusedExtensionSkipsItsBlockInsideATransactionAsync` | a refused extension failing the pass instead of skipping its indexes |
+| `OptionalExtensionBlocksTests.ADefectInsideABlockStillFailsAsync` | the skip widening into a catch-all that hides real failures |
+| `OptionalExtensionBlocksTests.TheReaderReadsTheGeneratorsOwnScriptAsync` | the generator and the reader drifting on the marker text |
+
+## A fixture does not create its own database
+
+Every test here wants a database of its own, and dozens of fixtures in one shard ask for one at the
+same time against one container. `CREATE DATABASE` copies a template under a lock, so those calls
+serialize and a loser fails outright rather than waiting; `DROP DATABASE ... WITH (FORCE)` from a
+class finishing at that moment contends with it. The failure lands in `[Before(Test)]`, which the
+runner reports as **the test** failing, in a few milliseconds, before a single assertion has run. It
+reads as a defect in whichever test happened to hold the slot, and it is not one.
+
+So call `PerTestDatabaseFactory.CreateAsync("prefix")` and `DropAsync(name)` rather than issuing the
+statements. They retry the contention with a bounded backoff on a `TimeProvider`, ask
+`TransientDatabaseFailure` (the classifier the worker loops use) what is worth retrying, add the one
+state specific to creating a database (`55006`, the template being read by another creator), and
+treat `42P04` as an attempt of their own having already won. A drop that cannot win is abandoned
+rather than raised, because a teardown that throws turns a passing test red for tidying up.
+
+**A new database-creating fixture uses the factory.** One that issues its own statement is one more
+entrant in the race, and the next author copies whatever is nearest.
+
+The duration is the tell, and it is worth remembering for the next one of these: if a test fails far
+faster than the work it describes could possibly take, it failed before its body ran, and the fixture
+is where to look rather than the assertions.
+
 ## Checklist for a change in this area
 
 0. **Does more than one instance reach it at startup?** The advisory lock elects one migrator; the
@@ -368,6 +457,14 @@ which no row count and no absence of an exception can establish.
    from `GetConnectionString()`.
 2. **Does one statement depend on another's committed effect?** Ordering is not enough. Emit a
    boundary.
+2b. **Does it form a key that decides whether a phase runs?** The key must be unique for what it
+   gates. A simple type name is not: models nested under feature holders share it, and two things
+   sharing one hash row means at least one of them reads as changed on every start, which is DDL
+   under the lock on every start of every instance.
+2c. **Does the SQL declare an index that needs an extension?** Put the family in an optional-extension
+   block, one `CREATE EXTENSION` per block, in **every** script that carries those indexes. A server
+   is allowed to refuse an extension, and a refusal must cost the index family and one warning, never
+   the pass. Do not put a commit boundary in the same script as a block.
 3. **Does the test seed data in the old shape, wide enough to defeat an in-place update?** If not, it
    proves nothing.
 4. **Does anything exercise a non-default schema?** `public` always exists, so a test against it

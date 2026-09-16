@@ -142,6 +142,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **The bootstrap closure was never recognized as recorded:** the infrastructure schema script
+  carried a stamp of the current time in a comment line, and that script is the first thing the
+  closure hash covers, so every instance of one release computed a different hash, the record never
+  matched, and every start still applied the bootstrap DDL under the lock. The schema builders no
+  longer stamp the clock, and the hash covers statements only: comment-only lines and line endings
+  take no part, so a header or a note cannot turn one release into two closures.
+- **The perspective-table pass re-applied its DDL on every start of a schema whose models share a
+  type name:** the per-perspective hash rows were keyed by the model's simple name, so models nested
+  under feature holders (`Order.Model`, `Invoice.Model`, or several `SagaModel`s) shared one row;
+  whichever wrote last owned it, the one compared first read as changed on every start, the slow
+  path ran, and `CREATE TABLE` and `CREATE INDEX ... IF NOT EXISTS` took relation locks on hot
+  tables for nothing, which is what deadlocked an instance starting under load. The rows are keyed
+  by table name now, which is unique within a schema. The first start on this release records the
+  new keys (one ordinary perspective pass); the rows under the old keys stay behind, inert.
+- **A refused `pg_trgm` extension failed the whole perspective pass:** every substring index emitted
+  its own `CREATE EXTENSION IF NOT EXISTS pg_trgm;`, and on a server that refuses the extension
+  (not allow-listed, no privilege, not installed) that statement failed the pass, so a service with
+  one substring index paid a failed startup attempt on every start and never got the index either
+  way. The extension is now created once per table script inside a marked block, and the schema
+  pass applies the block under a savepoint: a refusal (`0A000`, `42501`, `58P01`) skips the trigram
+  indexes with one warning naming them and lets the pass complete; substring queries scan until an
+  operator provides the extension. Both of the scripts the generator writes carry the block: the
+  hash-tracked one per table, and the single script the pass falls back to when it cannot read the
+  tracking tables. A trigram index left outside the block that creates the extension is the worse
+  half of the same defect, because it reaches a server with no `gin_trgm_ops` operator class as an
+  ordinary statement and fails the pass with nothing to skip.
+- **One claim poll cost what the instance held, not what the poll returned:** with acquisition
+  bounded, a busy instance -- thousands of leased rows, polling several times a second to re-offer the
+  streams it holds so its drains keep a current work list -- still touched thousands of blocks per
+  poll, because every part of the poll priced itself by the holdings: the three orphan guards read
+  `instance_id IS NULL OR lease_expiry < now`, a disjunction with no index order, so proving nothing
+  was orphaned examined every pending row; the outbox re-offer ranked every held row with a window
+  function it never read; the inbox re-offer ranked every held row with three window functions and
+  fetched every held row's heap page to do it; the perspective re-offer aggregated every held event;
+  and the inbox event-store chain re-checked every held event against the event store on every poll,
+  twice. Migration 158 makes each part cost what the batch costs: the guards probe two index heads
+  (unowned rows, and the oldest lease through a new lease-expiry index per queue table); the outbox
+  re-offer walks an arrival index and stops at the batch; the inbox and perspective re-offers walk
+  lane indexes -- holder, priority bucket, and for the inbox kind and fresh-or-retried class -- one
+  index-only probe per stream from a stream id drawn per poll, wrapping once and stopping at the
+  batch; and the chain reads only rows without `wh_inbox.chain_emitted_at` and stamps the ones whose
+  event it finds in the event store, leaving a row whose insert conflicted unstamped so the next poll
+  re-attempts it. Priority order, per-stream order, the fresh-work share, partitions, leases and the
+  outstanding budget are unchanged. Summed over the four tables and their indexes, one steady-state
+  poll returning 300 rows costs 700 blocks and 305 tuples at 5,000 held rows per table and 925 blocks
+  and 304 tuples at 40,000, against 5,425/35,012 and 42,388/280,012 before: eight times the holdings
+  cost eight times as much before and 1.3 times as much now.
+- **A held inbox stream is re-offered as one row per lane instead of every row it holds there**
+  (behavior note, same change): the drain has consumed stream ids and pulled a stream's rows on
+  demand since Phase H, and the batch hooks fold a stream's returned rows to its most urgent number
+  and oldest arrival, so a stream's further rows inside one lane carried nothing a caller read while
+  ranking them was the poll's whole cost. A stream whose rows span priority buckets or the
+  command/event lanes is still returned once per lane, and the fold over those rows is unchanged, so
+  `PriorityBatchEntry.PendingRows` now counts the lanes a stream appears in (usually one) rather than
+  its rows in the batch. `p_max_streams` now bounds returned streams rather than returned rows for
+  the inbox, which is what the parameter is named for; acquisition keeps its own row bound (145). The
+  perspective re-offer's small-streams-first tier is gone with the per-stream drain that made it
+  moot. `ClaimWorkPlanShapeTests` asserts both ceilings -- blocks touched and tuples examined, per
+  table -- at a full budget of holdings and again at double it, because blocks alone would not catch
+  an index-only pass over the whole holdings.
+- **A transient database failure inside one perspective batch stopped the whole host:** the channel
+  consumer loop rethrew after logging, the exception left `ExecuteAsync`, and the host's default
+  `BackgroundServiceExceptionBehavior` (`StopHost`) shut the process down over a deadlock that would
+  have passed on the next attempt — which also made every perspective apply failure a potential host
+  stop, since the per-group catch reports, parks the row, and rethrows into that same loop. Two new
+  types carry the fix: `TransientDatabaseFailure` classifies what a loop caught (deadlock,
+  serialization failure, statement canceled, lock timeout, connection lost, insufficient resources, a
+  wrapped command timeout, or the provider's own transient flag) from `DbException.SqlState` and
+  `DbException.IsTransient` alone, wrappers and aggregates included, so Core still references no
+  provider; `WorkerLoopRecovery` is the single place a loop decides what to do about it, picking
+  between the worker's own two report lines and waiting a bounded backoff on the worker's
+  `TimeProvider` (250 ms doubling to 30 s, reset by the next good iteration). The perspective consumer
+  loop and its drain pass now report each failed batch once at Error with the reason, the SQLSTATE and
+  the batch's stream ids, release those streams' unstarted rows so a sibling can take them instead of
+  waiting out the lease, back off and continue; a failure that is not the database's is reported as a
+  defect under its own event id and the loop still continues. The audit behind it also found the
+  outbox drain worker's batch body guarded by a `finally` with no `catch`, so anything from the
+  identity lookup, the security-context establishment or the publish flush ended the worker: it now
+  has the same per-batch guard its inbox mirror always had. The claim poll and the inbox drain name
+  the classification on the lines they already wrote.
 - **The stored-form rewrite skipped when it lost the schema lock, and nothing ran it later:** the
   phase took the schema-init key with a single `pg_try_advisory_lock` and skipped at Debug on a lost
   attempt, on the assumption that the holder was another rewriter. The holder is often a sibling's

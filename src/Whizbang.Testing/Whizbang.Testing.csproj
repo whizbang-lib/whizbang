@@ -17,6 +17,11 @@
     <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- The per-test-database retry policy is asserted from the Postgres test project, which is
+         where Npgsql and the fixtures that use it live. -->
+    <InternalsVisibleTo Include="Whizbang.Data.EFCore.Postgres.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Bogus" />

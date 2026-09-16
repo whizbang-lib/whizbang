@@ -3,6 +3,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.Postgres;
 using Whizbang.Generators.Shared.Models;
 using Whizbang.Testing.Containers;
 
@@ -41,17 +42,9 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   public async Task SetupAsync() {
     await SharedPostgresContainer.InitializeAsync();
 
-    _databaseName = $"index_setup_{Guid.NewGuid():N}";
-    await using (var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
-      await admin.OpenAsync();
-      await using var create = new NpgsqlCommand($"CREATE DATABASE {_databaseName}", admin);
-      await create.ExecuteNonQueryAsync();
-    }
-
-    _connectionString = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
-      Database = _databaseName,
-      Timezone = "UTC",
-    }.ConnectionString;
+    var database = await PerTestDatabaseFactory.CreateAsync("index_setup");
+    _databaseName = database.Name;
+    _connectionString = database.ConnectionString;
 
     await _executeAsync($"""
       CREATE TABLE {TABLE} (
@@ -66,15 +59,7 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   [After(Test)]
   public async ValueTask DisposeAsync() {
     if (_databaseName is not null) {
-      try {
-        await using var admin = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
-        await admin.OpenAsync();
-        await using var drop = new NpgsqlCommand(
-          $"DROP DATABASE IF EXISTS {_databaseName} WITH (FORCE)", admin);
-        await drop.ExecuteNonQueryAsync();
-      } catch (NpgsqlException) {
-        // The container outlives the run; a leftover database costs nothing.
-      }
+      await PerTestDatabaseFactory.DropAsync(_databaseName);
     }
 
     GC.SuppressFinalize(this);
@@ -100,11 +85,11 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   /// matters there is that running both leaves both indexes rather than one.
   /// </remarks>
   private async Task _createDeclaredAsync(params JsonIndexInfo[] indexes) {
-    foreach (var index in indexes) {
-      foreach (var statement in JsonIndexSql.CreateStatements(index, TABLE, "setup")) {
-        await _executeAsync(statement);
-      }
-    }
+    // The script as the generator builds it, applied the way the schema pass applies it: the
+    // trigram indexes sit in an optional-extension block that creates the extension once.
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync();
+    await OptionalExtensionBlocks.ApplyAsync(db, null, JsonIndexSql.Script(indexes, TABLE, "setup"), 30);
   }
 
   /// <summary>Every index on the table, as PostgreSQL describes it back.</summary>

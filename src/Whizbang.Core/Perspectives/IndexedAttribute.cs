@@ -20,6 +20,13 @@ namespace Whizbang.Core.Perspectives;
 /// the one outcome worth ruling out, because the declaration reads as a claim either way.
 /// </para>
 /// <para>
+/// On PostgreSQL substring matching needs the <c>pg_trgm</c> extension. The schema pass creates it
+/// once per table script, and where the server refuses it (a managed server that does not
+/// allow-list it, a role without the privilege, a build without it) the pass skips the trigram
+/// indexes with one warning naming them and completes; substring queries then scan, as they do
+/// wherever the index is absent. The declaration is never the reason a service fails to start.
+/// </para>
+/// <para>
 /// Plural, as a combinable enumeration is named. A single capability is the common case and reads
 /// fine that way, <c>[Indexed(IndexKinds.Substring)]</c>.
 /// </para>

@@ -71,16 +71,22 @@ public class ClaimWorkerCoverageTests {
     /// <summary>When set, RecordHeartbeatAsync throws this instead of succeeding.</summary>
     public Exception? HeartbeatException { get; set; }
 
+    /// <summary>Thrown by the next claim only, then cleared: one failed tick, then normal service.</summary>
+    public Exception? NextClaimException { get; set; }
+
     public Task<WorkBatch> ClaimWorkAsync(ClaimWorkRequest req, CancellationToken ct = default) {
       WorkBatch batch;
+      Exception? failure;
       lock (_lock) {
         CallCount++;
         LastMaxStreams = req.MaxStreams;
         if (req.MaxStreams > PeakMaxStreams) { PeakMaxStreams = req.MaxStreams; }
         batch = _batchToReturn;
+        failure = NextClaimException;
+        NextClaimException = null;
         if (_watchers.TryGetValue(CallCount, out var tcs)) { tcs.TrySetResult(); }
       }
-      return Task.FromResult(batch);
+      return failure is not null ? Task.FromException<WorkBatch>(failure) : Task.FromResult(batch);
     }
 
     public Task WaitForCallsAsync(int n, TimeSpan timeout) {
@@ -152,7 +158,8 @@ public class ClaimWorkerCoverageTests {
       ISchemaReadyGate? schemaGate = null,
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
-      ClaimChurnFeedback? churnFeedback = null) {
+      ClaimChurnFeedback? churnFeedback = null,
+      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
     var services = new ServiceCollection();
     services.AddSingleton<IWorkCoordinator>(coord);
     var sp = services.BuildServiceProvider();
@@ -162,7 +169,7 @@ public class ClaimWorkerCoverageTests {
       new NoOpWorkNotificationListener(),
       schemaGate ?? SchemaReadyGate.AlreadyReady(),
       Options.Create(options),
-      NullLogger<ClaimWorker>.Instance,
+      logger ?? NullLogger<ClaimWorker>.Instance,
       outboxChannel: outboxChannel,
       perspectiveChannel: perspectiveChannel,
       churnFeedback: churnFeedback);
@@ -182,11 +189,37 @@ public class ClaimWorkerCoverageTests {
       ClaimWorkerOptions options,
       IWorkChannelWriter? outboxChannel = null,
       IPerspectiveChannelWriter? perspectiveChannel = null,
-      ClaimChurnFeedback? churnFeedback = null) {
-    var (worker, _) = _build(coord, options, outboxChannel: outboxChannel, perspectiveChannel: perspectiveChannel, churnFeedback: churnFeedback);
+      ClaimChurnFeedback? churnFeedback = null,
+      Microsoft.Extensions.Logging.ILogger<ClaimWorker>? logger = null) {
+    var (worker, _) = _build(coord, options, outboxChannel: outboxChannel, perspectiveChannel: perspectiveChannel, churnFeedback: churnFeedback, logger: logger);
     var cts = new CancellationTokenSource();
     worker.StartAsync(cts.Token).GetAwaiter().GetResult();
     return new WorkerHarness(worker, cts);
+  }
+
+  /// <summary>
+  /// A deadlock inside one claim is the database's business, not the loop's: the tick is reported
+  /// with the classified reason and the next tick runs. The loop already survived every exception;
+  /// what an operator could not tell from the line was whether it was a passing failure or a defect.
+  /// </summary>
+  [Test]
+  public async Task ClaimTick_TransientDatabaseFailure_IsReportedWithItsReasonAndTheNextTickRunsAsync() {
+    var coord = new RecordingCoordinator { NextClaimException = FakeDbException.WithSqlState("40P01", message: "deadlock detected") };
+    var logger = new Microsoft.Extensions.Logging.Testing.FakeLogger<ClaimWorker>();
+    using var harness = _startWorker(coord, new ClaimWorkerOptions {
+      PollingIntervalMilliseconds = 10,
+      PollingMaxIntervalMilliseconds = 50,
+    }, logger: logger);
+
+    await coord.WaitForCallsAsync(2, TimeSpan.FromSeconds(10));
+
+    var reported = logger.Collector.GetSnapshot()
+      .Where(e => e.Id.Id == ClaimWorker.TRANSIENT_FAILURE_EVENT_ID).ToList();
+    await Assert.That(reported).Count().IsEqualTo(1);
+    await Assert.That(reported[0].Level).IsEqualTo(Microsoft.Extensions.Logging.LogLevel.Warning);
+    await Assert.That(reported[0].Message).Contains(TransientDatabaseFailure.DEADLOCK, StringComparison.Ordinal);
+    await Assert.That(reported[0].Message).Contains("40P01", StringComparison.Ordinal);
+    await Assert.That(reported[0].Exception).IsTypeOf<FakeDbException>();
   }
 
   // ============================================================
@@ -472,7 +505,6 @@ public class ClaimWorkerCoverageTests {
     // and a loop that halved on it walked a 1000-stream window down to the floor in under a second
     // while the queue held a single row. So the churn has to be reported over at least
     // MinStreamsPerBatch rows to be considered at all.
-    churnFeedback.Report([.. Enumerable.Repeat(2, 27), .. Enumerable.Repeat(1, 3)]); // 27 of 30 re-claimed
     coord.BatchToReturn = new WorkBatch {
       OutboxWork = [],
       PerspectiveWork = [],
@@ -483,11 +515,25 @@ public class ClaimWorkerCoverageTests {
       InboxStreamIds = Enumerable.Range(0, 30).Select(_ => TrackedGuid.NewMedo().Value).ToList(),
     };
 
-    // A generous buffer of cycles past the swap: however many polls it takes the swapped batch and
-    // churn report to actually land (at most one or two), the shrink must be visible well before
-    // this many more have gone by, and nothing after it can grow the window back (the swapped batch
-    // reports zero churn on every later poll, which reads as UNMEASURED, not clean).
-    await coord.WaitForCallsAsync(15, TimeSpan.FromSeconds(5));
+    // The swap has to be visible to a WHOLE cycle before the churn is reported, and that ordering
+    // is the difference between this test measuring adaptivity and measuring the scheduler.
+    // ClaimWorker takes the feedback unconditionally and destructively on every cycle
+    // (_churnFeedback?.Take() in _observeChurn), so a cycle still holding the clean phase-1 batch
+    // will consume this report and spend it against thirty first-attempt rows. The evidence is then
+    // gone, every later cycle reads Observed=0, which is UNMEASURED rather than clean, and the
+    // window neither grows nor shrinks again: the assertion below sees the width equal to the peak
+    // and reports a failure to narrow that is really a failure to deliver the sample. Reported
+    // once a cycle that BEGAN after the swap has completed, the churn can only ever be consumed
+    // against the stream-id shape, which is the path under test.
+    var callsAtSwap = coord.CallCount;
+    await coord.WaitForCallsAsync(callsAtSwap + 2, TimeSpan.FromSeconds(5));
+
+    churnFeedback.Report([.. Enumerable.Repeat(2, 27), .. Enumerable.Repeat(1, 3)]); // 27 of 30 re-claimed
+
+    // One more cycle is all the shrink needs, since the very next claim consumes the report; the
+    // buffer is for a loaded machine, not for the mechanism. Nothing here can grow the window back,
+    // because an unmeasured cycle blocks growth exactly as an unmeasured drain does.
+    await coord.WaitForCallsAsync(coord.CallCount + 4, TimeSpan.FromSeconds(5));
 
     // Compared against the peak rather than a width sampled before the swap. Growth continues
     // until the swapped batch lands, so a sampled width is only a lower bound on how wide the
