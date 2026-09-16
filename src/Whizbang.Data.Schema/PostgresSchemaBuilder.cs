@@ -205,8 +205,9 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   public string BuildInfrastructureSchema(SchemaConfiguration config) {
     var sb = new StringBuilder();
 
+    // No clock stamp and nothing else per call: the schema bootstrap hashes this script to recognize
+    // a closure it has already applied, so two instances of one release must produce one text.
     sb.AppendLine("-- Whizbang Infrastructure Schema for Postgres");
-    sb.AppendLine($"-- Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
     sb.AppendLine($"-- Infrastructure Prefix: {config.InfrastructurePrefix}");
     sb.AppendLine($"-- Perspective Prefix: {config.PerspectivePrefix}");
     sb.AppendLine($"-- Schema: {config.SchemaName}");

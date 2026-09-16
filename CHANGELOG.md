@@ -142,6 +142,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **The bootstrap closure was never recognized as recorded:** the infrastructure schema script
+  carried a stamp of the current time in a comment line, and that script is the first thing the
+  closure hash covers, so every instance of one release computed a different hash, the record never
+  matched, and every start still applied the bootstrap DDL under the lock. The schema builders no
+  longer stamp the clock, and the hash covers statements only: comment-only lines and line endings
+  take no part, so a header or a note cannot turn one release into two closures.
 - **The stored-form rewrite skipped when it lost the schema lock, and nothing ran it later:** the
   phase took the schema-init key with a single `pg_try_advisory_lock` and skipped at Debug on a lost
   attempt, on the assumption that the holder was another rewriter. The holder is often a sibling's

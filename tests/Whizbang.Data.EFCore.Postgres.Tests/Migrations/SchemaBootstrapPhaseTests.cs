@@ -316,6 +316,37 @@ public class SchemaBootstrapPhaseTests {
         + "locks on hot tables for nothing, which is what deadlocked a start under load");
   }
 
+  /// <summary>
+  /// A closure whose scripts differ only in comment lines is the recorded closure.
+  /// </summary>
+  /// <remarks>
+  /// Two instances of one release build their scripts independently. A header line a builder
+  /// writes, or a clock stamp, is not a statement; if it took part in the hash, no second instance
+  /// would ever find the record, and every start would apply the DDL under the lock, which is the
+  /// deadlock the record exists to prevent.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task AClosureThatDiffersOnlyInCommentsIsCurrentAsync(CancellationToken cancellationToken) {
+    var scripts = _bootstrapScripts();
+    scripts.Add(("marker",
+      "CREATE TABLE IF NOT EXISTS bootstrap_marker (note TEXT NOT NULL); "
+      + "INSERT INTO bootstrap_marker (note) VALUES ('applied');"));
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    var commented = scripts
+      .Select(s => (s.Name, "-- Generated: 2026-01-02 03:04:05 UTC\n" + s.Sql + "\n-- a note that changes no statement"))
+      .ToList();
+    var again = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, commented, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    await Assert.That(again).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker"))
+      .IsEqualTo(1L)
+      .Because("comment lines carry no statement, so a closure that differs only there is the one already recorded");
+  }
+
   /// <summary>A closure that changed is applied, and the record moves with it.</summary>
   [Test]
   [Timeout(120000)]

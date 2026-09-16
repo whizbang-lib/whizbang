@@ -94,6 +94,15 @@ applied in `wh_bootstrap_closure` (created by the closure itself, in migration 0
 whose closure is recorded applies nothing: no statement, no lock. See
 `schema-initialization-connections.md`, trap 4.
 
+The hash is a function of the statements and nothing else. The first rollout of the record found
+every instance of one release computing a different hash, because the infrastructure schema script
+began with a comment stamping the current time, so no instance ever skipped. The rule that came out
+of it: a schema builder must not write anything per call into the SQL it returns (no clock, no host,
+no process), and `SchemaBootstrapPhase.ClosureHash` drops comment-only lines and normalizes line
+endings before hashing, so a header or a note added later cannot split one release into two
+closures. Script names and order still take part, because a region moved or renamed is a different
+closure.
+
 ## Finding 5: the idle cost is polling and connection churn
 
 With every queue empty the two busiest databases committed 122 and 182 transactions a second. The
