@@ -511,14 +511,99 @@ gating question is no.
 
 ### How much is actually on the table
 
-Worth stating before the stages, because it is the part a reader will assume and get wrong. Four
-paths carry essentially all of the value, and three of them are cheap:
+Two framings, and they give different answers. **Counting code paths sizes the framework; counting
+query volume sizes a deployment.** The inventory above is a path count, which is the right method for
+asking what the framework may safely move, and the wrong method for asking what a given service
+would save. A path count treats the lens read side as one row among 112. In a service whose API
+surface is lens reads, that one row is most of the queries the service issues. Both numbers are
+true, and the volume one is the one that decides whether this is worth building.
+
+So the payoff is a function of the deployment profile, not of the framework.
+
+#### Which profiles the split pays for
+
+Shares below are shapes rather than measurements: they describe where a profile's query volume sits,
+not a figure taken from any particular system. The last column is what a replica would actually
+absorb, which is the read-eligible share **after** the write-scope guard has forced back what it must.
+
+| Profile | Where its query volume sits | Read-eligible share | Verdict |
+|---|---|---|---|
+| **Backend-for-frontend over perspectives** | API surface is almost entirely lens reads; the write machinery runs in-process but is not the API | dominant | **Pays materially.** The case this is worth building for |
+| **Mixed transactional API** (commands and queries on one surface) | split between lens reads and command handling, with many lens reads issued inside receptors | partial, and the guard forces a real fraction of it back | **Pays something**, less than it looks |
+| **Consumer or projector with no API** | claim, apply, cursor, complete. No lens surface at all | near zero | **Pays nothing** |
+| **Producer or ingestion service** | append and outbox, with lens reads incidental | near zero | **Pays nothing** |
+
+The framework cannot know which profile it is running in, which is why routing has to be declared
+(stage 3) rather than inferred, and why the framework default must stay on the primary.
+
+#### The backend-for-frontend profile, and why it is first-class
+
+This is not a hypothetical shape the framework merely tolerates; it is one the framework explicitly
+supports and ships a sample for. In that sample the BFF exposes nine read endpoints against one
+write endpoint (`samples/ECommerce/ECommerce.BFF.API/Endpoints/`), and every one of the reads goes
+through a lens over a perspective
+(`samples/ECommerce/ECommerce.BFF.API/Lenses/`: order, product catalog, inventory levels). For a
+service of that shape the lens read side is the query workload, and the replica split is worth
+materially more than a path count suggests.
+
+That does not change the framework-general verdict above. It adds a profile in which the first of
+the four paths below is not one item on a list but the whole point.
+
+#### Three things that must go with the profile
+
+**1. A read-mostly API is not a read-mostly database workload.** The same sample makes this concrete:
+that BFF also declares its own perspectives (`samples/ECommerce/ECommerce.BFF.API/Perspectives/`),
+so it consumes events on the inbox, applies them, moves cursors, claims and leases work, and has
+commit order stamped for it. Every one of those is a write or a read inside a write, and all of them
+stay on the primary. The asymmetry is larger than it sounds: a read-mostly service of this shape,
+observed during a bulk import, emitted its own events in the tens of thousands while consuming fewer
+than it emitted, because applying a perspective fans out into further events. The write machinery is
+far from idle in a service whose API is read-only.
+
+**2. Therefore the split is per seam inside one process, and never per service.** The obvious wrong
+conclusion from the profile above is "the BFF is read-only, point it at the replica", and someone
+will draw it. **Do not.** A service pointed wholly at a reader loses its inbox and its apply path,
+and the inventory says how it loses them: the current-row read behind the lost-update guard, the
+runner's idempotency filter, the cursor reads that drive the inversion detector, and the
+outstanding-work count are all in the silently-wrong class. A whole-service switch does not fail at
+startup; it corrupts perspectives quietly while the API keeps answering. What moves is the lens seam
+inside the process. The workers in that same process keep the writer connection, which is precisely
+why stage 2 puts the reader on a separate context factory rather than on the registered context.
+
+**3. This is the case the ambient write-scope guard exists for.** One process serving replica-routed
+lens queries while its own workers run on the primary is exactly the mixed shape stage 4 is built
+around, so the profile strengthens that mechanism rather than needing a new one. Two notes on its
+coverage:
+
+- The guard must cover a lens query issued from **inside a receptor or a perspective apply**, not
+  only one inside an open transaction. That is how a read-mostly service would most plausibly trip
+  it, because reading a lens from a receptor is a supported pattern and a BFF has both halves in one
+  process.
+- Forcing rather than refusing is what makes the profile usable. A BFF can declare the reader as the
+  default for its read models and still be correct when the same lens is called from its own apply
+  path, which is the only way a per-model default is safe to set aggressively.
+
+#### How a consumer finds its own share
+
+The framework cannot supply this number, but a consumer can measure it, and the method is already
+written down. Snapshot `pg_stat_statements` before and after a representative window and diff it
+rather than reading cumulative counters, and sample `pg_stat_activity` across the window as well,
+because a thrashing statement cache hides the heaviest work and a statement still running at the end
+of the window appears in no diff at all (`ai-docs/load-under-bulk-import.md:11-27`). Grouping the
+diff into lens reads against work-coordination traffic gives the read-eligible share directly.
+Stage 7's per-operation naming is what would make that grouping trivial instead of manual.
+
+#### The framework-general list, unchanged
+
+Independently of profile, four paths carry essentially all of the value the framework itself can
+move, and three of them are cheap:
 
 1. **The lens read side.** The only genuinely high-volume read surface in the framework, and the one
    the read/write split exists for. It needs no change-tracking work (it is already
    `AsNoTracking()` throughout), it already resolves its context through a factory that opens a
    fresh scope, and its read surface is closed to `IQueryable` and `GetByIdAsync`. It is also the one
-   path whose staleness is a **product** question rather than a framework one.
+   path whose staleness is a **product** question rather than a framework one, and the one whose
+   value depends entirely on the profile.
 2. **The work-statistics gauge.** Four unbounded `COUNT(*)` over the queue tables and the active-stream
    table on a periodic cadence, feeding one gauge, inside a catch-everything block. These are the
    last unbounded counts in the hot set, so this is the largest single load item that is also
@@ -533,12 +618,15 @@ paths carry essentially all of the value, and three of them are cheap:
    `pg_stat_user_tables` half of the table-statistics provider must stay (risk class 2 below).
 
 Everything else on the `R` list is a one-shot startup reconciler or a log sentinel, and moving those
-buys nothing measurable. So the honest summary is: **one path worth real money, three worth a
-measurable amount, and a long tail worth nothing.** The framework already spent its optimization
-effort on this problem in a different direction, by decomposing the poll and bounding it by the
-batch it returns rather than the backlog it scans (`ai-docs/load-under-bulk-import.md:40-62`), and by
-pinning the hot worker connections off the pooler
-(`src/Whizbang.Core/Workers/WhizbangPinnedPoolOptions.cs:10-16`).
+buys nothing measurable. So the honest summary, in two sentences rather than one: **across the
+framework, one path is worth real money, three are worth a measurable amount, and a long tail is
+worth nothing. In a backend-for-frontend deployment that one path is most of the query volume, which
+is what makes the feature worth building at all.** Note also that the framework already spent
+optimization effort on this problem in a different direction, by decomposing the poll and bounding
+it by the batch it returns rather than the backlog it scans
+(`ai-docs/load-under-bulk-import.md:40-62`), and by pinning the hot worker connections off the pooler
+(`src/Whizbang.Core/Workers/WhizbangPinnedPoolOptions.cs:10-16`); a reader is additive to those, not
+a substitute for them.
 
 ### Stage 1: resolve a reader key, falling back to the pooled key
 
@@ -702,6 +790,13 @@ reader-default lenses never actually reach the reader, and fix the composition i
 
 The guard also makes the per-lens default safe to set aggressively, which is what makes mechanism 1
 worth having at all.
+
+**The mixed single process is the case this exists for**, not an edge of it. A backend-for-frontend
+serving replica-routed lens queries while its own perspective workers run on the primary has both
+halves in one process, so the same lens type is reached from a controller and from an apply within
+the same host (see the profile in "How much is actually on the table"). The receptor and apply
+conditions above are therefore load-bearing rather than defensive: a guard that covered only the
+open-transaction case would miss the composition a read-mostly service is most likely to have.
 
 **Beyond the guard, an allow-list decides which framework-internal components may hold a reader at
 all.** "Must be the primary" is a property of the component, not of the query, and there are three
@@ -957,21 +1052,26 @@ decision plus tests rather than an obvious edit. Nothing in this branch changes 
 2. **Whether the lens path may be stale.** Everything in stages 2 to 5 hinges on this and the framework
    cannot answer it: whether a user-facing grid may be a few seconds behind is the consumer's
    product decision, not the framework's. If the answer is no for any consumer, the default must be
-   the primary and the reader must be opt-in per lens.
-3. **Whether the sync-aware lens path may ever use a reader.** The recommendation is no by default:
+   the primary and the reader must be opt-in per lens. Note that this is answered per read model
+   rather than once, which is why stage 3 puts the default on the model and not on a global switch.
+3. **Whether the backend-for-frontend profile is a supported configuration or the motivating one.**
+   The sizing section treats it as the profile that makes the feature worth building. If it is
+   instead one shape among several, stages 3 to 5 are harder to justify on their own, because no
+   other profile recovers their cost.
+4. **Whether the sync-aware lens path may ever use a reader.** The recommendation is no by default:
    the fence it advertises would stop working silently (stage 5), so it should stay on the primary
    unless the caller opts into the read-your-writes form that compares the reader against a captured
    write position. Whether to offer that form on the sync-aware seam at all, or to keep the two
    mechanisms separate, is the decision.
-4. **The lag budget's default value**, and whether it is a single framework-wide number or must be
+5. **The lag budget's default value**, and whether it is a single framework-wide number or must be
    per lens from the start. The framework can supply a conservative default; what a product will
    tolerate is not something it can guess.
-5. **Whether the reader is a framework concern at all.** The consumer already owns its own read
+6. **Whether the reader is a framework concern at all.** The consumer already owns its own read
    paths, and the documented position hands them the replica. An alternative that costs the
    framework nothing is to document that `-readonly` is a consumer key, state plainly that Whizbang
    never reads it, and close the question. Note that stages 6, 7 and 7a survive this answer: lag
    measurement and connection observability are gaps regardless.
-6. **What to do with the four incidental findings above.** Each is a real defect and none is in this
+7. **What to do with the four incidental findings above.** Each is a real defect and none is in this
    audit's scope.
 
 ### Already decided, recorded so it is not reopened
