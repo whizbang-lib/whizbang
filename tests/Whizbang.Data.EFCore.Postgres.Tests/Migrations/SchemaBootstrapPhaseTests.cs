@@ -288,6 +288,56 @@ public class SchemaBootstrapPhaseTests {
       .IsEqualTo(0L);
   }
 
+  /// <summary>A closure the database already holds is not applied again.</summary>
+  /// <remarks>
+  /// Every instance start used to re-run the closure's DDL, each statement taking a lock on a table
+  /// the running instances write. An instance an autoscaler started under load deadlocked against
+  /// the maintenance sweep and the poll sources within two seconds of starting. A closure that
+  /// matches what the database recorded needs no statement and no lock.
+  /// </remarks>
+  [Test]
+  [Timeout(120000)]
+  public async Task ACurrentClosureIsNotAppliedAgainAsync(CancellationToken cancellationToken) {
+    var scripts = _bootstrapScripts();
+    scripts.Add(("marker",
+      "CREATE TABLE IF NOT EXISTS bootstrap_marker (note TEXT NOT NULL); "
+      + "INSERT INTO bootstrap_marker (note) VALUES ('applied');"));
+
+    var first = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    var second = await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    await Assert.That(first).IsTrue();
+    await Assert.That(second).IsTrue();
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker"))
+      .IsEqualTo(1L)
+      .Because("the closure offered is the closure recorded; running its statements again takes DDL "
+        + "locks on hot tables for nothing, which is what deadlocked a start under load");
+  }
+
+  /// <summary>A closure that changed is applied, and the record moves with it.</summary>
+  [Test]
+  [Timeout(120000)]
+  public async Task AChangedClosureIsAppliedAsync(CancellationToken cancellationToken) {
+    var scripts = _bootstrapScripts();
+    scripts.Add(("marker",
+      "CREATE TABLE IF NOT EXISTS bootstrap_marker (note TEXT NOT NULL); "
+      + "INSERT INTO bootstrap_marker (note) VALUES ('first');"));
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    scripts.Add(("marker-2", "INSERT INTO bootstrap_marker (note) VALUES ('second');"));
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+    await SchemaBootstrapPhase.ApplyAsync(
+      _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
+
+    await Assert.That(await _scalarAsync<long>("SELECT count(*) FROM bootstrap_marker"))
+      .IsEqualTo(3L)
+      .Because("a new closure runs once in full (both markers) and then not again");
+  }
+
   /// <summary>
   /// An instance that cannot take the lock applies nothing, and says so by what it reports.
   /// </summary>

@@ -85,11 +85,22 @@ public static class SchemaBootstrapPhase {
     await using var connection = connectionFactory();
     await connection.OpenAsync(cancellationToken);
 
-    // Its own method so the transaction is closed before the probe below, which has to read
-    // committed state. That ordering is the reason this is not inlined here.
-    await _applyUnderTheLockAsync(
-      connection, lockId, scripts, commandTimeoutSeconds, log, cancellationToken)
-      .ConfigureAwait(false);
+    var target = string.IsNullOrEmpty(schema) ? "public" : schema.Replace("\"", string.Empty);
+    var closure = new List<(string Name, string Sql)>(scripts);
+    var closureHash = ClosureHash(closure);
+
+    if (await _isClosureRecordedAsync(connection, target, closureHash, cancellationToken).ConfigureAwait(false)) {
+      // The closure this instance carries is the one the database already holds. Applying it again
+      // would take a share lock per statement on tables the running instances write, for nothing;
+      // an instance starting under load deadlocked on exactly that.
+      SchemaBootstrapLog.ClosureCurrent(log, closureHash, target);
+    } else {
+      // Its own method so the transaction is closed before the probe below, which has to read
+      // committed state. That ordering is the reason this is not inlined here.
+      await _applyUnderTheLockAsync(
+        connection, lockId, closure, closureHash, target, commandTimeoutSeconds, log, cancellationToken)
+        .ConfigureAwait(false);
+    }
 
     var ready = await CanElectAsync(connection, schema, cancellationToken).ConfigureAwait(false);
     if (!ready) {
@@ -127,6 +138,8 @@ public static class SchemaBootstrapPhase {
       NpgsqlConnection connection,
       long lockId,
       IEnumerable<(string Name, string Sql)> scripts,
+      string closureHash,
+      string schema,
       int commandTimeoutSeconds,
       ILogger log,
       CancellationToken cancellationToken) {
@@ -150,7 +163,18 @@ public static class SchemaBootstrapPhase {
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
       }
 
+      // Recorded in the same transaction as the scripts, so the record exists exactly when the
+      // closure it names does. The table is part of the closure (migration 000's region).
+      applying = "<closure record>";
+      await using (var record = new NpgsqlCommand(
+          $"INSERT INTO {_quoteIdentifier(schema)}.wh_bootstrap_closure (closure_hash) VALUES ($1) ON CONFLICT DO NOTHING",
+          connection)) {
+        record.Parameters.AddWithValue(closureHash);
+        await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+      }
+
       await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+      SchemaBootstrapLog.ClosureApplied(log, closureHash, schema);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Reported and carried on from, never rethrown. A bootstrap that cannot be applied costs the
       // election; the caller then migrates under the advisory lock, which is what every instance
@@ -240,6 +264,49 @@ public static class SchemaBootstrapPhase {
     await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
   }
 
+  /// <summary>
+  /// The hash that identifies a closure: SHA-256 over every script's name and text, in order.
+  /// </summary>
+  /// <param name="scripts">The scripts, in the order they apply.</param>
+  /// <returns>Sixty-four lowercase hex characters.</returns>
+  /// <remarks>
+  /// Names take part so that the same text under a different region name, or a region moved to a
+  /// different position, reads as a different closure; the point of the record is that an equal
+  /// hash means the database holds exactly what this instance would apply.
+  /// </remarks>
+  public static string ClosureHash(IEnumerable<(string Name, string Sql)> scripts) {
+    ArgumentNullException.ThrowIfNull(scripts);
+    using var sha = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+    foreach (var (name, sql) in scripts) {
+      sha.AppendData(System.Text.Encoding.UTF8.GetBytes(name));
+      sha.AppendData("\n"u8);
+      sha.AppendData(System.Text.Encoding.UTF8.GetBytes(sql));
+      sha.AppendData("\n"u8);
+    }
+    return Convert.ToHexStringLower(sha.GetHashAndReset());
+  }
+
+  /// <summary>Whether the database records <paramref name="closureHash"/> as applied.</summary>
+  /// <remarks>
+  /// Two statements rather than one: a query that names the record table fails to parse when the
+  /// table does not exist yet, whatever else the query says, and on an empty database it does not.
+  /// A record that cannot be read reads as "not recorded", which applies the closure; the safe
+  /// direction, since applying is idempotent and skipping is not.
+  /// </remarks>
+  private static async Task<bool> _isClosureRecordedAsync(
+      NpgsqlConnection connection, string schema, string closureHash, CancellationToken cancellationToken) {
+    await using (var exists = new NpgsqlCommand("SELECT to_regclass($1 || '.wh_bootstrap_closure') IS NOT NULL", connection)) {
+      exists.Parameters.AddWithValue(_quoteIdentifier(schema));
+      if (await exists.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is not true) {
+        return false;
+      }
+    }
+    await using var recorded = new NpgsqlCommand(
+      $"SELECT EXISTS (SELECT 1 FROM {_quoteIdentifier(schema)}.wh_bootstrap_closure WHERE closure_hash = $1)", connection);
+    recorded.Parameters.AddWithValue(closureHash);
+    return await recorded.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is true;
+  }
+
   private static string _quoteIdentifier(string identifier) =>
     "\"" + identifier.Replace("\"", "\"\"") + "\"";
 
@@ -280,4 +347,16 @@ internal static partial class SchemaBootstrapLog {
       Message = "Schema {Schema} cannot elect a migrator yet, so this instance will migrate under "
               + "the advisory lock alone; correct but duplicated across a fleet")]
   public static partial void ElectionUnavailable(ILogger logger, string schema);
+
+  [LoggerMessage(
+      EventId = 4,
+      Level = LogLevel.Debug,
+      Message = "Schema bootstrap closure {ClosureHash} is already recorded for {Schema}; nothing applied, no lock taken")]
+  public static partial void ClosureCurrent(ILogger logger, string closureHash, string schema);
+
+  [LoggerMessage(
+      EventId = 5,
+      Level = LogLevel.Information,
+      Message = "Schema bootstrap closure {ClosureHash} applied and recorded for {Schema}")]
+  public static partial void ClosureApplied(ILogger logger, string closureHash, string schema);
 }
