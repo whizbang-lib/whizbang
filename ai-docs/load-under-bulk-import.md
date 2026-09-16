@@ -58,6 +58,88 @@ reproduces both shapes (poll empty, fill with wide rows, poll again on the same 
 the rows leased elsewhere, once unowned) and asserts the tuples one poll reads stay within a few
 batches per table.
 
+## Finding 1, round two: with acquisition bounded, the poll still cost what the instance held
+
+Acquisition was only half of a poll. The other half is the re-offer: a busy instance holds as many
+leased rows as its budget allows, has already handed most of them to a drain, and polls several
+times a second to re-offer the streams it holds so the drain keeps its work list current. Every part
+of that re-offer priced itself by the holdings. Measured again over a 339 to 346 second window with
+157 in place, `claim_work` was still the top statement on every database by an order of magnitude:
+1,278 calls at 401 ms and about 7,450 shared blocks each on the producer's database for 29 rows a
+call, and 659 calls at 780 ms and about 19,000 blocks each on the largest consumer's for 128 rows a
+call. Blocks to return a row, not blocks to find one.
+
+Reproduced on a container with `auto_explain` (`log_nested_statements` on, so the plans inside the
+function are logged) and per-table `pg_statio` / `pg_stat_user_indexes` deltas around one poll. Five
+causes, each priced by the holdings and none by the batch:
+
+- **The orphan guards.** Each of the three read `WHERE processed_at IS NULL AND (instance_id IS NULL
+  OR lease_expiry < now)`. A disjunction has no index order, so proving that nothing is orphaned
+  examined every pending row: on a busy instance, its whole holdings, three times a poll. They now
+  probe twice: unowned rows under `instance_id IS NULL` through the outstanding-by-instance indexes
+  (123), and expired leases at the head of a lease-expiry index per queue table (158). An instance
+  whose leases are all live proves it at the first entry of each.
+- **The outbox re-offer** ranked every held row per stream with a window function whose result the
+  query never read, then sorted them all and kept a batch. It now walks
+  `idx_outbox_held_arrival` (holder, arrival, id, covering, partial on pending singles) and stops
+  at the batch.
+- **The inbox re-offer** ranked every held row with three window functions and, because it selected
+  `i.*`, fetched every held row's heap page to do it. With payloads wide enough that rows are not
+  updated in place, that is one page per held row per poll.
+- **The perspective re-offer** aggregated every held event to put streams with a hundred or fewer
+  pending events ahead of larger ones. That tier guarded a batch of *rows* against one large stream;
+  the drain has been per stream with an unbounded channel since Phase H, so a large stream no longer
+  displaces small ones, and the tier is gone with the reason for it.
+- **The inbox event-store chain**, which is how an inbox event leased at store time gets its
+  event-store row and its perspective work, re-checked every held event against the event store on
+  every poll, twice (a lock pass and an insert pass), when all but the newest had been chained long
+  ago.
+
+Both re-offers now enumerate the streams an instance holds through a lane index, one index-only
+probe per stream, lane by lane in the order the batch is ordered (bucket, and for the inbox kind and
+fresh-or-retried class as well), each lane's walk starting at a stream id drawn per poll, wrapping
+once, and stopping at the batch. A recursive CTE with a `LIMIT 1` lateral per step is what makes
+that one probe per stream rather than a scan; the upper bound of each step has to be written as a
+`CASE` and not an `OR`, or it degrades from an index condition to a filter and the walk reads past
+its stopping point. A held stream is re-offered as its oldest row in each lane it appears in instead
+of as every row it holds there. The drain consumes stream ids and pulls a stream's rows on demand,
+and the batch hooks fold a stream's returned rows to one number and one arrival, so the further rows
+inside one lane carried nothing a caller read and ranking them was the whole cost. The chain now
+reads only rows without `wh_inbox.chain_emitted_at` and stamps the ones whose event it finds in the
+event store; a row whose insert hit `ON CONFLICT DO NOTHING` stays unstamped, because that clause's
+contract is that the next poll re-attempts it.
+
+One steady-state poll, returning 300 rows out of a batch of 100 per category, summed over the
+outbox, inbox, perspective-event and event-store tables and their indexes:
+
+| Held rows per table | Blocks before | Tuples before | Blocks after | Tuples after |
+|---|---|---|---|---|
+| 5,000 | 5,425 | 35,012 | 700 | 305 |
+| 10,000 | 10,705 | 70,012 | 912 | 305 |
+| 40,000 | 42,388 | 280,012 | 925 | 304 |
+
+Eight times the holdings cost eight times as much before and 1.3 times as much after, and the
+tuples a poll examines no longer depend on the holdings at all. Per row returned: 18, 36 and 141
+blocks before against 2.3, 3.0 and 3.1 after.
+
+**Rule:** a poll is priced by the batch it returns. Every part of it, the guards that decide
+whether to call an acquisition, the re-offers and the bookkeeping at the end, has to reach its
+answer through an index whose key order is the answer's order, with the `LIMIT` before any join or
+sort, and must never read a row of a stream it is not going to return. Two ceilings hold it, and
+neither is enough alone: blocks per call catches the heap fetches, and tuples examined per row
+returned catches an index-only pass over the whole holdings, which is cheap in blocks and still
+grows with the backlog. `ClaimWorkPlanShapeTests` asserts both, per table, once at a full budget of
+holdings and again at double it.
+
+**Two things deliberately left alone.** `count_outstanding_work` rides the claim's round trip and is
+index-only: 159 blocks at 40,000 held rows per table, 11 percent of the fixed poll and about 1
+percent of the broken one. It examines every held row in tuples, but migration 123 records why it
+cannot be truncated or estimated (the budget would be reading its own output), so it stays exact
+and the measurement is recorded here instead. And the block counters in `pg_statio_user_tables` are
+cluster-wide, not per backend: autovacuum's reads of the pages a fill just wrote land inside a
+measured window and read as poll cost. Vacuum the fill before measuring, or the number is not the
+poll's. Tuple counters do not have this problem.
+
 ## Finding 2: maintenance ran at the peak
 
 `close_digest_epochs` occupied about two backends on the consumer and one on the producer for a

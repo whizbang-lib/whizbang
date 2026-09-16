@@ -12,6 +12,11 @@
 # The empty stream id: a row without a stream.
 __EMPTY_UUID__ = '00000000-0000-0000-0000-000000000000'
 
+# The last id in UUID order. Written where "no upper bound" has to be an index condition rather than a
+# filter, so a walk that stops at a bound stops inside the index instead of scanning past it (see the
+# stream walks in claim_work).
+__MAX_UUID__ = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+
 # The application_name prefix every instance's connection carries (see wh_service_instances).
 __INSTANCE_APPLICATION_NAME_PREFIX__ = 'whizbang-'
 

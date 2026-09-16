@@ -168,6 +168,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tracking tables. A trigram index left outside the block that creates the extension is the worse
   half of the same defect, because it reaches a server with no `gin_trgm_ops` operator class as an
   ordinary statement and fails the pass with nothing to skip.
+- **One claim poll cost what the instance held, not what the poll returned:** with acquisition
+  bounded, a busy instance -- thousands of leased rows, polling several times a second to re-offer the
+  streams it holds so its drains keep a current work list -- still touched thousands of blocks per
+  poll, because every part of the poll priced itself by the holdings: the three orphan guards read
+  `instance_id IS NULL OR lease_expiry < now`, a disjunction with no index order, so proving nothing
+  was orphaned examined every pending row; the outbox re-offer ranked every held row with a window
+  function it never read; the inbox re-offer ranked every held row with three window functions and
+  fetched every held row's heap page to do it; the perspective re-offer aggregated every held event;
+  and the inbox event-store chain re-checked every held event against the event store on every poll,
+  twice. Migration 158 makes each part cost what the batch costs: the guards probe two index heads
+  (unowned rows, and the oldest lease through a new lease-expiry index per queue table); the outbox
+  re-offer walks an arrival index and stops at the batch; the inbox and perspective re-offers walk
+  lane indexes -- holder, priority bucket, and for the inbox kind and fresh-or-retried class -- one
+  index-only probe per stream from a stream id drawn per poll, wrapping once and stopping at the
+  batch; and the chain reads only rows without `wh_inbox.chain_emitted_at` and stamps the ones whose
+  event it finds in the event store, leaving a row whose insert conflicted unstamped so the next poll
+  re-attempts it. Priority order, per-stream order, the fresh-work share, partitions, leases and the
+  outstanding budget are unchanged. Summed over the four tables and their indexes, one steady-state
+  poll returning 300 rows costs 700 blocks and 305 tuples at 5,000 held rows per table and 925 blocks
+  and 304 tuples at 40,000, against 5,425/35,012 and 42,388/280,012 before: eight times the holdings
+  cost eight times as much before and 1.3 times as much now.
+- **A held inbox stream is re-offered as one row per lane instead of every row it holds there**
+  (behavior note, same change): the drain has consumed stream ids and pulled a stream's rows on
+  demand since Phase H, and the batch hooks fold a stream's returned rows to its most urgent number
+  and oldest arrival, so a stream's further rows inside one lane carried nothing a caller read while
+  ranking them was the poll's whole cost. A stream whose rows span priority buckets or the
+  command/event lanes is still returned once per lane, and the fold over those rows is unchanged, so
+  `PriorityBatchEntry.PendingRows` now counts the lanes a stream appears in (usually one) rather than
+  its rows in the batch. `p_max_streams` now bounds returned streams rather than returned rows for
+  the inbox, which is what the parameter is named for; acquisition keeps its own row bound (145). The
+  perspective re-offer's small-streams-first tier is gone with the per-stream drain that made it
+  moot. `ClaimWorkPlanShapeTests` asserts both ceilings -- blocks touched and tuples examined, per
+  table -- at a full budget of holdings and again at double it, because blocks alone would not catch
+  an index-only pass over the whole holdings.
 - **The stored-form rewrite skipped when it lost the schema lock, and nothing ran it later:** the
   phase took the schema-init key with a single `pg_try_advisory_lock` and skipped at Debug on a lost
   attempt, on the assumption that the holder was another rewriter. The holder is often a sibling's
