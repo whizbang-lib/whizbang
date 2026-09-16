@@ -105,6 +105,62 @@ several hundred a second per database. That is a consumer connection-string deci
 (`No Reset On Close`) and is documented on the claim-loop page, not something the framework can
 decide for a consumer.
 
+## Finding 6: one deadlock in a worker loop stopped the host
+
+An instance added to a fleet under load started up and ran schema DDL under the lock (Finding 4).
+The already-running instance's perspective consumer loop deadlocked against it inside the drain
+fetch, the loop logged and rethrew, the exception left `ExecuteAsync`, and
+`HostOptions.BackgroundServiceExceptionBehavior` (the default, `StopHost`) shut the process down.
+The orchestrator restarted it: an instance gone for the length of a restart plus a schema
+initialization, in the middle of the import, over a failure that would have passed on the next
+attempt. The same rethrow made every perspective apply failure a potential host stop, because the
+per-group catch reports, parks the row, and then rethrows into the same loop.
+
+The rule: **no failure inside one batch or one tick may end a worker loop.** Two types carry it:
+
+- `TransientDatabaseFailure.TryClassify` says what a caught exception is — deadlock, serialization
+  failure, statement canceled, lock timeout, connection lost, insufficient resources, a command
+  timeout the provider wrapped, or the provider's own transient flag. It reads `DbException.SqlState`
+  and `DbException.IsTransient` only, so Core references no provider, and it walks
+  `InnerException` and `AggregateException` the way `StoredFormUnreadable` does. A timeout or a lost
+  socket counts only beneath a database exception: a wait that elapsed in application code is not the
+  database failing.
+- `WorkerLoopRecovery` is the one place a loop decides what to do with it. `Report` picks between the
+  caller's two `LoggerMessage` methods — each worker keeps its own event ids and wording — and
+  `RecoverAsync` adds a bounded backoff on the caller's `TimeProvider` (250 ms doubling to 30 s,
+  snapped back by `Recovered()` on the next good iteration) for a loop that has no cadence of its own.
+
+The perspective consumer loop and its drain pass now report each failed batch once at Error with the
+reason, the SQLSTATE and the batch's stream ids, release those streams' unstarted rows through
+`ReleaseUnstartedLeasesAsync` so a sibling takes them instead of waiting out the lease, back off, and
+continue; the drain pass is guarded separately so a failed fetch does not cost the claimed per-event
+work sharing its batch. A failure that is not the database's is reported as a defect under its own
+event id and the loop still continues, because a stopped host reports nothing at all.
+`BackgroundServiceExceptionBehavior` stays at its default on purpose: the loops are correct on their
+own, and a worker that genuinely cannot run (a missing dependency at startup) should still stop the
+host.
+
+Audit of every `BackgroundService` in `Whizbang.Core` and `Whizbang.Data.Postgres` at the time of the
+fix. Two let a failure out of `ExecuteAsync`:
+
+- the perspective worker's consumer loop (logged, then `throw;`), now guarded;
+- the outbox drain worker's batch body, which had a `finally` and no `catch` — the per-stream path
+  isolates its own failures and the batched fetch degrades to per-stream fetches, but the batch
+  envelope around them did not: the identity lookup, the security-context establishment, and the
+  publish flush that ships the remainder from that same `finally`. It now has the guard its mirror,
+  `InboxDrainWorker`, always had.
+
+Everything else already caught per iteration and continued: the claim, dispatch, inbox drain, publish,
+maintenance, heartbeat, dead-letter, integrity, schedule, stamper, durable-signal and flush workers;
+the poll sources hand a failed tick to `OnTickError` and keep their timer; the batch flushers retry
+inside `BatchFlusher` and drop with a line. Three residual notes worth a later pass: a
+`when (ex is not OperationCanceledException)` filter used as a loop's *only* general handler still
+lets a non-shutdown cancellation out (a statement the server canceled arrives as one) — the two
+statistics collectors have that shape, and the perspective loop's own arms were rewritten to name
+shutdown explicitly instead; `BacklogAgeWorker` *returns* on a cancellation rather than retrying; and
+`InboxDispatchWorker`'s per-item catch itself writes to a channel, which can throw once the flusher
+is disposed.
+
 ## Two consumer-side findings, recorded because the framework cannot detect them
 
 - A consumer-owned trigger cast a document key's text to `timestamptz`, which fails on the canonical

@@ -74,11 +74,14 @@ the polling loops (`count_outstanding_work`, due-schedule counts, existence prob
 | L7 | Outbox and inbox failure functions read the element the runtime writes (`MessageId`, `Reason`) as well as the older names, as the perspective function already does, so `failure_reason` stops reading Unknown for every row (156) | done |
 | L8 | A drain-path apply failure of any kind parks each leased row through the failure channel, as the stored-form path does, so the rows back off and dead-letter instead of being re-claimed forever behind a cursor failure that names no row | done |
 | L9 | Tag payload-size thresholds bind from configuration under `Whizbang:Tags` (`PayloadSizeWarningThresholdBytes`, `PayloadSizeErrorThresholdBytes`, and per tag under `...ByTag:{tag}`); the processor resolves the per-tag value first, then the global one | done |
+| L10 | Workers survive transient database failures: `TransientDatabaseFailure` classifies a deadlock, serialization failure, canceled statement, lock timeout, lost connection, exhausted resources, a wrapped command timeout or a provider-flagged failure from `DbException` alone, and `WorkerLoopRecovery` is the one place a loop decides what it caught, reports through the loop's own event ids and waits a bounded backoff (250 ms doubling to 30 s, reset by the next good iteration) on the loop's `TimeProvider`. The perspective consumer loop and its drain pass no longer rethrow: each failed batch is reported once at Error with the reason, the SQLSTATE and the batch's stream ids, its unstarted rows are released for a sibling to take, and the loop continues; a failure that is not the database's is reported as a defect under its own event id and the loop still continues. The outbox drain worker gains the per-batch guard its inbox mirror always had, and the claim poll and inbox drain name the classification on the line they already wrote. Evidence: an instance added to a fleet under load ran schema DDL under the lock (L5), a running instance's perspective consumer loop deadlocked against it inside the drain fetch, the loop logged and rethrew, and the host's default `BackgroundServiceExceptionBehavior` (`StopHost`) stopped the process mid-load — a restart plus a schema initialization lost to a failure the next attempt would have won | done |
 
 Ordering: L1 removes most of the peak; L2 and L3 remove the maintenance load from the peak; L5 is a
 correctness item (deadlocks); L4 and L6 are efficiency; L7 and L8 were deferred from the stored-form
 work and change what a failed row records; L9 was found alongside (six warnings per message on a
-tag whose payloads are legitimately wide, with no configuration to raise the line).
+tag whose payloads are legitimately wide, with no configuration to raise the line). L10 is what makes
+the rest survivable: until it landed, any of these deadlocks could end a worker loop and, with it,
+the host.
 
 The settings-snapshot idea from the first draft of L6 was dropped on the numbers: the settings reads
 cost a tenth of a millisecond each. The transaction rate at idle is connection churn (a `DISCARD ALL`
