@@ -496,12 +496,18 @@ so that the cost is on the record rather than guessed at.
 |---|---|---|---|
 | 1 | Resolve a `-readonly` sibling key, falling back to the pooled key so a consumer without a replica is unchanged | small | `Not started` |
 | 2 | A reader data source behind a marker interface plus a reader context factory, wired into the lens path only | medium | `Not started` |
-| 3 | The deny-by-default allow-list, as a registry test, plus a connection-role assertion in the coordinator's connection acquisition | small | `Not started` |
-| 4 | A replication-lag gauge, a documented staleness bound, and an explicit decision about the sync-aware lens path | medium | `Not started` |
-| 5 | Startup detection and a one-line Information log when the reader key points at the primary | small | `Not started` |
+| 3 | Mechanism 1: declared intent, as a per-lens default plus a call-site override in both directions | medium | `Not started` |
+| 4 | Mechanism 2: the ambient write-scope guard, plus the deny-by-default allow-list as a registry test and a connection-role assertion at the coordinator's connection acquisition | medium | `Not started` |
+| 5 | Mechanism 3: bounded staleness, as a lag budget with a primary fallback, plus the read-your-writes option | medium | `Not started` |
+| 6 | Replication-lag measurement (time and byte lag) as a provider, collector, meter gauges, and a health source. **Stage 5 has no input without this** | medium | `Not started` |
+| 7 | Connection observability: role-tagged pool gauges and an operation name on every database call | medium | `Not started` |
+| 7a | Prerequisite tidying: migrate the twelve remaining `application_name` literals onto the constant that already exists | small | `Not started` |
+| 8 | Startup detection and a one-line Information log when the reader key points at the primary | small | `Not started` |
 
-Every stage is gated on the first item in "Not decided" below. Nothing here should be started until
-that is answered.
+Stages 1 to 5 and 8 are gated on the first item in "Not decided" below. Stages 6, 7 and 7a stand on
+their own merits: the framework cannot measure replication lag or report connection saturation today
+regardless of whether a reader is ever adopted, so they are worth doing even if the answer to the
+gating question is no.
 
 ### How much is actually on the table
 
@@ -617,13 +623,90 @@ Two caveats that must ship with it:
   which is the same context the writers use. No generator emits it today, but a host that wires
   lenses that way would put reads on the write context, and must not be moved to a reader.
 
-### Stage 3: what must never use it, and the guard
+### The three mechanisms, and the one that is deliberately absent
+
+Routing is decided by exactly three layered mechanisms, in this order. Each is a stage below.
+
+1. **Declared intent** (stage 3): a per-lens default, plus a call-site override in both directions.
+2. **The ambient write-scope guard** (stage 4): the primary is forced whenever the query runs inside
+   a write scope, so a lens whose default is the reader cannot be silently wrong when it is called
+   from inside a transaction, a receptor, or a perspective apply.
+3. **Bounded staleness** (stage 5): measured replication lag against a budget, falling back to the
+   primary while the budget is exceeded, plus a read-your-writes option for callers that need one.
+
+#### Rejected, so nobody proposes it again: a recency cache of written streams
+
+A tempting fourth mechanism is to keep a set of recently written stream ids and send reads for those
+to the primary while everything else goes to the reader. **Do not build this.** Two independent
+holes, either of which is disqualifying:
+
+- **It would be fed by a best-effort signal.** The doorbell and signal-bus path degrades to a polling
+  fallback, and it does so under exactly the conditions that make replica lag worst. This is not a
+  hypothetical: the framework models it as a first-class state and reports it as a health component.
+  A transport that cannot deliver its own loopback probe within the probe timeout marks the wire
+  route failed (`src/Whizbang.Core/Signals/SignalBusProbeSignal.cs:4-6`;
+  `src/Whizbang.Core/Signals/SignalBusOptions.cs:4-10`), and the health source then reports that the
+  bus still serves on polling fallback while every hop pays the poll interval
+  (`src/Whizbang.Core/Health/SignalBusHealthSource.cs:10-12`). Instances do log exactly that under
+  heavy load. A routing decision built on a signal that can silently stop arriving would send reads
+  to a stale reader precisely when it is most stale, and the failure would be invisible at the call
+  site, which is the one property this whole document argues against.
+- **The cache is per process.** One instance does not see another instance's writes, so a read that
+  needs the primary because a *peer* just wrote is routed to the reader anyway. That is not a tuning
+  gap; it is the common case in a multi-instance fleet.
+
+Staleness is bounded by measuring it (mechanism 3), never by guessing which rows are fresh.
+
+### Stage 3: declared intent, per lens and per call site
 
 Status: `Not started`.
 
-"Must be the primary" is not a property of a query; it is a property of the component that issues
-it. The guard therefore belongs on components, and there are three candidate shapes. The
-recommendation is the second, with the third as a cheap backstop.
+Routing is a declaration, not an inference. Two surfaces, and both directions must exist:
+
+- **A per-lens default.** The natural home is `WhizbangPerspectiveAttribute`
+  (`src/Whizbang.Core/Perspectives/WhizbangPerspectiveAttribute.cs:84`), which already declares the
+  read model a lens reads over, so the default travels with the model rather than with the call and
+  the generator can carry it into the emitted registration. A model backing a user-facing grid can
+  declare the reader; one read inside a decision declares the primary. The framework default must be
+  the primary, because the safe direction is the one that costs latency rather than correctness.
+  Note that a consumer's lens is an ordinary type taking `ILensQuery<TModel>` in its constructor
+  (for example `samples/ECommerce/ECommerce.BFF.API/Lenses/OrderLens.cs:10`), so there is no lens
+  type for the framework to attribute; the model is the only declaration site it owns.
+- **A call-site override in both directions.** Both, not one. A reader-default lens needs a way to
+  demand the primary for the one query that follows a write the user just made, and a
+  primary-default lens needs a way to opt a heavy reporting query onto the reader without changing
+  the lens for every other caller. An override that only relaxes would make the safe default
+  unusable; an override that only tightens would make the fast default unreachable.
+
+The override belongs on the scoped-access seam the lens API already funnels every read through
+(`src/Whizbang.Core/Lenses/IScopedLensAccess.cs:18,27`), so it composes with the scope selection
+that is already expressed there rather than becoming a second, parallel fluent chain.
+
+### Stage 4: the ambient write-scope guard, and the allow-list
+
+Status: `Not started`.
+
+Declared intent is not enough on its own, because the same lens is called from both a controller and
+a receptor. The guard closes that: **whenever a read runs inside a write scope, the primary is
+forced, whatever the declaration says.** Three conditions qualify, and all three are observable in
+process without asking the database:
+
+- an open transaction on the ambient `DbContext`;
+- executing inside a receptor;
+- executing inside a perspective apply.
+
+Forcing rather than refusing is the right response. A refusal would turn a correct-but-slow
+composition into an outage, and the composition is legitimate: reading a lens inside a receptor is a
+documented pattern. Log the force at debug with the lens name so a consumer can see which of its
+reader-default lenses never actually reach the reader, and fix the composition if it cares.
+
+The guard also makes the per-lens default safe to set aggressively, which is what makes mechanism 1
+worth having at all.
+
+**Beyond the guard, an allow-list decides which framework-internal components may hold a reader at
+all.** "Must be the primary" is a property of the component, not of the query, and there are three
+candidate shapes for enforcing it. The recommendation is the second, with the third as a cheap
+backstop.
 
 **An analyzer.** The repo already ships thirteen analyzers
 (`src/Whizbang.Generators/Analyzers/`), so the precedent exists. But an analyzer cannot see through
@@ -653,7 +736,7 @@ already the single place where the "pinned versus fresh" connection decision is 
 every coordinator read and write on both drivers in one place. This is cheap and it turns a silent
 class of bug into a loud one.
 
-### Stage 4: staleness handling, and why the existing fence does not cover it
+### Stage 5: bounded staleness, and why the existing fence does not cover it
 
 Status: `Not started`.
 
@@ -674,22 +757,144 @@ refuses rows whose `commit_sequence` is not yet stamped
 (`src/Whizbang.Data.Postgres/Migrations/058_GetStreamEventsUnstampedGate.sql:79,113`), which is a
 statement about one node's transaction horizon. It is not a statement about replication.
 
-What a caller would need instead, if any path moves:
+So bounded staleness has to be measured, and it has two halves.
 
-- a lag reading the caller can see, from `pg_last_xact_replay_timestamp()` on the reader, surfaced as
-  a gauge beside the existing ones (the table-statistics and notify-debounce collectors are the
-  model: `src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs:226-254`);
-- a documented bound, so "the grid may be a few seconds behind" is a contract rather than a
-  surprise;
-- and for a caller that cannot tolerate it, a way to ask for the primary on that one query.
+**A lag budget, with the primary as the fallback.** Each reader-eligible read carries a maximum
+tolerable lag, defaulting from a framework-wide setting and overridable per lens. The router
+compares it against the lag measurement from stage 6. While the measured lag is inside the budget,
+the read goes to the reader. While it is outside, or while the measurement is missing or stale, the
+read goes to the primary. Note the direction carefully: **an unavailable measurement must route to
+the primary, not to the reader.** That is the same asymmetry the codebase already applies to its
+settledness gates, where an unmeasured answer is never treated as the permissive one
+(`src/Whizbang.Core/Messaging/IWorkCoordinator.cs:184-187`), and it is the one place a reader design
+most easily gets it backwards, because "no lag reading" reads like "no lag".
 
-### Stage 5: migration path, and a reader that is really the primary
+The fallback must also be observable, or it becomes the silent-failure class this document is about.
+A counter of reads that fell back, attributed by lens, is the minimum: a consumer whose reader is
+permanently over budget should see that its replica is buying nothing, not merely enjoy correct
+results at primary cost.
+
+**A read-your-writes option for callers that need one.** For the caller that has just written and
+must see its own write, a lag budget is the wrong instrument, because it bounds staleness in general
+rather than relative to a specific write. The mechanism is to capture the write position at commit
+and then either wait for the reader to reach that position or use the primary. Two notes on fitting
+it to this codebase:
+
+- The framework already has a write position with the right properties. `commit_sequence` is
+  assigned in commit order and is the value the whole read side already gates on
+  (`src/Whizbang.Data.Postgres/Migrations/058_GetStreamEventsUnstampedGate.sql:79,113`), so a caller
+  that captured the `commit_sequence` of its write has a token a reader can be compared against.
+  That reuses an existing fence rather than adding a second notion of progress.
+- The waiting form must be bounded and must fall back to the primary on expiry, never return a stale
+  answer. This is the same shape as the existing perspective sync awaiter, which already has a
+  timeout and an explicit "proceed with eventual consistency" branch
+  (`src/Whizbang.Core/Lenses/ISyncAwareLensQuery.cs:44-50`), so the precedent for the timeout
+  semantics exists; what it lacks is any awareness of which endpoint the following query runs on.
+
+### Stage 6: measuring replication lag
+
+Status: `Not started`.
+
+**The framework cannot measure this today.** Nothing queries `pg_is_in_recovery`,
+`pg_last_xact_replay_timestamp`, `pg_last_wal_replay_lsn`, or `pg_current_wal_lsn` anywhere; the
+repo-wide search for any of them returns nothing. Mechanism 3 has no input until this exists, which
+is why it is a stage of its own rather than a detail of stage 5.
+
+Both useful measurements are available from the reader endpoint itself, and both are worth having
+because they answer different questions:
+
+- **Time lag**, how far behind in wall-clock terms. This is what a product decision is expressed in
+  ("the grid may be a few seconds behind"), so it is the one a lag budget should be configured
+  against. Its known weakness is that on an idle primary it grows without anything being wrong,
+  which the collector must not report as a fault.
+- **Byte lag**, how far behind in WAL terms. This is the one that is meaningful when the primary is
+  idle and the one that shows a replica falling behind under write pressure before the time lag
+  becomes alarming.
+
+The natural home is the pattern the framework already uses twice for exactly this shape of periodic
+measurement: a provider that owns a data source, a collector on a cadence that refreshes cached
+values, and a meter whose gauges read the cache rather than querying
+(`src/Whizbang.Data.EFCore.Postgres/PostgresTableStatisticsProvider.cs` with
+`src/Whizbang.Core/Observability/TableStatisticsCollector.cs`; and
+`src/Whizbang.Data.EFCore.Postgres/PostgresNotifyDebounceStatsProvider.cs` with
+`src/Whizbang.Core/Observability/NotifyDebounceStatsCollector.cs`). Following it means the gauges cost
+nothing per scrape, which matters because the lag reading is also on the routing path.
+
+Alongside the gauges, a health-source component beside the existing ones
+(`src/Whizbang.Core/Health/`, registered the way the event-store connectivity source is at
+`src/Whizbang.Data.EFCore.Postgres/PostgresDriverExtensions.cs:215-220`). One constraint on its
+severity: a lagging reader must **not** make the service unhealthy, because the fallback means reads
+are still correct. Degraded is the honest state, and the reason has to say so, or a lag spike becomes
+an outage that the fallback had already handled.
+
+### Stage 7: connection observability, and the `application_name` constraint
+
+Status: `Not started`.
+
+A reader is a fourth connection role, and the framework currently cannot see the three it already
+has. Of roughly 295 distinct `whizbang.*` instrument names, four are connection-adjacent and all are
+narrow: the notification connection's state
+(`whizbang.postgres.notifications.connection_state`) and three pinned-pool instruments
+(`whizbang.workers.pinned_pool.borrow.duration`, `.borrow.timeouts`, `.connection_recycles`). **There
+is no pool-utilization metric for the main data source at all**, so nothing reports saturation on the
+connection every read and write actually uses. Adding a role without adding this would mean a
+consumer could not tell which of two pools was exhausted.
+
+Two proposals:
+
+- **Role-tagged pool gauges.** In-use, idle, and waiting counts, each carrying a role attribute over
+  `writer`, `reader`, `direct`, and `init`. One instrument per measure with a role attribute, not one
+  instrument per role, so a dashboard sums or splits by role without knowing the role set in advance,
+  and a fifth role later costs no new instrument.
+- **An operation name on every database call.** The gauges say a pool is saturated; the operation name
+  says by what. This is the difference between "the reader pool is full" and "the reader pool is full
+  of one reporting query", and it is also what makes the fallback counter in stage 5 actionable.
+
+**The constraint to be careful about.** Seventeen predicates across fourteen shipped migrations match
+`pg_stat_activity.application_name` with **equality** against `'whizbang-' || instance_id`, and they
+are load-bearing: they are the TCP-fresh half of instance liveness, used by the orphan-claim paths,
+the ownership gate, and the `wh_live_instances` view (`src/Whizbang.Data.Postgres/Migrations/052_LiveInstancesView.sql:49`;
+`024_ClaimOrphanedOutbox.sql:69`; `025_ClaimOrphanedInbox.sql:87`;
+`027_ClaimOrphanedPerspectiveEvents.sql:72`; `059_GetStreamEventsOwnershipGate.sql:83`;
+`072_EphemeralBodyOffload.sql:620`; `078_DropInlineBodyColumns.sql:567`;
+`115_TagBoundCoalescing.sql:685`; `138_BoundedInboxAcquisitionIndex.sql:124`;
+`139_PerspectiveFailureCounter.sql:136`; `140_LockFreeDoorbellProbes.sql:889`;
+`145_BoundedAcquisitionRewrite.sql:97`; `148_ActiveStreamLeases.sql:73,436,625`;
+`150_BucketAwareClaim.sql:122,1230`).
+
+**Recommendation: preserve the exact value on the notification connection, and do not move the
+predicates to a prefix match.** Three reasons, and the first is the one that settles it:
+
+1. **`ApplicationName` is set on the notification connections and nowhere else**
+   (`src/Whizbang.Data.Postgres/Notifications/PgSharedNotifyConnection.cs:395`;
+   `src/Whizbang.Data.Postgres/Notifications/PostgresNotificationsServiceCollectionExtensions.cs:243,362`,
+   all through the one helper `PgSharedNotifyConnection.ComputeApplicationName` at `:110`). The
+   pooled data source sets none. So naming the writer, reader and init connections cannot collide
+   with those predicates at all, as long as the notification connection keeps emitting exactly
+   `whizbang-{instanceId:D}`. The change is additive and needs no migration.
+2. **A prefix match would break the signal's purpose.** The predicate exists because the LISTEN
+   connection is TCP-fresh, unlike the heartbeat column, so its presence is a sub-second liveness
+   signal (`052_LiveInstancesView.sql:52`). Widening it to a prefix would let a pod's *pooled*
+   connections satisfy it, so an instance whose LISTEN connection had died would still read as alive
+   on the strength of a pooled connection. That converts a precise liveness signal into a vague one,
+   which is the opposite of the fix.
+3. **Seventeen predicates is a large blast radius for no benefit**, and the prefix already has a
+   single home to change if it ever must: `src/Whizbang.Data.Postgres/Migrations/constants.txt:16`
+   defines `__INSTANCE_APPLICATION_NAME_PREFIX__` as `'whizbang-'`, and the two newest migrations use
+   the placeholder while the twelve older ones still carry the literal.
+
+So the one piece of tidying worth doing, independently of any of this, is to migrate those twelve
+remaining literals onto the placeholder that already exists, so the prefix has one definition rather
+than thirteen. That is a mechanical change with a clear invariant to test, and it is the prerequisite
+for ever touching the prefix at all.
+
+### Stage 8: migration path, and a reader that is really the primary
 
 Status: `Not started`.
 
 Migration is a no-op by construction: with the stage-1 fallback, a consumer that configures nothing
 keeps today's behavior exactly, and a consumer that configures `-readonly` moves only the paths
-stage 3's allow-list names.
+stage 4's allow-list names.
 
 The one thing the framework must do is refuse to be quietly misconfigured. A `-readonly` key
 pointing at the primary is the common case in practice (it is what a consumer writes first, and what
@@ -749,16 +954,33 @@ decision plus tests rather than an obvious edit. Nothing in this branch changes 
    connection stays on the primary
    (`whizbang-lib.github.io/src/assets/docs/v1.0.0/operations/deployment/scaling.md:256`), and this
    audit found nothing that contradicts it. Reopening it is a product call, not an engineering one.
-2. **Whether the lens path may be stale.** Everything in stage 2 hinges on this and the framework
+2. **Whether the lens path may be stale.** Everything in stages 2 to 5 hinges on this and the framework
    cannot answer it: whether a user-facing grid may be a few seconds behind is the consumer's
    product decision, not the framework's. If the answer is no for any consumer, the default must be
    the primary and the reader must be opt-in per lens.
-3. **Whether the sync-aware lens path may ever use a reader.** The recommendation is no, because the
-   fence it advertises would stop working silently (stage 4). Making it yes requires a lag check and
-   a documented bound.
-4. **Whether the reader is a framework concern at all.** The consumer already owns its own read
+3. **Whether the sync-aware lens path may ever use a reader.** The recommendation is no by default:
+   the fence it advertises would stop working silently (stage 5), so it should stay on the primary
+   unless the caller opts into the read-your-writes form that compares the reader against a captured
+   write position. Whether to offer that form on the sync-aware seam at all, or to keep the two
+   mechanisms separate, is the decision.
+4. **The lag budget's default value**, and whether it is a single framework-wide number or must be
+   per lens from the start. The framework can supply a conservative default; what a product will
+   tolerate is not something it can guess.
+5. **Whether the reader is a framework concern at all.** The consumer already owns its own read
    paths, and the documented position hands them the replica. An alternative that costs the
    framework nothing is to document that `-readonly` is a consumer key, state plainly that Whizbang
-   never reads it, and close the question.
-5. **What to do with the four incidental findings above.** Each is a real defect and none is in this
+   never reads it, and close the question. Note that stages 6, 7 and 7a survive this answer: lag
+   measurement and connection observability are gaps regardless.
+6. **What to do with the four incidental findings above.** Each is a real defect and none is in this
    audit's scope.
+
+### Already decided, recorded so it is not reopened
+
+- **A recency cache of written streams is rejected**, on the two grounds given in the design: it
+  would be fed by a signal that degrades to polling under exactly the load that worsens lag, and a
+  per-process cache cannot see a peer's writes. Bound staleness by measuring it, never by guessing
+  which rows are fresh.
+- **Routing is decided by three layered mechanisms and no others**: declared intent, the ambient
+  write-scope guard, and bounded staleness.
+- **`application_name` keeps its exact value on the notification connection**, and the seventeen
+  equality predicates across fourteen migrations stay equality predicates (stage 7).
