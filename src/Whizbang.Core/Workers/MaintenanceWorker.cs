@@ -98,7 +98,8 @@ public sealed partial class MaintenanceWorker(
     if (!decision.Granted) {
       LogMaintenanceDeferred(
         _logger, decision.Reason,
-        backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
+        backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1,
+        backlog?.PendingOutboxRows ?? -1, backlog?.PendingPerspectiveRows ?? -1);
       return;
     }
 
@@ -106,7 +107,8 @@ public sealed partial class MaintenanceWorker(
       // Reaching this branch means the service did not settle once across the whole deferral
       // window — worth surfacing on its own, separately from the sweep it is about to run.
       LogMaintenanceForcedAfterDeferrals(
-        _logger, backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1);
+        _logger, backlog?.UnprocessedInboxRows ?? -1, backlog?.ActiveLeasedRows ?? -1,
+        backlog?.PendingOutboxRows ?? -1, backlog?.PendingPerspectiveRows ?? -1);
     }
 
     try {
@@ -846,13 +848,13 @@ public sealed partial class MaintenanceWorker(
     Message = "Failed to publish the debug-retention setting to the store; the maintenance sweep keeps its previous value. If debug retention was just enabled, completed rows may still be purged.")]
   static partial void LogDebugRetentionSyncFailed(ILogger logger, Exception ex);
 
-  [LoggerMessage(EventId = 47, Level = LogLevel.Debug,
-    Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed row(s) and {ActiveLeases} active lease(s). The sweep contends with the statement that marks work complete, so it waits for the service to settle. -1 means unmeasured.")]
-  static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases);
+  [LoggerMessage(EventId = 47, Level = LogLevel.Information,
+    Message = "Maintenance sweep deferred ({Reason}): service has {UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s) and {PendingPerspectiveRows} pending perspective event(s). The sweep contends with the statements that publish, apply and mark work complete, so it waits for the service to settle. -1 means unmeasured.")]
+  static partial void LogMaintenanceDeferred(ILogger logger, HousekeepingCoordinator.Verdict reason, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows);
 
   [LoggerMessage(EventId = 48, Level = LogLevel.Warning,
-    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed row(s), {ActiveLeases} active lease(s)). Cleanup has no deadline but it does have a limit — space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
-  static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases);
+    Message = "Maintenance sweep forced through after repeated deferrals: the service has not settled once across the deferral window ({UnprocessedRows} unprocessed inbox row(s), {ActiveLeases} active lease(s), {PendingOutboxRows} pending outbox row(s), {PendingPerspectiveRows} pending perspective event(s)). Cleanup has no deadline but it does have a limit — space still has to be reclaimed. Sustained busyness at every cycle is itself worth investigating.")]
+  static partial void LogMaintenanceForcedAfterDeferrals(ILogger logger, long unprocessedRows, long activeLeases, long pendingOutboxRows, long pendingPerspectiveRows);
 
   [LoggerMessage(EventId = 49, Level = LogLevel.Warning,
     Message = "Service-settledness probe failed; maintenance proceeds UNGATED for this cycle rather than deferring, so a failing probe cannot disable cleanup.")]

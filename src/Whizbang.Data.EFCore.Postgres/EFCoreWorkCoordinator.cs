@@ -236,6 +236,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       DEFAULT_SCHEMA,
       _logger);
     var inbox = BuildSchemaQualifiedName(schema, "wh_inbox");
+    var outbox = BuildSchemaQualifiedName(schema, "wh_outbox");
+    var perspectiveEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
 
     await using var scope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
@@ -256,6 +258,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // and counting them reported an idle service as busy forever — housekeeping deferred on
     // ServiceBusy for a day against ~10,000 parked rows while the true claimable backlog was zero.
     // The leased count stays unfiltered: a valid lease is in-flight work regardless of schedule.
+    // The fourth and fifth columns are the other two work tables. A producer's load sits in its
+    // outbox and a draining consumer's in its perspective events, and a gate that read only the
+    // inbox took both for idle and swept at the peak of a bulk load.
     cmd.CommandText = $@"
       SELECT
         (SELECT count(*) FROM (SELECT 1 FROM {inbox} WHERE processed_at IS NULL
@@ -265,7 +270,11 @@ public class EFCoreWorkCoordinator<TDbContext>(
         COALESCE(EXTRACT(EPOCH FROM (now() - (
           SELECT received_at FROM {inbox} WHERE processed_at IS NULL
             AND (scheduled_for IS NULL OR scheduled_for <= now())
-          ORDER BY received_at LIMIT 1))), 0)";
+          ORDER BY received_at LIMIT 1))), 0),
+        (SELECT count(*) FROM (SELECT 1 FROM {outbox} WHERE processed_at IS NULL
+           AND (scheduled_for IS NULL OR scheduled_for <= now()) LIMIT 1000) c),
+        (SELECT count(*) FROM (SELECT 1 FROM {perspectiveEvents} WHERE processed_at IS NULL
+           AND (scheduled_for IS NULL OR scheduled_for <= now()) LIMIT 1000) d)";
 #pragma warning restore S2077
 
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
@@ -280,6 +289,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
       ActiveLeasedRows = reader.GetInt64(1),
       // Clamped at zero: clock skew between writer and reader must not report negative lag.
       OldestUnprocessedAge = TimeSpan.FromSeconds(Math.Max(0, reader.GetDouble(2))),
+      PendingOutboxRows = reader.GetInt64(3),
+      PendingPerspectiveRows = reader.GetInt64(4),
     };
   }
 
