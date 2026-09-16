@@ -76,6 +76,36 @@ public class TransientDatabaseFailureTests {
     await Assert.That(ReferenceEquals(failure.Cause, deadlock)).IsTrue();
   }
 
+  /// <summary>
+  /// An aggregate holding nothing the database raised is not transient, however many faults it
+  /// carries.
+  /// </summary>
+  /// <remarks>
+  /// The other side of the search through an aggregate, and the answer that decides whether a loop
+  /// treats a failure as the database's doing or reports it as a defect. Answering "transient"
+  /// because an aggregate was the outer shape would back off over a defect and report it as the
+  /// database's, which is a page for something no operator can fix.
+  /// </remarks>
+  [Test]
+  public async Task AnAggregateOfFailuresThatAreNotTheDatabases_IsNotTransientAsync() {
+    var aggregate = new AggregateException(
+      new InvalidOperationException("one defect"),
+      new ArgumentOutOfRangeException("another"));
+
+    var found = TransientDatabaseFailure.TryClassify(aggregate, out var failure);
+
+    await Assert.That(found).IsFalse()
+      .Because("every fault in it was the process's own, so there is nothing to wait out");
+    await Assert.That(failure).IsNull();
+    await Assert.That(TransientDatabaseFailure.IsTransient(aggregate)).IsFalse();
+  }
+
+  /// <summary>An empty aggregate is not transient either, and does not throw on the way to saying so.</summary>
+  [Test]
+  public async Task AnEmptyAggregate_IsNotTransientAsync() =>
+    await Assert.That(TransientDatabaseFailure.IsTransient(new AggregateException())).IsFalse()
+      .Because("a loop must get an answer for whatever shape it caught, including an empty one");
+
   [Test]
   public async Task AConstraintViolation_IsNotTransientAsync() {
     await Assert.That(TransientDatabaseFailure.IsTransient(FakeDbException.WithSqlState("23505"))).IsFalse();

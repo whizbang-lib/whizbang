@@ -727,7 +727,7 @@ public partial class PerspectiveWorker(
   private async Task _recoverFailedBatchAsync(
       Exception exception, List<Guid> streamIds, CancellationToken cancellationToken) {
     Interlocked.Increment(ref _containedBatchFailures);
-    await _releaseFailedBatchLeasesAsync(streamIds, cancellationToken).ConfigureAwait(false);
+    await ReleaseFailedBatchLeasesAsync(streamIds, cancellationToken).ConfigureAwait(false);
     var streams = string.Join(", ", streamIds);
     await _loopRecovery.RecoverAsync(
       exception,
@@ -742,14 +742,26 @@ public partial class PerspectiveWorker(
   /// them now rather than after the lease lapses.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Best effort by design: a store that does not implement the release, and a release that fails
   /// against the same database that just failed, both leave the rows to their leases, which is what
   /// happened before this existed. Neither may raise out of the recovery path, because the recovery
   /// path is what keeps the loop alive.
+  /// </para>
+  /// <para>
+  /// Internal for the same reason <see cref="ProcessChannelBatchAsync(List{PerspectiveWork}, CancellationToken)"/>
+  /// is: the empty-batch arm cannot be driven through the consumer loop, which skips a cycle
+  /// carrying neither work nor a drain signal, so both recovery call sites always hand this a
+  /// non-empty list. It is a precondition on the store call rather than dead code, and it is
+  /// asserted directly.
+  /// </para>
   /// </remarks>
-  private async Task _releaseFailedBatchLeasesAsync(
+  internal async Task ReleaseFailedBatchLeasesAsync(
       List<Guid> streamIds, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(streamIds);
     if (streamIds.Count == 0) {
+      // Nothing to hand back, and an empty release is still a round-trip to the database that just
+      // failed.
       return;
     }
 

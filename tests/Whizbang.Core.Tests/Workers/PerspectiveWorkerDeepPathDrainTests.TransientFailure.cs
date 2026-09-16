@@ -108,6 +108,36 @@ public partial class PerspectiveWorkerDeepPathDrainTests {
       .Because("the loop survives a defect too, but it must not be filed as the database's doing");
   }
 
+  /// <summary>
+  /// A recovery with no streams to hand back asks the store for nothing.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The precondition on the release, asserted directly because the consumer loop cannot present
+  /// it: a cycle carrying neither work nor a drain signal is skipped before any batch is processed,
+  /// so both recovery call sites always hand the release a non-empty list. It is still the right
+  /// guard, because an empty release is a round-trip to the database that has just failed, and the
+  /// recovery path runs precisely when the database is in trouble.
+  /// </para>
+  /// <para>
+  /// Driven through the worker's internal surface for the same reason
+  /// <c>ProcessChannelBatchAsync</c> has one.
+  /// </para>
+  /// </remarks>
+  [Test]
+  public async Task ARecoveryWithNoStreamsAsksTheStoreForNothingAsync() {
+    var coordinator = new DrainWorkCoordinator();
+    var runner = new DrainRunner();
+    var (worker, _, provider) = _createWorker(coordinator, new DrainEventStore(), _registry(runner));
+    await using var _ = provider;
+
+    await worker.ReleaseFailedBatchLeasesAsync([], CancellationToken.None);
+
+    await Assert.That(coordinator.PerspectiveLeaseReleases).IsEmpty()
+      .Because("there is nothing to hand back, and the database that just failed is not worth a "
+             + "round-trip to say so");
+  }
+
   [Test]
   public async Task DrainMode_AStoreThatCannotReleaseTheLeases_SaysSoAndStillContinuesAsync() {
     // Release is defaulted on IWorkCoordinator: a store that never implemented it throws, and the
