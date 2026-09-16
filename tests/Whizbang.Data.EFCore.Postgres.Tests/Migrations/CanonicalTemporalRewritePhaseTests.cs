@@ -1,6 +1,5 @@
 using System.Globalization;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Time.Testing;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -115,23 +114,10 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Steps the clock until the phase returns, so no outcome depends on scheduling.
+  /// The longest a test waits for a line the phase logs almost at once. The wait is a signal, so
+  /// the bound exists only to fail rather than hang when the line never comes.
   /// </summary>
-  /// <param name="run">The phase.</param>
-  /// <param name="time">Its clock.</param>
-  /// <param name="onEachStep">Runs between steps; a test uses it to react to what the phase logs.</param>
-  private static async Task<bool> _stepUntilDoneAsync(
-      Task<bool> run, FakeTimeProvider time, Func<Task>? onEachStep = null) {
-    while (!run.IsCompleted) {
-      if (onEachStep is not null) {
-        await onEachStep();
-      }
-      time.Advance(TimeSpan.FromMilliseconds(1));
-      await Task.Yield();
-    }
-
-    return await run;
-  }
+  private static readonly TimeSpan _signalTimeout = TimeSpan.FromSeconds(30);
 
   /// <summary>The holder applies every rewrite, gives the lock back, and says what it did.</summary>
   [Test]
@@ -161,24 +147,22 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   [Test]
   public async Task AnInstanceWaitsForTheLockAndAppliesOnceItIsReleasedAsync() {
     await using var holder = await _holdLockAsync();
-    var time = new FakeTimeProvider();
     var log = new ListLogger();
-    var released = false;
 
     var run = CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("after-the-wait"), TIMEOUT_SECONDS, time, log);
+      _connect, LOCK_ID, _rewrites("after-the-wait"), TIMEOUT_SECONDS, log);
 
-    var ran = await _stepUntilDoneAsync(run, time, async () => {
-      // The lock goes back only once the phase has said it is waiting, so the test proves a wait
-      // happened rather than a lucky first attempt.
-      if (!released && log.Entries.Any(e => e.Message.Contains("waiting"))) {
-        await _releaseLockAsync(holder);
-        released = true;
-      }
-    });
+    // The lock goes back only once the phase has said it is waiting, so the test proves a wait
+    // happened rather than a lucky first attempt. The logger signals that line; nothing polls for
+    // it and nothing drives a clock, for the reason ListLogger gives.
+    await log.WaitForAsync("waiting").WaitAsync(_signalTimeout);
+    await _releaseLockAsync(holder);
 
-    await Assert.That(ran).IsTrue();
-    await Assert.That(released).IsTrue()
+    await Assert.That(await run).IsTrue()
+      .Because("the phase retries until it holds the lock, and it can hold it as soon as the "
+        + "holder gives it back, which is well inside the budget");
+    await Assert.That(log.Entries.Any(e => e.Level == LogLevel.Information && e.Message.Contains("waiting")))
+      .IsTrue()
       .Because("the phase must report the wait at a level an operator sees");
     await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("1");
     await Assert.That(await _lockHoldersAsync()).IsEqualTo("0");
@@ -194,13 +178,12 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   [Test]
   public async Task AnInstanceGivesUpWhenTheLockStaysHeldAsync() {
     await using var holder = await _holdLockAsync();
-    var time = new FakeTimeProvider();
     var log = new ListLogger();
 
-    // The budget for the lock is the command timeout: two seconds here, on the fake clock.
-    var run = CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("should-not-run"), commandTimeoutSeconds: 2, time, log);
-    var ran = await _stepUntilDoneAsync(run, time);
+    // The budget for the lock is the command timeout, two seconds here, and this holder never lets
+    // go, so the budget is the only way out and the outcome cannot depend on scheduling.
+    var ran = await CanonicalTemporalRewritePhase.ApplyAsync(
+      _connect, LOCK_ID, _rewrites("should-not-run"), commandTimeoutSeconds: 2, log);
 
     await Assert.That(ran).IsFalse();
     await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("0");
@@ -216,20 +199,18 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   [Test]
   public async Task CancellationDuringTheWaitThrowsAsync() {
     await using var holder = await _holdLockAsync();
-    var time = new FakeTimeProvider();
     var log = new ListLogger();
     using var cts = new CancellationTokenSource();
 
     var run = CanonicalTemporalRewritePhase.ApplyAsync(
-      _connect, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS, time, log, cts.Token);
+      _connect, LOCK_ID, _rewrites("should-not-run"), TIMEOUT_SECONDS, log, cts.Token);
 
-    await Assert.That(async () => await _stepUntilDoneAsync(run, time, () => {
-      // Canceled once the phase is in its wait, which is where a shutdown finds it.
-      if (log.Entries.Any(e => e.Message.Contains("waiting"))) {
-        cts.Cancel();
-      }
-      return Task.CompletedTask;
-    })).Throws<OperationCanceledException>();
+    // Canceled once the phase is in its wait, which is where a shutdown finds it. The cancellation
+    // ends the wait itself, so the budget never comes into it.
+    await log.WaitForAsync("waiting").WaitAsync(_signalTimeout);
+    await cts.CancelAsync();
+
+    await Assert.That(async () => await run).Throws<OperationCanceledException>();
 
     await Assert.That(await _scalarAsync("SELECT count(*) FROM marker")).IsEqualTo("0");
     await _releaseLockAsync(holder);
@@ -359,8 +340,56 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
   }
 
   /// <summary>Keeps every entry, so a test can ask what was said and at what level.</summary>
+  /// <summary>
+  /// Keeps every entry, and signals the moment one arrives that a test is waiting for.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The signal is what makes these tests deterministic. The phase spends real time on database
+  /// round-trips, and a test that spins until it sees a log line, rather than being told, can hold
+  /// the thread pool for the whole spin: the round-trip's continuation never runs, the phase makes
+  /// no progress at all, and the test concludes it waited long enough. That reads as a failure in a
+  /// couple of hundred milliseconds and reproduces only under load, which is what it did.
+  /// </para>
+  /// <para>
+  /// Driving a <c>FakeTimeProvider</c> from such a spin makes it worse, because the loop creates
+  /// the phase's whole budget in fake time while the phase is still on its first round-trip, so the
+  /// phase gives up having never seen the lock released. These tests use the real clock: the budget
+  /// is thirty seconds and the phase retries every quarter second, so releasing the lock decides
+  /// the outcome and scheduling cannot.
+  /// </para>
+  /// <para>
+  /// <see cref="Entries"/> hands out a snapshot, because the phase logs from its own thread while a
+  /// test reads.
+  /// </para>
+  /// </remarks>
   private sealed class ListLogger : ILogger {
-    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    private readonly List<(LogLevel Level, string Message)> _entries = [];
+    private readonly List<(string Fragment, TaskCompletionSource Signal)> _waiters = [];
+
+    /// <summary>Every entry logged so far.</summary>
+    public IReadOnlyList<(LogLevel Level, string Message)> Entries {
+      get {
+        lock (_entries) {
+          return [.. _entries];
+        }
+      }
+    }
+
+    /// <summary>Completes once an entry whose message contains <paramref name="fragment"/> arrives.</summary>
+    /// <param name="fragment">The text to wait for.</param>
+    /// <returns>A task that completes on the matching entry, or at once if one is already there.</returns>
+    public Task WaitForAsync(string fragment) {
+      lock (_entries) {
+        if (_entries.Exists(e => e.Message.Contains(fragment, StringComparison.Ordinal))) {
+          return Task.CompletedTask;
+        }
+
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiters.Add((fragment, signal));
+        return signal.Task;
+      }
+    }
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -369,8 +398,22 @@ public class CanonicalTemporalRewritePhaseTests : IAsyncDisposable {
     public void Log<TState>(
         LogLevel logLevel, EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      lock (Entries) {
-        Entries.Add((logLevel, formatter(state, exception)));
+      var message = formatter(state, exception);
+      var ready = new List<TaskCompletionSource>();
+
+      lock (_entries) {
+        _entries.Add((logLevel, message));
+        for (var i = _waiters.Count - 1; i >= 0; i--) {
+          if (message.Contains(_waiters[i].Fragment, StringComparison.Ordinal)) {
+            ready.Add(_waiters[i].Signal);
+            _waiters.RemoveAt(i);
+          }
+        }
+      }
+
+      // Outside the lock: a continuation the phase runs must not be able to re-enter it.
+      foreach (var signal in ready) {
+        signal.SetResult();
       }
     }
   }
