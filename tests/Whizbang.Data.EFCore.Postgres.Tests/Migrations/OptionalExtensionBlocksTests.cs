@@ -229,7 +229,7 @@ public class OptionalExtensionBlocksTests : IAsyncDisposable {
   /// <summary>A defect inside a block is not an unavailable extension, and is not swallowed.</summary>
   [Test]
   public async Task ADefectInsideABlockStillFailsAsync() {
-    var broken = OptionalExtensionBlocks.BEGIN_MARKER + "pg_trgm\n"
+    const string broken = OptionalExtensionBlocks.BEGIN_MARKER + "pg_trgm\n"
       + "CREATE EXTENSION IF NOT EXISTS pg_trgm;\n"
       + "CREATE INDEX IF NOT EXISTS idx_broken ON table_that_does_not_exist USING gin (a gin_trgm_ops);\n"
       + OptionalExtensionBlocks.END_MARKER + "\n";

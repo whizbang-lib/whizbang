@@ -51,30 +51,36 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
   /// <summary>Streams those rows spread over, so the re-offer has many more streams than one batch.</summary>
   private const int HELD_STREAMS = 500;
   /// <summary>
+  /// <para>
   /// Blocks (heap and index, hit or read) one poll may touch on one table and its indexes while
   /// re-offering out of a full budget of holdings. A re-offer bounded by its batch pays an index
   /// descent and a page or two per stream it returns and nothing for the streams it does not, so the
   /// ceiling is that constant times the batch, and it has to hold at double the holdings as well.
-  ///
+  /// </para>
+  /// <para>
   /// Measured on a container at 5,000, 10,000 and 40,000 held rows per table, one steady-state poll
   /// returning 300 rows: 700, 912 and 925 blocks in total across the four tables, the worst single
   /// table being 341, 441 and 449. The same polls before this change cost 5,425, 10,705 and 42,388
   /// blocks, the inbox alone 3,817, 7,571 and 30,095, one per held row's page. Twelve per returned
   /// row leaves a factor of two and a half above the measured worst and a factor of three below what
   /// the old shape cost at the smallest of the three sizes.
+  /// </para>
   /// </summary>
   private const long BLOCKS_PER_RETURNED_ROW = 12;
   private const long BLOCK_CEILING_PER_TABLE = BLOCKS_PER_RETURNED_ROW * BATCH;
   /// <summary>
+  /// <para>
   /// Tuples (index entries read plus sequential tuples read) one poll may examine on one table while
   /// re-offering out of a full budget of holdings. Blocks alone would not catch an index-only pass
   /// over the whole holdings, which is cheap in blocks and still grows with the backlog.
-  ///
+  /// </para>
+  /// <para>
   /// Measured on the same polls: 100 on the inbox and 101 on the outbox and on the perspective
   /// events (one probe per returned stream), 2 on the event store, at every one of the three holding
   /// sizes. Before the change the same polls examined 15,005, 5,001, 5,000 and 10,006 at 5,000 held
   /// rows, and eight times that at 40,000. Four per returned stream is four times the measured worst
   /// and a fiftieth of the smallest number the old shape produced.
+  /// </para>
   /// </summary>
   private const long TUPLES_PER_RETURNED_STREAM = 4;
   private const long TUPLE_CEILING_PER_TABLE = TUPLES_PER_RETURNED_STREAM * BATCH;
@@ -335,7 +341,7 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
              CASE rows.ordinal % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
       FROM rows;
       ANALYZE wh_outbox; ANALYZE wh_inbox; ANALYZE wh_perspective_events; ANALYZE wh_event_store;";
-    fill.Parameters.AddWithValue("holder", holder);
+    fill.Parameters.AddWithValue(nameof(holder), holder);
     fill.Parameters.AddWithValue("streams", HELD_STREAMS);
     fill.Parameters.AddWithValue("per_stream", HELD_ROWS_PER_TABLE / HELD_STREAMS);
     fill.CommandTimeout = 300;

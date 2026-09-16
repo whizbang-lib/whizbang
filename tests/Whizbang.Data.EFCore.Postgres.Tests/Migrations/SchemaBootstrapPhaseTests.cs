@@ -335,9 +335,8 @@ public class SchemaBootstrapPhaseTests {
     await SchemaBootstrapPhase.ApplyAsync(
       _connect, LOCK_ID, scripts, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
 
-    var commented = scripts
-      .Select(s => (s.Name, "-- Generated: 2026-01-02 03:04:05 UTC\n" + s.Sql + "\n-- a note that changes no statement"))
-      .ToList();
+    var commented = scripts.ConvertAll(
+      s => (s.Name, "-- Generated: 2026-01-02 03:04:05 UTC\n" + s.Sql + "\n-- a note that changes no statement"));
     var again = await SchemaBootstrapPhase.ApplyAsync(
       _connect, LOCK_ID, commented, SCHEMA, TIMEOUT_SECONDS, null, cancellationToken);
 

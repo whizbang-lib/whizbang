@@ -18,9 +18,6 @@ namespace Whizbang.Core.Tests.Workers;
                 + "serialization constructor, obsolete since .NET 8 (SYSLIB0051). A test double that "
                 + "is thrown and caught in-process is never serialized.")]
 internal sealed class FakeDbException : DbException {
-  private readonly string? _sqlState;
-  private readonly bool _isTransient;
-
   /// <summary>Creates one with no message, no SQLSTATE and no transient flag.</summary>
   public FakeDbException() { }
 
@@ -35,8 +32,8 @@ internal sealed class FakeDbException : DbException {
 
   private FakeDbException(string? sqlState, bool isTransient, string? message, Exception? inner)
       : base(message ?? $"fake database failure {sqlState ?? "(no SQLSTATE)"}", inner) {
-    _sqlState = sqlState;
-    _isTransient = isTransient;
+    SqlState = sqlState;
+    IsTransient = isTransient;
   }
 
   /// <summary>Creates one the way a provider would: a SQLSTATE, and optionally a transient flag.</summary>
@@ -49,7 +46,9 @@ internal sealed class FakeDbException : DbException {
       string? sqlState, bool isTransient = false, string? message = null, Exception? inner = null) =>
     new(sqlState, isTransient, message, inner);
 
-  public override string? SqlState => _sqlState;
+  /// <summary>The SQLSTATE the provider reports, or null for a provider that reports none.</summary>
+  public override string? SqlState { get; }
 
-  public override bool IsTransient => _isTransient;
+  /// <summary>What the provider's own transient flag says.</summary>
+  public override bool IsTransient { get; }
 }

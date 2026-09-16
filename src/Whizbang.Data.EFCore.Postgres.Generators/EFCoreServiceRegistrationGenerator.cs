@@ -2783,9 +2783,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     perspSql.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_tenant ON {quotedSchema}.{perspective.TableName} ((scope->>'t'));");
 
     // See _appendStandardIndexes: a declared index is what makes a range or an ordering on a
-    // JSON-only field a lookup rather than a scan.
-    // The trigram indexes go inside one optional-extension block that creates the extension once;
-    // the schema pass skips the block, with one warning, on a server that refuses the extension.
+    // JSON-only field a lookup rather than a scan. The trigram indexes go inside one
+    // optional-extension block, which creates the extension once, and the schema pass skips that
+    // whole block with one warning on a server that refuses the extension.
     JsonIndexSql.AppendScript(perspSql, perspective.JsonIndexes, $"{quotedSchema}.{perspective.TableName}", shortName);
 
     foreach (var field in perspective.PhysicalFields) {

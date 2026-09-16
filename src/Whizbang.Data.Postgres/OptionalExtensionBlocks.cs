@@ -62,10 +62,14 @@ public static class OptionalExtensionBlocks {
     ImmutableHashSet.Create(StringComparer.Ordinal, "0A000", "42501", "58P01");
 
   /// <summary>Whether <paramref name="sql"/> carries at least one block.</summary>
-  /// <param name="sql">The script.</param>
+  /// <param name="sql">The script, or null.</param>
   /// <returns><see langword="true"/> when a block is present.</returns>
-  public static bool HasBlocks(string sql) =>
-    sql is not null && sql.Contains(BEGIN_MARKER, StringComparison.Ordinal);
+  /// <remarks>
+  /// Asked of a script before anything has validated it, on the path that decides how to apply one,
+  /// so no script is no block rather than a throw.
+  /// </remarks>
+  public static bool HasBlocks(string? sql) =>
+    sql?.Contains(BEGIN_MARKER, StringComparison.Ordinal) == true;
 
   /// <summary>Whether a SQL state is one of the ways a server refuses an extension.</summary>
   /// <param name="sqlState">The state.</param>
