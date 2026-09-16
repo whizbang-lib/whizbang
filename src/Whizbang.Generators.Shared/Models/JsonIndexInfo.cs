@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 
 namespace Whizbang.Generators.Shared.Models;
 
@@ -108,6 +110,7 @@ public sealed record JsonIndexInfo(
 /// </remarks>
 /// <docs>fundamentals/perspectives/physical-fields</docs>
 /// <tests>tests/Whizbang.Generators.Tests/JsonIndexGenerationTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/JsonIndexSqlScriptTests.cs</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/QueryTranslation/PerspectiveIndexSetupTests.cs</tests>
 public static class JsonIndexSql {
   /// <summary>The SQL name of a cast target, or null when no cast is applied.</summary>
@@ -207,12 +210,84 @@ public static class JsonIndexSql {
     }
 
     if (index.Substring) {
-      // Requires pg_trgm. Created alongside rather than assumed, so a consumer who declares
-      // substring matching does not have to know that.
-      yield return "CREATE EXTENSION IF NOT EXISTS pg_trgm;";
+      // Needs the trigram extension. The extension statement is not emitted here, per index, but
+      // once per script by AppendScript, inside a block the schema pass can skip as a whole when
+      // the server refuses the extension.
       yield return $"CREATE INDEX IF NOT EXISTS idx_{indexPrefix}_{suffix}{fold}_trgm "
           + $"ON {qualifiedTable} USING gin ({element} gin_trgm_ops);";
     }
+  }
+
+  /// <summary>The extension a trigram index needs.</summary>
+  public const string TRIGRAM_EXTENSION = "pg_trgm";
+
+  /// <summary>
+  /// Opens a block of statements that need an extension the server may refuse. The extension name
+  /// follows on the same line. Mirrored by the runtime's optional-extension block reader, which
+  /// creates the extension once, and on refusal skips the block with one warning.
+  /// </summary>
+  public const string OPTIONAL_EXTENSION_BEGIN = "-- @whizbang:optional-extension ";
+
+  /// <summary>Closes a block opened by <see cref="OPTIONAL_EXTENSION_BEGIN"/>.</summary>
+  public const string OPTIONAL_EXTENSION_END = "-- @whizbang:optional-extension-end";
+
+  /// <summary>
+  /// Appends the statements for every index of one table: the plain ones first, then the trigram
+  /// ones inside one optional-extension block that creates the extension once.
+  /// </summary>
+  /// <param name="script">The script being built.</param>
+  /// <param name="indexes">The table's declared indexes.</param>
+  /// <param name="qualifiedTable">The table, schema-qualified.</param>
+  /// <param name="indexPrefix">The prefix index names carry.</param>
+  /// <remarks>
+  /// One <c>CREATE EXTENSION</c> per script rather than one per index, because the schema pass
+  /// treats a refused extension as "this index family is unavailable": it skips the whole block
+  /// with one warning naming the extension and the indexes, and the pass completes. A managed
+  /// server that does not allow-list the extension, a role without the privilege, or a build
+  /// without the extension installed all land there, and a substring query then scans, which is
+  /// what it does wherever the index is absent.
+  /// </remarks>
+  public static void AppendScript(
+      StringBuilder script, IEnumerable<JsonIndexInfo> indexes, string qualifiedTable, string indexPrefix) {
+    if (script is null) {
+      throw new ArgumentNullException(nameof(script));
+    }
+    if (indexes is null) {
+      throw new ArgumentNullException(nameof(indexes));
+    }
+
+    var trigram = new List<string>();
+    foreach (var index in indexes) {
+      foreach (var statement in CreateStatements(index, qualifiedTable, indexPrefix)) {
+        if (statement.IndexOf("gin_trgm_ops", StringComparison.Ordinal) >= 0) {
+          trigram.Add(statement);
+        } else {
+          script.AppendLine(statement);
+        }
+      }
+    }
+
+    if (trigram.Count == 0) {
+      return;
+    }
+
+    script.AppendLine(OPTIONAL_EXTENSION_BEGIN + TRIGRAM_EXTENSION);
+    script.AppendLine($"CREATE EXTENSION IF NOT EXISTS {TRIGRAM_EXTENSION};");
+    foreach (var statement in trigram) {
+      script.AppendLine(statement);
+    }
+    script.AppendLine(OPTIONAL_EXTENSION_END);
+  }
+
+  /// <summary>The script <see cref="AppendScript"/> builds, as a string.</summary>
+  /// <param name="indexes">The table's declared indexes.</param>
+  /// <param name="qualifiedTable">The table, schema-qualified.</param>
+  /// <param name="indexPrefix">The prefix index names carry.</param>
+  /// <returns>The statements, one per line, with the trigram ones in their block.</returns>
+  public static string Script(IEnumerable<JsonIndexInfo> indexes, string qualifiedTable, string indexPrefix) {
+    var script = new StringBuilder();
+    AppendScript(script, indexes, qualifiedTable, indexPrefix);
+    return script.ToString();
   }
 
   /// <summary>

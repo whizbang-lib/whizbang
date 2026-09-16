@@ -811,6 +811,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
       string sql,
       ILogger? logger,
       CancellationToken cancellationToken) {
+    if (Whizbang.Data.Postgres.OptionalExtensionBlocks.HasBlocks(sql)) {
+      // A block of indexes that need an extension the server may refuse. Applied as one batch, a
+      // refused CREATE EXTENSION fails the whole pass; the reader creates the extension under a
+      // savepoint, skips the block with one warning when the server refuses it, and applies the
+      // rest, so a service runs without that index family rather than without a schema.
+      var extensionConnection = (Npgsql.NpgsqlConnection)dbContext.Database.GetDbConnection();
+      var extensionTransaction = dbContext.Database.CurrentTransaction?.GetDbTransaction() as Npgsql.NpgsqlTransaction;
+      await Whizbang.Data.Postgres.OptionalExtensionBlocks.ApplyAsync(
+        extensionConnection, extensionTransaction, _renderFormatBraces(sql), SCHEMA_COMMAND_TIMEOUT_SECONDS, logger, cancellationToken);
+      return;
+    }
+
     if (!sql.Contains(Whizbang.Data.Postgres.SchemaCommandBoundary.MARKER, StringComparison.Ordinal)) {
       await dbContext.Database.ExecuteSqlRawAsync(sql, cancellationToken);
       return;

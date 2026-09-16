@@ -3,6 +3,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Data.Postgres;
 using Whizbang.Generators.Shared.Models;
 using Whizbang.Testing.Containers;
 
@@ -100,11 +101,11 @@ public class PerspectiveIndexSetupTests : IAsyncDisposable {
   /// matters there is that running both leaves both indexes rather than one.
   /// </remarks>
   private async Task _createDeclaredAsync(params JsonIndexInfo[] indexes) {
-    foreach (var index in indexes) {
-      foreach (var statement in JsonIndexSql.CreateStatements(index, TABLE, "setup")) {
-        await _executeAsync(statement);
-      }
-    }
+    // The script as the generator builds it, applied the way the schema pass applies it: the
+    // trigram indexes sit in an optional-extension block that creates the extension once.
+    await using var db = new NpgsqlConnection(_connectionString);
+    await db.OpenAsync();
+    await OptionalExtensionBlocks.ApplyAsync(db, null, JsonIndexSql.Script(indexes, TABLE, "setup"), 30);
   }
 
   /// <summary>Every index on the table, as PostgreSQL describes it back.</summary>
