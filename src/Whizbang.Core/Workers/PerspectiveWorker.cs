@@ -1237,11 +1237,11 @@ public partial class PerspectiveWorker(
               _metrics?.EventsProcessed.Add(processedEvents.Count);
             }
           } catch (Exception ex) when (ex is not OperationCanceledException) {
-            var storedForm = await _tryRecordStoredFormFailureAsync(
-              ex, streamId, perspectiveName,
-              group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct(), ct);
+            var leasedRows = group.Select(w => w.WorkId).Where(id => id != Guid.Empty).Distinct().ToList();
+            var storedForm = await _tryRecordStoredFormFailureAsync(ex, streamId, perspectiveName, leasedRows, ct);
             if (storedForm is null) {
               LogErrorProcessingPerspectiveCursor(_logger, ex, perspectiveName, streamId);
+              await _parkLeasedRowsAsync(leasedRows, ex.Message, MessageFailureReason.Unknown, ct);
             }
             _metrics?.Errors.Add(1);
             if (_syncEventTracker is not null && upcomingEvents is { Count: > 0 }) {
@@ -2311,12 +2311,13 @@ public partial class PerspectiveWorker(
       };
       await _completionStrategy.ReportFailureAsync(failure, groupWorkCoordinator, ct);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      var storedForm = await _tryRecordStoredFormFailureAsync(
-        ex, streamId, perspectiveName, _drainGroupWorkIds(filteredEvents, batchContext, perspectiveName), ct);
+      var leasedRows = _drainGroupWorkIds(filteredEvents, batchContext, perspectiveName).ToList();
+      var storedForm = await _tryRecordStoredFormFailureAsync(ex, streamId, perspectiveName, leasedRows, ct);
       if (storedForm is null) {
 #pragma warning disable CA1848
         _logger.LogError(ex, "Drain mode: Error processing perspective {Perspective} for stream {StreamId}", perspectiveName, streamId);
 #pragma warning restore CA1848
+        await _parkLeasedRowsAsync(leasedRows, ex.Message, MessageFailureReason.Unknown, ct);
       }
       _metrics?.Errors.Add(1);
 
@@ -2378,17 +2379,33 @@ public partial class PerspectiveWorker(
       new KeyValuePair<string, object?>("reason", Whizbang.Core.Perspectives.StoredFormUnreadable.REASON));
 
     var error = $"Stored form unreadable at {path}: {unreadable.Detail}";
-    // Both callers run only on the channel surfaces, which the worker refuses to start without
-    // (see the failure-channel checks at the top of each consumer loop), so the channel is present.
+    await _parkLeasedRowsAsync(workIds, error, MessageFailureReason.SerializationError, ct).ConfigureAwait(false);
+    return error;
+  }
+
+  /// <summary>
+  /// Reports each leased row of a failed group through the failure channel, so the database records
+  /// the failure against the row, schedules its retry with backoff, and dead-letters it at the
+  /// configured threshold.
+  /// </summary>
+  /// <remarks>
+  /// The cursor failure the drain path reports alongside names no event, so on its own it records
+  /// nothing against the rows: the lease lapsed, the rows were re-claimed, and the same failure
+  /// repeated every cycle with no backoff and no dead-letter. Every failure parks its rows the way
+  /// the stored-form failure always did. Both callers run only on the channel surfaces, which the
+  /// worker refuses to start without (see the failure-channel checks at the top of each consumer
+  /// loop), so the channel is present.
+  /// </remarks>
+  private async Task _parkLeasedRowsAsync(
+      IEnumerable<Guid> workIds, string error, MessageFailureReason reason, CancellationToken ct) {
     foreach (var workId in workIds) {
       await _failureChannel!.EnqueueAsync(WorkCategory.PerspectiveEvent, new MessageFailure {
         MessageId = workId,
         CompletedStatus = MessageProcessingStatus.None,
         Error = error,
-        Reason = MessageFailureReason.SerializationError,
+        Reason = reason,
       }, ct).ConfigureAwait(false);
     }
-    return error;
   }
 
   [LoggerMessage(EventId = 65, Level = LogLevel.Error,

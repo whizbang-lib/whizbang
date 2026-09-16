@@ -6,6 +6,15 @@
 -- @whizbang:bootstrap-begin
 -- Bootstrap: the ledger tables, and drop_all_overloads, which 010 calls.
 
+-- The bootstrap closure records the hash of the scripts it applied, so an instance whose closure is
+-- already recorded applies nothing: idempotent DDL still takes a share lock per statement, and an
+-- instance starting under load deadlocked on exactly that. Not the migration ledger; the bootstrap
+-- claims nothing about migrations.
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_bootstrap_closure (
+  closure_hash VARCHAR(64) PRIMARY KEY,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_schema_versions (
   id SERIAL PRIMARY KEY,
   library_version VARCHAR(50) NOT NULL,

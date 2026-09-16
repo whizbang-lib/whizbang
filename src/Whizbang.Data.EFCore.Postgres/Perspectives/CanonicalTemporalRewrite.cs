@@ -163,14 +163,21 @@ public static class CanonicalTemporalRewrite {
     sb.Append("BEGIN\n");
     // At this point in startup the table frequently does not exist yet, and neither may the ledger
     // on a database that has not bootstrapped.
+    // Every exit says what became of the table. Only the statement knows why it stopped early or how
+    // many row updates it made, and a pass that was silent on success once left a fleet unable to
+    // tell "converted" from "never ran".
     sb.Append(CultureInfo.InvariantCulture,
       $"  IF to_regclass('{quotedSchema}.{quotedTable}') IS NULL OR to_regclass('{ledger}') IS NULL THEN\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"    RAISE NOTICE USING MESSAGE = format('%s: table absent, nothing to convert', {tableLiteral});\n");
     sb.Append("    RETURN;\n");
     sb.Append("  END IF;\n");
     sb.Append(CultureInfo.InvariantCulture,
       $"  SELECT temporal_form, settled_at INTO v_form, v_settled FROM {ledger} WHERE table_name = {tableLiteral};\n");
     // A table a pass has already found clean is skipped without a scan.
     sb.Append("  IF v_settled IS NOT NULL THEN\n");
+    sb.Append(CultureInfo.InvariantCulture,
+      $"    RAISE NOTICE USING MESSAGE = format('%s: settled, skipped', {tableLiteral});\n");
     sb.Append("    RETURN;\n");
     sb.Append("  END IF;\n");
     sb.Append("  v_form := coalesce(v_form, 1);\n");
@@ -205,6 +212,9 @@ public static class CanonicalTemporalRewrite {
       $"  VALUES ({tableLiteral}, {MICROSECOND_FORM}, now(), CASE WHEN v_form >= {MICROSECOND_FORM} AND v_touched = 0 THEN now() END)\n");
     sb.Append(CultureInfo.InvariantCulture,
       $"  ON CONFLICT (table_name) DO UPDATE SET temporal_form = {MICROSECOND_FORM}, applied_at = now(), settled_at = EXCLUDED.settled_at;\n");
+    // One update per row and path, so a row with three converted keys counts three times.
+    sb.Append(CultureInfo.InvariantCulture,
+      $"  RAISE NOTICE USING MESSAGE = format('%s: converted, %s row update(s)', {tableLiteral}, v_touched);\n");
     sb.Append("END\n");
     sb.Append("$wb$;");
     return sb.ToString();

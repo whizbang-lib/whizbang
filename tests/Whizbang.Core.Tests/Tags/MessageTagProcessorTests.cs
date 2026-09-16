@@ -1754,6 +1754,79 @@ public class MessageTagProcessorTests {
 
   [Test]
   [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PerTagWarningThreshold_WinsOverTheGlobalOneAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "wide-by-design");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var capturingLogger = new PayloadSizeCapturingLogger();
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = 16
+    };
+    options.UsePayloadSizeThresholds("wide-by-design", warningBytes: 100_000, errorBytes: null);
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, new LoggingScopeFactory(capturingLogger, hook));
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(capturingLogger.Warnings).IsEmpty()
+      .Because("a tag whose payloads are legitimately wide raises its own line without touching the global one");
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PerTagNullWarning_DisablesTheWarningForThatTagAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "unbounded");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var capturingLogger = new PayloadSizeCapturingLogger();
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = 16
+    };
+    options.UsePayloadSizeThresholds("unbounded", warningBytes: null, errorBytes: null);
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, new LoggingScopeFactory(capturingLogger, hook));
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion);
+
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(capturingLogger.Warnings).IsEmpty();
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
+  public async Task ProcessTagsAsync_PerTagErrorThreshold_ThrowsWhenTheGlobalOneIsOffAsync() {
+    _cleanupRegistry();
+    var registry = new TestMessageTagRegistry();
+    registry.AddRegistration(typeof(LargePayloadMessage), typeof(SignalTagAttribute), "strict");
+    MessageTagRegistry.Register(registry, priority: 100);
+
+    var options = new TagOptions {
+      PayloadSizeWarningThresholdBytes = null,
+      PayloadSizeErrorThresholdBytes = null
+    };
+    options.UsePayloadSizeThresholds("strict", warningBytes: null, errorBytes: 16);
+    options.UseHook<SignalTagAttribute, TrackingHook>();
+    var hook = new TrackingHook();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TrackingHook) ? hook : null);
+    var message = new LargePayloadMessage(new string('x', 1024));
+
+    await Assert.That(async () =>
+      await processor.ProcessTagsAsync(message, typeof(LargePayloadMessage), LifecycleStage.AfterReceptorCompletion))
+      .ThrowsExactly<InvalidOperationException>();
+    await Assert.That(hook.InvokedCount).IsEqualTo(0);
+  }
+
+  [Test]
+  [NotInParallel("TagRegistry")]
   public async Task ProcessTagsAsync_PayloadBelowWarningThreshold_DoesNotLogAsync() {
     _cleanupRegistry();
     var registry = new TestMessageTagRegistry();

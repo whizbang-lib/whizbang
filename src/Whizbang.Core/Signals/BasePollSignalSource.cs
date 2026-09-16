@@ -7,15 +7,25 @@ namespace Whizbang.Core.Signals;
 /// Deterministic tests use <c>Microsoft.Extensions.Time.Testing.FakeTimeProvider</c> and drive the
 /// tick via <see cref="TickForTestsAsync"/> — no <c>Task.Delay</c>, no timing races.
 /// </summary>
+/// <remarks>
+/// With an <paramref name="idleBackoff"/>, a source whose ticks keep finding nothing stretches its
+/// interval toward a ceiling and returns to the base interval on the first hit or on any
+/// <see cref="Reschedule"/>. Without one the interval is fixed, as it always was.
+/// </remarks>
 /// <docs>fundamentals/signal-bus/signal-bus</docs>
+/// <tests>tests/Whizbang.Core.Tests/Signals/PollSignalSourceIdleBackoffTests.cs</tests>
 public abstract class BasePollSignalSource<TSignal>(
   TimeProvider clock,
-  TimeSpan interval
+  TimeSpan interval,
+  PollIdleBackoff? idleBackoff = null
 ) : IPollSignalSource<TSignal> where TSignal : ISignal, new() {
   private readonly TimeProvider _clock = clock ?? throw new ArgumentNullException(nameof(clock));
-  private TimeSpan _interval = interval > TimeSpan.Zero
+  private readonly PollIdleBackoff? _idleBackoff = idleBackoff;
+  private TimeSpan _baseInterval = interval > TimeSpan.Zero
     ? interval
     : throw new ArgumentOutOfRangeException(nameof(interval), "Poll interval must be positive.");
+  private TimeSpan _interval = interval;
+  private int _emptyStreak;
   private ISignalSink? _sink;
   private ITimer? _timer;
   private readonly Lock _timerGate = new();
@@ -38,15 +48,17 @@ public abstract class BasePollSignalSource<TSignal>(
   /// <summary>
   /// Change the polling interval at runtime. Used by concrete sources that adapt their cadence
   /// to external state (e.g., tightening when a push transport reports unavailable). A no-op
-  /// before <see cref="StartAsync"/> — reschedules the running timer otherwise.
+  /// before <see cref="StartAsync"/> — reschedules the running timer otherwise. The new interval
+  /// is the base the idle backoff stretches from, and the empty streak restarts.
   /// </summary>
   protected void Reschedule(TimeSpan newInterval) {
     if (newInterval <= TimeSpan.Zero) {
       throw new ArgumentOutOfRangeException(nameof(newInterval), "Poll interval must be positive.");
     }
     lock (_timerGate) {
-      _interval = newInterval;
-      _timer?.Change(newInterval, newInterval);
+      _baseInterval = newInterval;
+      _emptyStreak = 0;
+      _applyInterval(newInterval);
     }
   }
 
@@ -99,8 +111,29 @@ public abstract class BasePollSignalSource<TSignal>(
 
   private async ValueTask _tickAsync(ISignalSink sink, CancellationToken cancellationToken) {
     var detected = await DetectAsync(cancellationToken).ConfigureAwait(false);
+    _recordOutcome(detected);
     if (detected) {
       await sink.ReceiveAsync(new TSignal(), cancellationToken).ConfigureAwait(false);
     }
+  }
+
+  /// <summary>Stretches or restores the interval from what the tick found; nothing without a backoff.</summary>
+  private void _recordOutcome(bool detected) {
+    if (_idleBackoff is null) {
+      return;
+    }
+    lock (_timerGate) {
+      _emptyStreak = detected ? 0 : _emptyStreak + 1;
+      _applyInterval(_idleBackoff.IntervalAfter(_baseInterval, _emptyStreak));
+    }
+  }
+
+  /// <summary>Sets the effective interval, moving the timer only when it changes. Caller holds the gate.</summary>
+  private void _applyInterval(TimeSpan effective) {
+    if (effective == _interval) {
+      return;
+    }
+    _interval = effective;
+    _timer?.Change(effective, effective);
   }
 }

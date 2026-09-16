@@ -142,6 +142,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fleet; the migrator warns about other releases still alive.
 
 ### Fixed
+- **The stored-form rewrite skipped when it lost the schema lock, and nothing ran it later:** the
+  phase took the schema-init key with a single `pg_try_advisory_lock` and skipped at Debug on a lost
+  attempt, on the assumption that the holder was another rewriter. The holder is often a sibling's
+  bootstrap or DDL transaction, which converts nothing, and a sibling staged to wait for the migrator
+  never rewrites, so two instances starting together left every table of the schema unconverted with
+  nothing above debug level to say so. The phase now waits for the key (poll with backoff, up to the
+  schema command timeout), holds it at transaction scope in a transaction of its own with a savepoint
+  per table, logs once at Information that it is waiting, and gives up with a warning naming the key.
+  A migrator killed mid-rewrite left the remaining tables unconverted for the same reason: every
+  replacement instance was a waiter, and the rewrite sat before the wait behind a "not a waiter"
+  guard. A waiter whose deferral ends with the migrator gone now runs the rewrite before it contends
+  for the DDL lock, through the same body the migrator runs. The wait covers a race, not a queue: an
+  instance that finds the key already held when it is about to rewrite watches the key through the
+  same deferral a waiter uses, rather than sitting inside the rewrite for the whole ten-minute budget
+  behind a migration, and rewrites when the wait ends.
+- **The rewrite said nothing on success:** each table's DO block now raises a notice on every exit
+  (converted with its update count, settled and skipped, or table absent) and the phase relays it at
+  Information, followed by a one-line summary of the pass; a table that fails is still a warning
+  naming it. `SchemaCommandBoundary.ApplyOnAsync`, whose only caller was the phase, is removed.
+- **Maintenance ran at the peak of a bulk load:** the housekeeping gate measured settledness from
+  unprocessed inbox rows and live leases alone, so a producer whose load sat in its outbox and a
+  consumer whose load sat in its perspective events both read as idle, and the purges and the
+  digest-epoch closure occupied two to three database backends for the length of the load.
+  `ServiceBacklog` now carries bounded counts of pending outbox rows and pending perspective events,
+  `IsSettled` requires all four measures to be zero, and a deferred sweep is logged at Information
+  with every count rather than at Debug.
+- **Store-backed pull sources polled an idle store at full cadence:** with every queue empty the
+  poll loops alone committed over a hundred transactions a second per busy database. A
+  `BasePollSignalSource` given a `PollIdleBackoff` stretches its interval after a run of empty ticks
+  (doubling per tick up to a ceiling) and returns to the base interval on the first hit or on any
+  reschedule; the work-available and due-schedule sources use three empty ticks and a one-minute
+  ceiling.
+- **A drain-path apply failure of any other kind parked nothing:** the cursor failure the drain
+  path reported named no event, so the coordinator recorded nothing against the rows; the lease
+  lapsed, the rows were re-claimed, and the same failure repeated every cycle with no backoff and no
+  dead-letter. Every failure now parks each leased row of the group through the failure channel
+  (reason Unknown, the exception's message as the error), the way the stored-form failure already
+  did, so the rows back off and dead-letter at the configured threshold.
+- **Tag payload-size thresholds could not be raised for one tag, or from configuration:** the
+  warning threshold defaulted to 8 KiB, nothing bound either threshold from configuration, and a tag
+  whose payloads are legitimately wide produced a warning per hook per message. `TagOptions` now
+  takes per-tag thresholds (`UsePayloadSizeThresholds`), the processor resolves the tag's value before
+  the global one, and `TagPayloadSizeConfigurationBinder` reads both, globally and per tag, from
+  `Whizbang:Tags` without reflection; an empty value disables a threshold and a non-numeric value
+  fails startup naming the key.
+- **The claim poll priced itself by the backlog, not the batch:** measured under a bulk load, one
+  `claim_work` call read tens of thousands of blocks and the queue tables were scanned whole several
+  times per poll on every instance, so the poll alone took most of the database's cores and the
+  backlog grew because of it. Two causes. The outbox acquisition sorted every pending row to keep a
+  batch and the perspective acquisition aggregated every claimable event to choose its streams;
+  migration 157 adds an arrival-order covering index for the outbox and an urgency-order one for
+  perspective events, and `claim_orphaned_perspective_events` (150) now chooses streams from a bounded
+  window of the most urgent events while still capturing a selected stream in full. And a session
+  that polled while the tables were empty kept generic plans made for empty tables, which scanned
+  them whole once they filled; `claim_work` now runs under `plan_cache_mode = force_custom_plan`, so
+  the poll and everything it calls plan for the tables as they are. `ClaimWorkPlanShapeTests`
+  reproduces both shapes and asserts the tuples one poll reads stay within a few batches.
+- **The digest-epoch lane probes scanned the event store whole:** the closure and verification
+  probes for a foreign lane filter on `origin_service_id` and `origin_commit_sequence`, and no index
+  covered those columns, so each probe was a parallel sequential scan of the event store, about
+  twenty per maintenance tick. Migration 155 adds `idx_event_store_origin_lane`, partial on the rows
+  that have a lane.
+- **The commit-order stamper sorted every unstamped row on every wake:** the eligibility query
+  ordered the unstamped set by transaction id before taking a batch and ran whether or not anything
+  was unstamped, about half a core per busy database on the backstop tick. The leader now asks the
+  partial index whether any row is unstamped and runs the stamp only when the answer is yes; a wake
+  that finds nothing raises `OnStampSkipped`.
+- **Every instance start applied the bootstrap closure, and idempotent DDL still locks:**
+  `CREATE INDEX IF NOT EXISTS` on an existing index takes a share lock on the table before it finds
+  nothing to do, and an instance an autoscaler started under load deadlocked against the maintenance
+  sweep and the poll sources. The transaction that applies the closure now records a hash of its
+  scripts in `wh_bootstrap_closure` (created by the closure itself, in migration 000), and an
+  instance whose closure is recorded applies nothing: no statement, no lock, no wait. A changed
+  closure runs in full once; the migration ledger is untouched.
+- **Outbox and inbox failure reasons were always Unknown:** `process_outbox_failures` and
+  `process_inbox_failures` read the reason from a `FailureReason` element that nothing writes, so
+  the dead-letter decision could not tell a lease that lapsed from a handler that threw. Migration
+  156 reads `Reason` and `FailureReason` alike, as 154 did for perspective events.
 - **A perspective document one path wrote and the other could not read:** an opaque document was
   written as canonical numbers under the persistence profile and read through the data source's
   default-profile options, so every read failed. Opaque columns are now bound to the persistence

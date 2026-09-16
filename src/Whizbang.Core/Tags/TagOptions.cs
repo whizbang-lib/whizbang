@@ -35,6 +35,8 @@ public sealed class TagOptions {
   private readonly Dictionary<string, CoalescePolicyOptions> _coalesceBindings = new(StringComparer.Ordinal);
   private readonly Dictionary<string, string> _routeNamespaceBindings = new(StringComparer.Ordinal);
   private readonly Dictionary<string, int> _priorityDeclarations = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, int?> _payloadSizeWarningByTag = new(StringComparer.Ordinal);
+  private readonly Dictionary<string, int?> _payloadSizeErrorByTag = new(StringComparer.Ordinal);
 
   /// <summary>
   /// Gets the registered hook configurations.
@@ -74,6 +76,79 @@ public sealed class TagOptions {
   /// Evaluated before hooks run; when tripped, no hook fires for the offending tag.
   /// </remarks>
   public int? PayloadSizeErrorThresholdBytes { get; set; }
+
+  /// <summary>
+  /// Warning thresholds declared per tag. A tag present here uses its own value, including an
+  /// explicit <see langword="null"/> that disables the warning for that tag alone; a tag absent
+  /// here uses <see cref="PayloadSizeWarningThresholdBytes"/>.
+  /// </summary>
+  /// <remarks>
+  /// Some payloads are wide by design (an embedding, a rendered document) and every one of them
+  /// crossed the global line, several warnings per message. The line is raised for that tag and
+  /// the global one keeps catching the tag attribute that forgot to narrow its properties.
+  /// </remarks>
+  public IReadOnlyDictionary<string, int?> PayloadSizeWarningThresholdBytesByTag => _payloadSizeWarningByTag;
+
+  /// <summary>
+  /// Error thresholds declared per tag, resolved the same way as
+  /// <see cref="PayloadSizeWarningThresholdBytesByTag"/>.
+  /// </summary>
+  public IReadOnlyDictionary<string, int?> PayloadSizeErrorThresholdBytesByTag => _payloadSizeErrorByTag;
+
+  /// <summary>
+  /// Declares both payload-size thresholds for one tag, each overriding the global value for that
+  /// tag; <see langword="null"/> disables the threshold for the tag.
+  /// </summary>
+  /// <param name="tag">The tag name, as declared on the tag attribute.</param>
+  /// <param name="warningBytes">Bytes above which the processor warns, or <see langword="null"/> for never.</param>
+  /// <param name="errorBytes">Bytes above which the processor refuses, or <see langword="null"/> for never.</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <example>
+  /// <code>
+  /// options.Tags.UsePayloadSizeThresholds("embeddings", warningBytes: 65_536, errorBytes: 262_144);
+  /// </code>
+  /// </example>
+  public TagOptions UsePayloadSizeThresholds(string tag, int? warningBytes, int? errorBytes) {
+    SetPayloadSizeWarningThreshold(tag, warningBytes);
+    SetPayloadSizeErrorThreshold(tag, errorBytes);
+    return this;
+  }
+
+  /// <summary>Declares the warning threshold for one tag; <see langword="null"/> disables it for the tag.</summary>
+  /// <param name="tag">The tag name.</param>
+  /// <param name="warningBytes">Bytes above which the processor warns, or <see langword="null"/> for never.</param>
+  public void SetPayloadSizeWarningThreshold(string tag, int? warningBytes) {
+    _payloadSizeWarningByTag[_validTag(tag)] = _validThreshold(warningBytes, nameof(warningBytes));
+  }
+
+  /// <summary>Declares the error threshold for one tag; <see langword="null"/> disables it for the tag.</summary>
+  /// <param name="tag">The tag name.</param>
+  /// <param name="errorBytes">Bytes above which the processor refuses, or <see langword="null"/> for never.</param>
+  public void SetPayloadSizeErrorThreshold(string tag, int? errorBytes) {
+    _payloadSizeErrorByTag[_validTag(tag)] = _validThreshold(errorBytes, nameof(errorBytes));
+  }
+
+  /// <summary>The warning threshold that applies to <paramref name="tag"/>: its own if declared, else the global one.</summary>
+  /// <param name="tag">The tag name.</param>
+  /// <returns>Bytes above which the processor warns, or <see langword="null"/> when it never does for this tag.</returns>
+  public int? ResolvePayloadSizeWarningThreshold(string tag) =>
+    _payloadSizeWarningByTag.TryGetValue(tag, out var own) ? own : PayloadSizeWarningThresholdBytes;
+
+  /// <summary>The error threshold that applies to <paramref name="tag"/>: its own if declared, else the global one.</summary>
+  /// <param name="tag">The tag name.</param>
+  /// <returns>Bytes above which the processor refuses, or <see langword="null"/> when it never does for this tag.</returns>
+  public int? ResolvePayloadSizeErrorThreshold(string tag) =>
+    _payloadSizeErrorByTag.TryGetValue(tag, out var own) ? own : PayloadSizeErrorThresholdBytes;
+
+  private static string _validTag(string tag) =>
+    string.IsNullOrWhiteSpace(tag)
+      ? throw new ArgumentException("A tag name is required.", nameof(tag))
+      : tag;
+
+  private static int? _validThreshold(int? bytes, string parameterName) =>
+    bytes is < 0
+      ? throw new ArgumentOutOfRangeException(parameterName, "A payload-size threshold cannot be negative.")
+      : bytes;
 
   /// <summary>
   /// Registers a hook for processing messages tagged with the specified attribute type.

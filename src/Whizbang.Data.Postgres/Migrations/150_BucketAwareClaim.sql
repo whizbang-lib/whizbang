@@ -678,6 +678,9 @@ DECLARE
   c_source_inbox CONSTANT VARCHAR(20) := __CATEGORY_INBOX__;
   v_has_any_work BOOLEAN;
 BEGIN
+  -- 157: this function runs under plan_cache_mode = force_custom_plan (see its closing clause), so
+  -- the plans below and in the acquisition functions it calls are made for the tables as they are
+  -- at each poll, never kept from a poll that found them empty.
   -- Empty-call short-circuit: cheap indexed EXISTS lookups on partial indexes.
   -- Each LIMIT 1 against an existing partial index is sub-millisecond when buffer-cached.
   -- Note: wh_receptor_processing uses completed_at (not processed_at) for the "is done" semantic.
@@ -1129,7 +1132,12 @@ BEGIN
 
   RETURN;
 END;
-$$ LANGUAGE plpgsql;
+-- 157: custom plans for the poll and everything it calls. The queue tables are empty between loads,
+-- and a session that polled while they were empty kept generic plans made for empty tables; once
+-- the tables filled those plans scanned them whole, nested, on every poll, until the next analyze
+-- invalidated them. Measured: a poll that takes well under a second with fresh plans did not finish
+-- inside the command timeout with the empty-table plans. Planning per call costs milliseconds.
+$$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
 
 COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION, INTEGER, BOOLEAN, INTEGER) IS
   'Leases work for an instance and re-offers the streams it holds (145: bounded acquisition, command lane, row bound, stealing). 150: the re-offered inbox and perspective streams are ordered most urgent bucket first, folded over the rows the instance holds.';
@@ -1152,8 +1160,14 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
 #variable_conflict use_column
 BEGIN
   RETURN QUERY
-  WITH claimable_events AS (
-    -- Find all events eligible for claiming (orphaned or unleased)
+  -- 157: the window this poll chooses streams from, bounded by the batch. The most urgent
+  -- claimable-looking events in (priority, event_id) order, walked from idx_perspective_event_urgency
+  -- with an early stop, so the cost of choosing streams follows the batch and never the backlog.
+  -- Aggregating every claimable event per poll, on every instance, was most of a saturated database's
+  -- CPU under a bulk load. A stream whose head lies beyond the window is by definition less urgent
+  -- than every stream selected from it, and a later poll sees it. Ownership and per-stream ordering
+  -- are decided on the window below, and a selected stream is still captured in full.
+  WITH head AS (
     SELECT
       pe.event_work_id,
       pe.stream_id,
@@ -1165,6 +1179,20 @@ BEGIN
     WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
       AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
       AND pe.processed_at IS NULL
+    ORDER BY pe.priority, pe.event_id
+    LIMIT GREATEST(p_max_streams, 1) * 8
+  ),
+  claimable_events AS (
+    -- The events of the window this instance may claim (orphaned or unleased, owned or unowned).
+    SELECT
+      pe.event_work_id,
+      pe.stream_id,
+      pe.perspective_name,
+      pe.event_id,
+      pe.partition_number,
+      pe.priority
+    FROM head pe
+    WHERE TRUE
       -- Phase H step 6 slice 2: stream ownership now combines wh_active_streams pinning
       -- (OWNER PATH — always wins) with partition-modulo load balancing for unowned streams
       -- (UNOWNED PATH — symmetric with claim_orphaned_outbox / _inbox).
@@ -1230,11 +1258,26 @@ BEGIN
   -- shape claim_orphaned_inbox and claim_orphaned_outbox already use. A row another session holds
   -- is a row being completed or leased; waiting for it stalled the whole claim tick behind one
   -- commit batch. The lock is scoped to the selected streams, never the full eligible backlog.
+  -- 157: full-stream capture reads the selected streams' rows through idx_perspective_event_order,
+  -- not the window, so a stream still drains in one lease as before; the same ordering predicate
+  -- keeps an event behind a leased or scheduled earlier one out of the claim.
   locked AS (
     SELECT pe.event_work_id
     FROM __SCHEMA__.wh_perspective_events pe
-    INNER JOIN claimable_events ce ON ce.event_work_id = pe.event_work_id
-    INNER JOIN selected_streams ss ON ce.stream_id = ss.stream_id
+    INNER JOIN selected_streams ss ON ss.stream_id = pe.stream_id
+    WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
+      AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
+      AND pe.processed_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_perspective_events earlier
+        WHERE earlier.stream_id = pe.stream_id
+          AND earlier.perspective_name = pe.perspective_name
+          AND earlier.event_id < pe.event_id
+          AND (
+            (earlier.instance_id IS NOT NULL AND earlier.lease_expiry > p_now)
+            OR (earlier.scheduled_for > p_now)
+          )
+      )
     FOR UPDATE OF pe SKIP LOCKED
   ),
   -- Claim ALL events for selected streams (full-stream capture)

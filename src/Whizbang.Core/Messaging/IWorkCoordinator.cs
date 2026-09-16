@@ -50,8 +50,28 @@ public sealed record ServiceBacklog {
   /// </remarks>
   public TimeSpan OldestUnprocessedAge { get; init; }
 
-  /// <summary>True when nothing is queued and no instance holds a live lease.</summary>
-  public bool IsSettled => UnprocessedInboxRows == 0 && ActiveLeasedRows == 0;
+  /// <summary>
+  /// Outbox rows not yet published and claimable now, across the whole service (bounded count).
+  /// </summary>
+  /// <remarks>
+  /// A producer under a bulk load holds its work here, not in its inbox. A gate that read only the
+  /// inbox and the leases took such a service for idle and ran its maintenance sweep at the peak,
+  /// where the purges and the epoch closure occupied backends for the length of the load.
+  /// </remarks>
+  public long PendingOutboxRows { get; init; }
+
+  /// <summary>
+  /// Perspective events not yet applied, across the whole service (bounded count).
+  /// </summary>
+  /// <remarks>
+  /// A consumer mid-drain has stored its inbox rows and queued everything as perspective events,
+  /// so this is where its backlog shows once the inbox reads empty.
+  /// </remarks>
+  public long PendingPerspectiveRows { get; init; }
+
+  /// <summary>True when nothing is queued on any work table and no instance holds a live lease.</summary>
+  public bool IsSettled =>
+    UnprocessedInboxRows == 0 && ActiveLeasedRows == 0 && PendingOutboxRows == 0 && PendingPerspectiveRows == 0;
 }
 
 

@@ -19,6 +19,7 @@ This directory contains focused documentation topics to help Claude Code underst
 
 - **[flaky-tests.md](flaky-tests.md)** - Diagnosing and fixing intermittent test failures
 - [schema-initialization-connections.md](schema-initialization-connections.md) — two traps that each shipped once: statements that need a commit between them, and why there is almost never a connection string to open a second connection from
+- [load-under-bulk-import.md](load-under-bulk-import.md) — where a bulk load's database CPU went, measured: the claim poll priced by the backlog, maintenance running at the peak, the stamper sorting on every wake, DDL at startup under load, idle polling; the rule each became, and how to measure without being misled by cumulative counters
 - [test-sharding.md](test-sharding.md) — how CI splits slow test projects across runners, and the guard that stops a class silently running in no shard
 - [coverage-exclusions.md](coverage-exclusions.md) — when `[ExcludeFromCodeCoverage]` is right, when it hides real coverage, and how to pin the invariant that makes a guard unreachable
   - **When to use:** Tests pass sometimes but fail other times
@@ -50,6 +51,9 @@ This directory contains focused documentation topics to help Claude Code underst
 - **[perspective-stored-forms.md](perspective-stored-forms.md)** - One unit for every stored date, time and duration; the two storage paths and the one reader they share; the ledger and rewrite; what happens when a row cannot be read
   - **When to use:** Touching the persistence profile, `CanonicalTemporalConvention`, the JSON reader/writers, `CanonicalTemporalRewrite`, or the perspective worker's failure path; reading a "cannot read its stored document" error
   - **Critical:** Never a second unit, never a reader that reinterprets a number, never a per-property discovery of what to convert
+- **[load-under-bulk-import.md](load-under-bulk-import.md)** - What a bulk load costs the database and the rules that bound it: the claim poll, the housekeeping gate, the stamper, the bootstrap, the pull sources
+  - **When to use:** Touching `claim_work`, `HousekeepingCoordinator` or `ServiceBacklog`, the commit-order stamper, `SchemaBootstrapPhase`, or a poll source; investigating database CPU under load
+  - **Critical:** Snapshot and diff the statistics, sample sessions; cumulative counters and a thrashing statement cache both mislead
 - **[startup-registration-invariants.md](startup-registration-invariants.md)** - Six invariants for startup and DI registration, each from a shipped defect
   - **When to use:** Touching `AddWhizbangWorkers`, `DbContextInitializationRegistry`, `PostgresDriverExtensions`, `EventSubscriptionDiscovery`, or notification connection resolution
   - **Critical:** Never let the framework silently do less than the consumer asked for; refuse with a reason or log the consequence

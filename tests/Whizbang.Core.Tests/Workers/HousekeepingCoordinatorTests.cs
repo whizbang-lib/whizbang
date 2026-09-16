@@ -76,6 +76,42 @@ public class HousekeepingCoordinatorTests {
   }
 
   [Test]
+  public async Task MaintenanceWaitsWhileOutboxRowsArePendingAsync() {
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+
+    // A producer under a bulk load: its inbox is empty and it holds no inbox leases, so the two
+    // measures the gate used to read say "idle" while the outbox holds thousands of rows.
+    var decision = coordinator.TryBegin(
+      HousekeepingCoordinator.Activity.Maintenance, new ServiceBacklog { PendingOutboxRows = 12_914 });
+
+    await Assert.That(decision.Granted).IsFalse()
+      .Because("the sweep's purges and the epoch closure contend with the publish path; measured "
+             + "occupying two backends for the length of a bulk import because the outbox was not counted");
+    await Assert.That(decision.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.ServiceBusy);
+  }
+
+  [Test]
+  public async Task MaintenanceWaitsWhilePerspectiveEventsArePendingAsync() {
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+
+    // A consumer mid-drain: inbox already stored, everything now queued as perspective events.
+    var decision = coordinator.TryBegin(
+      HousekeepingCoordinator.Activity.Maintenance, new ServiceBacklog { PendingPerspectiveRows = 18_124 });
+
+    await Assert.That(decision.Granted).IsFalse();
+    await Assert.That(decision.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.ServiceBusy);
+  }
+
+  [Test]
+  public async Task ABacklogIsSettledOnlyWhenEveryQueueIsEmptyAsync() {
+    await Assert.That(new ServiceBacklog().IsSettled).IsTrue();
+    await Assert.That(new ServiceBacklog { PendingOutboxRows = 1 }.IsSettled).IsFalse();
+    await Assert.That(new ServiceBacklog { PendingPerspectiveRows = 1 }.IsSettled).IsFalse();
+    await Assert.That(new ServiceBacklog { UnprocessedInboxRows = 1 }.IsSettled).IsFalse();
+    await Assert.That(new ServiceBacklog { ActiveLeasedRows = 1 }.IsSettled).IsFalse();
+  }
+
+  [Test]
   public async Task MaintenanceProceedsOnceTheServiceSettlesAsync() {
     var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
 

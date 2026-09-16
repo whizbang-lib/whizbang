@@ -135,6 +135,37 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     await worker.StopAsync(CancellationToken.None);
   }
 
+  /// <summary>
+  /// With nothing unstamped, the polling tick does not run the stamp.
+  /// </summary>
+  /// <remarks>
+  /// The stamp's eligibility query sorts every unstamped row by transaction id before taking a
+  /// batch, and it ran on every tick whether or not anything was unstamped: measured at about half
+  /// a core per busy database under a bulk load. The partial-index existence probe costs nothing,
+  /// so it decides whether the stamp runs at all.
+  /// </remarks>
+  [Test]
+  public async Task Worker_NothingUnstamped_SkipsTheStampOnPollingTicksAsync() {
+    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+    var worker = _newWorker(ConnectionString, pollingInterval: TimeSpan.FromMilliseconds(50));
+    var skips = 0;
+    var stamps = 0;
+    var skippedThrice = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    worker.OnStampSkipped += () => {
+      if (Interlocked.Increment(ref skips) >= 3) {
+        skippedThrice.TrySetResult();
+      }
+    };
+    worker.OnStampCompleted += _ => Interlocked.Increment(ref stamps);
+    await worker.StartAsync(cts.Token);
+
+    await skippedThrice.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    await worker.StopAsync(CancellationToken.None);
+
+    await Assert.That(stamps).IsEqualTo(0)
+      .Because("the eligibility query sorts every unstamped row; with none it has nothing to do and must not run per tick");
+  }
+
   [Test]
   public async Task Worker_DisableStamper_ExitsImmediatelyAndDoesNotAcquireLockAsync() {
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -342,11 +373,14 @@ public class PgCommitOrderStamperWorkerIntegrationTests : EFCoreTestBase {
     var worker = _newWorker(ConnectionString, pollingInterval: TimeSpan.FromSeconds(60), gate: gate);
     var leaderTcs = await _whenBecomesLeaderAsync(worker);
     var stampPulse = new SemaphoreSlim(0);
+    // A wake with nothing unstamped is skipped rather than stamped; either is the wake this test
+    // counts.
     worker.OnStampCompleted += _ => stampPulse.Release();
+    worker.OnStampSkipped += () => stampPulse.Release();
     await worker.StartAsync(cts.Token);
     await leaderTcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
     await Assert.That(await stampPulse.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue()
-      .Because("the initial wake permit produces exactly one stamp attempt");
+      .Because("the initial wake permit produces exactly one wake of the loop");
     await Assert.That(gate.Subscribers).IsEqualTo(1)
       .Because("the running stamper listens for availability changes");
 

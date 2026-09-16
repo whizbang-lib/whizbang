@@ -369,6 +369,27 @@ else changes. The pinned test `AFrameworkDocumentIsNotConvertedAsync` is inverte
   this design the per-model modifiers hid it by rewriting the cached metadata's converters in
   place. The facade's cache is now keyed by options (a weak table, per thread), pinned by a Core
   test that asks in both orders and by a generator test.
+- Found in the first rollout of the alpha, fixed in S8a and S8d: two instances of one service
+  started in the same second. The elected migrator's rewrite phase took the schema-init key with a
+  single try-lock and skipped at Debug when it lost, on the assumption that the holder was another
+  rewriter; the holder was the sibling's bootstrap or DDL transaction, which converts nothing, and
+  the sibling was then staged as a waiter, which never rewrites. Every table of that schema stayed
+  in the old form with no line above debug level. Separately, a migrator killed mid-rewrite by a
+  rolling restart left the remaining tables unconverted, and both replacements were waiters whose
+  deferral ended in a takeover that ran the DDL loop but not the rewrite, because the rewrite sat
+  before the wait behind a "not a waiter" guard. The phase now waits for the key at transaction
+  scope with a savepoint per table, and the takeover path runs the same rewrite body first.
+- Found in the first rollout, documented in S8c: a consumer-owned trigger cast a temporal key's
+  text to `timestamptz`. The rewrite's update of that table fired it and failed with `22008` on the
+  canonical number, which the phase reported as a failed table while converting the rest; the same
+  trigger would have failed every later write into that table. The framework cannot know such an
+  object exists; the rule and the transition-safe `CASE` shape are in the docs.
+- Found in the first rollout, no change: a table with no model in the running binary (a perspective
+  removed from the source, its table left behind) is correctly not named by the rewrite, since nothing
+  reads it; and a verification regex that scans document text counts a rendering inside a
+  string-typed member that happens to hold serialized JSON, so verify by path, never by text.
+- Found in the first rollout, fixed in S8b: the pass was silent on success, so an operator could not
+  tell "converted" from "never ran" without querying the ledger. Each table now reports its outcome.
 - Follow-up, not in this PR: the outbox and inbox failure functions read `FailureReason` the same
   way, so `failure_reason` on those rows has always been Unknown. Different tables and functions
   with their own drift-pinned tests, and no bearing on stored forms; it deserves its own change.
@@ -445,8 +466,14 @@ Kept current as slices land. One branch, one PR, one release.
 | S5c | Fresh tables recorded at form 2 (settled); Day index renamed for its new cast and the old one dropped; mixed-fleet warning | done |
 | S6 | Loudness: classified `StoredFormUnreadable` error once per stream, meter, parking; one reader per kind on both paths; migration 154 | done |
 | S7 | Docs: stored-forms table, migrations page, ai-docs, code/tests/docs links (docs site PR whizbang-lib.github.io#619) | done |
-| PR | #770 open against develop; CI green, gate green (100% new-code coverage, zero Sonar findings); awaiting merge, then the alpha | ready to merge |
-| Rollout | Pin in the consumer, deploy to the parked slot, unpause KEDA, restore config, prove the failing feature, import test | pending |
+| PR | #770 merged to develop; alpha published; consumer pinned and deployed | done |
+| Rollout | First deployment of the alpha: readers tolerant everywhere, most tables converted; three findings below, two of them framework defects fixed in S8 | done, with findings |
+| S8a | Rewrite waits for the schema lock instead of skipping (transaction scope, savepoint per table, warning when the budget runs out); a two-instance start had left every table unconverted with nothing above debug level | done |
+| S8b | Per-table outcome (converted with count, settled, absent) as notices relayed at Information, and a one-line pass summary | done |
+| S8c | Consumer-owned objects over temporal keys documented: read the number, the transition-safe `CASE` shape | done |
+| S8d | A waiter that takes over from a dead migrator runs the rewrite before the DDL, through the body the migrator runs | done |
+| S8e | An instance that would rewrite behind a held schema key watches the key through the deferral first, instead of waiting inside the rewrite for the whole budget; the three deferral cases in `SchemaInitializationConcurrencyTests` timed out on S8a's wait | done |
+| PR 2 | S8 against develop; CI, gate, docs site PR #619 updated | in review |
 
 ## 7. Decisions requested
 
