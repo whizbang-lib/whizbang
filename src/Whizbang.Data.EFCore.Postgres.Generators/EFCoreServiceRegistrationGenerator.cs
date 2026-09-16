@@ -2697,7 +2697,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           .Replace("{", "{{")
           .Replace("}", "}}");
 
-      var perspectiveName = TypeNameUtilities.GetSimpleName(perspective.ModelTypeName);
+      // The entry name is the per-perspective hash key the initializer records and compares
+      // (perspective:<name> in wh_schema_migrations). The table is the one name unique to a
+      // perspective within its schema: models nested under feature holders share simple names
+      // (Order.Model, Invoice.Model), and keyed by simple name they shared one hash row, so the one
+      // compared first always read as changed and every start re-applied the DDL under the lock.
+      var perspectiveName = perspective.TableName;
 
       sb.Append($"      (\"{perspectiveName}\", @\"{escapedSql}\")");
       if (i < uniqueTables.Count - 1) {
