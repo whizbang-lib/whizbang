@@ -66,13 +66,14 @@ jobs:
       # later — rejected outright on the main-plus-PRs free plan. The PR analysis already
       # gated this exact change, and keeping the queue run lean is the point of the queue.
       - name: SonarScanner Begin
-        if: (github.event_name != 'push' || github.ref == 'refs/heads/main') && github.event_name != 'merge_group'
+        if: (github.event_name != 'push' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && github.event_name != 'merge_group'
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.head_ref }}
           BASE_REF: ${{ github.base_ref }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           # coverageReportPaths is a path only — the file is produced later, after the
           # suites' coverage artifacts arrive; the scanner reads it at the End step.
@@ -80,15 +81,35 @@ jobs:
             /k:"whizbang-lib_whizbang" /o:"whizbang-lib"
             /d:sonar.token="${SONAR_TOKEN}"
             /d:sonar.host.url="https://sonarcloud.io"
-            /d:sonar.qualitygate.wait=true
             /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml"
           )
 
+          # Three analysis shapes. A PR is a pull-request analysis against its base; main is
+          # the project's main branch (no sonar.branch.name — SonarCloud's default); anything
+          # else is a NAMED branch analysis. That last case is why this exists: without
+          # sonar.branch.name, a non-main analysis is recorded AS main, silently overwriting
+          # the project's main-branch numbers. Only `main` had ever reached the scanner
+          # before, so nothing had overwritten anything — but develop needs to be analyzed
+          # now, and it must land under its own name.
           if [ "$EVENT_NAME" = "pull_request" ]; then
             SONAR_ARGS+=(
               /d:sonar.pullrequest.key="$PR_NUMBER"
               /d:sonar.pullrequest.branch="$HEAD_REF"
               /d:sonar.pullrequest.base="$BASE_REF"
+              /d:sonar.qualitygate.wait=true
+            )
+          elif [ "$BRANCH" = "main" ]; then
+            SONAR_ARGS+=(/d:sonar.qualitygate.wait=true)
+          else
+            # develop (and any branch this workflow is dispatched on) is analyzed under its
+            # own name so the project carries a WHOLE-BRANCH issue and coverage number, not
+            # just per-PR deltas. The gate is MEASURED here, not enforced: waiting on it
+            # would fail every develop push over debt that accumulated while the branch was
+            # never analyzed at all — blocking the very work that pays it down. Flip
+            # qualitygate.wait to true for develop once it reaches zero.
+            SONAR_ARGS+=(
+              /d:sonar.branch.name="$BRANCH"
+              /d:sonar.qualitygate.wait=false
             )
           fi
 
@@ -273,7 +294,7 @@ jobs:
           fi
 
       - name: SonarScanner End
-        if: (github.event_name != 'push' || github.ref == 'refs/heads/main') && github.event_name != 'merge_group'
+        if: (github.event_name != 'push' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') && github.event_name != 'merge_group'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
