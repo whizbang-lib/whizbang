@@ -42,3 +42,50 @@ doorbell.perspective.wh_outbox.seq_scans_per_ring	0	scans/ring
 doorbell.perspective.wh_outbox.tuples_read_per_ring	0	tuples/ring	100	
 doorbell.perspective.wh_perspective_events.seq_scans_per_ring	0	scans/ring		was 1 per ring before the fix
 doorbell.perspective.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	100	was 20000 per ring; a ring must not read a queue row
+
+# --- Store emptiness probe against a pending backlog -----------------------------------------
+# 200 streams carrying 100 pending unpublished outbox rows each, then a producer storing four
+# messages per call on streams the outbox has never held. Before its first insert for a stream the
+# store asks whether that stream has a pending row, so it knows whether to ring a doorbell.
+#
+# The ceiling is on tuples read per ROW WRITTEN, which is the ratio a deployed fleet reported at
+# 4,550 and the one that makes a scan obvious whatever the absolute size of the table: a store
+# should read about what it writes. Fifty leaves room for the small bookkeeping tables the store
+# legitimately reads while being two orders of magnitude below a scan.
+#
+# The absolute per-call tuple count carries a ceiling too, because the ratio alone can be satisfied
+# by a call that writes more rather than by one that reads less.
+#
+# Measured before the fix: 80,078 tuples and 4 sequential scans per call, 20,019.5 tuples per row
+# written. Every stream_id index on wh_outbox is partial on a condition this predicate cannot
+# satisfy, so nothing served it and it scanned every unpublished row to prove a fresh stream empty.
+store.rows_written_per_call	4	rows/call		
+store.wh_outbox.seq_scans_per_call	0	scans/call		was 4 per call before the fix, one per fresh stream
+store.wh_outbox.tuples_read_per_call	0	tuples/call	1000	was 80078; a probe by stream id must not read the table
+store.wh_outbox.tuples_read_per_row_written	0	tuples/row	50	was 20019.5; a deployed fleet reported 4550
+store.wh_perspective_events.seq_scans_per_call	4	scans/call		
+store.wh_perspective_events.tuples_read_per_call	0	tuples/call	1000	
+
+# --- Claim poll cost per call, by stream depth ------------------------------------------------
+# 100 streams and a batch of 10 at two depths: 12 pending perspective events per stream, then 200.
+# Same batch, same stream count; only the depth differs.
+#
+# The gate is the MULTIPLE, because it is the only measure that separates a poll that is expensive
+# because it was asked for a lot from a poll that is expensive because of what it happened to find.
+# A poll bounded by the batch it was asked for holds this near one. Two leaves room for the larger
+# table's own index depth while still failing a poll whose cost tracks its consumer's data shape.
+#
+# The absolute deep-stream cost carries a ceiling as well, so the multiple cannot be satisfied by
+# making the shallow case worse. Rows leased per call is the mechanism rather than a gate: the
+# acquisition selects a batch of STREAMS and then leases every pending event of each one.
+#
+# Measured before the fix: 3,730.5 blocks a call shallow, 54,914 deep, 1,766.7 rows leased a call
+# at depth, a 14.7x multiple. Three deployed services reported 4,575, 12,022 and 29,018 blocks a
+# call on this same code, which is one code path at three data shapes.
+claim.blocks_per_call.depth_12	1025.5	blocks/call	8000	
+claim.blocks_per_call.depth_200	6964.8	blocks/call	8000	was 54914 before the row bound
+claim.blocks_per_call.depth_50	2600	blocks/call	8000	
+claim.depth_cost_multiple	6.8	x		recorded, not gated: 14.7 before the row bound, and the deepest fixture holds 16x the rows
+claim.rows_leased_per_call.depth_12	5	rows/call		
+claim.rows_leased_per_call.depth_200	5	rows/call	50	was 1766.7 before the row bound
+claim.rows_leased_per_call.depth_50	5	rows/call		
