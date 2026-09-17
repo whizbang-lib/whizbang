@@ -150,7 +150,7 @@ public class PerspectivePartialLeaseOrderingTests : EFCoreTestBase {
         ORDER BY event_id",
       cmd => {
         cmd.Parameters.AddWithValue("sid", streamId);
-        cmd.Parameters.AddWithValue("poller", poller);
+        cmd.Parameters.AddWithValue(nameof(poller), poller);
       });
 
   private static async Task<List<Guid>> _readEventIdsAsync(

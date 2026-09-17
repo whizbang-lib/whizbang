@@ -116,7 +116,7 @@ public class SerialExecutorDrainAfterStopTests {
 
   /// <summary>A locally dispatched envelope, which is all the executor reads of it.</summary>
   private static MessageEnvelope<DrainProbeMessage> _envelope(string payload) =>
-    new MessageEnvelope<DrainProbeMessage> {
+    new() {
       MessageId = MessageId.New(),
       Payload = new DrainProbeMessage(payload),
       Hops = [],

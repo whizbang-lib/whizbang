@@ -218,11 +218,11 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
         await workItem.ExecuteAsync(workItem.State);
       } catch (Exception ex) {
         // UNREACHABLE from outside this type, and deliberately kept. The invariant: the only
-        // delegate ever assigned to WorkItem.ExecuteAsync is _executeWithPooledStateAsync (the sole
-        // `new WorkItem` above), it is `async`, and its try/catch(Exception)/finally spans its whole
-        // body including the handler invocation itself -- so a handler that throws synchronously
-        // before its first await is caught there exactly as one that throws after it, becomes
-        // Source.SetException, and leaves this await with a successfully completed ValueTask. The
+        // delegate ever assigned to WorkItem.ExecuteAsync is _executeWithPooledStateAsync, at the
+        // single construction site above; it is an async method, and its own try, catch and finally
+        // cover its whole body including the handler invocation itself -- so a handler that throws
+        // synchronously before its first await is caught there exactly as one that throws after it,
+        // is recorded on the pooled source, and leaves this await successfully completed. The
         // caller observes the exception; the worker never does. WorkItem and _channel are private,
         // so no test can enqueue a work item whose delegate faults, and the repository bans
         // reflection.

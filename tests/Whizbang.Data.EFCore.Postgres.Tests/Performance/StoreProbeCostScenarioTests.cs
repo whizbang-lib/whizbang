@@ -153,7 +153,7 @@ public class StoreProbeCostScenarioTests : EFCoreTestBase {
       SELECT count(*) FROM store_outbox_messages(
         @messages::jsonb, @instance, NOW() + INTERVAL '5 minutes', NOW(), 10000)";
     cmd.Parameters.AddWithValue("messages", JsonSerializer.Serialize(messages));
-    cmd.Parameters.AddWithValue("instance", instance);
+    cmd.Parameters.AddWithValue(nameof(instance), instance);
     cmd.CommandTimeout = 300;
     _ = await cmd.ExecuteScalarAsync(cancellationToken);
   }

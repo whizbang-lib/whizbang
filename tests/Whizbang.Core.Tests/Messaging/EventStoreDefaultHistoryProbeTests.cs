@@ -70,7 +70,7 @@ public class EventStoreDefaultHistoryProbeTests {
   /// </summary>
   private sealed class StoreWithoutHistoryProbe : IEventStore {
     private static NotSupportedException _notUsed(string member) =>
-      new NotSupportedException($"{member} is not part of this test's surface.");
+      new($"{member} is not part of this test's surface.");
 
     public Task AppendAsync<TMessage>(
         Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) =>

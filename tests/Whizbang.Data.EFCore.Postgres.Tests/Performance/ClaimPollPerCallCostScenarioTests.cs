@@ -182,7 +182,7 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
       ANALYZE wh_perspective_events;";
     fill.Parameters.AddWithValue("poller", poller);
     fill.Parameters.AddWithValue("streams", STREAMS);
-    fill.Parameters.AddWithValue("depth", depth);
+    fill.Parameters.AddWithValue(nameof(depth), depth);
     fill.CommandTimeout = 900;
     await fill.ExecuteNonQueryAsync();
     return poller;
