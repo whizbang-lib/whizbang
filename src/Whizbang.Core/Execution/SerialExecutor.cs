@@ -24,6 +24,7 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_SerialExecution_MaintainsStrictOrderAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCanceledWorkAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorDrainAfterStopTests.cs:DrainAsync_WorkerCanceledWhileTheDrainAwaitsIt_CompletesAndRecordsItAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
 public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
@@ -180,8 +181,12 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
       try {
         await _workerTask;
       } catch (OperationCanceledException) {
-        // DEFENSIVE: Should never happen - channel completes before worker cancellation
-        // Kept as safety net for unexpected cancellation timing edge cases
+        // A stop that lands while this drain is already awaiting the worker. Everything above the
+        // await is synchronous, so a caller can have the channel completed and this task suspended
+        // here when StopAsync cancels the worker token; the worker's next read observes the canceled
+        // token ahead of "done writing" and its task ends canceled. Swallowed for the caller, who
+        // asked only to drain, and recorded so an operator can see it happened.
+        // SerialExecutorDrainAfterStopTests reaches this deterministically.
         WhizbangActivitySource.RecordDefensiveCancellation(
           activity,
           "Worker canceled during DrainAsync after channel completion"
@@ -212,8 +217,23 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
       try {
         await workItem.ExecuteAsync(workItem.State);
       } catch (Exception ex) {
-        // DEFENSIVE: Should never happen - exceptions captured in PooledValueTaskSource
-        // Kept as safety net for unexpected exception paths
+        // UNREACHABLE from outside this type, and deliberately kept. The invariant: the only
+        // delegate ever assigned to WorkItem.ExecuteAsync is _executeWithPooledStateAsync (the sole
+        // `new WorkItem` above), it is `async`, and its try/catch(Exception)/finally spans its whole
+        // body including the handler invocation itself -- so a handler that throws synchronously
+        // before its first await is caught there exactly as one that throws after it, becomes
+        // Source.SetException, and leaves this await with a successfully completed ValueTask. The
+        // caller observes the exception; the worker never does. WorkItem and _channel are private,
+        // so no test can enqueue a work item whose delegate faults, and the repository bans
+        // reflection.
+        //
+        // Not excluded from coverage: this catch shares a member with the FIFO loop and the
+        // canceled-while-queued branch, both of which are tested, and
+        // [ExcludeFromCodeCoverage] is member-level -- annotating here would hide their coverage
+        // too (see ai-docs/coverage-exclusions.md). Left uncovered on purpose, with the invariant
+        // written down so a reader can tell whether it still holds. If PooledValueTaskSource ever
+        // stops capturing, or a second enqueue site appears, this becomes reachable and should get
+        // a test rather than this comment.
         WhizbangActivitySource.RecordDefensiveException(
           activity,
           ex,
