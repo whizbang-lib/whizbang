@@ -136,18 +136,49 @@ public sealed class InboxDeserializeCache {
   /// them.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Separated from the enforcement so the selection can be driven directly. The entries it is
   /// given are a live concurrent dictionary in production, which constrains how it may read them
   /// and is the whole reason this is its own method.
+  /// </para>
+  /// <para>
+  /// It is enumerated, never materialized through its <c>Count</c>. A
+  /// <see cref="ConcurrentDictionary{TKey, TValue}"/> is designed to be walked with its own
+  /// enumerator, which yields a moving but coherent snapshot and tolerates concurrent writes. Going
+  /// through the <see cref="ICollection{T}"/> face instead -- which is what LINQ does when it
+  /// buffers an ordered source for a <c>Take</c> -- reads <c>Count</c>, allocates an array of that
+  /// size, and then calls <c>CopyTo</c>, which refuses if the dictionary has grown in between. That
+  /// threw under load and the dispatch worker logged it as a failed deserialization and continued,
+  /// so a message stopped being processed for a reason nothing named.
+  /// </para>
+  /// <para>
+  /// The result is therefore best effort, and that is the correct contract here: the cache is a
+  /// performance aid whose cap exists to bound memory, so a cap briefly off by a few entries costs
+  /// nothing and throwing costs a message. The count may move while this runs; what it must never
+  /// do is fail.
+  /// </para>
   /// </remarks>
   internal static Guid[] SelectEvictionKeys(
       IEnumerable<KeyValuePair<Guid, Entry>> entries, int batch) {
     ArgumentNullException.ThrowIfNull(entries);
-    return entries
-      .OrderBy(static p => p.Value.ExpiresAt)
-      .Take(batch)
-      .Select(static p => p.Key)
-      .ToArray();
+    if (batch <= 0) {
+      return [];
+    }
+    // The foreach is the point: one pass, no size question asked of the source.
+    var snapshot = new List<KeyValuePair<Guid, Entry>>();
+    foreach (var pair in entries) {
+      snapshot.Add(pair);
+    }
+    // Sorting a private list, never the live source: the ordering below cannot ask the dictionary
+    // anything, because it is no longer looking at it.
+    snapshot.Sort(static (left, right) => left.Value.ExpiresAt.CompareTo(right.Value.ExpiresAt));
+
+    var take = Math.Min(batch, snapshot.Count);
+    var keys = new Guid[take];
+    for (var i = 0; i < take; i++) {
+      keys[i] = snapshot[i].Key;
+    }
+    return keys;
   }
 
   internal readonly record struct Entry(object Payload, DateTimeOffset ExpiresAt);
