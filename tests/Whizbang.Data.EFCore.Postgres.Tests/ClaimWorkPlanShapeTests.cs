@@ -111,7 +111,7 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
         p_max_rows => @batch
       )";
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("batch", batch ?? BATCH);
+    cmd.Parameters.AddWithValue(nameof(batch), batch ?? BATCH);
     cmd.CommandTimeout = 300;
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
   }

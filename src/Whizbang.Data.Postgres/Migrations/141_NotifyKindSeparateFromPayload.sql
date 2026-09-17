@@ -36,8 +36,8 @@
 --   overload beside this one until this file runs again, and a bare name is ambiguous (42725).
 --
 --   Later, in place: the deterministic-target branch computes the partition number instead of
---   reading it. It had recovered one number per unclaimed stream with
---   "SELECT partition_number FROM <queue table> WHERE stream_id = ANY(...)", once per kind. That
+--   reading it. It had recovered one number per unclaimed stream by reading partition_number out of
+--   the queue table for that kind, matching stream_id against the unclaimed set, once per kind. That
 --   lookup carries no status predicate and every stream_id index on the queue tables is partial on
 --   one, so no index ever applied: each ring read every row those streams had ever written, settled
 --   history included. Measured on a deployed fleet during a bulk import, the outbox branch alone

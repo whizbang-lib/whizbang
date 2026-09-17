@@ -270,7 +270,7 @@ public class NotifyInstanceOwnersScanShapeSqlTests : EFCoreTestBase {
     var before = await _sequentialTuplesReadAsync(conn, table);
     await using (var emit = conn.CreateCommand()) {
       emit.CommandText = "SELECT notify_instance_owners(@kind, ARRAY[@sid]::uuid[])";
-      emit.Parameters.AddWithValue("kind", kind);
+      emit.Parameters.AddWithValue(nameof(kind), kind);
       emit.Parameters.AddWithValue("sid", streamId);
       await emit.ExecuteNonQueryAsync();
     }
