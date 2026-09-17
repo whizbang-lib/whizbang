@@ -1,0 +1,44 @@
+# Whizbang performance baseline. One measure per line, tab separated:
+#   name<TAB>value<TAB>unit<TAB>ceiling<TAB>note
+#
+# The value is what the measure read when the line was last written, and is reported as drift on
+# every run. The CEILING is the gate, and is deliberately optional: a measure with no ceiling is
+# recorded and never fails a run. Declare one only where the number is a property of the design
+# rather than of the machine, and say why in the note -- a ceiling that encodes a machine's speed
+# will either flap or hide a real regression, which is the failure mode this file exists to avoid.
+#
+# Values are WORK DONE (tuples, scans, blocks, rows), never wall clock. Time moves with the runner,
+# its neighbors and its cache; a plan's page and tuple counts do not.
+
+# --- Doorbell against settled history -------------------------------------------------------
+# Eight streams carrying 2,500 settled rows each in all three queue tables, none of them in the
+# stream ledger, so every ring takes the deterministic-target branch. A ring names streams and must
+# cost what it names, never what those streams have accumulated.
+#
+# Before the deterministic branch stopped recovering a stream's partition number by reading the
+# queue table, the same scenario read 20,000 tuples and took one sequential scan PER RING on each
+# of the three branches. That is the measurement this suite exists to have caught.
+#
+# The ceiling is on tuples read, and it is a property of the design: the partition number is a
+# total function of the stream id, so a ring has no reason to read a queue row at all. A hundred
+# leaves room for a planner that reads a page to answer something else while still being two orders
+# of magnitude below a scan of a 20,000-row table. Scan counts are recorded without a ceiling,
+# because they are the same finding counted a second way and one gate per family is enough.
+doorbell.inbox.wh_inbox.seq_scans_per_ring	0	scans/ring		was 1 per ring before the fix
+doorbell.inbox.wh_inbox.tuples_read_per_ring	0	tuples/ring	100	was 20000 per ring; a ring must not read a queue row
+doorbell.inbox.wh_outbox.seq_scans_per_ring	0	scans/ring		
+doorbell.inbox.wh_outbox.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.inbox.wh_perspective_events.seq_scans_per_ring	0	scans/ring		
+doorbell.inbox.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.outbox.wh_inbox.seq_scans_per_ring	0	scans/ring		
+doorbell.outbox.wh_inbox.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.outbox.wh_outbox.seq_scans_per_ring	0	scans/ring		was 1 per ring before the fix
+doorbell.outbox.wh_outbox.tuples_read_per_ring	0	tuples/ring	100	was 20000 per ring; a ring must not read a queue row
+doorbell.outbox.wh_perspective_events.seq_scans_per_ring	0	scans/ring		
+doorbell.outbox.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.perspective.wh_inbox.seq_scans_per_ring	0	scans/ring		
+doorbell.perspective.wh_inbox.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.perspective.wh_outbox.seq_scans_per_ring	0	scans/ring		
+doorbell.perspective.wh_outbox.tuples_read_per_ring	0	tuples/ring	100	
+doorbell.perspective.wh_perspective_events.seq_scans_per_ring	0	scans/ring		was 1 per ring before the fix
+doorbell.perspective.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	100	was 20000 per ring; a ring must not read a queue row

@@ -65,4 +65,10 @@
     <NoWarn>$(NoWarn);CA1707;IDE1006;CA1816;CA1822;CA1859;CA1860</NoWarn>
   </PropertyGroup>
 
+
+  <!-- The performance baseline travels with the test binary: the scenarios read it from the build
+       output, and a run that cannot find it reports every measure as new rather than failing. -->
+  <ItemGroup>
+    <None Update="Performance\baseline.tsv" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
