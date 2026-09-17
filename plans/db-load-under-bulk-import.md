@@ -107,3 +107,38 @@ the backoff addresses the probes, and the churn is a consumer connection-string 
   hand-written operations. Assess by the operations the web actually sends.
 - Query Store `all` capture mode on the shared development server is worth reducing to `top` or
   `none` during load testing.
+
+## 4. Measured and deliberately not changed: the adaptive notify debounce is inert
+
+Recorded so the next person does not re-derive it, and so nobody re-tunes a threshold against a
+baseline that is about to move. From a deployed fleet's `wh_notify_state` counters and the statement
+deltas for one bulk import:
+
+| Measure | Value |
+|---|---|
+| Lifetime | 62,302 fired against 8,340 suppressed, a 11.8 percent suppression rate |
+| In the window | 8,466 rings through `_notify_debounced` against 574 suppress-path updates, 6.3 percent |
+| Of those rings | 6,099 took the fire path; the other 2,367 (28 percent) bypassed the state machine entirely through the `NOT FOUND` branch, where a `SKIP LOCKED` miss rings and returns |
+| `effective_window_ms` | 50 for every kind, which is `notify_debounce_floor_ms` |
+| `rapid_run` | maximum 1 for outbox and inbox, 3 for perspective, against `notify_churn_run` = 5 |
+
+**The escalation to the seven-second ceiling has never engaged.** The volume axis needs five
+consecutive doorbells to the same (instance, kind) each within `notify_rapid_gap_ms` (100 ms). The
+observed aggregate is about seven rings a second spread over 142 targets, so roughly one ring per
+target per twenty seconds: the real gap is about two hundred times wider than the threshold, so
+`rapid_run` resets to zero every time and the window stays at the 50 ms floor. A 50 ms floor almost
+never suppresses, because suppression additionally requires `claim_work` to have armed `last_work_at`
+inside that window.
+
+**Why nothing changed here.** Suppressing a doorbell trades latency for database work, and that trade
+was worth making while a doorbell cost about nineteen thousand block reads. Once the deterministic
+branch stopped recovering a stream's partition number by reading the queue table (migration 141, in
+place), a doorbell is a hash and a small join, and the observed rate is not pathological: tightening
+the debounce would buy little and add delivery latency. Re-calibrating against the old baseline would
+be the same mistake as tuning on any stale measurement.
+
+**Rule:** re-measure these counters after the scan fix has run under load before anyone moves
+`notify_rapid_gap_ms`, `notify_churn_run` or `notify_debounce_floor_ms`. The 28 percent that bypasses
+the state machine through the `SKIP LOCKED` miss is worth a second look at the same time: it is a
+correctness-preserving fall-through (a contended watermark rings rather than waits), but it means the
+measured suppression rate understates what the state machine would do if it saw every ring.
