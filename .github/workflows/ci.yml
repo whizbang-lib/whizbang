@@ -308,7 +308,7 @@ jobs:
       # Same upload shape as the quality job's step, so Codecov's develop baseline is
       # indistinguishable from a full-matrix push run.
       - name: Upload Merged Coverage to Codecov
-        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: coverage
@@ -707,11 +707,16 @@ jobs:
           echo "have=true" >> "$GITHUB_OUTPUT"
           echo "Converted $CONVERTED of ${#TRX[@]} TRX file(s) to JUnit XML"
 
+      # codecov/test-results-action is deprecated (and was the last node20 action here):
+      # codecov-action itself does test results with report_type: test_results, driving the
+      # same Codecov CLI. Inputs are otherwise identical to the action it replaces, so the
+      # search still walks trx/ and picks up the *.junit.xml the convert step wrote there.
       - name: Upload test results to Codecov
         if: steps.junit.outputs.have == 'true'
-        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3 # v1.2.1
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          report_type: test_results
           directory: trx
           fail_ci_if_error: false
 
@@ -1135,7 +1140,7 @@ jobs:
 
       - name: Checkout docs repo
         if: steps.trx.outputs.have == 'true'
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: whizbang-lib/whizbang-lib.github.io
           ref: main
