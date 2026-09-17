@@ -166,9 +166,13 @@ public sealed class InboxDeserializeCache {
     }
     // The foreach is the point: one pass, no size question asked of the source.
     var snapshot = new List<KeyValuePair<Guid, Entry>>();
+#pragma warning disable RCS1077 // "Optimize Add call": AddRange and the collection initializer both
+    // reach for the source's Count to size their destination, which is exactly the call that threw
+    // here and the reason this method exists. See the remarks above. Do not take this suggestion.
     foreach (var pair in entries) {
       snapshot.Add(pair);
     }
+#pragma warning restore RCS1077
     // Sorting a private list, never the live source: the ordering below cannot ask the dictionary
     // anything, because it is no longer looking at it.
     snapshot.Sort(static (left, right) => left.Value.ExpiresAt.CompareTo(right.Value.ExpiresAt));

@@ -257,7 +257,7 @@ public class NotifyDebounceEscalationSqlTests : EFCoreTestBase {
       WHERE instance_id = @id AND payload_kind = @kind";
     cmd.Parameters.AddWithValue("id", instance);
     cmd.Parameters.AddWithValue("kind", KIND);
-    cmd.Parameters.Add(new NpgsqlParameter("armed", NpgsqlDbType.Boolean) { Value = armed });
+    cmd.Parameters.Add(new NpgsqlParameter(nameof(armed), NpgsqlDbType.Boolean) { Value = armed });
     await cmd.ExecuteNonQueryAsync();
   }
 

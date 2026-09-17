@@ -71,12 +71,16 @@ public class InboxDeserializeCacheCapConcurrencyTests {
       new(Guid.NewGuid(), new InboxDeserializeCache.Entry(
         $"payload-{i}", DateTimeOffset.UnixEpoch.AddSeconds(i)));
 
+    /// <summary>How many times anything asked this source its size.</summary>
+    public int CountReads { get; private set; }
+
     /// <summary>
     /// Reports the size the caller will size its array from, and THEN grows, which is the ordering
     /// that matters: the reader allocates for what it saw, and the copy finds one more.
     /// </summary>
     public int Count {
       get {
+        CountReads++;
         var observed = _items.Count;
         _items.Add(_entry(observed));
         return observed;
@@ -158,6 +162,30 @@ public class InboxDeserializeCacheCapConcurrencyTests {
   }
 
   /// <summary>
+  /// A batch of zero or fewer selects nothing, without reading the source at all.
+  /// </summary>
+  /// <remarks>
+  /// The caller computes the batch arithmetically, so a cap small enough to make the tenth round to
+  /// zero, or an overflow that has already been resolved by another enforcer, both reach here with a
+  /// non-positive batch. Returning empty early is what keeps that from becoming an allocation and a
+  /// walk of the whole cache for nothing.
+  /// </remarks>
+  [Test]
+  [Arguments(0)]
+  [Arguments(-1)]
+  public async Task SelectEvictionKeys_BatchIsNotPositive_SelectsNothingAsync(int batch) {
+    var entries = new GrowsBetweenCountAndCopy(4);
+
+    var keys = InboxDeserializeCache.SelectEvictionKeys(entries, batch);
+
+    await Assert.That(keys).IsEmpty()
+      .Because($"a batch of {batch} asks for nothing, so nothing is selected");
+    await Assert.That(entries.CountReads).IsEqualTo(0)
+      .Because("the early return must precede any read of the source, so a pointless enforcement "
+        + "costs neither an allocation nor a walk");
+  }
+
+  /// <summary>
   /// The property the fix has to hold under real threads: the cache keeps taking writes while the
   /// cap is enforced, and stays near the cap.
   /// </summary>
@@ -200,7 +228,7 @@ public class InboxDeserializeCacheCapConcurrencyTests {
     // The cap is best-effort, so the assertion is a band rather than an equality: enforcement
     // evicts a tenth of the cap at a time and writers insert between an eviction and the next
     // count, so a transient overshoot of roughly one batch per writer is expected and fine.
-    var tolerance = CAP + (writers * (CAP / 10)) + writers;
+    const int tolerance = CAP + (writers * (CAP / 10)) + writers;
     await Assert.That(cache.Count).IsLessThanOrEqualTo(tolerance)
       .Because($"{writers} writers put {writers * perWriter} entries through a cache capped at {CAP}, "
         + $"and it holds {cache.Count}; the cap is best-effort but it still has to bound memory, which "
