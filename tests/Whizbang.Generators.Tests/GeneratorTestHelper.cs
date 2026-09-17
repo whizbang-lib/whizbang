@@ -280,7 +280,24 @@ public static class GeneratorTestHelper {
   [RequiresAssemblyFiles()]
   public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors<TGenerator>(
       string source, (string path, string content)[]? additionalFiles = null)
-      where TGenerator : IIncrementalGenerator, new() {
+      where TGenerator : IIncrementalGenerator, new() =>
+    GetGeneratedCompilationErrors([new TGenerator()], source, additionalFiles);
+
+  /// <summary>
+  /// The same, for several generators at once.
+  /// </summary>
+  /// <remarks>
+  /// A generator whose output references a sibling generator's output does not compile on its own: the
+  /// harness has to run the siblings too, or the caller is left comparing one broken compile against
+  /// another and calling the absence of a difference a pass. Running the real set instead lets a test
+  /// assert the thing it means, which is that the generated code compiles.
+  /// </remarks>
+  [RequiresAssemblyFiles()]
+  public static ImmutableArray<Diagnostic> GetGeneratedCompilationErrors(
+      IReadOnlyList<IIncrementalGenerator> generators,
+      string source,
+      (string path, string content)[]? additionalFiles = null) {
+    ArgumentNullException.ThrowIfNull(generators);
 
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
     var compilation = CSharpCompilation.Create(
@@ -290,19 +307,42 @@ public static class GeneratorTestHelper {
         options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
     );
 
-    var generator = new TGenerator();
-    var driver = additionalFiles is { Length: > 0 }
-        ? CSharpGeneratorDriver.Create(
-            generators: [generator.AsSourceGenerator()],
-            additionalTexts: additionalFiles
-                .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
-                .ToImmutableArray())
-        : CSharpGeneratorDriver.Create(generator);
-    _ = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out _);
+    var driver = CSharpGeneratorDriver.Create(
+        generators: generators.Select(static g => g.AsSourceGenerator()).ToImmutableArray(),
+        additionalTexts: (additionalFiles ?? [])
+            .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
+            .ToImmutableArray());
+    var ran = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out _);
+
+    _throwIfAnyGeneratorFailed(ran.GetRunResult());
 
     return outputCompilation.GetDiagnostics()
         .Where(d => d.Severity == DiagnosticSeverity.Error)
         .ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Turns a generator that threw into a loud failure instead of a clean compile.
+  /// </summary>
+  /// <remarks>
+  /// A generator that throws emits nothing, and the driver keeps the exception in its own run result
+  /// rather than in the compilation, so the compilation handed back is the one the caller started with
+  /// and its error list is empty. Every caller of this helper reads an empty error list as "the
+  /// generated code is valid", so without this the two states -- nothing was wrong, and nothing ran --
+  /// are the same answer. A develop run failed with one half of a comparison reporting zero errors
+  /// against the other's three, and the harness had discarded the only record of why.
+  /// </remarks>
+  private static void _throwIfAnyGeneratorFailed(GeneratorDriverRunResult result) {
+    foreach (var generatorResult in result.Results) {
+      if (generatorResult.Exception is null) {
+        continue;
+      }
+      var name = generatorResult.Generator.GetGeneratorType().Name;
+      throw new InvalidOperationException(
+        $"The generator {name} threw instead of generating. It emitted no source, so the compilation "
+        + "carries no errors and would otherwise have been reported as a clean compile.",
+        generatorResult.Exception);
+    }
   }
 
   /// <summary>

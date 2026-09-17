@@ -60,12 +60,28 @@ public class MessageJsonContextRenameAliasTests {
     await Assert.That(generated!).DoesNotContain("OrderCreatedEvent");
   }
 
+  /// <summary>
+  /// The emitted alias registration (RegisterTypeName + typeof + MessageEnvelope&lt;T&gt;) is valid C#.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// This compiles the real generator set rather than one generator. The context generator emits a
+  /// facade that references <c>WhizbangIdJsonContext</c>, which <c>WhizbangIdGenerator</c> emits, so
+  /// running the context generator alone produces code that cannot compile for a reason that has
+  /// nothing to do with the ledger. Run both and the generated output compiles clean, which lets this
+  /// assert the thing it means: zero errors.
+  /// </para>
+  /// <para>
+  /// It used to run the generator twice, once without the ledger, and compare the two error sets, so
+  /// that the standing error was subtracted out. That made the test's expected value the output of the
+  /// very machinery under test, which is the weakness that turned a single odd run into an
+  /// undiagnosable flake: one half reported zero errors and the other three, and nothing in the
+  /// failure said which compile had misbehaved or why. An oracle has to be independent of the subject.
+  /// </para>
+  /// </remarks>
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_LedgerFormerName_GeneratedAliasCompilesAsync() {
-    // The emitted alias registration (RegisterTypeName + typeof + MessageEnvelope<T>) must be valid C#.
-    // The single-generator harness produces a facade referencing WhizbangIdJsonContext (a SIBLING generator's
-    // output), so a baseline error set exists independent of the ledger. Assert the alias adds no NEW error.
     var ledger = """
       { "version": 1, "types": [
         { "pinnedId": "11111111-2222-3333-4444-555555555555",
@@ -75,15 +91,18 @@ public class MessageJsonContextRenameAliasTests {
       ] }
       """;
 
-    var baseline = GeneratorTestHelper.GetGeneratedCompilationErrors<MessageJsonContextGenerator>(EVENT_SOURCE)
-      .Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).OrderBy(m => m).ToArray();
-    var withLedger = GeneratorTestHelper.GetGeneratedCompilationErrors<MessageJsonContextGenerator>(
-      EVENT_SOURCE, [(LEDGER_PATH, ledger)])
-      .Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).OrderBy(m => m).ToArray();
+    var errors = GeneratorTestHelper.GetGeneratedCompilationErrors(
+      [new MessageJsonContextGenerator(), new WhizbangIdGenerator()],
+      EVENT_SOURCE, [(LEDGER_PATH, ledger)]);
 
-    // No NEW compile error, and nothing referencing the alias'd former name — the generated alias is valid C#.
-    await Assert.That(withLedger).IsEquivalentTo(baseline);
-    await Assert.That(withLedger.Any(m => m.Contains("OrderCreatedEvent"))).IsFalse();
+    var messages = errors
+      .Select(d => d.GetMessage(System.Globalization.CultureInfo.InvariantCulture))
+      .OrderBy(m => m, StringComparer.Ordinal)
+      .ToArray();
+    await Assert.That(messages).IsEmpty()
+      .Because("the generated alias registration has to be valid C#, and with the sibling generator present "
+        + "there is no standing error to subtract out, so the assertion is simply that the generated code "
+        + $"compiles: [{string.Join("; ", messages)}]");
   }
 
   [Test]
