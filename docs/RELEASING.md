@@ -348,6 +348,17 @@ below), writes the version into `Directory.Build.props`, and opens a PR to `main
 > without ever touching develop's placeholder. Any *other* merge conflict is unexpected and fails the
 > run loudly rather than being silently dropped.
 
+> **Why the PR quality gate does not apply to a release PR.** `reusable-quality.yml` fails a
+> `pull_request` that carries any uncovered new line or any open Sonar finding. That gate judges code
+> **entering** the codebase, which happens on the PR into `develop`. A release PR introduces none: it
+> is develop's already-gated history plus the one `chore(release)` bump — so GitHub's "new code vs
+> base" diff is the whole develop-to-main delta, and the gate re-judges the entire release at once.
+> v0.2058.0 hit exactly that (75 uncovered lines, 1217 findings, every one already merged through the
+> same gate on its own PR), and `Quality / Quality Analysis` is required on `main`, so the release
+> could not merge. The gate now skips when the head is `release/*` and the base is `main`
+> (`PR_GATE_APPLIES`). The coverage threshold, SonarScanner and **Sonar's own quality gate** still run
+> and stay required. A `hotfix/*` PR into `main` is **not** exempt — it does carry new code.
+
 ### Prerelease vs final
 
 - A version **with** a label (`-alpha.1`, `-beta.1`, `-rc.1`) publishes as a **GitHub Pre-Release**

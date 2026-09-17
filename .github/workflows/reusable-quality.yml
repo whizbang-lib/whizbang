@@ -34,6 +34,19 @@ jobs:
       pull-requests: write
     timeout-minutes: 60
 
+    env:
+      # The PR gate below (100% coverage of new lines, zero open Sonar findings) gates code
+      # ENTERING the codebase, which happens on the PR into develop. A release PR (release/* →
+      # main) introduces no such code: it is develop's already-gated history plus one
+      # `chore(release)` version bump, so GitHub's "new code vs base" diff is the ENTIRE
+      # develop-to-main delta and the gate re-judges every line of the release at once —
+      # unsatisfiable by construction, and it blocked v0.2058.0 (75 uncovered lines, 1217
+      # findings, every one of them already merged through this same gate). Release PRs are
+      # therefore exempt from THIS gate only: the coverage threshold, SonarScanner and Sonar's
+      # own quality gate still run and stay required on main. Hotfix PRs into main are NOT
+      # exempt — they do carry new code.
+      PR_GATE_APPLIES: ${{ github.event_name == 'pull_request' && !(github.base_ref == 'main' && startsWith(github.head_ref, 'release/')) }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -283,7 +296,7 @@ jobs:
       # Both lists are computed after the scanner has submitted the analysis, uploaded, posted on the
       # PR in one comment, and only then does one step fail the job when either list is not empty.
       - name: Uncovered New Lines
-        if: github.event_name == 'pull_request'
+        if: env.PR_GATE_APPLIES == 'true'
         id: uncovered
         shell: pwsh
         run: |
@@ -293,7 +306,7 @@ jobs:
           "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Sonar Findings on New Code
-        if: github.event_name == 'pull_request'
+        if: env.PR_GATE_APPLIES == 'true'
         id: sonar-findings
         shell: pwsh
         env:
@@ -304,7 +317,7 @@ jobs:
           "count=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: Upload PR Gate Reports
-        if: github.event_name == 'pull_request' && always()
+        if: always() && env.PR_GATE_APPLIES == 'true'
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: pr-quality-gate
@@ -314,7 +327,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Comment PR Gate Results
-        if: github.event_name == 'pull_request' && always() && steps.uncovered.outputs.count != ''
+        if: always() && env.PR_GATE_APPLIES == 'true' && steps.uncovered.outputs.count != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -360,7 +373,7 @@ jobs:
           fi
 
       - name: Fail on PR Gate Violations
-        if: github.event_name == 'pull_request' && (steps.uncovered.outputs.count != '0' || steps.sonar-findings.outputs.count != '0')
+        if: env.PR_GATE_APPLIES == 'true' && (steps.uncovered.outputs.count != '0' || steps.sonar-findings.outputs.count != '0')
         run: |
           echo "::error::PR quality gate: ${{ steps.uncovered.outputs.count }} uncovered new line(s), ${{ steps.sonar-findings.outputs.count }} open Sonar finding(s). Both must be zero (see the pr-quality-gate artifact and the PR comment)."
           exit 1
