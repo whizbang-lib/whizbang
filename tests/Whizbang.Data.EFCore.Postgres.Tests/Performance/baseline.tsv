@@ -65,3 +65,24 @@ store.wh_outbox.tuples_read_per_call	0	tuples/call	1000	was 80078; a probe by st
 store.wh_outbox.tuples_read_per_row_written	0	tuples/row	50	was 20019.5; a deployed fleet reported 4550
 store.wh_perspective_events.seq_scans_per_call	4	scans/call		
 store.wh_perspective_events.tuples_read_per_call	0	tuples/call	1000	
+
+# --- Claim poll cost per call, by stream depth ------------------------------------------------
+# 100 streams and a batch of 10 at two depths: 12 pending perspective events per stream, then 200.
+# Same batch, same stream count; only the depth differs.
+#
+# The gate is the MULTIPLE, because it is the only measure that separates a poll that is expensive
+# because it was asked for a lot from a poll that is expensive because of what it happened to find.
+# A poll bounded by the batch it was asked for holds this near one. Two leaves room for the larger
+# table's own index depth while still failing a poll whose cost tracks its consumer's data shape.
+#
+# The absolute deep-stream cost carries a ceiling as well, so the multiple cannot be satisfied by
+# making the shallow case worse. Rows leased per call is the mechanism rather than a gate: the
+# acquisition selects a batch of STREAMS and then leases every pending event of each one.
+#
+# Measured before the fix: 3,730.5 blocks a call shallow, 54,914 deep, 1,766.7 rows leased a call
+# at depth, a 14.7x multiple. Three deployed services reported 4,575, 12,022 and 29,018 blocks a
+# call on this same code, which is one code path at three data shapes.
+claim.blocks_per_call.deep_streams	54914	blocks/call	8000	was 54914 against 3730 shallow
+claim.blocks_per_call.shallow_streams	3730.5	blocks/call		
+claim.depth_cost_multiple	14.7	x	2	was 14.7; a poll must cost what its batch costs, not what its streams hold
+claim.rows_leased_per_call.deep_streams	1766.7	rows/call		the mechanism: a batch of streams, then every event of each
