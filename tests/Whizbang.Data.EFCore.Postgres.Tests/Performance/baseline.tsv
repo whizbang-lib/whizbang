@@ -60,8 +60,8 @@ doorbell.perspective.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	10
 # written. Every stream_id index on wh_outbox is partial on a condition this predicate cannot
 # satisfy, so nothing served it and it scanned every unpublished row to prove a fresh stream empty.
 store.rows_written_per_call	4	rows/call		
-store.wh_outbox.seq_scans_per_call	4	scans/call		was 4 per call before the fix, one per fresh stream
-store.wh_outbox.tuples_read_per_call	80078	tuples/call	1000	was 80078; a probe by stream id must not read the table
-store.wh_outbox.tuples_read_per_row_written	20019.5	tuples/row	50	was 20019.5; a deployed fleet reported 4550
+store.wh_outbox.seq_scans_per_call	0	scans/call		was 4 per call before the fix, one per fresh stream
+store.wh_outbox.tuples_read_per_call	0	tuples/call	1000	was 80078; a probe by stream id must not read the table
+store.wh_outbox.tuples_read_per_row_written	0	tuples/row	50	was 20019.5; a deployed fleet reported 4550
 store.wh_perspective_events.seq_scans_per_call	4	scans/call		
 store.wh_perspective_events.tuples_read_per_call	0	tuples/call	1000	
