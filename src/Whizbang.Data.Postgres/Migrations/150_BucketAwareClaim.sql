@@ -888,8 +888,14 @@ BEGIN
       -- 145 (#719): perspective ACQUISITION has its own bound. The caller passes 0 while its drain channel is
       -- above its cap, so a perspective backlog is drained before more is leased; re-emission of held work
       -- below stays on p_max_streams so the drain keeps moving.
+      -- 160: the perspective acquisition gets a ROW bound as well as its stream bound. It used to
+      -- take a batch of streams and lease every pending event of each, so one poll leased whatever
+      -- a consumer's streams happened to hold and cost accordingly. The caller's own budget is used
+      -- when it passes one; otherwise a multiple of the batch, because handing a stream count
+      -- straight to an acquisition as a row cap is 145's #714 mistake in reverse.
       PERFORM __SCHEMA__.claim_orphaned_perspective_events(
-        p_instance_id, v_lease_expiry, v_now, COALESCE(p_max_perspective_streams, p_max_streams), v_rank, v_count
+        p_instance_id, v_lease_expiry, v_now, COALESCE(p_max_perspective_streams, p_max_streams), v_rank, v_count,
+        COALESCE(p_max_rows, GREATEST(COALESCE(p_max_perspective_streams, p_max_streams), 1) * 8)
       );
     END IF;
 
@@ -1339,13 +1345,26 @@ COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, IN
 -- ---------------------------------------------------------------------------------------------
 -- claim_orphaned_perspective_events: last word 148_ActiveStreamLeases.sql; the most urgent streams are selected first.
 -- ---------------------------------------------------------------------------------------------
+-- 160: the signature gains p_max_rows, so the old five-argument overload has to go first or the
+-- initializer's duplicate-overload sweep force-replays this file on every start.
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_perspective_events');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
   p_now TIMESTAMPTZ,
   p_max_streams INTEGER DEFAULT 500,
   p_instance_rank INTEGER DEFAULT 0,
-  p_active_instance_count INTEGER DEFAULT 1
+  p_active_instance_count INTEGER DEFAULT 1,
+  -- 160: rows this call may lease, as p_max_streams bounds the streams it may take. Without it the
+  -- claim selected a batch of STREAMS and then leased every pending event of each, so a poll cost
+  -- what a consumer's streams happened to hold: 3,730 blocks a call over streams twelve events
+  -- deep and 54,914 over streams two hundred deep, for the same batch. NULL keeps the old
+  -- unbounded behavior for a caller that has not been taught to pass one; claim_work passes its own
+  -- row budget. 145 (#714) is the warning against the other mistake, handing a STREAM count to an
+  -- acquisition as a row cap and turning a fat stream into one row per cycle -- hence a multiple of
+  -- the batch rather than the batch itself.
+  p_max_rows INTEGER DEFAULT NULL
 ) RETURNS TABLE(
   event_work_id UUID,
   stream_id UUID,
@@ -1455,26 +1474,57 @@ BEGIN
   -- 157: full-stream capture reads the selected streams' rows through idx_perspective_event_order,
   -- not the window, so a stream still drains in one lease as before; the same ordering predicate
   -- keeps an event behind a leased or scheduled earlier one out of the claim.
+  -- 160: the row bound has to be reached BEFORE the per-row work, not after it. Bounding only the
+  -- final result still sorted every claimable row of every selected stream and ran the ordering
+  -- probe below on each one, so leasing fell to a handful of rows a call while the poll still cost
+  -- what the streams held: 8,352 blocks a call at depth against 1,523 shallow, for 6.7 rows leased.
+  -- Each stream is walked separately instead, oldest first through idx_perspective_event_order,
+  -- and stops at the bound on its own. Work is then bounded by the batch times the bound rather
+  -- than by the depth of whatever streams the batch happened to select, and a deep stream can still
+  -- contribute the whole bound rather than being rationed to one row a cycle (145, #714).
+  candidate_events AS (
+    SELECT c.event_work_id, c.event_id
+    FROM selected_streams ss
+    CROSS JOIN LATERAL (
+      SELECT pe.event_work_id, pe.event_id
+      FROM __SCHEMA__.wh_perspective_events pe
+      WHERE pe.stream_id = ss.stream_id
+        AND (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
+        AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
+        AND pe.processed_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM __SCHEMA__.wh_perspective_events earlier
+          WHERE earlier.stream_id = pe.stream_id
+            AND earlier.perspective_name = pe.perspective_name
+            AND earlier.event_id < pe.event_id
+            AND (
+              (earlier.instance_id IS NOT NULL AND earlier.lease_expiry > p_now)
+              OR (earlier.scheduled_for > p_now)
+            )
+        )
+      ORDER BY pe.event_id
+      LIMIT COALESCE(p_max_rows, 2147483647)
+    ) c
+  ),
   locked AS (
+    -- Oldest first across the selected streams, and stop at the row bound. event_id is a v7 id, so
+    -- this is arrival order, and per-stream order falls out of it: an event is only reached after
+    -- every earlier event of its own stream, so a stream is captured from its head and never with a
+    -- hole. A stream deeper than the bound is captured over consecutive polls, which is what the
+    -- inbox has done since 145; the drain is per stream with an unbounded channel and the re-offer
+    -- hands the stream back each poll, so the remainder is picked up rather than stranded.
+    -- Full-stream capture in one lease was never a correctness property, only the previous cost of
+    -- not bounding this.
     SELECT pe.event_work_id
     FROM __SCHEMA__.wh_perspective_events pe
-    INNER JOIN selected_streams ss ON ss.stream_id = pe.stream_id
+    INNER JOIN candidate_events ce ON ce.event_work_id = pe.event_work_id
     WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
-      AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
       AND pe.processed_at IS NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM __SCHEMA__.wh_perspective_events earlier
-        WHERE earlier.stream_id = pe.stream_id
-          AND earlier.perspective_name = pe.perspective_name
-          AND earlier.event_id < pe.event_id
-          AND (
-            (earlier.instance_id IS NOT NULL AND earlier.lease_expiry > p_now)
-            OR (earlier.scheduled_for > p_now)
-          )
-      )
+    ORDER BY ce.event_id
+    LIMIT COALESCE(p_max_rows, 2147483647)
     FOR UPDATE OF pe SKIP LOCKED
   ),
-  -- Claim ALL events for selected streams (full-stream capture)
+  -- Claim the locked events for the selected streams, oldest first, up to the row bound (160).
   claimed AS (
     UPDATE __SCHEMA__.wh_perspective_events pe
     SET instance_id = p_instance_id,
@@ -1543,5 +1593,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_perspective_events(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER) IS
-  'Acquires unowned/abandoned pending perspective events for an instance, by stream (027 ownership, 140 per-stream gate, 148 stream leases). 150: the streams with the most urgent claimable event are selected first, oldest first within a priority.';
+COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_perspective_events(UUID, TIMESTAMPTZ, TIMESTAMPTZ, INTEGER, INTEGER, INTEGER, INTEGER) IS
+  'Acquires unowned/abandoned pending perspective events for an instance, by stream (027 ownership, 140 per-stream gate, 148 stream leases). 150: the streams with the most urgent claimable event are selected first, oldest first within a priority. 160: bounded by ROWS as well as by streams -- it used to take a batch of streams and lease every pending event of each, so one call cost whatever a consumer''s streams happened to hold; a stream deeper than the bound is now captured from its head over consecutive polls.';

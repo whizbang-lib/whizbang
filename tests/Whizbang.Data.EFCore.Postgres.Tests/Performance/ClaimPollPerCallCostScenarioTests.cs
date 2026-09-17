@@ -27,26 +27,30 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Performance;
 /// take longer.
 /// </para>
 /// <para>
-/// The measure is taken at two stream depths against the same batch. One number alone cannot
-/// distinguish a poll that is expensive because it was asked for a lot from a poll that is expensive
-/// because of what it found, and that distinction is the whole finding: the same code was reported
-/// at 4,575, 12,022 and 29,018 blocks a call on three deployed services, which turns out to be one
-/// code path at three data shapes rather than three problems.
+/// The measure is taken at three stream depths against the same batch and the same stream count, so
+/// depth is the only thing that varies. One number alone cannot distinguish a poll that is expensive
+/// because it was asked for a lot from a poll that is expensive because of what it found, and that
+/// distinction is the whole finding: the same code was reported at 4,575, 12,022 and 29,018 blocks a
+/// call on three deployed services, which turns out to be one code path at three data shapes rather
+/// than three problems. The ceiling is declared once and has to hold at every depth.
 /// </para>
 /// </remarks>
 [Category("Benchmark")]
 [Category("Performance")]
 public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
-  /// <summary>Streams the work spreads over. Held constant across the two depths.</summary>
+  /// <summary>Streams the work spreads over. Held constant across the depths.</summary>
   private const int STREAMS = 100;
-  /// <summary>The claim's batch, in streams. Held constant across the two depths.</summary>
+  /// <summary>The claim's batch, in streams. Held constant across the depths.</summary>
   private const int BATCH = 10;
   /// <summary>Polls measured at each depth.</summary>
   private const int POLLS = 6;
-  /// <summary>A shallow stream: the shape a service with short-lived streams has.</summary>
-  private const int SHALLOW_DEPTH = 12;
-  /// <summary>A deep stream: the shape that made a poll cost tens of thousands of blocks.</summary>
-  private const int DEEP_DEPTH = 200;
+  /// <summary>
+  /// The depths measured, from a service with short-lived streams to the shape that made a poll cost
+  /// tens of thousands of blocks. The ceiling has to hold at every one of them: the property worth
+  /// having is that per-call cost is bounded by a number declared here rather than by a consumer's
+  /// data shape, and a ceiling that holds only at the shallow end does not say that.
+  /// </summary>
+  private static readonly int[] DEPTHS = [12, 50, 200];
 
   private static readonly string[] MEASURED_TABLES =
     ["wh_outbox", "wh_inbox", "wh_perspective_events", "wh_event_store"];
@@ -64,23 +68,28 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
     var baseline = PerformanceBaseline.Load(PerformanceBaseline.DefaultPath);
     var report = new PerformanceBaseline.Report(baseline, "Claim poll cost per call, by stream depth");
 
-    var shallow = await _measureAtDepthAsync(conn, recorder, SHALLOW_DEPTH, cancellationToken);
-    var deep = await _measureAtDepthAsync(conn, recorder, DEEP_DEPTH, cancellationToken);
-
-    report.Measure("claim.blocks_per_call.shallow_streams", shallow.BlocksPerCall, "blocks/call");
-    report.Measure("claim.blocks_per_call.deep_streams", deep.BlocksPerCall, "blocks/call");
-    report.Measure("claim.rows_leased_per_call.deep_streams", deep.RowsLeasedPerCall, "rows/call");
-    // The finding, as one number: how much more a poll costs purely because the streams it found
-    // are deeper. A poll bounded by what it was asked for holds this near one.
+    var measures = new List<DepthMeasure>();
+    foreach (var depth in DEPTHS) {
+      var measured = await _measureAtDepthAsync(conn, recorder, depth, cancellationToken);
+      measures.Add(measured);
+      report.Measure($"claim.blocks_per_call.depth_{depth}", measured.BlocksPerCall, "blocks/call");
+      report.Measure($"claim.rows_leased_per_call.depth_{depth}", measured.RowsLeasedPerCall, "rows/call");
+    }
+    // Recorded, not gated. It says how much more a poll costs purely because the streams it found
+    // are deeper, and it is the number that fell from near-linear to sublinear when the row bound
+    // landed. It is deliberately not a ceiling: the deepest fixture holds sixteen times the rows of
+    // the shallowest, so some of this ratio is a larger index being deeper to descend rather than a
+    // poll doing more work, and gating a ratio between two different table sizes would conflate the
+    // two. The absolute ceiling at every depth is the property that matters.
     report.Measure("claim.depth_cost_multiple",
-      deep.BlocksPerCall / Math.Max(shallow.BlocksPerCall, 1), "x");
+      measures[^1].BlocksPerCall / Math.Max(measures[0].BlocksPerCall, 1), "x");
 
     var rendered = report.Render();
     Console.WriteLine(rendered);
     Console.WriteLine("Baseline lines for this run:\n" + report.RenderBaselineLines());
     await _writeReportAsync("claim-per-call", rendered, report.RenderBaselineLines());
 
-    await Assert.That(shallow.BlocksPerCall).IsGreaterThan(0)
+    await Assert.That(measures[0].BlocksPerCall).IsGreaterThan(0)
       .Because("the poll has to have done something, or the multiple below divides by nothing and a "
         + "scenario that never polls would report a perfect score");
     await Assert.That(report.Breaches).IsEmpty()
@@ -93,7 +102,7 @@ public class ClaimPollPerCallCostScenarioTests : EFCoreTestBase {
   private readonly record struct DepthMeasure(double BlocksPerCall, double RowsLeasedPerCall);
 
   /// <summary>
-  /// Fills to one stream depth and measures the polls. Each depth gets its own fill, so the two
+  /// Fills to one stream depth and measures the polls. Each depth gets its own fill, so the
   /// measurements differ in depth and in nothing else.
   /// </summary>
   private async Task<DepthMeasure> _measureAtDepthAsync(
