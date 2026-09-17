@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup .NET
         uses: ./.github/actions/setup-dotnet-retry
@@ -41,7 +41,7 @@ jobs:
 
       - name: Cache NuGet packages
         if: inputs.artifact-name == ''
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload TRX Results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: trx-unit
           path: |
@@ -107,7 +107,7 @@ jobs:
 
       - name: Upload Coverage (pre-built)
         if: success() && inputs.artifact-name != ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coverage-unit
           path: TestResults/*.cobertura.xml
@@ -115,7 +115,7 @@ jobs:
 
       - name: Upload Coverage (dynamic)
         if: success() && inputs.artifact-name == ''
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: coverage-unit
           path: |
