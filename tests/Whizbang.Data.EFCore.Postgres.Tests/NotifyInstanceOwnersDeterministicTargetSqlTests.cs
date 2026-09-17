@@ -50,11 +50,19 @@ public class NotifyInstanceOwnersDeterministicTargetSqlTests : EFCoreTestBase {
     const int partitionNumber = 7;
     await _insertOutboxRowAsync(conn, streamId: streamId, partitionNumber: partitionNumber);
 
-    // Ensure the stream is NOT in wh_active_streams (i.e. cold-start case).
-    await using (var clear = conn.CreateCommand()) {
-      clear.CommandText = "DELETE FROM wh_active_streams WHERE stream_id = @sid";
-      clear.Parameters.AddWithValue("sid", streamId);
-      await clear.ExecuteNonQueryAsync();
+    // Unclaimed: the ledger knows the stream's partition but no instance owns it. The number is
+    // pinned here rather than left to be recovered from the outbox row, because recovering it from
+    // the queue table is what made every doorbell read the whole table; the ledger carries the
+    // stream-to-partition mapping and is what the branch reads now.
+    await using (var pin = conn.CreateCommand()) {
+      pin.CommandText = @"
+        INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, last_activity_at)
+        VALUES (@sid, @part, NULL, NOW())
+        ON CONFLICT (stream_id) DO UPDATE
+          SET partition_number = EXCLUDED.partition_number, assigned_instance_id = NULL";
+      pin.Parameters.AddWithValue("sid", streamId);
+      pin.Parameters.AddWithValue("part", partitionNumber);
+      await pin.ExecuteNonQueryAsync();
     }
 
     var received = await _captureNotificationsAsync(

@@ -90,8 +90,11 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await _upsertActiveStreamAsync(conn, pinnedStream, partitionNumber: 0, instanceA);
 
     var unclaimedStream = (Guid)TrackedGuid.NewMedo();
-    // partition 7 % 3 = rank 1 → instanceB.
+    // partition 7 % 3 = rank 1 → instanceB. The ledger carries the number and no owner: that is
+    // what "unclaimed" means to Step 2, and the ledger is where the number comes from now that a
+    // doorbell no longer recovers it by reading the queue table.
     await _insertOutboxRowAsync(conn, unclaimedStream, partitionNumber: 7);
+    await _upsertActiveStreamAsync(conn, unclaimedStream, partitionNumber: 7, owner: null);
 
     var received = await _captureNotificationsAsync(
       conn,

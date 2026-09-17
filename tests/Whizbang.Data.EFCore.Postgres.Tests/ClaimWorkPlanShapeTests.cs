@@ -95,8 +95,10 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
     await hb.ExecuteNonQueryAsync();
   }
 
-  private static async Task<int> _claimAsync(NpgsqlConnection connection, Guid instanceId) {
+  private static async Task<int> _claimAsync(NpgsqlConnection connection, Guid instanceId, int? batch = null) {
     await using var cmd = connection.CreateCommand();
+    // p_max_rows is the acquisition's own row bound (145); the coordinator passes what the
+    // outstanding budget can afford, which under load is the batch.
     cmd.CommandText = @"
       SELECT count(*) FROM claim_work(
         p_instance_id => @id,
@@ -105,10 +107,12 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
         p_process_id => 1,
         p_max_streams => @batch,
         p_partition_count => 10000,
-        p_lease_seconds => 300
+        p_lease_seconds => 300,
+        p_max_rows => @batch
       )";
     cmd.Parameters.AddWithValue("id", instanceId);
-    cmd.Parameters.AddWithValue("batch", BATCH);
+    cmd.Parameters.AddWithValue(nameof(batch), batch ?? BATCH);
+    cmd.CommandTimeout = 300;
     return Convert.ToInt32(await cmd.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
   }
 
@@ -402,6 +406,219 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
       counts[reader.GetString(0)] = reader.GetInt64(1);
     }
     return counts;
+  }
+
+  /// <summary>Streams the acquiring workload spreads its work over.</summary>
+  private const int IMPORT_STREAMS = 400;
+  /// <summary>Rows per stream per table: a backlog in the thousands, as an import produces.</summary>
+  private const int IMPORT_ROWS_PER_STREAM = 12;
+  /// <summary>Claimants competing for it, so an instance's rank decides what it may take.</summary>
+  private const int IMPORT_CLAIMANTS = 4;
+  /// <summary>Polls measured. The ratio is over the window, not over any one poll.</summary>
+  private const int IMPORT_POLLS = 10;
+  /// <summary>Rows completed per table between polls: an import never stops moving.</summary>
+  private const int IMPORT_CHURN_PER_POLL = 20;
+  /// <summary>The batch a loaded instance polls with once its claim window has narrowed.</summary>
+  private const int IMPORT_BATCH = 10;
+  /// <summary>
+  /// <para>
+  /// Blocks one poll may read per row of work it returns, while a backlog it can acquire from is
+  /// present. This is the ratio a deployed fleet reports, and the only one that survived contact
+  /// with production: blocks per poll says nothing on its own, because a poll that returns twelve
+  /// rows and one that returns a hundred cost nearly the same.
+  /// </para>
+  /// <para>
+  /// Measured on a fleet during a bulk import, four times, with an observability extension on and
+  /// off and with busy and idle neighbors: 229 to 247 on a consumer-shaped service returning about
+  /// a hundred rows a poll, and 321 to 411 on a producer-shaped one returning twelve to fifteen.
+  /// Stable across every run. The poll was between a quarter and a half of all database time.
+  /// </para>
+  /// <para>
+  /// This harness read 605 before the acquisition was bounded and 211 after, so the ceiling is set
+  /// where it separates the two and leaves room for a planner that picks differently on another
+  /// machine. It is deliberately not lower, and the reason is worth stating because it is a property
+  /// of the ratio and not of the code: a row RETURNED is a stream offered, and a poll that offers
+  /// thirty streams leases about a hundred and forty rows to do it. Most of what a bounded poll now
+  /// costs is the lease itself, a new heap tuple and an entry in every index of the row it takes,
+  /// and that cost is proportional to rows leased, which this denominator does not count. Per row
+  /// of work actually transacted the same polls cost about 32 blocks. Pushing the ratio below the
+  /// leasing multiple would mean leasing less per poll, which is a throughput decision and not a
+  /// plan-shape one.
+  /// </para>
+  /// </summary>
+  private const long BLOCKS_PER_ROW_RETURNED = 300;
+
+  /// <summary>
+  /// A poll that can acquire is priced by the batch it returns, not by the backlog it acquires
+  /// from.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// The two tests above measure a poll that acquires nothing: one finds every row leased by a live
+  /// peer, the other re-offers what the instance already holds. That is the steady state between
+  /// loads, and it is not the state a bulk import is ever in. During an import there is always
+  /// unowned work, so every poll of every instance runs all three acquisitions, and the acquisitions
+  /// are what the poll costs -- the re-offers that produce the rows this ratio counts are a rounding
+  /// error beside them.
+  /// </para>
+  /// <para>
+  /// Two things make this harness reproduce a production ratio where a re-offer-only one does not,
+  /// and both are the point. The tables are filled with work the poller may take, so acquisition
+  /// runs on every poll instead of never. And the fill is not vacuumed: autovacuum is turned off on
+  /// the queue tables for the duration instead, which keeps its reads of the just-written pages out
+  /// of the measured window without also removing the dead rows. Vacuuming leaves the visibility map
+  /// all-visible, and a scan that is index-only against an all-visible map fetches a heap page per
+  /// row against a churning one. A queue table under load is never all-visible, so a vacuumed fill
+  /// measures a plan shape production does not have.
+  /// </para>
+  /// </remarks>
+  [Test]
+  [Timeout(600000)]
+  public async Task ClaimWork_AcquiringUnderAnImport_IsPricedByTheBatchNotTheBacklogAsync(
+      CancellationToken cancellationToken) {
+    await using var dbContext = CreateDbContext();
+    var connection = (NpgsqlConnection)dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync(cancellationToken);
+    }
+    var poller = await _fillImportAsync(connection);
+
+    var (rows, blocks) = await _measureAcquiringPollsAsync(connection, poller);
+
+    await Assert.That(rows).IsGreaterThan(0)
+      .Because("the poller must return work, or the ratio has no denominator and proves nothing");
+    var ratio = blocks / rows;
+    await Assert.That(ratio).IsLessThan(BLOCKS_PER_ROW_RETURNED)
+      .Because($"{IMPORT_POLLS} polls read {blocks} blocks to return {rows} rows of work, {ratio} per row, from a "
+        + $"backlog of {IMPORT_STREAMS * IMPORT_ROWS_PER_STREAM} rows per table shared with {IMPORT_CLAIMANTS} "
+        + "claimants; an acquisition bounded by what it leases pays an index descent and a page per row it takes, "
+        + "and one bounded by the backlog walks every pending row of every stream it is not going to return, on "
+        + "every poll of every instance in the fleet, several times a second");
+  }
+
+  /// <summary>
+  /// Runs the measured window: a poll, then the rows an import completes between polls, repeated.
+  /// Returns the rows of work returned over the window and the blocks the four tables and their
+  /// indexes gave up for them.
+  /// </summary>
+  private async Task<(long Rows, long Blocks)> _measureAcquiringPollsAsync(
+      NpgsqlConnection connection, Guid poller) {
+    var before = await _costAsync(connection);
+    long rows = 0;
+    for (var i = 0; i < IMPORT_POLLS; i++) {
+      rows += await _claimAsync(connection, poller, IMPORT_BATCH);
+      await _completeSomeAsync(connection, poller);
+    }
+    var after = await _costAsync(connection);
+    return (rows, TABLES.Sum(t => after[t].Blocks - before[t].Blocks));
+  }
+
+  /// <summary>
+  /// The shape a bulk import puts a database in: hundreds of streams carrying a mix of outbox,
+  /// inbox and perspective work at mixed priorities, payloads wide enough that no row is updated in
+  /// place, several registered claimants, and a share of the streams unowned so every poll has
+  /// something to acquire. Returns the instance the measurement polls as.
+  /// </summary>
+  private static async Task<Guid> _fillImportAsync(NpgsqlConnection connection) {
+    var claimants = Enumerable.Range(0, IMPORT_CLAIMANTS).Select(_ => Guid.NewGuid()).ToArray();
+    foreach (var claimant in claimants) {
+      await _heartbeatAsync(connection, claimant);
+    }
+
+    await using var fill = connection.CreateCommand();
+    // Autovacuum off for the duration: its reads of the pages this fill just wrote would land inside
+    // the measured window, and vacuuming instead would leave the visibility map all-visible, which
+    // is the one condition a queue table under load never has.
+    fill.CommandText = @"
+      ALTER TABLE wh_outbox SET (autovacuum_enabled = false);
+      ALTER TABLE wh_inbox SET (autovacuum_enabled = false);
+      ALTER TABLE wh_perspective_events SET (autovacuum_enabled = false);
+      ALTER TABLE wh_event_store SET (autovacuum_enabled = false);
+      CREATE TEMP TABLE _import_streams AS
+      SELECT gen_random_uuid() AS stream_id, s AS ordinal,
+             -- Every fifth stream unowned, so acquisition always has candidates; the rest leased by
+             -- one of the claimants, which is what an instance's peers hold mid-import.
+             CASE WHEN s % 5 = 0 THEN NULL ELSE (@holders::uuid[])[1 + (s % @holder_count)] END AS holder,
+             CASE s % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END AS priority
+      FROM generate_series(1, @streams) s;
+
+      INSERT INTO wh_outbox
+        (message_id, destination, message_type, event_data, metadata, status, attempts, created_at,
+         stream_id, partition_number, instance_id, lease_expiry, priority)
+      SELECT gen_random_uuid(), 'topic', 'TestEvent', jsonb_build_object('pad', repeat('x', 1500)), '{}',
+             0, 0, NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
+             st.stream_id, compute_partition(st.stream_id), st.holder,
+             CASE WHEN st.holder IS NULL THEN NULL ELSE NOW() + INTERVAL '5 minutes' END, st.priority
+      FROM _import_streams st CROSS JOIN generate_series(1, @per_stream) r;
+
+      -- Every inbox event already carries its event-store row and is stamped as chained, which is
+      -- the state a row reaches moments after it is stored. The chain is not what this measures,
+      -- and leaving it work to do on every poll would price the window by the fill instead.
+      WITH inserted AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
+           stream_id, partition_number, instance_id, lease_expiry, is_event, priority, chain_emitted_at)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent',
+               jsonb_build_object('pad', repeat('x', 1500)), '{}',
+               0, 0, NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
+               st.stream_id, compute_partition(st.stream_id), st.holder,
+               CASE WHEN st.holder IS NULL THEN NULL ELSE NOW() + INTERVAL '5 minutes' END,
+               (st.ordinal % 4) <> 0, st.priority, NOW()
+        FROM _import_streams st CROSS JOIN generate_series(1, @per_stream) r
+        RETURNING message_id, stream_id, received_at, is_event)
+      INSERT INTO wh_event_store
+        (event_id, stream_id, aggregate_id, aggregate_type, event_type, scope, version, created_at,
+         commit_sequence)
+      SELECT i.message_id, i.stream_id, i.stream_id, 'TestAggregate', 'TestEvent', '{}'::jsonb,
+             ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at, i.message_id),
+             i.received_at,
+             ROW_NUMBER() OVER (ORDER BY i.received_at, i.message_id)
+      FROM inserted i WHERE i.is_event;
+
+      INSERT INTO wh_perspective_events
+        (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number,
+         instance_id, lease_expiry, priority)
+      SELECT st.stream_id, 'TestPerspective', gen_random_uuid(), 0, 0,
+             NOW() - (st.ordinal * INTERVAL '1 millisecond') + (r * INTERVAL '1 microsecond'),
+             compute_partition(st.stream_id), st.holder,
+             CASE WHEN st.holder IS NULL THEN NULL ELSE NOW() + INTERVAL '5 minutes' END, st.priority
+      FROM _import_streams st CROSS JOIN generate_series(1, @per_stream) r;
+
+      DROP TABLE _import_streams;
+      ANALYZE wh_outbox; ANALYZE wh_inbox; ANALYZE wh_perspective_events; ANALYZE wh_event_store;";
+    fill.Parameters.AddWithValue("holders", claimants);
+    fill.Parameters.AddWithValue("holder_count", IMPORT_CLAIMANTS);
+    fill.Parameters.AddWithValue("streams", IMPORT_STREAMS);
+    fill.Parameters.AddWithValue("per_stream", IMPORT_ROWS_PER_STREAM);
+    fill.CommandTimeout = 300;
+    await fill.ExecuteNonQueryAsync();
+    return claimants[0];
+  }
+
+  /// <summary>
+  /// The rows an import completes between two polls. Work leaves the queue the whole time a load
+  /// runs, and the dead rows it leaves behind are why a scan that reads the heap costs a page per
+  /// row rather than an index entry.
+  /// </summary>
+  private static async Task _completeSomeAsync(NpgsqlConnection connection, Guid poller) {
+    await using var done = connection.CreateCommand();
+    done.CommandText = @"
+      UPDATE wh_outbox SET processed_at = NOW()
+      WHERE message_id IN (SELECT message_id FROM wh_outbox
+                           WHERE processed_at IS NULL AND instance_id = @id
+                           ORDER BY created_at LIMIT @n);
+      UPDATE wh_inbox SET processed_at = NOW()
+      WHERE message_id IN (SELECT message_id FROM wh_inbox
+                           WHERE processed_at IS NULL AND instance_id = @id
+                           ORDER BY received_at LIMIT @n);
+      UPDATE wh_perspective_events SET processed_at = NOW()
+      WHERE event_work_id IN (SELECT event_work_id FROM wh_perspective_events
+                              WHERE processed_at IS NULL AND instance_id = @id
+                              ORDER BY created_at LIMIT @n);";
+    done.Parameters.AddWithValue("id", poller);
+    done.Parameters.AddWithValue("n", IMPORT_CHURN_PER_POLL);
+    done.CommandTimeout = 300;
+    await done.ExecuteNonQueryAsync();
   }
 
   /// <summary>
