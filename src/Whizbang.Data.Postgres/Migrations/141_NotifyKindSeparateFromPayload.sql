@@ -35,7 +35,27 @@
 --   statements in 130 and 131 carry an argument list now: a replay recreates the three-argument
 --   overload beside this one until this file runs again, and a bare name is ambiguous (42725).
 --
--- Dependencies: 130 (wh_notify_state, notify_instance_owners), 137 (_notify_debounced current text)
+--   Later, in place: the deterministic-target branch computes the partition number instead of
+--   reading it. It had recovered one number per unclaimed stream with
+--   "SELECT partition_number FROM <queue table> WHERE stream_id = ANY(...)", once per kind. That
+--   lookup carries no status predicate and every stream_id index on the queue tables is partial on
+--   one, so no index ever applied: each ring read every row those streams had ever written, settled
+--   history included. Measured on a deployed fleet during a bulk import, the outbox branch alone
+--   took 14,383 sequential scans reading 165 million tuples to announce 36 thousand inserted rows
+--   -- 4,550 tuples read per row written -- and the doorbell, not the insert, was where the store
+--   spent its time. compute_partition (001) is IMMUTABLE and total in the stream id and is the only
+--   writer of partition_number, so the number was always derivable from the argument already in
+--   hand; the three branches differed only in which table they read, and collapse into one that
+--   reads no queue table at all. The kind still gates the branch, so a schedule doorbell and a
+--   signal's wire name reach it exactly as before, which is to say not at all.
+--   The identity is not quite universal, so the branch prefers the stream ledger's stored number and
+--   computes only for a stream the ledger has never held: recover_dead_letter writes partition 0
+--   whatever the stream id hashes to, and the partition count is a consumer setting, so a
+--   deployment that changes it stamped its rows with a count compute_partition's default does not
+--   know. The ledger carries the number the claim routes on in both cases, and the lookup is one
+--   primary-key probe against a table this function already reads twice.
+--
+-- Dependencies: 130 (wh_notify_state, notify_instance_owners), 137 (_notify_debounced current text), 001 (compute_partition)
 -- Objects: wh_notify_state.payload_kind (TEXT), _notify_debounced, notify_instance_owners_with_payload, notify_instance_owners
 
 ALTER TABLE __SCHEMA__.wh_notify_state
@@ -212,69 +232,63 @@ BEGIN
     RETURN;
   END IF;
 
-  IF p_kind = 'outbox' THEN
+  -- The partition number is COMPUTED, never read. This branch needs one number per unclaimed
+  -- stream, and compute_partition (001) is IMMUTABLE and total in the stream id: it is the only
+  -- thing that ever writes partition_number into the queue tables, and recompute_partition_numbers
+  -- (041) exists to restore that identity wherever a partition count changed. Recovering the number
+  -- by reading the table asked a question the argument already answered, and asked it the most
+  -- expensive way available: "stream_id = ANY(...)" carries no status predicate, every stream_id
+  -- index on the queue tables is partial on one, so no index applied and each ring read every row
+  -- those streams had ever written, settled history included. Measured on a deployed fleet during a
+  -- bulk import, the three branches together read hundreds of millions of tuples sequentially to
+  -- announce tens of thousands of inserted rows, and the doorbell, not the insert, was where the
+  -- store spent its time.
+  --
+  -- Two consequences worth naming, both deliberate:
+  --   * The three branches collapse into one. They differed only in which table they read the
+  --     number out of, and nothing reads a table now, so the kind no longer selects a query. It
+  --     still GATES the branch: a doorbell kind other than these three (schedule) and a signal's
+  --     wire name reached no branch before and must reach none now, or every targeted signal would
+  --     start waking a deterministic owner it never woke.
+  --   * A stream the caller names that has no row in the queue table changes from "notify nobody"
+  --     to "notify its deterministic owner". That is what the branch is for -- it exists to wake the
+  --     instance that would claim a stream nothing has claimed yet -- and deriving the target from
+  --     stored rows made it fall silent exactly when the rows were not visible to it.
+  IF p_kind IN (__CATEGORY_OUTBOX__, __CATEGORY_INBOX__, __CATEGORY_PERSPECTIVE__) THEN
     PERFORM __SCHEMA__._notify_debounced(targets.target_instance_id, p_kind, p_payload, v_debounce)
     FROM (
-      WITH src AS (
-        SELECT partition_number
-        FROM __SCHEMA__.wh_outbox
-        WHERE stream_id = ANY(v_unclaimed_streams)
-      ),
-      live AS (
+      WITH live AS (
         SELECT instance_id,
                (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)::INTEGER AS rank
         FROM __SCHEMA__.wh_service_instances
         WHERE last_heartbeat_at > NOW() - INTERVAL '30 seconds'
       )
       SELECT DISTINCT live.instance_id AS target_instance_id
-      FROM src
-      JOIN live ON live.rank = (src.partition_number % v_active_count)
-      WHERE src.partition_number IS NOT NULL
-    ) AS targets;
-  ELSIF p_kind = 'inbox' THEN
-    PERFORM __SCHEMA__._notify_debounced(targets.target_instance_id, p_kind, p_payload, v_debounce)
-    FROM (
-      WITH src AS (
-        SELECT partition_number
-        FROM __SCHEMA__.wh_inbox
-        WHERE stream_id = ANY(v_unclaimed_streams)
-      ),
-      live AS (
-        SELECT instance_id,
-               (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)::INTEGER AS rank
-        FROM __SCHEMA__.wh_service_instances
-        WHERE last_heartbeat_at > NOW() - INTERVAL '30 seconds'
-      )
-      SELECT DISTINCT live.instance_id AS target_instance_id
-      FROM src
-      JOIN live ON live.rank = (src.partition_number % v_active_count)
-      WHERE src.partition_number IS NOT NULL
-    ) AS targets;
-  ELSIF p_kind = 'perspective' THEN
-    PERFORM __SCHEMA__._notify_debounced(targets.target_instance_id, p_kind, p_payload, v_debounce)
-    FROM (
-      WITH src AS (
-        SELECT partition_number
-        FROM __SCHEMA__.wh_perspective_events
-        WHERE stream_id = ANY(v_unclaimed_streams)
-      ),
-      live AS (
-        SELECT instance_id,
-               (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)::INTEGER AS rank
-        FROM __SCHEMA__.wh_service_instances
-        WHERE last_heartbeat_at > NOW() - INTERVAL '30 seconds'
-      )
-      SELECT DISTINCT live.instance_id AS target_instance_id
-      FROM src
-      JOIN live ON live.rank = (src.partition_number % v_active_count)
-      WHERE src.partition_number IS NOT NULL
+      FROM unnest(v_unclaimed_streams) AS s
+      JOIN live ON live.rank = (
+        -- The stream ledger's number first, computed only for a stream it has never held. The
+        -- ledger is keyed by stream id, so this is one primary-key probe per unclaimed stream
+        -- against a table this function already reads twice, never a scan of a queue table. It is
+        -- also the number the claim itself routes on, which matters in the two places where the
+        -- stored number and the computed one part company: a row put back by recover_dead_letter
+        -- carries partition 0 whatever its stream id hashes to, and a deployment that configures a
+        -- partition count other than the default stamped its rows with that count while
+        -- compute_partition here would assume the default. In both cases the ledger agrees with the
+        -- claim and a bare computation would not, so the doorbell would wake an instance that is
+        -- not allowed to take the work and the real owner would wait out its poll.
+        COALESCE(
+          (SELECT ast.partition_number
+           FROM __SCHEMA__.wh_active_streams ast
+           WHERE ast.stream_id = s),
+          __SCHEMA__.compute_partition(s)
+        ) % v_active_count)
     ) AS targets;
   END IF;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION __SCHEMA__.notify_instance_owners_with_payload(TEXT, TEXT, UUID[]) IS
-'Instance-routed NOTIFY emission with doorbell debounce (slice 27 + v0.685 + 130, kind split from payload in 141). Targeting is unchanged (per-owner for pinned streams, rank-deterministic by p_kind for unclaimed outbox/inbox/perspective streams); every emission goes through _notify_debounced(instance, p_kind, p_payload, window). Signals call this form with their wire name as both.';
+'Instance-routed NOTIFY emission with doorbell debounce (slice 27 + v0.685 + 130, kind split from payload in 141). Per-owner for pinned streams; rank-deterministic for unclaimed outbox/inbox/perspective streams, where the partition number is computed from the stream id through compute_partition rather than read out of the queue table -- reading it made every ring cost what the named streams had ever written, because the lookup carries no status predicate and every stream_id index on those tables is partial on one. A named stream with no row in the queue table therefore reaches its deterministic owner now instead of nobody, which is what the branch is for. Every emission goes through _notify_debounced(instance, p_kind, p_payload, window). Signals call this form with their wire name as both, and reach only the per-owner path.';
 
 -- ============================================================================
 -- notify_instance_owners(payload, stream_ids) — the doorbell form. Payload IS kind; the closed
