@@ -125,16 +125,30 @@ public sealed class InboxDeserializeCache {
       }
       // Evict the oldest ~10% so we don't hit the cap again on the very next insert.
       var batch = Math.Max(overflow, _maxEntries / 10);
-      var toEvict = _entries
-        .OrderBy(static p => p.Value.ExpiresAt)
-        .Take(batch)
-        .Select(static p => p.Key)
-        .ToArray();
-      foreach (var key in toEvict) {
+      foreach (var key in SelectEvictionKeys(_entries, batch)) {
         _entries.TryRemove(key, out _);
       }
     }
   }
 
-  private readonly record struct Entry(object Payload, DateTimeOffset ExpiresAt);
+  /// <summary>
+  /// The keys a cap enforcement evicts: the oldest by expiry, up to <paramref name="batch"/> of
+  /// them.
+  /// </summary>
+  /// <remarks>
+  /// Separated from the enforcement so the selection can be driven directly. The entries it is
+  /// given are a live concurrent dictionary in production, which constrains how it may read them
+  /// and is the whole reason this is its own method.
+  /// </remarks>
+  internal static Guid[] SelectEvictionKeys(
+      IEnumerable<KeyValuePair<Guid, Entry>> entries, int batch) {
+    ArgumentNullException.ThrowIfNull(entries);
+    return entries
+      .OrderBy(static p => p.Value.ExpiresAt)
+      .Take(batch)
+      .Select(static p => p.Key)
+      .ToArray();
+  }
+
+  internal readonly record struct Entry(object Payload, DateTimeOffset ExpiresAt);
 }
