@@ -109,7 +109,17 @@ BEGIN
            -- 150: a background stream that has waited past the background wait target competes as standard.
            p_now - (c_background_wait_target_seconds * INTERVAL '1 second') AS background_promote_before,
            -- 150: the share of a batch the background bucket always receives while it has pending streams.
-           GREATEST(1, CEIL(LEAST(COALESCE(p_max_rows, 2147483647), 1000000) * c_background_floor_share))::BIGINT AS background_floor
+           GREATEST(1, CEIL(LEAST(COALESCE(p_max_rows, 2147483647), 1000000) * c_background_floor_share))::BIGINT AS background_floor,
+           -- 159: rows of one band and one ownership class the acquisition will look at. A multiple
+           -- of the batch, and a constant against the backlog, which is the whole point: the window
+           -- is what makes a poll cost the same whether the queue holds a thousand rows or a
+           -- million. It cannot cost the acquisition its throughput, only its breadth: the lanes
+           -- claim p_max_rows rows either way, and a narrower window means a lane meets fewer
+           -- distinct streams and takes more rows from each (the few-mode branch below), which is
+           -- the same batch drawn less widely. The window is over the OLDEST claimable rows and
+           -- those are what the poll claims, so it advances every poll rather than re-reading one
+           -- set forever.
+           GREATEST(LEAST(COALESCE(p_max_rows, 1000), 1000000), 1)::BIGINT * 8 AS claim_window
   ),
   -- 145: ownership is a per-STREAM property. The two sets below are built ONCE per call from the small
   -- ledger tables and tested by hash membership. 138 evaluated the same predicate as correlated
@@ -136,6 +146,59 @@ BEGIN
     WHERE ast.assigned_instance_id = p_instance_id
       AND ast.lease_expiry > p_now
   ),
+  -- 159: the rows this call may take, read once, in an order an index carries. Every lane below
+  -- selects from here instead of from wh_inbox, and each had re-derived the same predicate for
+  -- itself:
+  --
+  --   WHERE processed_at IS NULL AND (instance_id IS NULL OR lease_expiry < p_now)
+  --
+  -- A disjunction has no index order, so each of the five walked the whole pending inbox and threw
+  -- away what a live peer holds -- one plan removed 4,716 rows of 4,800 by filter to yield seven
+  -- streams -- and fetched a heap page per row doing it, because the stream-ordered index carries
+  -- neither is_event nor priority and a queue table under load is never all-visible, so nothing on
+  -- it is ever really index-only. Five passes over the backlog per poll, several polls a second,
+  -- every instance. Doubling the backlog doubled the poll.
+  --
+  -- Split in two, each half is a partial predicate a planner can prove, so 159's indexes carry the
+  -- order: unowned rows by arrival, leased rows by lease expiry so the longest-expired come first.
+  -- One walk per band per class, each stopped at the window, each covered by its index. The bucket
+  -- is the leading key so a band draws from its own range: a large background backlog can never
+  -- crowd an interactive row out of the window, and the background floor below still finds the
+  -- background band populated. Rows of one stream keep their arrival order, which is what per-stream
+  -- FIFO rests on, and the lanes' own band, kind, ownership and partition filters are unchanged --
+  -- this narrows what they read, never what they choose.
+  --
+  -- The window is a bound the LIMITs below could not provide on their own. A lane stops at its
+  -- LIMIT only when it can reach it, and during an import most pending rows belong to a peer or to
+  -- another rank, so a lane that wants eleven streams and can see seven never stops early and runs
+  -- to the end of the table. The bound has to be on rows examined, not on rows found.
+  --
+  -- The scheduled_for predicate rides along: a row that is not due yet is not claimable now, and
+  -- every lane applied it.
+  claimable AS MATERIALIZED (
+    SELECT c.message_id, c.stream_id, c.received_at, c.is_event, c.priority, c.partition_number
+    FROM (VALUES (0), (1), (2)) AS b(bucket)
+    CROSS JOIN LATERAL (
+      (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+       FROM __SCHEMA__.wh_inbox i
+       WHERE i.processed_at IS NULL
+         AND i.instance_id IS NULL
+         AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = b.bucket
+         AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+       ORDER BY i.received_at, i.message_id
+       LIMIT (SELECT claim_window FROM params))
+      UNION ALL
+      (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+       FROM __SCHEMA__.wh_inbox i
+       WHERE i.processed_at IS NULL
+         AND i.instance_id IS NOT NULL
+         AND i.lease_expiry < p_now
+         AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = b.bucket
+         AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+       ORDER BY i.lease_expiry, i.received_at, i.message_id
+       LIMIT (SELECT claim_window FROM params))
+    ) c
+  ),
   -- 150 BUCKET LANES (priority step 3). Every row carries an effective priority (149); the claim schedules by the
   -- bucket the number falls in: interactive (1 to 99), standard (100 to 199), background (200 and up). Lane 0 is
   -- every stream with a pending interactive row anywhere in it: the fold is over all of a stream's pending rows,
@@ -149,10 +212,8 @@ BEGIN
   -- command lane, #721). Priority reorders streams, never rows within a stream.
   urgent_streams AS MATERIALIZED (
     SELECT DISTINCT i.stream_id
-    FROM __SCHEMA__.wh_inbox i
-    WHERE i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+    FROM claimable i
+    WHERE TRUE
       AND i.priority <= c_interactive_band_end
       AND (
         i.stream_id IN (SELECT stream_id FROM mine_owned)
@@ -176,11 +237,9 @@ BEGIN
            CASE WHEN i.is_event THEN 1 ELSE 0 END AS kind,
            ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at, i.message_id) AS stream_seq,
            i.received_at AS cand_received_at
-    FROM __SCHEMA__.wh_inbox i
+    FROM claimable i
     JOIN urgent_streams us ON us.stream_id = i.stream_id
-    WHERE i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+    WHERE TRUE
       AND (
         i.stream_id IN (SELECT stream_id FROM mine_owned)
         OR (
@@ -207,10 +266,8 @@ BEGIN
            0 AS kind,
            ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at, i.message_id) AS stream_seq,
            i.received_at AS cand_received_at
-    FROM __SCHEMA__.wh_inbox i
-    WHERE i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+    FROM claimable i
+    WHERE TRUE
       AND i.is_event = FALSE
       AND i.stream_id NOT IN (SELECT stream_id FROM urgent_streams)
       AND (
@@ -240,10 +297,8 @@ BEGIN
   background_reserved AS (
     SELECT LEAST((SELECT background_floor FROM params),
                  (SELECT count(*) FROM (
-                    SELECT 1 FROM __SCHEMA__.wh_inbox i
-                    WHERE i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+                    SELECT 1 FROM claimable i
+                    WHERE TRUE
                       AND i.is_event = TRUE
                       AND (i.priority > c_standard_band_end AND i.received_at >= (SELECT background_promote_before FROM params))
                       AND i.stream_id NOT IN (SELECT stream_id FROM urgent_streams)
@@ -267,10 +322,8 @@ BEGIN
   -- LANE 1: standard rows, plus background rows promoted past the wait target; breadth-first, early stop.
   eligible_event_streams_std AS MATERIALIZED (
     SELECT DISTINCT i.stream_id
-    FROM __SCHEMA__.wh_inbox i
-    WHERE i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+    FROM claimable i
+    WHERE TRUE
       AND i.is_event = TRUE
       AND (i.priority BETWEEN c_interactive_band_end + 1 AND c_standard_band_end OR (i.priority > c_standard_band_end AND i.received_at < (SELECT background_promote_before FROM params)))
       AND i.stream_id NOT IN (SELECT stream_id FROM urgent_streams)
@@ -300,11 +353,8 @@ BEGIN
            1 AS kind,
            1::BIGINT AS stream_seq,
            i.received_at AS cand_received_at
-    FROM __SCHEMA__.wh_inbox i
+    FROM claimable i
     WHERE (SELECT n_streams > remaining FROM mode_std)
-      AND i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
       AND i.is_event = TRUE
       AND (i.priority BETWEEN c_interactive_band_end + 1 AND c_standard_band_end OR (i.priority > c_standard_band_end AND i.received_at < (SELECT background_promote_before FROM params)))
       AND i.stream_id NOT IN (SELECT stream_id FROM urgent_streams)
@@ -354,11 +404,8 @@ BEGIN
     CROSS JOIN LATERAL (
       SELECT i.message_id, i.received_at,
              ROW_NUMBER() OVER (ORDER BY i.received_at, i.message_id) AS rn
-      FROM __SCHEMA__.wh_inbox i
+      FROM claimable i
       WHERE i.stream_id = s.stream_id
-        AND i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
         AND i.is_event = TRUE
         AND (i.partition_number IS NULL
              OR (i.partition_number % p_active_instance_count) = p_instance_rank
@@ -377,10 +424,8 @@ BEGIN
   -- LANE 2: background rows inside the wait target; whatever the standard lane left, never less than the floor.
   eligible_event_streams_bg AS MATERIALIZED (
     SELECT DISTINCT i.stream_id
-    FROM __SCHEMA__.wh_inbox i
-    WHERE i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+    FROM claimable i
+    WHERE TRUE
       AND i.is_event = TRUE
       AND (i.priority > c_standard_band_end AND i.received_at >= (SELECT background_promote_before FROM params))
       AND i.stream_id NOT IN (SELECT stream_id FROM urgent_streams)
@@ -410,11 +455,8 @@ BEGIN
            1 AS kind,
            1::BIGINT AS stream_seq,
            i.received_at AS cand_received_at
-    FROM __SCHEMA__.wh_inbox i
+    FROM claimable i
     WHERE (SELECT n_streams > remaining FROM mode_bg)
-      AND i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
       AND i.is_event = TRUE
       AND (i.priority > c_standard_band_end AND i.received_at >= (SELECT background_promote_before FROM params))
       AND i.stream_id NOT IN (SELECT stream_id FROM urgent_streams)
@@ -464,11 +506,8 @@ BEGIN
     CROSS JOIN LATERAL (
       SELECT i.message_id, i.received_at,
              ROW_NUMBER() OVER (ORDER BY i.received_at, i.message_id) AS rn
-      FROM __SCHEMA__.wh_inbox i
+      FROM claimable i
       WHERE i.stream_id = s.stream_id
-        AND i.processed_at IS NULL
-      AND (i.instance_id IS NULL OR i.lease_expiry < p_now)
-      AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
         AND i.is_event = TRUE
         AND (i.partition_number IS NULL
              OR (i.partition_number % p_active_instance_count) = p_instance_rank
@@ -500,6 +539,19 @@ BEGIN
     ) u
     ORDER BY u.cand_message_id, u.lane
   ),
+  -- 159: the batch is cut before the row lookup, not after it. The lanes together offer several
+  -- times the batch, every one of them was fetched by primary key to be ordered and then discarded,
+  -- and the whole ordering key (lane, kind, stream order, arrival, id) is already carried here --
+  -- nothing the lookup returns takes part in it. A few batches of headroom is kept so SKIP LOCKED
+  -- below still has rows to fall through to when a peer holds the head of the order; past that a
+  -- contended poll returns a short batch and the next poll takes the rest, which is what SKIP LOCKED
+  -- means everywhere else in this function.
+  pick_ordered AS (
+    SELECT u.cand_message_id, u.lane, u.kind, u.stream_seq, u.cand_received_at
+    FROM pick u
+    ORDER BY u.lane, u.kind, u.stream_seq, u.cand_received_at, u.cand_message_id
+    LIMIT (SELECT max_rows * 4 FROM params)
+  ),
   candidates AS (
     -- Lock under lane order. SKIP LOCKED skips rows a concurrent claimer holds, and the volatile predicates
     -- re-check under the lock - a row leased between pick and here is filtered exactly as before.
@@ -509,7 +561,7 @@ BEGIN
            pick.stream_seq AS cand_stream_seq,
            pick.cand_received_at
     FROM __SCHEMA__.wh_inbox i
-    JOIN pick ON pick.cand_message_id = i.message_id
+    JOIN pick_ordered pick ON pick.cand_message_id = i.message_id
     WHERE (i.instance_id IS NULL OR i.lease_expiry < p_now)
       AND i.processed_at IS NULL
     ORDER BY pick.lane, pick.kind, pick.stream_seq, pick.cand_received_at, pick.cand_message_id

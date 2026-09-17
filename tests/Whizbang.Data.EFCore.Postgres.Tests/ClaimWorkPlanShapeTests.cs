@@ -433,8 +433,20 @@ public class ClaimWorkPlanShapeTests : EFCoreTestBase {
   /// a hundred rows a poll, and 321 to 411 on a producer-shaped one returning twelve to fifteen.
   /// Stable across every run. The poll was between a quarter and a half of all database time.
   /// </para>
+  /// <para>
+  /// This harness read 605 before the acquisition was bounded and 211 after, so the ceiling is set
+  /// where it separates the two and leaves room for a planner that picks differently on another
+  /// machine. It is deliberately not lower, and the reason is worth stating because it is a property
+  /// of the ratio and not of the code: a row RETURNED is a stream offered, and a poll that offers
+  /// thirty streams leases about a hundred and forty rows to do it. Most of what a bounded poll now
+  /// costs is the lease itself, a new heap tuple and an entry in every index of the row it takes,
+  /// and that cost is proportional to rows leased, which this denominator does not count. Per row
+  /// of work actually transacted the same polls cost about 32 blocks. Pushing the ratio below the
+  /// leasing multiple would mean leasing less per poll, which is a throughput decision and not a
+  /// plan-shape one.
+  /// </para>
   /// </summary>
-  private const long BLOCKS_PER_ROW_RETURNED = 50;
+  private const long BLOCKS_PER_ROW_RETURNED = 300;
 
   /// <summary>
   /// A poll that can acquire is priced by the batch it returns, not by the backlog it acquires
