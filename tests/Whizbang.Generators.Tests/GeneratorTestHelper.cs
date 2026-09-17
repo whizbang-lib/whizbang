@@ -308,10 +308,9 @@ public static class GeneratorTestHelper {
     );
 
     var driver = CSharpGeneratorDriver.Create(
-        generators: generators.Select(static g => g.AsSourceGenerator()).ToImmutableArray(),
-        additionalTexts: (additionalFiles ?? [])
-            .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))
-            .ToImmutableArray());
+        generators: [.. generators.Select(static g => g.AsSourceGenerator())],
+        additionalTexts: [.. (additionalFiles ?? [])
+            .Select(f => (AdditionalText)new TestAdditionalText(f.path, f.content))]);
     var ran = driver.RunGeneratorsAndUpdateCompilation(compilation, out var outputCompilation, out _);
 
     _throwIfAnyGeneratorFailed(ran.GetRunResult());
