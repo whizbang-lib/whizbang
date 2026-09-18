@@ -287,6 +287,12 @@ public class PerspectiveWorkerDeepPathMiscTests {
     var runner = new MiscRunner();
     var registry = new MiscRegistry(PERSPECTIVE, runner, [typeof(MiscDeepEvent)]);
     var drainChannel = new SignalingDrainChannel();
+    // The accumulation window is timed THROUGH this clock, so it cannot close on its own. Before
+    // PerspectiveWorker passed its injected provider into the accumulator, that loop read
+    // TimeProvider.System directly and this test had to land stream B inside a 150 ms wall-clock
+    // window -- a race a loaded CI runner loses, and one that dequeued a green pull request from
+    // the merge queue. Nothing here waits on elapsed real time now.
+    var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
     var (worker, _, _) = _createWorker(
       coordinator, eventStore, registry,
       configure: opts => {
@@ -297,7 +303,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
           MaxSize = 10
         };
       },
-      drainChannelOverride: drainChannel);
+      drainChannelOverride: drainChannel,
+      timeProvider: clock);
 
     // Act — write A, wait until the worker is inside the accumulation window, then write B
     using var cts = new CancellationTokenSource();
@@ -305,6 +312,11 @@ public class PerspectiveWorkerDeepPathMiscTests {
     await drainChannel.WriteAsync(streamA, cts.Token);
     await drainChannel.ReaderImpl.WindowWaitEntered.WaitAsync(TimeSpan.FromSeconds(10));
     await drainChannel.WriteAsync(streamB, cts.Token);
+    // Entry two proves B was drained and the window re-armed. Advancing before that is proven would
+    // race the reader and could close the window on a signal written but not yet read.
+    await drainChannel.ReaderImpl.WindowWaitEnteredAtLeast(2).WaitAsync(TimeSpan.FromSeconds(10));
+    // Now close the window deliberately, past the sliding bound and short of MaxWait.
+    clock.Advance(TimeSpan.FromMilliseconds(200));
     await coordinator.WaitForCompletionsAsync(2, TimeSpan.FromSeconds(10));
     cts.Cancel();
     try { await worker.StopAsync(CancellationToken.None); } catch (OperationCanceledException) { }
@@ -413,7 +425,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
       PerspectiveStreamLockOptions? streamLockOptions = null,
       IReceptorInvoker? receptorInvoker = null,
       ICollectiveDispatcher? collectiveDispatcher = null,
-      IPerspectiveDrainChannel? drainChannelOverride = null) {
+      IPerspectiveDrainChannel? drainChannelOverride = null,
+      TimeProvider? timeProvider = null) {
     var instanceProvider = new FakeInstanceProvider();
     var harness = new PerspectiveWorkerTestHarness();
 
@@ -456,7 +469,8 @@ public class PerspectiveWorkerDeepPathMiscTests {
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
+      timeProvider: timeProvider);
     return (worker, harness, provider);
   }
 
@@ -716,10 +730,33 @@ public class PerspectiveWorkerDeepPathMiscTests {
     public bool TryWrite(Guid streamId) => _inner.Writer.TryWrite(streamId);
 
     internal sealed class SignalingReader(ChannelReader<Guid> inner) : ChannelReader<Guid> {
-      private readonly TaskCompletionSource _windowWaitEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+      private readonly System.Collections.Concurrent.ConcurrentDictionary<int, TaskCompletionSource> _gates = new();
       private int _readCount;
+      private int _windowWaits;
 
-      public Task WindowWaitEntered => _windowWaitEntered.Task;
+      /// <summary>Completes the first time the accumulator waits inside its window.</summary>
+      public Task WindowWaitEntered => WindowWaitEnteredAtLeast(1);
+
+      /// <summary>
+      /// Completes once the accumulator has entered its window wait <paramref name="times"/> times.
+      /// </summary>
+      /// <remarks>
+      /// The second entry is the signal that matters, and one-shot was not enough to write this
+      /// test honestly. Entry two happens only after the accumulator has drained what the channel
+      /// held and re-armed, so awaiting it proves the second stream id is IN the batch. Advancing a
+      /// fake clock before that is proven races the reader and can close the window on a signal that
+      /// was written but not yet read -- the very thing the test claims cannot happen.
+      /// </remarks>
+      public Task WindowWaitEnteredAtLeast(int times) {
+        var gate = _gates.GetOrAdd(
+          times, static _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        // A gate registered AFTER its count was already reached would otherwise never complete, and
+        // the test would hang on something that has already happened.
+        if (Volatile.Read(ref _windowWaits) >= times) {
+          gate.TrySetResult();
+        }
+        return gate.Task;
+      }
 
       public override bool TryRead(out Guid item) {
         var read = inner.TryRead(out item);
@@ -731,7 +768,12 @@ public class PerspectiveWorkerDeepPathMiscTests {
 
       public override ValueTask<bool> WaitToReadAsync(CancellationToken cancellationToken = default) {
         if (Volatile.Read(ref _readCount) > 0) {
-          _windowWaitEntered.TrySetResult();
+          var entered = Interlocked.Increment(ref _windowWaits);
+          foreach (var gate in _gates) {
+            if (gate.Key <= entered) {
+              gate.Value.TrySetResult();
+            }
+          }
         }
         return inner.WaitToReadAsync(cancellationToken);
       }
