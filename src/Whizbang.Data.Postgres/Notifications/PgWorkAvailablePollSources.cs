@@ -58,7 +58,7 @@ public sealed class PgInboxWorkAvailablePollSource(
   protected override string DetectSql => @"
     SELECT EXISTS (
       SELECT 1
-      FROM wh_inbox i
+      FROM wh_inbox_state i
       JOIN wh_active_streams s ON s.stream_id = i.stream_id
       WHERE s.assigned_instance_id = @instance_id
         AND i.processed_at IS NULL

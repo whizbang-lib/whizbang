@@ -747,6 +747,73 @@ a 69 percent cut on every write to the work state, a roughly 700x cut on the gat
 fixture's shape, `wh_inbox` down from 26 indexes to three, for a one-time stall of about 5.0
 microseconds per row.
 
+## 3.15 The C# domain, and the enumeration that was finally provably complete
+
+The function enumeration was derived from `pg_proc`, correctly and completely. **`pg_proc` is not
+where all of this system's SQL lives**: the coordinators build statements as C# strings. The
+enumeration was complete for functions and complete for nothing else, and **the question to have
+asked was "what reads these columns", not "which functions read these columns"**. That is a category
+worse than the six pattern-too-narrow instances, because no amount of care with the pattern would
+have caught it. A failing test found it, in `CountServiceBacklogAsync`, after the columns were
+already dropped.
+
+Eight real code sites, of 32 window hits; the other 24 were comments and interface documentation.
+Seven needed redirecting, plus the EF entity model, which mapped nine of the ten moved columns and
+is now explicitly `Ignore`-ing them. The `DapperWorkCoordinator` discard sweep is the interesting
+one: `message_type` stays on the message and the claim state moved, so the inbox variant could no
+longer share `DISCARD_PENDING_WHERE` with the outbox.
+
+**Then it was verified, which is the part that matters.** Full suite, and for every
+`undefined_column` failure, whether any `src/` frame appears before the test frame. **Not one does.**
+All remaining failures originate in test fixture code. So the 22-function enumeration plus the C#
+sweep is complete for product code, by evidence rather than by assertion, after nine instances today
+of enumerations being short.
+
+**For the outbox and perspective-events splits: enumerate their C# exposure from the start.** They
+have it, and discovering it by a failing test after the columns are gone is the expensive order.
+
+## 3.16 Two things the guards caught, one of them on their author
+
+**The shard guard caught my own three new test classes.** They declared no shard category, so CI
+would have selected them in no slice and they would have **silently stopped running** while appearing
+to exist. That is exactly the failure the guard exists to prevent, and it caught it on the person who
+had been told to read it before changing categories. It is the cleanest example in this whole body of
+work of why a structural guard beats a convention: the convention was known, written down, and
+pointed at, and it was still missed.
+
+**The enumeration guard caught a defect in the migration itself.** `claim_work` ends with
+`$$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;`, and the extraction regex's terminator
+could not match the `=`, so it ran to the next terminator and silently swallowed **253 lines,
+including the whole of `claim_orphaned_perspective_events` and a destructive `drop_all_overloads`
+call**. Identical text, so nothing would have failed. The harm is that migration 162 would have
+become the authoritative site for a function nobody thinks it owns, and a later edit to 150 would be
+shadowed by the stale copy: the two-declaration-sites trap, created by the tooling written to avoid
+it.
+
+The guard's first derived output was also a false positive worth keeping: it flagged
+`notify_instance_owners`, whose 045 and 130 definitions scan `wh_inbox` and whose current definition
+(141) does not reference the table at all. It was flagging history. It now resolves
+**latest-definition-wins** by numeric migration order, because a guard that fails on superseded text
+is a guard somebody disables.
+
+## 3.17 Recorded, not done: 62 hand-rolled inbox inserts across 40 test files
+
+Every fixture that needs an inbox row builds the `INSERT` by hand. **62 insert statements in 40
+files**, reached through 77 distinct helper methods. A shared test builder would have made this
+migration a one-line edit instead of sixty-two, and the outbox and perspective splits will pay the
+same cost again in exactly the same way.
+
+Not consolidated here deliberately: it would balloon a change that is already large, and it is a
+different edit with a different risk profile.
+
+**One observation that makes the sweep smaller and the tests better.** `status` appears in 61 of the
+62 and is a **hardcoded literal in every one sampled**, never a parameter and never asserted on:
+row-plausibility boilerplate rather than a tested value. So is `partition_number 0`, and
+`error, failure_reason` as `NULL, 99`. The columns that are genuinely under test are the parameterized
+ones: `attempts`, `instance_id`, `lease_expiry`, `processed_at`. Where a column is incidental the
+better edit is to stop setting it rather than to set it somewhere new, which leaves the fixture
+saying only what it means.
+
 ## 4. Scope
 
 `wh_inbox` only, as the proof. `wh_outbox` and `wh_perspective_events` have the same shape and very

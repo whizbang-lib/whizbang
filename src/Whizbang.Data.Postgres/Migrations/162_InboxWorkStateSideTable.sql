@@ -89,6 +89,14 @@
 --              DROP COLUMN itself is catalog-only and costs single-digit milliseconds at both
 --              scales; the stall is the backfill and the three index builds.
 --
+-- THE COLUMN DROPS ARE AT THE END OF THIS FILE, AFTER EVERY FUNCTION THAT READ THEM
+--
+--              The order is load-bearing and it is the reason this is one file: the columns cannot
+--              be dropped until every function has been redirected, and the functions cannot be
+--              redirected in a separately committed step without leaving a window where a claim
+--              writes a column nobody reads. One transaction, in this order, is the only safe
+--              arrangement.
+--
 -- THIS FILE MUST NEVER CARRY A COMMIT BOUNDARY MARKER
 --
 --              SchemaCommandBoundary applies a marker-free script as ONE command on one connection,
@@ -230,76 +238,484 @@ CREATE INDEX IF NOT EXISTS idx_inbox_state_stream_order
   ON __SCHEMA__.wh_inbox_state (stream_id, received_at, message_id)
   WHERE processed_at IS NULL;
 
--- ===========================================================================================
--- BUILD SCAFFOLD. TEMPORARY. REMOVED IN THE SAME COMMIT THAT ADDS THE COLUMN DROPS.
--- ===========================================================================================
--- These triggers keep wh_inbox's seven mutable columns and wh_inbox_state in step while the
--- sixteen functions are being rewritten one batch at a time. Without them a rewritten function
--- reading the lease table sits beside an un-rewritten one still writing wh_inbox, the two
--- representations disagree, and the existing suite fails for reasons that say nothing about the
--- rewrite being verified.
+
+-- perform_maintenance was in the enumeration of twenty-two and was missed in the batch that should
+-- have carried it. The enumeration was right; the checklist against it was not. Found by the full
+-- suite failing, not by review.
 --
--- This is the expand/migrate/contract mechanism used as a DEVELOPMENT scaffold, not as a shipping
--- strategy, and the difference is the whole point. Staging was rejected because a consumer would
--- run a version where the old columns exist but are ignored, so a claim writing an ignored column
--- believes it holds a lease it does not, and dispatches work a second claimer will also take. No
--- consumer ever sees these triggers: they and the column drops are one commit.
---
--- THE COLUMN LIST HERE IS THE DROP LIST AND MUST BE RE-DERIVED WITH IT. It was not, once:
--- partition_number joined the drop list when the exhaustive pass found recompute_partition_numbers
--- rewrites it, and this scaffold kept a list from before that, so a recomputed partition stopped
--- reaching wh_inbox and a test that reads it there failed. Same failure mode as every other list in
--- this work that was carried forward rather than re-derived.
---
--- Created AFTER the backfill above, deliberately, so the backfill does not fire them once per row.
--- pg_trigger_depth() > 1 means we were fired by the other trigger rather than by a statement, which
--- is how the two directions avoid recursing into each other.
-CREATE OR REPLACE FUNCTION __SCHEMA__._scaffold_sync_inbox_to_state() RETURNS TRIGGER AS $$
+-- <docs>operations/infrastructure/maintenance</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PurgesStuckInboxMessages_OlderThanRetentionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PreservesRecentStuckInboxMessages_WithinRetentionAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PreservesLeasedInboxMessages_EvenIfOldAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PreservesClaimedInboxMessages_EvenIfOldAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.perform_maintenance()
+RETURNS TABLE(
+  task_name TEXT,
+  rows_affected BIGINT,
+  duration_ms DOUBLE PRECISION,
+  status TEXT
+) AS $$
+DECLARE
+  v_start TIMESTAMPTZ;
+  v_rows BIGINT;
+  v_dedup_retention_days INTEGER;
+  v_stuck_inbox_retention_days INTEGER;
+  v_debug_mode BOOLEAN;
+  v_abandoned_stream_hours INTEGER;
+  v_ephemeral_grace_seconds INTEGER;
+  v_per_table TEXT;
+  v_per_deleted BIGINT;
+  v_instance_eviction_retention_hours INTEGER;
+  v_dead_letter_retention_days INTEGER;
+  v_orphan_grace_hours INTEGER;
 BEGIN
-  IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
-  INSERT INTO __SCHEMA__.wh_inbox_state (
-    message_id, stream_id, received_at, partition_number, priority, is_event,
-    processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
-    chain_emitted_at, status)
-  VALUES (
-    NEW.message_id, NEW.stream_id, NEW.received_at, NEW.partition_number, NEW.priority,
-    NEW.is_event, NEW.processed_at, NEW.instance_id, NEW.lease_expiry, NEW.attempts,
-    NEW.scheduled_for, NEW.failure_reason, NEW.error, NEW.chain_emitted_at, NEW.status)
-  ON CONFLICT (message_id) DO UPDATE SET
-    processed_at = EXCLUDED.processed_at, instance_id = EXCLUDED.instance_id,
-    lease_expiry = EXCLUDED.lease_expiry, attempts = EXCLUDED.attempts,
-    scheduled_for = EXCLUDED.scheduled_for, failure_reason = EXCLUDED.failure_reason,
-    error = EXCLUDED.error, chain_emitted_at = EXCLUDED.chain_emitted_at,
-    status = EXCLUDED.status, partition_number = EXCLUDED.partition_number;
-  RETURN NULL;
+  -- Read debug_mode flag once for the cycle. When true, the complete_* functions
+  -- retain rows for forensics with processed_at stamped, this maintenance pass
+  -- MUST skip purging those rows or the debug-mode design breaks.
+  SELECT COALESCE(
+    (SELECT setting_value::BOOLEAN FROM __SCHEMA__.wh_settings WHERE setting_key = 'debug_mode'),
+    FALSE
+  ) INTO v_debug_mode;
+
+  -- Grace period before an owner-less active-stream row is purged (Task 6). Configurable via
+  -- wh_settings; default 1 hour preserves the transient-NULL race window between
+  -- cleanup_stale_instances nulling the owner and the next claim cycle re-assigning it.
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'abandoned_stream_hours'),
+    1
+  ) INTO v_abandoned_stream_hours;
+
+  -- Rewind grace window (seconds): an ephemeral body is retained this long AFTER consumption so an
+  -- out-of-order straggler can still rewind through it (events arrive out of order in a short window).
+  -- Configurable via wh_settings; default 300s. A per-type [Ephemeral(RewindGrace)] override lands later.
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'ephemeral_rewind_grace_seconds'),
+    300
+  ) INTO v_ephemeral_grace_seconds;
+
+  -- Retention for wh_instance_evictions tombstones (Task 10, migration 106/107). The tombstone only
+  -- needs to outlive a paused instance's resumption window, not the fleet's lifetime. Default 24
+  -- hours is generous against any realistic pause while still bounding the table.
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'instance_eviction_retention_hours'),
+    24
+  ) INTO v_instance_eviction_retention_hours;
+
+  -- ========================================
+  -- Task 1: Purge completed outbox messages
+  -- ========================================
+  v_start := clock_timestamp();
+  IF v_debug_mode THEN
+    v_rows := 0;
+  ELSE
+    DELETE FROM __SCHEMA__.wh_outbox WHERE processed_at IS NOT NULL;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+  END IF;
+  RETURN QUERY SELECT
+    'purge_completed_outbox'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
+
+  -- ========================================
+  -- Task 2: Purge completed inbox messages
+  -- ========================================
+  v_start := clock_timestamp();
+  IF v_debug_mode THEN
+    v_rows := 0;
+  ELSE
+    -- 162: processed_at is work state. The DELETE stays on wh_inbox because that is the row being
+    -- removed, and the state row goes with it through ON DELETE CASCADE; the predicate reads the
+    -- state table. USING keeps this one statement so the GET DIAGNOSTICS below still measures it.
+    DELETE FROM __SCHEMA__.wh_inbox i
+    USING __SCHEMA__.wh_inbox_state ist
+    WHERE ist.message_id = i.message_id AND ist.processed_at IS NOT NULL;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+  END IF;
+  RETURN QUERY SELECT
+    'purge_completed_inbox'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
+
+  -- ========================================
+  -- Task 3: Purge completed perspective events
+  -- ========================================
+  v_start := clock_timestamp();
+  IF v_debug_mode THEN
+    v_rows := 0;
+  ELSE
+    DELETE FROM __SCHEMA__.wh_perspective_events WHERE processed_at IS NOT NULL;
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+  END IF;
+  RETURN QUERY SELECT
+    'purge_completed_perspective_events'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
+
+  -- ========================================
+  -- Task 4: Purge old deduplication entries
+  -- ========================================
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'dedup_retention_days'),
+    30
+  ) INTO v_dedup_retention_days;
+
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'dead_letter_retention_days'),
+    7
+  ) INTO v_dead_letter_retention_days;
+
+  v_start := clock_timestamp();
+  DELETE FROM __SCHEMA__.wh_message_deduplication
+  WHERE first_seen_at < NOW() - (v_dedup_retention_days || ' days')::INTERVAL;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_old_deduplication'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 5: Purge ancient stuck inbox messages
+  -- ========================================
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
+    7
+  ) INTO v_stuck_inbox_retention_days;
+
+  v_start := clock_timestamp();
+  -- 162: same shape as the purge above. Every term of this predicate is on the state table,
+  -- received_at as a write-once copy, so the sweep never reads the wide message row to decide.
+  DELETE FROM __SCHEMA__.wh_inbox i
+  USING __SCHEMA__.wh_inbox_state ist
+  WHERE ist.message_id = i.message_id
+    AND ist.processed_at IS NULL
+    AND ist.lease_expiry IS NULL
+    AND ist.instance_id IS NULL
+    AND ist.received_at < NOW() - (v_stuck_inbox_retention_days || ' days')::INTERVAL;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_stuck_inbox'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 6: Purge abandoned active-stream rows
+  -- ========================================
+  -- Two branches, both safe because UUIDv7 IDs never repeat (a missing
+  -- wh_service_instances row means the instance is fully gone):
+  --
+  --   (a) Rows whose assigned_instance_id is non-NULL but points at a
+  --       wh_service_instances row that no longer exists. After the
+  --       heartbeat-recency liveness check in claim_orphaned_inbox /
+  --       claim_orphaned_outbox (migrations 024/025) these are already
+  --       non-blocking; the cleanup just bounds accumulation. No age guard.
+  --
+  --   (b) Rows whose assigned_instance_id IS NULL AND whose last_activity_at
+  --       is older than the grace period. cleanup_stale_instances nulls the
+  --       assigned_instance_id in the same tick where it deletes the dead
+  --       wh_service_instances row, so without this branch every dead
+  --       instance leaves its streams in the table forever (production forensic:
+  --       tens of thousands of rows accumulated, 99% with NULL owner). The age
+  --       guard preserves the legitimate transient-NULL race window between
+  --       cleanup_stale_instances nulling the field and the next
+  --       claim_orphaned_* cycle re-assigning via INSERT ON CONFLICT.
+  v_start := clock_timestamp();
+  DELETE FROM __SCHEMA__.wh_active_streams
+  WHERE (
+      assigned_instance_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_service_instances si
+        WHERE si.instance_id = __SCHEMA__.wh_active_streams.assigned_instance_id
+      )
+    )
+    OR (
+      assigned_instance_id IS NULL
+      AND last_activity_at < NOW() - (v_abandoned_stream_hours * INTERVAL '1 hour')
+    );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_abandoned_active_streams'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 7: Refresh wh_dead_letter_summary
+  -- ========================================
+  -- Slice 6 of release/v0.645.0-alpha.1 (outbox-DLQ + dual-hash analysis).
+  -- Two-step pipeline inside aggregate_dead_letters:
+  --   (1) Version-aware backfill, re-hashes raw wh_dead_letters rows with
+  --       stale error_fingerprint_version; current-version rows are skipped.
+  --   (2) GROUP BY upsert into wh_dead_letter_summary.
+  -- The summary table is the operator/AI-facing rollup view: ~dozens of
+  -- distinct fingerprint clusters instead of tens of thousands of raw rows.
+  -- Cluster-count metric is the rows_affected for this task (post-aggregation).
+  v_start := clock_timestamp();
+  PERFORM __SCHEMA__.aggregate_dead_letters();
+  SELECT COUNT(*) FROM __SCHEMA__.wh_dead_letter_summary INTO v_rows;
+  RETURN QUERY SELECT
+    'aggregate_dead_letters'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 8: Reap consumed ephemeral event bodies (E1 #13b2, + E2-4c TTL floor)
+  -- ========================================
+  -- wh_event_body holds ONLY ephemeral bodies (offloaded by the emit chain, migration 072). A body is
+  -- reapable once every perspective that consumes its event has processed it, i.e. no unprocessed
+  -- wh_perspective_events work item still references the event_id. The emit chain writes the body and
+  -- its perspective work items in one transaction, so a body with consumers always has a matching
+  -- gating work item (no premature-reap window); an ephemeral event with no consuming perspective has
+  -- no work item and is reapable at once. The wh_event_store pointer is left in place, a
+  -- pointer-present / body-NULL row is the deterministic rebuild-guard signal (#13d), not a lost event.
+  -- Skipped under debug_mode so retained forensic bodies survive with the retained work items.
+  -- Grace window: a consumed body is also kept until it is OLDER than v_ephemeral_grace_seconds, so an
+  -- out-of-order straggler can still rewind through it (rewind uses the surviving bodies + a snapshot floor).
+  -- TTL floor (E2-4c): an AfterTtl event carries its own absolute expiry in body metadata
+  -- ('ephemeral_expires_at', stamped at dispatch). It EXTENDS retention, the consumed body is kept until it
+  -- is ALSO past that expiry. An event with no key (Sourced / WhenConsumed) is unaffected: the gate is
+  -- vacuously true, and it reaps as soon as consumed+aged.
+  v_start := clock_timestamp();
+  IF v_debug_mode THEN
+    v_rows := 0;
+  ELSE
+    DELETE FROM __SCHEMA__.wh_event_body eb
+    USING __SCHEMA__.wh_event_store es
+    LEFT JOIN __SCHEMA__.wh_ephemeral_type_grace g ON g.event_type = es.event_type
+    WHERE es.event_id = eb.event_id
+      -- #13b4 safety gate: the reap is scoped to EPHEMERAL events explicitly. Pre-split this was
+      -- guaranteed "by construction" (wh_event_body held only ephemeral bodies); once SOURCED bodies
+      -- move into the body table (full split), this gate is what keeps the durable log un-reapable.
+      AND (es.flags & 8) = 8
+      -- E2-3 destruction hold: a PreDestruction hook may Cancel (hold far-future) or Defer(until) a body;
+      -- while a hold is active the reap skips it, so the hook's decision is honoured.
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_event_destruction_hold h
+        WHERE h.event_id = eb.event_id AND h.hold_until > NOW()
+      )
+      AND es.created_at < NOW() - (COALESCE(g.grace_seconds, v_ephemeral_grace_seconds) * INTERVAL '1 second')
+      -- E2-4c TTL retention floor: an AfterTtl body carries an absolute 'ephemeral_expires_at' in its
+      -- metadata; it is kept until past that instant. No key (Sourced / WhenConsumed) => vacuously true.
+      AND (
+        eb.metadata ->> 'ephemeral_expires_at' IS NULL
+        OR (eb.metadata ->> 'ephemeral_expires_at')::timestamptz < NOW()
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
+        WHERE pe.event_id = eb.event_id
+          AND pe.processed_at IS NULL
+      )
+      -- Snapshot-coverage gate: the reap must never outrun the rewind floor. Reap only once EVERY consuming
+      -- perspective has a snapshot at/past this event's commit_sequence, i.e. there is no association whose
+      -- perspective lacks a covering snapshot for the stream. The reap-driven step (MaintenanceWorker) drives
+      -- those snapshots just before this runs, so coverage is normally satisfied; an event with no consuming
+      -- perspective is vacuously covered, and an unstamped event (commit_sequence NULL) is held until stamped.
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_message_associations ma
+        WHERE ma.normalized_message_type = es.event_type
+          AND ma.association_type = 'perspective'
+          AND NOT EXISTS (
+            SELECT 1 FROM __SCHEMA__.wh_perspective_snapshots s
+            WHERE s.stream_id = es.stream_id
+              AND s.perspective_name = ma.target_name
+              AND s.snapshot_commit_sequence >= es.commit_sequence
+          )
+      );
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+
+    -- Keep the hold table bounded: drop holds whose body is already gone (a Defer whose window lapsed and
+    -- was then reaped, or any body reaped by another path). A permanent Cancel keeps body + hold together.
+    DELETE FROM __SCHEMA__.wh_event_destruction_hold h
+    WHERE NOT EXISTS (SELECT 1 FROM __SCHEMA__.wh_event_body eb WHERE eb.event_id = h.event_id);
+  END IF;
+  RETURN QUERY SELECT
+    'reap_consumed_ephemeral_bodies'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
+
+  -- ========================================
+  -- Task 9: Reap expired TtlRow perspective rows (E2-4d)
+  -- ========================================
+  -- TransientStorage.TtlRow perspective rows carry an expires_at (stamped on upsert = now + ttl). Once past,
+  -- a row is logically expired (already hidden from lens reads) and is physically deleted here. Perspective
+  -- tables are named per-app (wh_per_*), so this dynamically enumerates every wh_per_* table that HAS an
+  -- expires_at column and deletes its expired rows. A non-TtlRow perspective's rows never get an expires_at
+  -- value (NULL), so they are never matched. Skipped under debug_mode, like the body reaper.
+  v_start := clock_timestamp();
+  v_rows := 0;
+  IF NOT v_debug_mode THEN
+    -- current_schema() (NOT the __SCHEMA__ placeholder): the EFCore schema-init replaces __SCHEMA__ with a
+    -- QUOTED identifier ("public"), which is correct for `schema.table` refs but wrong inside a string literal
+    -- compared to information_schema.table_schema (unquoted). current_schema() is the effective schema the
+    -- maintenance connection runs in (same pattern as migration 046).
+    FOR v_per_table IN
+      SELECT table_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND column_name = 'expires_at'
+        AND table_name LIKE 'wh\_per\_%'
+    LOOP
+      EXECUTE format(
+        'DELETE FROM %I.%I WHERE expires_at IS NOT NULL AND expires_at < NOW()',
+        current_schema(), v_per_table);
+      GET DIAGNOSTICS v_per_deleted = ROW_COUNT;
+      v_rows := v_rows + v_per_deleted;
+    END LOOP;
+  END IF;
+  RETURN QUERY SELECT
+    'reap_expired_perspective_rows'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
+
+  -- ========================================
+  -- Task 10: Purge expired instance-eviction tombstones (migration 106)
+  -- ========================================
+  -- The tombstone in wh_instance_evictions only needs to survive long enough for a genuinely
+  -- paused instance to resume and be correctly refused. Once it is older than the retention
+  -- window, either the instance is long dead for real, or, since instance ids are generated
+  -- per PROCESS, not per deployment slot, anything still calling with that id is not the same
+  -- process that was reaped. Keeping the row past that point only grows the table. Not gated on
+  -- debug_mode: this is instance-identity bookkeeping, not forensic message data (same treatment
+  -- as Task 6's abandoned-active-stream purge).
+  v_start := clock_timestamp();
+  DELETE FROM __SCHEMA__.wh_instance_evictions
+  WHERE evicted_at < NOW() - (v_instance_eviction_retention_hours * INTERVAL '1 hour');
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_instance_evictions'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 11: Purge settled dead letters
+  -- ========================================
+  -- Recovered(3) means the message was successfully re-driven, so the row is a receipt rather than
+  -- work. Every other status is either unresolved or a deliberate human hold, and none of those may
+  -- be discarded on age alone. Skipped under debug_mode, where the operator asked to keep evidence.
+  v_start := clock_timestamp();
+  IF v_debug_mode THEN
+    v_rows := 0;
+  ELSE
+    -- Retention keys on when the row SETTLED (#682): a backlog older than the window would
+    -- otherwise have its receipts deleted within one maintenance cycle of recovering ,
+    -- recovered counts went BACKWARDS while a drain made real progress. recovered_at is
+    -- NULL only on legacy rows settled before it was stamped; those fall back to the
+    -- original failure time rather than living forever.
+    -- A row referenced by an UNRESOLVED campaign's probe_ids is evidence, not clutter:
+    -- deleting it resolves the campaign on an empty evidence set (see 127's evaluate).
+    DELETE FROM __SCHEMA__.wh_dead_letters d
+    WHERE d.recovery_status = 3
+      AND COALESCE(d.recovered_at, d.dead_lettered_at) < NOW() - (v_dead_letter_retention_days || ' days')::INTERVAL
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_dlq_probe_campaigns c
+        WHERE c.verdict = 0 AND d.dead_letter_id = ANY(c.probe_ids)
+      );
+    GET DIAGNOSTICS v_rows = ROW_COUNT;
+  END IF;
+  RETURN QUERY SELECT
+    'purge_recovered_dead_letters'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
+
+  -- ========================================
+  -- Task 12: Reap orphaned perspective-event rows (issue #687)
+  -- ========================================
+  -- A wh_perspective_events row whose source event no longer exists in wh_event_store is
+  -- UNPROJECTABLE forever: the drainer's inner join (get_stream_events) returns nothing, so the
+  -- row is re-claimed every cycle with attempts climbing and no error, livelocking the pipeline
+  -- (root cause of #679). These arise when an event is reaped/purged after its perspective work
+  -- was created. Deleting is correct: the event is gone, so there is nothing to project and the
+  -- projection cursor never advanced past the row. Age-bounded on created_at so a row whose event
+  -- write has simply not committed yet (a legitimate in-flight window) is never reaped out from
+  -- under itself. Not gated on debug_mode: this is unprojectable garbage, not forensic evidence,
+  -- and leaving it keeps the pipeline wedged.
+  v_start := clock_timestamp();
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'orphan_perspective_grace_hours'),
+    1
+  ) INTO v_orphan_grace_hours;
+  DELETE FROM __SCHEMA__.wh_perspective_events pe
+  WHERE pe.processed_at IS NULL
+    AND pe.created_at < NOW() - (v_orphan_grace_hours * INTERVAL '1 hour')
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = pe.event_id
+    );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'reap_orphaned_perspective_events'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
+  -- Task 13: Settle orphaned perspective-event DEAD LETTERS (issue #687)
+  -- ========================================
+  -- Task 12 reaps orphans still in wh_perspective_events. A row that was dead-lettered before
+  -- its event vanished sits in wh_dead_letters instead, held forever: recovery would re-drive
+  -- it into an empty join, and generation replay excludes held rows by design. When the row's
+  -- ENTIRE source stream is absent from wh_event_store, every event of it is gone, so the
+  -- perspective work is unrecoverable, settle it (Recovered + note, same disposition as the
+  -- disabled-subsystem discard) so the ledger records the disposal and retention ages it out.
+  -- The whole-stream predicate needs no per-event lookup and has no false positives: a stream
+  -- with any surviving event is left for review (a genuine apply failure, not an orphan). Age-
+  -- gated on dead_lettered_at by the same grace window so a stream still being written is safe.
+  -- Operator holds (operator_disposition 2/3) are respected.
+  v_start := clock_timestamp();
+  UPDATE __SCHEMA__.wh_dead_letters dl
+  SET recovery_status = 3,  -- Recovered: settled, eligible for the retention purge
+      recovered_at    = NOW(),
+      operator_notes  = COALESCE(operator_notes || E'\n', '')
+        || 'auto-settled by maintenance: orphaned perspective event, source stream absent from event store'
+  WHERE dl.source_table = 'wh_perspective_events'
+    AND dl.recovered_at IS NULL
+    AND dl.recovery_status NOT IN (3, 4)
+    AND dl.operator_disposition NOT IN (2, 3)
+    AND dl.stream_id IS NOT NULL
+    AND dl.dead_lettered_at < NOW() - (v_orphan_grace_hours * INTERVAL '1 hour')
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.stream_id = dl.stream_id
+    );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'settle_orphaned_perspective_dead_letters'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
 END;
 $$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION __SCHEMA__._scaffold_sync_state_to_inbox() RETURNS TRIGGER AS $$
-BEGIN
-  IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
-  UPDATE __SCHEMA__.wh_inbox SET
-    processed_at = NEW.processed_at, instance_id = NEW.instance_id,
-    lease_expiry = NEW.lease_expiry, attempts = NEW.attempts,
-    scheduled_for = NEW.scheduled_for, failure_reason = NEW.failure_reason, error = NEW.error,
-    chain_emitted_at = NEW.chain_emitted_at, status = NEW.status,
-    partition_number = NEW.partition_number
-  WHERE message_id = NEW.message_id;
-  RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_scaffold_inbox_to_state ON __SCHEMA__.wh_inbox;
-CREATE TRIGGER trg_scaffold_inbox_to_state
-  AFTER INSERT OR UPDATE ON __SCHEMA__.wh_inbox
-  FOR EACH ROW EXECUTE FUNCTION __SCHEMA__._scaffold_sync_inbox_to_state();
-
--- UPDATE only on this side: the row is created by the inbox insert above, so an INSERT trigger here
--- would only ever duplicate work.
-DROP TRIGGER IF EXISTS trg_scaffold_state_to_inbox ON __SCHEMA__.wh_inbox_state;
-CREATE TRIGGER trg_scaffold_state_to_inbox
-  AFTER UPDATE ON __SCHEMA__.wh_inbox_state
-  FOR EACH ROW EXECUTE FUNCTION __SCHEMA__._scaffold_sync_state_to_inbox();
+-- ===========================================================================================
+-- THE CUTOVER. Everything above has moved to wh_inbox_state; these columns now have no reader.
+-- ===========================================================================================
+-- Ten columns, every one of them rewritten by something, established by the exhaustive pass over
+-- all 23 live columns rather than by discovery. Dropping them rather than leaving them ignored is
+-- what makes the single cutover safe: an instance still running older code raises SQLSTATE 42703
+-- on every claim, its loop reports a defect and backs off, and it takes no work and loses none. A
+-- claim that silently succeeded into a column nobody reads would believe it held a lease it did
+-- not, and dispatch work a second claimer would also take.
+--
+-- DROP COLUMN is a catalog update, not a table rewrite, and the twenty-one indexes that name these
+-- columns go with them as a catalog update plus a file unlink. Measured at about 1.1 ms for all ten
+-- at both 100,000 and 500,000 rows. The lock window is the backfill above, not this.
+ALTER TABLE __SCHEMA__.wh_inbox
+  DROP COLUMN IF EXISTS instance_id,
+  DROP COLUMN IF EXISTS lease_expiry,
+  DROP COLUMN IF EXISTS attempts,
+  DROP COLUMN IF EXISTS processed_at,
+  DROP COLUMN IF EXISTS scheduled_for,
+  DROP COLUMN IF EXISTS failure_reason,
+  DROP COLUMN IF EXISTS error,
+  DROP COLUMN IF EXISTS chain_emitted_at,
+  DROP COLUMN IF EXISTS status,
+  DROP COLUMN IF EXISTS partition_number;
 
 -- ===========================================================================================
 -- BATCH ONE: the functions that touch only claim state. Each reads and writes the lease table
@@ -2947,259 +3363,6 @@ END;
 -- inside the command timeout with the empty-table plans. Planning per call costs milliseconds.
 $$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
 
-COMMENT ON FUNCTION __SCHEMA__.claim_work(UUID, TEXT, TEXT, INTEGER, INTEGER, INTEGER, INTEGER, DOUBLE PRECISION, INTEGER, BOOLEAN, INTEGER) IS
-  'Leases work for an instance and re-offers the streams it holds (145: bounded acquisition, command lane, row bound, stealing). 150: the re-offered inbox and perspective streams are ordered most urgent bucket first. 158: every re-offer is bounded by the batch it returns rather than by the holdings -- a held stream is re-offered as its oldest row in each lane it appears in, not as every row it holds there -- and the inbox chain reads only rows it has not stamped.';
-
--- ---------------------------------------------------------------------------------------------
--- claim_orphaned_perspective_events: last word 148_ActiveStreamLeases.sql; the most urgent streams are selected first.
--- ---------------------------------------------------------------------------------------------
--- 160: the signature gains p_max_rows, so the old five-argument overload has to go first or the
--- initializer's duplicate-overload sweep force-replays this file on every start.
-SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_perspective_events');
-
-CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
-  p_instance_id UUID,
-  p_lease_expiry TIMESTAMPTZ,
-  p_now TIMESTAMPTZ,
-  p_max_streams INTEGER DEFAULT 500,
-  p_instance_rank INTEGER DEFAULT 0,
-  p_active_instance_count INTEGER DEFAULT 1,
-  -- 160: rows this call may lease, as p_max_streams bounds the streams it may take. Without it the
-  -- claim selected a batch of STREAMS and then leased every pending event of each, so a poll cost
-  -- what a consumer's streams happened to hold: 3,730 blocks a call over streams twelve events
-  -- deep and 54,914 over streams two hundred deep, for the same batch. NULL keeps the old
-  -- unbounded behavior for a caller that has not been taught to pass one; claim_work passes its own
-  -- row budget. 145 (#714) is the warning against the other mistake, handing a STREAM count to an
-  -- acquisition as a row cap and turning a fat stream into one row per cycle -- hence a multiple of
-  -- the batch rather than the batch itself.
-  p_max_rows INTEGER DEFAULT NULL
-) RETURNS TABLE(
-  event_work_id UUID,
-  stream_id UUID,
-  perspective_name VARCHAR(200)
-) AS $$
-#variable_conflict use_column
-BEGIN
-  RETURN QUERY
-  -- 157: the window this poll chooses streams from, bounded by the batch. The most urgent
-  -- claimable-looking events in (priority, event_id) order, walked from idx_perspective_event_urgency
-  -- with an early stop, so the cost of choosing streams follows the batch and never the backlog.
-  -- Aggregating every claimable event per poll, on every instance, was most of a saturated database's
-  -- CPU under a bulk load. A stream whose head lies beyond the window is by definition less urgent
-  -- than every stream selected from it, and a later poll sees it. Ownership and per-stream ordering
-  -- are decided on the window below, and a selected stream is still captured in full.
-  WITH head AS (
-    SELECT
-      pe.event_work_id,
-      pe.stream_id,
-      pe.perspective_name,
-      pe.event_id,
-      pe.partition_number,
-      pe.priority
-    FROM __SCHEMA__.wh_perspective_events pe
-    WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
-      AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
-      AND pe.processed_at IS NULL
-    ORDER BY pe.priority, pe.event_id
-    LIMIT GREATEST(p_max_streams, 1) * 8
-  ),
-  claimable_events AS (
-    -- The events of the window this instance may claim (orphaned or unleased, owned or unowned).
-    SELECT
-      pe.event_work_id,
-      pe.stream_id,
-      pe.perspective_name,
-      pe.event_id,
-      pe.partition_number,
-      pe.priority
-    FROM head pe
-    WHERE TRUE
-      -- Phase H step 6 slice 2: stream ownership now combines wh_active_streams pinning
-      -- (OWNER PATH, always wins) with partition-modulo load balancing for unowned streams
-      -- (UNOWNED PATH, symmetric with claim_orphaned_outbox / _inbox).
-      AND (
-        -- OWNER PATH, wh_active_streams says this instance owns the stream. Always claim.
-        EXISTS (
-          SELECT 1 FROM __SCHEMA__.wh_active_streams ast
-          WHERE ast.stream_id = pe.stream_id
-            AND ast.assigned_instance_id = p_instance_id
-        )
-        OR
-        -- UNOWNED / ABANDONED PATH, partition-modulo selection for streams with no live owner.
-        (
-          (pe.partition_number % p_active_instance_count) = p_instance_rank
-          AND NOT EXISTS (
-            SELECT 1 FROM __SCHEMA__.wh_active_streams ast
-            WHERE ast.stream_id = pe.stream_id
-              AND ast.assigned_instance_id != p_instance_id
-              AND (
-                -- Existing check: a row in wh_service_instances counts as alive.
-                -- This is removed by cleanup_stale_instances at the stale threshold.
-                EXISTS (
-                  SELECT 1 FROM __SCHEMA__.wh_service_instances si
-                  WHERE si.instance_id = ast.assigned_instance_id
-                )
-                -- Slice 2b of zero-idle-polling, additive defensive predicate:
-                -- a pod with a live Whizbang LISTEN connection in pg_stat_activity
-                -- counts as alive even if its wh_service_instances row has been
-                -- cleaned up (transient state during pod restart, race between
-                -- cleanup_stale_instances and the pod opening its LISTEN
-                -- connection on next boot). Strictly additive, only adds
-                -- protection against premature orphan-claim, never loosens.
-                OR EXISTS (
-                  SELECT 1 FROM pg_stat_activity sa
-                  WHERE sa.application_name = __INSTANCE_APPLICATION_NAME_PREFIX__ || ast.assigned_instance_id::text
-                )
-              )
-          )
-        )
-      )
-      -- Ensure ordering - no earlier uncompleted events in same perspective
-      AND NOT EXISTS (
-        SELECT 1 FROM __SCHEMA__.wh_perspective_events earlier
-        WHERE earlier.stream_id = pe.stream_id
-          AND earlier.perspective_name = pe.perspective_name
-          AND earlier.event_id < pe.event_id
-          AND (
-            (earlier.instance_id IS NOT NULL AND earlier.lease_expiry > p_now)
-            OR (earlier.scheduled_for > p_now)
-          )
-      )
-  ),
-  -- Select up to p_max_streams distinct streams from claimable events
-  -- 150: the most urgent streams first (the fold is the stream's most urgent claimable event), then the oldest.
-  selected_streams AS (
-    SELECT ce.stream_id
-    FROM claimable_events ce
-    GROUP BY ce.stream_id
-    ORDER BY MIN(ce.priority), MIN(ce.event_id::TEXT)   -- no min(uuid); a v7 id orders chronologically as text
-    LIMIT p_max_streams
-  ),
-  -- 140: lock the selected streams' rows with SKIP LOCKED before leasing them (issue #699), the
-  -- shape claim_orphaned_inbox and claim_orphaned_outbox already use. A row another session holds
-  -- is a row being completed or leased; waiting for it stalled the whole claim tick behind one
-  -- commit batch. The lock is scoped to the selected streams, never the full eligible backlog.
-  -- 157: full-stream capture reads the selected streams' rows through idx_perspective_event_order,
-  -- not the window, so a stream still drains in one lease as before; the same ordering predicate
-  -- keeps an event behind a leased or scheduled earlier one out of the claim.
-  -- 160: the row bound has to be reached BEFORE the per-row work, not after it. Bounding only the
-  -- final result still sorted every claimable row of every selected stream and ran the ordering
-  -- probe below on each one, so leasing fell to a handful of rows a call while the poll still cost
-  -- what the streams held: 8,352 blocks a call at depth against 1,523 shallow, for 6.7 rows leased.
-  -- Each stream is walked separately instead, oldest first through idx_perspective_event_order,
-  -- and stops at the bound on its own. Work is then bounded by the batch times the bound rather
-  -- than by the depth of whatever streams the batch happened to select, and a deep stream can still
-  -- contribute the whole bound rather than being rationed to one row a cycle (145, #714).
-  candidate_events AS (
-    SELECT c.event_work_id, c.event_id
-    FROM selected_streams ss
-    CROSS JOIN LATERAL (
-      SELECT pe.event_work_id, pe.event_id
-      FROM __SCHEMA__.wh_perspective_events pe
-      WHERE pe.stream_id = ss.stream_id
-        AND (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
-        AND (pe.scheduled_for IS NULL OR pe.scheduled_for <= p_now)
-        AND pe.processed_at IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM __SCHEMA__.wh_perspective_events earlier
-          WHERE earlier.stream_id = pe.stream_id
-            AND earlier.perspective_name = pe.perspective_name
-            AND earlier.event_id < pe.event_id
-            AND (
-              (earlier.instance_id IS NOT NULL AND earlier.lease_expiry > p_now)
-              OR (earlier.scheduled_for > p_now)
-            )
-        )
-      ORDER BY pe.event_id
-      LIMIT COALESCE(p_max_rows, 2147483647)
-    ) c
-  ),
-  locked AS (
-    -- Oldest first across the selected streams, and stop at the row bound. event_id is a v7 id, so
-    -- this is arrival order, and per-stream order falls out of it: an event is only reached after
-    -- every earlier event of its own stream, so a stream is captured from its head and never with a
-    -- hole. A stream deeper than the bound is captured over consecutive polls, which is what the
-    -- inbox has done since 145; the drain is per stream with an unbounded channel and the re-offer
-    -- hands the stream back each poll, so the remainder is picked up rather than stranded.
-    -- Full-stream capture in one lease was never a correctness property, only the previous cost of
-    -- not bounding this.
-    SELECT pe.event_work_id
-    FROM __SCHEMA__.wh_perspective_events pe
-    INNER JOIN candidate_events ce ON ce.event_work_id = pe.event_work_id
-    WHERE (pe.instance_id IS NULL OR pe.lease_expiry < p_now)
-      AND pe.processed_at IS NULL
-    ORDER BY ce.event_id
-    LIMIT COALESCE(p_max_rows, 2147483647)
-    FOR UPDATE OF pe SKIP LOCKED
-  ),
-  -- Claim the locked events for the selected streams, oldest first, up to the row bound (160).
-  claimed AS (
-    UPDATE __SCHEMA__.wh_perspective_events pe
-    SET instance_id = p_instance_id,
-        lease_expiry = p_lease_expiry,
-        -- Phase H step 8 slice D: see claim_orphaned_inbox (mig 025). Single-source
-        -- attempt counting; first claim → 1, every re-claim bumps; failures don't bump.
-        attempts = pe.attempts + 1
-    FROM locked l
-    WHERE pe.event_work_id = l.event_work_id
-    RETURNING pe.event_work_id AS c_event_work_id, pe.stream_id AS c_stream_id, pe.perspective_name AS c_perspective_name, pe.partition_number AS c_partition_number
-  ),
-  -- 2026-06-02: split the wh_active_streams ledger maintenance into REFRESH (row-only
-  -- UPDATE for already-owned-with-live-lease streams) + PIN (INSERT...ON CONFLICT for
-  -- the rare ownership-transition case, with ORDER BY stream_id for consistent lock
-  -- acquisition). Symmetric with the fix in claim_orphaned_outbox (mig 024); see that
-  -- migration for the full rationale. Eliminates the 40P01 deadlock observed in
-  -- production (Whizbang PR #227).
-  refreshed AS (
-    UPDATE __SCHEMA__.wh_active_streams ast
-    SET last_activity_at = p_now,
-        lease_expiry = p_lease_expiry
-    FROM claimed c
-    WHERE ast.stream_id = c.c_stream_id
-      AND ast.assigned_instance_id = p_instance_id
-      AND ast.lease_expiry > p_now
-    RETURNING ast.stream_id AS refreshed_stream_id
-  ),
-  pinned AS (
-    INSERT INTO __SCHEMA__.wh_active_streams AS ast
-      (stream_id, partition_number, assigned_instance_id, last_activity_at, lease_expiry)
-    SELECT DISTINCT ON (sub.stream_id) sub.stream_id, sub.partition_number, p_instance_id, p_now, p_lease_expiry
-    FROM (
-      SELECT c.c_stream_id AS stream_id, c.c_partition_number AS partition_number
-      FROM claimed c
-      WHERE NOT EXISTS (
-        SELECT 1 FROM refreshed r WHERE r.refreshed_stream_id = c.c_stream_id
-      )
-    ) sub
-    ORDER BY sub.stream_id
-    ON CONFLICT (stream_id) DO UPDATE
-      SET last_activity_at = EXCLUDED.last_activity_at,
-          assigned_instance_id = CASE
-            WHEN ast.assigned_instance_id IS NULL THEN EXCLUDED.assigned_instance_id
-            WHEN NOT EXISTS (
-              SELECT 1 FROM __SCHEMA__.wh_service_instances si
-              WHERE si.instance_id = ast.assigned_instance_id
-            ) THEN EXCLUDED.assigned_instance_id
-            ELSE ast.assigned_instance_id
-          END,
-          -- 148 (#731): the stream lease follows the assignment. Whoever the CASE above leaves as owner
-          -- holds the lease: a stream this instance takes (unowned, orphaned by a deregistered instance,
-          -- or already its own) is leased to p_lease_expiry; a stream another registered instance keeps
-          -- is not touched.
-          lease_expiry = CASE
-            WHEN ast.assigned_instance_id IS NULL THEN EXCLUDED.lease_expiry
-            WHEN ast.assigned_instance_id = EXCLUDED.assigned_instance_id THEN EXCLUDED.lease_expiry
-            WHEN NOT EXISTS (
-              SELECT 1 FROM __SCHEMA__.wh_service_instances si
-              WHERE si.instance_id = ast.assigned_instance_id
-            ) THEN EXCLUDED.lease_expiry
-            ELSE ast.lease_expiry
-          END
-    RETURNING ast.stream_id AS pinned_stream_id
-  )
-  SELECT c.c_event_work_id AS event_work_id, c.c_stream_id AS stream_id, c.c_perspective_name AS perspective_name FROM claimed c;
-END;
-$$ LANGUAGE plpgsql;
 
 -- ===========================================================================================
 -- BATCH FOUR: the five functions the re-derived enumeration found.

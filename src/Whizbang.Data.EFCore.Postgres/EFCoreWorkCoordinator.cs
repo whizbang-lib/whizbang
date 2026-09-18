@@ -236,7 +236,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
       _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(),
       DEFAULT_SCHEMA,
       _logger);
-    var inbox = BuildSchemaQualifiedName(schema, "wh_inbox");
+    // 162: every column the backlog query reads (processed_at, scheduled_for, instance_id,
+    // lease_expiry, received_at) is on wh_inbox_state, so it never touches the message row.
+    var inbox = BuildSchemaQualifiedName(schema, "wh_inbox_state");
     var outbox = BuildSchemaQualifiedName(schema, OUTBOX_TABLE);
     var perspectiveEvents = BuildSchemaQualifiedName(schema, "wh_perspective_events");
 
@@ -3554,7 +3556,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       SELECT
         (SELECT COUNT(*) FROM {schema}.wh_perspective_events WHERE processed_at IS NULL)::bigint as "PendingPerspectiveEvents",
         (SELECT COUNT(*) FROM {schema}.wh_outbox WHERE processed_at IS NULL)::bigint as "PendingOutbox",
-        (SELECT COUNT(*) FROM {schema}.wh_inbox WHERE processed_at IS NULL)::bigint as "PendingInbox",
+        (SELECT COUNT(*) FROM {schema}.wh_inbox_state WHERE processed_at IS NULL)::bigint as "PendingInbox",
         (SELECT COUNT(*) FROM {schema}.wh_active_streams)::bigint as "ActiveStreams"
       """;
 

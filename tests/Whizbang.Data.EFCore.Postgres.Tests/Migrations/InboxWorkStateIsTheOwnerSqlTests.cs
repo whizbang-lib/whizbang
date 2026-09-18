@@ -42,6 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </para>
 /// </remarks>
 [Category("Integration")]
+[Category("Shard3")]
 public class InboxWorkStateIsTheOwnerSqlTests : EFCoreTestBase {
   [Test]
   [Timeout(600000)]
