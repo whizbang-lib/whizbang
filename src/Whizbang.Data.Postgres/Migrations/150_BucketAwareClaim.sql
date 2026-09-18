@@ -19,22 +19,58 @@
 -- Objects: idx_inbox_pending_interactive, idx_inbox_pending_arrival_standard, idx_inbox_pending_arrival_background, claim_orphaned_inbox, claim_work (result set: + priority, received_at), claim_orphaned_perspective_events
 -- Constants: the double-underscore tokens in this file (for example __EMPTY_UUID__) are substituted from Migrations/constants.txt at apply time (README rule 12).
 
-CREATE INDEX IF NOT EXISTS idx_inbox_pending_interactive
-  ON __SCHEMA__.wh_inbox (stream_id, received_at, message_id)
-  INCLUDE (instance_id, lease_expiry, scheduled_for, partition_number, is_event)
-  WHERE processed_at IS NULL AND priority <= 99;
-COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_interactive IS
-  'Covering partial index over pending INTERACTIVE rows (priority 1 to 99) in per-stream arrival order (150). The '
-  'urgent lane in claim_orphaned_inbox folds streams over this set alone, so its cost is bounded by the pending '
-  'interactive rows, not the backlog.';
+-- 162 moves instance_id, lease_expiry, partition_number, processed_at, scheduled_for to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_pending_interactive
+    ON __SCHEMA__.wh_inbox (stream_id, received_at, message_id)
+    INCLUDE (instance_id, lease_expiry, scheduled_for, partition_number, is_event)
+    WHERE processed_at IS NULL AND priority <= 99;
+  END IF;
+END $$;
+-- Guarded for the same reason as the CREATE above: after 162 drops the columns this
+-- index keys on, a replay never creates it, and COMMENT ON a missing index is 42P01.
+DO $$
+BEGIN
+  IF to_regclass('__SCHEMA__.idx_inbox_pending_interactive') IS NOT NULL THEN
+    COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_interactive IS
+    'Covering partial index over pending INTERACTIVE rows (priority 1 to 99) in per-stream arrival order (150). The '
+    'urgent lane in claim_orphaned_inbox folds streams over this set alone, so its cost is bounded by the pending '
+    'interactive rows, not the backlog.';
+  END IF;
+END $$;
 
-CREATE INDEX IF NOT EXISTS idx_inbox_pending_arrival_standard
-  ON __SCHEMA__.wh_inbox (received_at, message_id)
-  INCLUDE (stream_id, instance_id, lease_expiry, scheduled_for, partition_number)
-  WHERE processed_at IS NULL AND is_event = TRUE AND priority BETWEEN 100 AND 199;
-COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_arrival_standard IS
-  'Arrival-order partial index over pending STANDARD events (150), so the standard lane''s breadth-first walk with an '
-  'early stop never steps over background rows.';
+-- 162 moves instance_id, lease_expiry, partition_number, processed_at, scheduled_for to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_pending_arrival_standard
+    ON __SCHEMA__.wh_inbox (received_at, message_id)
+    INCLUDE (stream_id, instance_id, lease_expiry, scheduled_for, partition_number)
+    WHERE processed_at IS NULL AND is_event = TRUE AND priority BETWEEN 100 AND 199;
+  END IF;
+END $$;
+-- Guarded for the same reason as the CREATE above: after 162 drops the columns this
+-- index keys on, a replay never creates it, and COMMENT ON a missing index is 42P01.
+DO $$
+BEGIN
+  IF to_regclass('__SCHEMA__.idx_inbox_pending_arrival_standard') IS NOT NULL THEN
+    COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_arrival_standard IS
+    'Arrival-order partial index over pending STANDARD events (150), so the standard lane''s breadth-first walk with an '
+    'early stop never steps over background rows.';
+  END IF;
+END $$;
 
 -- The band boundaries below are literals in three independent places: Whizbang.Core.Priority.WorkPriority, the
 -- CONSTANT declarations in claim_orphaned_inbox further down, and these index predicates. Index DDL cannot
@@ -52,14 +88,32 @@ COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_arrival_standard IS
 -- The DROP is load-bearing. CREATE INDEX IF NOT EXISTS matches on name alone, so without it a database already
 -- carrying the '>= 200' form would keep it forever; the re-run this file's changed hash triggers would do nothing.
 DROP INDEX IF EXISTS __SCHEMA__.idx_inbox_pending_arrival_background;
-CREATE INDEX IF NOT EXISTS idx_inbox_pending_arrival_background
-  ON __SCHEMA__.wh_inbox (received_at, message_id)
-  INCLUDE (stream_id, instance_id, lease_expiry, scheduled_for, partition_number)
-  WHERE processed_at IS NULL AND is_event = TRUE AND priority > 199;
-COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_arrival_background IS
-  'Arrival-order partial index over pending BACKGROUND events (150): the background lane''s walk, and the promotion '
-  'of streams that waited past the background wait target (a leading range on received_at). Its predicate is written '
-  'the way the lane queries it (priority > 199) because a partial index matches by textual implication, not arithmetic.';
+-- 162 moves instance_id, lease_expiry, partition_number, processed_at, scheduled_for to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_pending_arrival_background
+    ON __SCHEMA__.wh_inbox (received_at, message_id)
+    INCLUDE (stream_id, instance_id, lease_expiry, scheduled_for, partition_number)
+    WHERE processed_at IS NULL AND is_event = TRUE AND priority > 199;
+  END IF;
+END $$;
+-- Guarded for the same reason as the CREATE above: after 162 drops the columns this
+-- index keys on, a replay never creates it, and COMMENT ON a missing index is 42P01.
+DO $$
+BEGIN
+  IF to_regclass('__SCHEMA__.idx_inbox_pending_arrival_background') IS NOT NULL THEN
+    COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_arrival_background IS
+    'Arrival-order partial index over pending BACKGROUND events (150): the background lane''s walk, and the promotion '
+    'of streams that waited past the background wait target (a leading range on received_at). Its predicate is written '
+    'the way the lane queries it (priority > 199) because a partial index matches by textual implication, not arithmetic.';
+  END IF;
+END $$;
 
 -- ---------------------------------------------------------------------------------------------
 -- claim_orphaned_inbox: last word 148_ActiveStreamLeases.sql, with the lane block replaced by the bucket lanes.

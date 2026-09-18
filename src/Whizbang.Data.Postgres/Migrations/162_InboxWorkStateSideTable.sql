@@ -192,16 +192,31 @@ COMMENT ON TABLE __SCHEMA__.wh_inbox_state IS
   'HOT share across six million updates in a deployed fleet was under two tenths of one percent. '
   'One row per wh_inbox row, created and deleted with it.';
 
-INSERT INTO __SCHEMA__.wh_inbox_state (
-  message_id, stream_id, received_at, partition_number, priority, is_event,
-  processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
-  chain_emitted_at, status)
-SELECT
-  message_id, stream_id, received_at, partition_number, priority, is_event,
-  processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
-  chain_emitted_at, status
-FROM __SCHEMA__.wh_inbox
-ON CONFLICT (message_id) DO NOTHING;
+-- The backfill reads the ten columns off wh_inbox, which is right the first time this migration
+-- applies and impossible the second. A replayed ledger reaches here after the DROP below has
+-- already run, and the unqualified column list then fails with 42703 -- which wedges the whole init
+-- behind the schema-ready gate, on a database whose state table is already correctly populated.
+--
+-- Guarded on the source column rather than on the destination: wh_inbox_state existing proves
+-- nothing (CREATE TABLE IF NOT EXISTS above just made it), whereas wh_inbox still carrying
+-- processed_at is exactly the condition under which there is anything to copy.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    INSERT INTO __SCHEMA__.wh_inbox_state (
+      message_id, stream_id, received_at, partition_number, priority, is_event,
+      processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
+      chain_emitted_at, status)
+    SELECT
+      message_id, stream_id, received_at, partition_number, priority, is_event,
+      processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
+      chain_emitted_at, status
+    FROM __SCHEMA__.wh_inbox
+    ON CONFLICT (message_id) DO NOTHING;
+  END IF;
+END $$;
 
 -- The lanes the claim picks from. Partial on processed_at IS NULL so they track pending work rather
 -- than settled history, and split by ownership so neither lane reads the other's rows.
@@ -234,9 +249,49 @@ CREATE INDEX IF NOT EXISTS idx_inbox_state_held_lanes
     message_id)
   INCLUDE (priority, attempts, partition_number, status, lease_expiry)
   WHERE processed_at IS NULL;
+-- INCLUDE restores what idx_inbox_pending_stream_order (138) carried. Without it the gated pick
+-- stops being index-only and takes a heap fetch per candidate. The fetch is far cheaper here than
+-- it was on the 2,070-byte inbox row, but free is cheaper still, and 138 added these columns for a
+-- measured reason.
 CREATE INDEX IF NOT EXISTS idx_inbox_state_stream_order
   ON __SCHEMA__.wh_inbox_state (stream_id, received_at, message_id)
+  INCLUDE (instance_id, lease_expiry, scheduled_for, partition_number)
   WHERE processed_at IS NULL;
+
+-- THE PRIORITY LANES. Migration 150 split the arrival pick into one partial index per priority
+-- band, and 145 gave commands their own, because a band reading another band's rows is the defect
+-- those indexes exist to prevent. Every column they key, include or predicate on now lives on this
+-- table, so they move across unchanged apart from the table name.
+--
+-- These are re-created and the remaining orphans are NOT, and the distinction is deliberate rather
+-- than arbitrary: each of these five has a test that asserts a PLAN uses it, which is a demonstrated
+-- query. The others were dropped with their columns and nothing has yet shown what still reads them.
+-- Adding all of them back would take this table from six indexes to seventeen, past the sixteen-slot
+-- fast-path limit, and the point of the split is to get a hot statement back INSIDE that limit --
+-- measured on a deployed fleet as 39 backends over the limit and 3,296 locks going through the
+-- shared lock manager. Restoring everything unexamined would trade one bottleneck for the same one.
+CREATE INDEX IF NOT EXISTS idx_inbox_state_pending_interactive
+  ON __SCHEMA__.wh_inbox_state (stream_id, received_at, message_id)
+  INCLUDE (instance_id, lease_expiry, scheduled_for, partition_number, is_event)
+  WHERE processed_at IS NULL AND priority <= 99;
+CREATE INDEX IF NOT EXISTS idx_inbox_state_pending_arrival_standard
+  ON __SCHEMA__.wh_inbox_state (received_at, message_id)
+  INCLUDE (stream_id, instance_id, lease_expiry, scheduled_for, partition_number)
+  WHERE processed_at IS NULL AND is_event = TRUE AND priority >= 100 AND priority <= 199;
+CREATE INDEX IF NOT EXISTS idx_inbox_state_pending_arrival_background
+  ON __SCHEMA__.wh_inbox_state (received_at, message_id)
+  INCLUDE (stream_id, instance_id, lease_expiry, scheduled_for, partition_number)
+  WHERE processed_at IS NULL AND is_event = TRUE AND priority > 199;
+CREATE INDEX IF NOT EXISTS idx_inbox_state_pending_commands
+  ON __SCHEMA__.wh_inbox_state (stream_id, received_at, message_id)
+  INCLUDE (instance_id, lease_expiry, scheduled_for, partition_number)
+  WHERE processed_at IS NULL AND is_event = FALSE;
+
+-- find_stuck_inbox_rows' driving read. Tiny and highly selective: attempts > 5 on unprocessed rows
+-- is a handful of rows in a healthy system, which is exactly what makes the sentinel cheap to ask.
+CREATE INDEX IF NOT EXISTS idx_inbox_state_stuck_sentinel
+  ON __SCHEMA__.wh_inbox_state (attempts)
+  WHERE processed_at IS NULL AND attempts > 5;
 
 
 -- perform_maintenance was in the enumeration of twenty-two and was missed in the batch that should
@@ -518,7 +573,7 @@ BEGIN
       AND NOT EXISTS (
         SELECT 1 FROM __SCHEMA__.wh_message_associations ma
         WHERE ma.normalized_message_type = es.event_type
-          AND ma.association_type = 'perspective'
+          AND ma.association_type = __CATEGORY_PERSPECTIVE__
           AND NOT EXISTS (
             SELECT 1 FROM __SCHEMA__.wh_perspective_snapshots s
             WHERE s.stream_id = es.stream_id
@@ -705,6 +760,15 @@ $$ LANGUAGE plpgsql;
 -- DROP COLUMN is a catalog update, not a table rewrite, and the twenty-one indexes that name these
 -- columns go with them as a catalog update plus a file unlink. Measured at about 1.1 ms for all ten
 -- at both 100,000 and 500,000 rows. The lock window is the backfill above, not this.
+-- RECLAIM: the dropped bytes persist per EXISTING row. DROP COLUMN only flags the attribute in
+--          pg_attribute; every row already on disk keeps the ten columns' bytes forever and
+--          autovacuum never returns them. On this table that is the difference between the
+--          2,070 bytes a row occupies today and the ~1,900 it would occupy rewritten, so the
+--          write-amplification win this migration exists for is only PARTLY realized until a
+--          rewrite happens. Operators should run pg_repack on wh_inbox after this migration;
+--          VACUUM FULL or CLUSTER also work but take an exclusive lock for the duration.
+--          Nothing here is incorrect without it -- the reclaim is a size and cache-footprint
+--          matter, not a correctness one.
 ALTER TABLE __SCHEMA__.wh_inbox
   DROP COLUMN IF EXISTS instance_id,
   DROP COLUMN IF EXISTS lease_expiry,
@@ -1194,7 +1258,7 @@ BEGIN
 
   FOR v_completion IN
     SELECT
-      (elem->>'MessageId')::UUID as msg_id,
+      (elem->>__ENVELOPE_FIELD_MESSAGE_ID__)::UUID as msg_id,
       (elem->>'Status')::INTEGER as status_flags
     FROM jsonb_array_elements(p_completions) as elem
   LOOP
@@ -3523,15 +3587,15 @@ BEGIN
   -- to wh_perspective_events in the future, add a third SELECT/notify call here.
 
   IF v_outbox_streams IS NOT NULL AND array_length(v_outbox_streams, 1) > 0 THEN
-    PERFORM __SCHEMA__.notify_instance_owners('outbox', v_outbox_streams);
-    category := 'outbox';
+    PERFORM __SCHEMA__.notify_instance_owners(__CATEGORY_OUTBOX__, v_outbox_streams);
+    category := __CATEGORY_OUTBOX__;
     stream_count := array_length(v_outbox_streams, 1);
     RETURN NEXT;
   END IF;
 
   IF v_inbox_streams IS NOT NULL AND array_length(v_inbox_streams, 1) > 0 THEN
-    PERFORM __SCHEMA__.notify_instance_owners('inbox', v_inbox_streams);
-    category := 'inbox';
+    PERFORM __SCHEMA__.notify_instance_owners(__CATEGORY_INBOX__, v_inbox_streams);
+    category := __CATEGORY_INBOX__;
     stream_count := array_length(v_inbox_streams, 1);
     RETURN NEXT;
   END IF;

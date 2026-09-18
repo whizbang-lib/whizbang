@@ -138,7 +138,7 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
 
     var outboxIdx = await _indexExistsAsync(conn, "idx_outbox_stuck_sentinel");
-    var inboxIdx = await _indexExistsAsync(conn, "idx_inbox_stuck_sentinel");
+    var inboxIdx = await _indexExistsAsync(conn, "idx_inbox_state_stuck_sentinel");
 
     await Assert.That(outboxIdx).IsTrue()
       .Because("Without idx_outbox_stuck_sentinel, find_stuck_outbox_rows would full-scan wh_outbox on every 10-min maintenance tick — at production scale (millions of historical rows), the sentinel itself becomes a problem.");

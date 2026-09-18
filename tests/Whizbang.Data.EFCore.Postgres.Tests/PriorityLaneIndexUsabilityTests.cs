@@ -102,7 +102,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       $"i.is_event = TRUE AND i.priority > {_standardBandEnd}",
       "i.received_at, i.message_id");
 
-    await Assert.That(plan).Contains("idx_inbox_pending_arrival_background")
+    await Assert.That(plan).Contains("idx_inbox_state_pending_arrival_background")
       .Because($"the background lane is where a bulk load's rows sit; an index it cannot use leaves the claim filtering and sorting every pending row. Plan was:\n{plan}");
   }
 
@@ -116,7 +116,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       $"i.is_event = TRUE AND i.priority BETWEEN {_interactiveBandEnd + 1} AND {_standardBandEnd}",
       "i.received_at, i.message_id");
 
-    await Assert.That(plan).Contains("idx_inbox_pending_arrival_standard").Because($"plan was:\n{plan}");
+    await Assert.That(plan).Contains("idx_inbox_state_pending_arrival_standard").Because($"plan was:\n{plan}");
   }
 
   [Test]
@@ -129,7 +129,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       $"i.priority <= {_interactiveBandEnd}",
       "i.stream_id, i.received_at, i.message_id");
 
-    await Assert.That(plan).Contains("idx_inbox_pending_interactive").Because($"plan was:\n{plan}");
+    await Assert.That(plan).Contains("idx_inbox_state_pending_interactive").Because($"plan was:\n{plan}");
   }
 
   /// <summary>
@@ -145,7 +145,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = """
       SELECT indexname, substring(indexdef from position('WHERE' in indexdef))
-      FROM pg_indexes WHERE tablename = 'wh_inbox' AND indexname LIKE 'idx_inbox_pending_%'
+      FROM pg_indexes WHERE tablename = 'wh_inbox_state' AND indexname LIKE 'idx_inbox_state_pending_%'
       """;
     var predicates = new Dictionary<string, string>(StringComparer.Ordinal);
     await using (var reader = await cmd.ExecuteReaderAsync()) {
@@ -154,11 +154,11 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
       }
     }
 
-    await Assert.That(predicates["idx_inbox_pending_arrival_background"]).Contains($"priority > {_standardBandEnd}")
+    await Assert.That(predicates["idx_inbox_state_pending_arrival_background"]).Contains($"priority > {_standardBandEnd}")
       .Because("claim_orphaned_inbox's background lane filters with 'priority > c_standard_band_end'; an index declaring the same set as 'priority >= 200' cannot be matched to it");
-    await Assert.That(predicates["idx_inbox_pending_interactive"]).Contains($"priority <= {_interactiveBandEnd}");
-    await Assert.That(predicates["idx_inbox_pending_arrival_standard"]).Contains($"priority >= {_interactiveBandEnd + 1}");
-    await Assert.That(predicates["idx_inbox_pending_arrival_standard"]).Contains($"priority <= {_standardBandEnd}");
+    await Assert.That(predicates["idx_inbox_state_pending_interactive"]).Contains($"priority <= {_interactiveBandEnd}");
+    await Assert.That(predicates["idx_inbox_state_pending_arrival_standard"]).Contains($"priority >= {_interactiveBandEnd + 1}");
+    await Assert.That(predicates["idx_inbox_state_pending_arrival_standard"]).Contains($"priority <= {_standardBandEnd}");
   }
 
   /// <summary>

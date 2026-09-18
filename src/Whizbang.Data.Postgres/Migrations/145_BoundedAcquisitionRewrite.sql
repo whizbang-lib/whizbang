@@ -31,13 +31,31 @@
 --   is reproduced verbatim from 138 and 140.
 
 -- COMMAND LANE INDEX: pending commands are few; this lets the lane be ranked over commands alone.
-CREATE INDEX IF NOT EXISTS idx_inbox_pending_commands
-  ON __SCHEMA__.wh_inbox (stream_id, received_at, message_id)
-  INCLUDE (instance_id, lease_expiry, scheduled_for, partition_number)
-  WHERE processed_at IS NULL AND is_event = FALSE;
-COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_commands IS
-  'Covering partial index over pending COMMAND rows (is_event = FALSE) in per-stream arrival order (145). The command '
-  'lane in claim_orphaned_inbox ranks this set alone, so its cost is bounded by the number of pending commands.';
+-- 162 moves instance_id, lease_expiry, partition_number, processed_at, scheduled_for to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_pending_commands
+    ON __SCHEMA__.wh_inbox (stream_id, received_at, message_id)
+    INCLUDE (instance_id, lease_expiry, scheduled_for, partition_number)
+    WHERE processed_at IS NULL AND is_event = FALSE;
+  END IF;
+END $$;
+-- Guarded for the same reason as the CREATE above: after 162 drops the columns this
+-- index keys on, a replay never creates it, and COMMENT ON a missing index is 42P01.
+DO $$
+BEGIN
+  IF to_regclass('__SCHEMA__.idx_inbox_pending_commands') IS NOT NULL THEN
+    COMMENT ON INDEX __SCHEMA__.idx_inbox_pending_commands IS
+    'Covering partial index over pending COMMAND rows (is_event = FALSE) in per-stream arrival order (145). The command '
+    'lane in claim_orphaned_inbox ranks this set alone, so its cost is bounded by the number of pending commands.';
+  END IF;
+END $$;
 
 -- Signatures change: exactly one overload per framework function.
 SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_inbox');

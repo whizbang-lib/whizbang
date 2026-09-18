@@ -56,18 +56,58 @@
 -- Dependencies: 123 (outstanding-by-instance indexes), 149 (priority columns), 150 (claim_work), 157 (bounded acquisition)
 -- Objects: wh_inbox.chain_emitted_at, idx_inbox_chain_pending, idx_outbox_held_arrival, idx_inbox_held_lanes, idx_perspective_held_lanes, idx_outbox_lease_expiry, idx_inbox_lease_expiry, idx_perspective_lease_expiry
 
-ALTER TABLE __SCHEMA__.wh_inbox ADD COLUMN IF NOT EXISTS chain_emitted_at TIMESTAMPTZ;
-COMMENT ON COLUMN __SCHEMA__.wh_inbox.chain_emitted_at IS
-  'When the inbox event-store chain last confirmed this row''s event is in the event store (158). NULL means '
-  'the chain is not finished with the row. The claim poll reads only unstamped rows, so a held row is checked '
-  'against the event store once instead of on every poll.';
+-- 162 moves this column to wh_inbox_state. IF NOT EXISTS makes a bare re-run SUCCEED, which is
+-- worse than failing: it RESURRECTS a column the cutover removed, and then the guarded index
+-- below sees its guard column present and tries to build an index whose predicate needs
+-- processed_at, which is still gone. Guard on processed_at, the column that actually tells us
+-- whether this table is still pre-split.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    ALTER TABLE __SCHEMA__.wh_inbox ADD COLUMN IF NOT EXISTS chain_emitted_at TIMESTAMPTZ;
+  END IF;
+END $$;
+-- 162 drops this column from wh_inbox. COMMENT ON a column that is gone is 42703, so a
+-- replayed ledger must skip it. Guarded on processed_at, which is what tells us whether
+-- this table is still pre-split.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    COMMENT ON COLUMN __SCHEMA__.wh_inbox.chain_emitted_at IS
+    'When the inbox event-store chain last confirmed this row''s event is in the event store (158). NULL means '
+    'the chain is not finished with the row. The claim poll reads only unstamped rows, so a held row is checked '
+    'against the event store once instead of on every poll.';
+  END IF;
+END $$;
 
-CREATE INDEX IF NOT EXISTS idx_inbox_chain_pending
-  ON __SCHEMA__.wh_inbox (instance_id)
-  WHERE processed_at IS NULL AND is_event = TRUE AND stream_id IS NOT NULL AND chain_emitted_at IS NULL;
-COMMENT ON INDEX __SCHEMA__.idx_inbox_chain_pending IS
-  'Pending inbox events the event-store chain has not read yet, by holder (158). Empty for a holder in steady '
-  'state, so the claim poll skips the chain without touching a held row.';
+-- 162 moves chain_emitted_at, instance_id, processed_at to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_chain_pending
+    ON __SCHEMA__.wh_inbox (instance_id)
+    WHERE processed_at IS NULL AND is_event = TRUE AND stream_id IS NOT NULL AND chain_emitted_at IS NULL;
+  END IF;
+END $$;
+-- Guarded for the same reason as the CREATE above: after 162 drops the columns this
+-- index keys on, a replay never creates it, and COMMENT ON a missing index is 42P01.
+DO $$
+BEGIN
+  IF to_regclass('__SCHEMA__.idx_inbox_chain_pending') IS NOT NULL THEN
+    COMMENT ON INDEX __SCHEMA__.idx_inbox_chain_pending IS
+    'Pending inbox events the event-store chain has not read yet, by holder (158). Empty for a holder in steady '
+    'state, so the claim poll skips the chain without touching a held row.';
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_outbox_held_arrival
   ON __SCHEMA__.wh_outbox (instance_id, created_at, message_id)
@@ -84,8 +124,17 @@ COMMENT ON INDEX __SCHEMA__.idx_outbox_held_arrival IS
 -- returns is in the index, so the walk never reaches the heap, which is what the previous shape did
 -- once per held row. The bucket expression is the one claim_work writes, so the planner matches it;
 -- keep the two identical.
-CREATE INDEX IF NOT EXISTS idx_inbox_held_lanes
-  ON __SCHEMA__.wh_inbox (
+-- 162 moves attempts, instance_id, lease_expiry, partition_number, processed_at, status to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_held_lanes
+    ON __SCHEMA__.wh_inbox (
     instance_id,
     (CASE WHEN priority <= 99 THEN 0 WHEN priority <= 199 THEN 1 ELSE 2 END),
     is_event,
@@ -93,12 +142,21 @@ CREATE INDEX IF NOT EXISTS idx_inbox_held_lanes
     stream_id,
     received_at,
     message_id)
-  INCLUDE (priority, attempts, partition_number, status, lease_expiry)
-  WHERE processed_at IS NULL;
-COMMENT ON INDEX __SCHEMA__.idx_inbox_held_lanes IS
-  'Pending inbox rows by holder, priority bucket, kind, tried-or-fresh, stream and arrival (158). claim_work '
-  'enumerates the streams an instance holds one index-only probe per stream through this index, lane by lane '
-  'in batch order, and re-offers a batch of them instead of ranking every held row per poll.';
+    INCLUDE (priority, attempts, partition_number, status, lease_expiry)
+    WHERE processed_at IS NULL;
+  END IF;
+END $$;
+-- Guarded for the same reason as the CREATE above: after 162 drops the columns this
+-- index keys on, a replay never creates it, and COMMENT ON a missing index is 42P01.
+DO $$
+BEGIN
+  IF to_regclass('__SCHEMA__.idx_inbox_held_lanes') IS NOT NULL THEN
+    COMMENT ON INDEX __SCHEMA__.idx_inbox_held_lanes IS
+    'Pending inbox rows by holder, priority bucket, kind, tried-or-fresh, stream and arrival (158). claim_work '
+    'enumerates the streams an instance holds one index-only probe per stream through this index, lane by lane '
+    'in batch order, and re-offers a batch of them instead of ranking every held row per poll.';
+  END IF;
+END $$;
 
 -- The lane of a pending perspective event: its holder and its priority bucket (150), then the stream and
 -- the event. claim_work walks a bucket one probe per stream; a stream's first entry is its oldest held
@@ -128,12 +186,30 @@ COMMENT ON INDEX __SCHEMA__.idx_outbox_lease_expiry IS
   'Leased pending outbox singles by lease expiry (158), so claim_work''s orphan guard finds an expired lease at '
   'the index head and proves there is none without walking the holdings.';
 
-CREATE INDEX IF NOT EXISTS idx_inbox_lease_expiry
-  ON __SCHEMA__.wh_inbox (lease_expiry)
-  WHERE processed_at IS NULL AND instance_id IS NOT NULL;
-COMMENT ON INDEX __SCHEMA__.idx_inbox_lease_expiry IS
-  'Leased pending inbox rows by lease expiry (158), so claim_work''s orphan guard finds an expired lease at '
-  'the index head and proves there is none without walking the holdings.';
+-- 162 moves instance_id, lease_expiry, processed_at to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_lease_expiry
+    ON __SCHEMA__.wh_inbox (lease_expiry)
+    WHERE processed_at IS NULL AND instance_id IS NOT NULL;
+  END IF;
+END $$;
+-- Guarded for the same reason as the CREATE above: after 162 drops the columns this
+-- index keys on, a replay never creates it, and COMMENT ON a missing index is 42P01.
+DO $$
+BEGIN
+  IF to_regclass('__SCHEMA__.idx_inbox_lease_expiry') IS NOT NULL THEN
+    COMMENT ON INDEX __SCHEMA__.idx_inbox_lease_expiry IS
+    'Leased pending inbox rows by lease expiry (158), so claim_work''s orphan guard finds an expired lease at '
+    'the index head and proves there is none without walking the holdings.';
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_perspective_lease_expiry
   ON __SCHEMA__.wh_perspective_events (lease_expiry)

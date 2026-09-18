@@ -33,9 +33,20 @@ CREATE INDEX IF NOT EXISTS idx_outbox_stuck_sentinel
   ON __SCHEMA__.wh_outbox (attempts)
   WHERE processed_at IS NULL AND attempts > 5;
 
-CREATE INDEX IF NOT EXISTS idx_inbox_stuck_sentinel
-  ON __SCHEMA__.wh_inbox (attempts)
-  WHERE processed_at IS NULL AND attempts > 5;
+-- 162 moves attempts, processed_at to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_stuck_sentinel
+    ON __SCHEMA__.wh_inbox (attempts)
+    WHERE processed_at IS NULL AND attempts > 5;
+  END IF;
+END $$;
 
 -- ============================================================================
 -- find_stuck_outbox_rows — surface wh_outbox rows the drainer never reaches
@@ -81,7 +92,17 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.find_stuck_inbox_rows(
   stream_id UUID,
   attempts INTEGER,
   claimed_since TIMESTAMPTZ
-) LANGUAGE SQL STABLE AS $$
+-- plpgsql rather than SQL, and the difference is not stylistic. PostgreSQL VALIDATES a LANGUAGE SQL
+-- body at CREATE time, resolving every column. Migration 162 moves attempts and processed_at to
+-- wh_inbox_state, so a replayed ledger reaching this statement against the post-split shape failed
+-- here with 42703 before the function 162 defines could replace it -- and that wedged the whole init
+-- behind the schema-ready gate. A plpgsql body is parsed but not resolved until first execution, so
+-- this definition applies cleanly and 162's redefinition is what actually runs.
+-- Every reference is alias-qualified, which is what keeps the RETURNS TABLE column names
+-- (message_id, stream_id, attempts) from colliding with the query's own.
+) LANGUAGE plpgsql STABLE AS $$
+BEGIN
+  RETURN QUERY
   SELECT i.message_id,
          i.message_type::TEXT,
          i.stream_id,
@@ -92,6 +113,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.find_stuck_inbox_rows(
     AND i.processed_at IS NULL
   ORDER BY i.attempts DESC, i.received_at ASC
   LIMIT p_limit;
+END;
 $$;
 
 COMMENT ON FUNCTION __SCHEMA__.find_stuck_inbox_rows IS
