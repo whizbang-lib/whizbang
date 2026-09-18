@@ -127,7 +127,11 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_state (
   -- payload, appear in no index, and are read only as projections by paths that join anyway.
   stream_id        UUID,
   received_at      TIMESTAMPTZ NOT NULL,
-  priority         INTEGER     NOT NULL DEFAULT 100,
+  -- DEFAULT 150, which is what migration 149 gave this column on all three work tables. This read
+  -- 100 until the contract guard compared it against the outbox. 100 and 150 land in the same
+  -- priority band, so nothing about lane selection changes, but the lanes ORDER BY priority: a row
+  -- that took the old default would have sorted ahead of every row that named 150 explicitly.
+  priority         INTEGER     NOT NULL DEFAULT 150,
   is_event         BOOLEAN     NOT NULL DEFAULT FALSE,
   -- partition_number is the TENTH mutable column and was found only by the exhaustive pass.
   -- recompute_partition_numbers rewrites it, so question one forbids it being copied: it moves.
@@ -153,7 +157,14 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_state (
   -- Written when a failure is reported, and when the claim finds a lease that expired with nobody
   -- having said why. error is NULL for every row that has not failed, which costs a bit in the null
   -- bitmap and nothing else.
-  failure_reason   INTEGER,
+  -- NOT NULL DEFAULT 99, carried over verbatim from wh_inbox rather than simplified. Dropping it
+  -- was silent and wrong: store_inbox_messages and both recover_dead_letter paths insert without
+  -- naming this column, so every newly stored message got NULL where it used to get 99, while the
+  -- backfill copied real values for the rows that already existed. A NULL here is not a quieter 99
+  -- -- `failure_reason = 99` and `failure_reason <> 99` both exclude it -- so the rows would have
+  -- gone missing from anything that counts or groups by reason, and only for rows stored after the
+  -- cutover. Caught by FailureReasonSchemaTests asserting the column keeps its default.
+  failure_reason   INTEGER NOT NULL DEFAULT 99,
   error            TEXT,
   -- status is rewritten by the completion and failure paths, and it is single-homed today, so the
   -- first boundary question allows it to stay. The second one does not. claim_work's held-lane
@@ -163,7 +174,11 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_state (
   -- leaving status behind buys a heap fetch on the wide row per candidate stream, which is the exact
   -- cost this migration removes. A split that de-indexes the path it was meant to speed up is not a
   -- smaller change, it is a wrong one.
-  status           INTEGER     NOT NULL DEFAULT 0,
+  -- DEFAULT 1, which is what wh_inbox declared. This read DEFAULT 0 until a column-by-column diff
+  -- against the table it came from caught it. No insert in this migration omits status, so nothing
+  -- observes the difference today -- which is exactly why it would have sat here until something
+  -- did, and status is a bit field, so 0 and 1 are not near-misses of each other.
+  status           INTEGER     NOT NULL DEFAULT 1,
   -- chain_emitted_at is here for the SAME reason processed_at is, and it was nearly missed. It is
   -- single-homed on wh_inbox today, so the boundary rule (a rewritten column lives in exactly one
   -- table) does not by itself force it to move. What forces it is the predicate that reads it:
@@ -231,8 +246,16 @@ CREATE INDEX IF NOT EXISTS idx_inbox_state_expired
 -- The emit chain's driving read, now entirely local to this table. Mirrors
 -- idx_inbox_chain_pending, which cannot survive on wh_inbox because it keys on instance_id and
 -- predicates on processed_at, both of which move.
+-- INCLUDE carries the three columns the emit-chain lock pass reads for every candidate row, so the
+-- pass is index-only rather than one heap fetch per candidate. message_id is the one that matters
+-- most: the pass anti-joins it against the event store, and v0.685's lock-in (migration 057, and
+-- EmitChainInboxIndexTests) required it to be reachable from the index precisely so the planner can
+-- take a merge or hash anti-join instead of a nested loop over heap tuples. It was the primary key
+-- of the wide row and is the primary key here, which does NOT put it in a secondary index, so it
+-- has to be named. lease_expiry and stream_id are the pass's other two reads.
 CREATE INDEX IF NOT EXISTS idx_inbox_state_chain_pending
   ON __SCHEMA__.wh_inbox_state (instance_id)
+  INCLUDE (message_id, stream_id, lease_expiry)
   WHERE processed_at IS NULL AND is_event = TRUE AND stream_id IS NOT NULL
     AND chain_emitted_at IS NULL;
 -- claim_work's held-lane re-offer walk, rebuilt here. INCLUDE carries every column the walk
