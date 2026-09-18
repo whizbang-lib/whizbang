@@ -89,3 +89,9 @@ claim.depth_cost_multiple	6.8	x		recorded, not gated: 14.7 before the row bound,
 claim.rows_leased_per_call.depth_12	5	rows/call		
 claim.rows_leased_per_call.depth_200	5	rows/call	50	was 1766.7 before the row bound
 claim.rows_leased_per_call.depth_50	5	rows/call		
+ephemeral_reap.no_index.wh_event_store.tuples_read_per_cycle	20000	tuples/cycle		recorded, not gated: this is the plan the index replaces, kept so the pair reads as a before and after
+ephemeral_reap.no_index.wh_event_body.tuples_read_per_cycle	0	tuples/cycle		recorded: this container's planner drives the join from the event store, so the body table is not scanned here. A deployed fleet's plan read it too, which is why the fix covers both sides
+ephemeral_reap.indexed.wh_event_store.tuples_read_per_cycle	0	tuples/cycle	100	GATED: a design property, not a machine property. The reap asks whether anything is reapable; with a partial index on the ephemeral flag the empty answer costs an index probe, so a sequential read of the event store means the index stopped being used
+ephemeral_reap.indexed.wh_event_body.tuples_read_per_cycle	0	tuples/cycle	100	GATED: same property on the other side of the join
+ephemeral_reap.tuples_read_per_cycle_total.no_index	20000	tuples/cycle		recorded, not gated
+ephemeral_reap.tuples_read_per_cycle_total.indexed	0	tuples/cycle	200	GATED: the whole cycle. Measured on a deployed fleet at 2,119 s of statement time and 9.6M block reads across 410 calls that returned zero rows
