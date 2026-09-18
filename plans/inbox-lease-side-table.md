@@ -1,7 +1,12 @@
 # Moving the inbox lease into a table of its own
 
-Status: designed and prototyped, not built. Every number here is from a controlled fixture at the
-shape stated beside it. Nothing in this document rests on statistics from a running environment.
+Status: designed, prototyped and measured. No SQL written. Every number here is from a controlled
+fixture at the shape stated beside it. Nothing in this document rests on statistics from a running
+environment.
+
+The cutover is **one migration in one transaction**, because customers take the latest package and
+there is no sequence of releases to march anyone through. The lock window that buys is measured in
+section 3.5 and is the number to argue with.
 
 ## 1. The case
 
@@ -122,6 +127,10 @@ occur, because after the split claim state lives in exactly one place.** `wh_inb
 it. Orphan reclaim looks for `lease_expiry < now()`, which is a lease-table predicate start to
 finish, so every reclaim path keeps working unchanged in shape.
 
+Dropping the columns rather than ignoring them also removes the failure mode that would otherwise
+be invisible here: there is no longer a place for a stale lease to be written. A claim either finds
+the lease table or raises.
+
 **The split introduces a different risk and it is the one to test for: a missing lease row.** An
 inbox row with no lease row is a message nothing can ever claim, and it fails silently, which is the
 worst shape a defect can have. Two things prevent it:
@@ -134,34 +143,124 @@ worst shape a defect can have. Two things prevent it:
 And one thing detects it: an invariant test asserting that every unprocessed `wh_inbox` row has a
 lease row, run after the fixtures that insert, claim, fail, expire and dead-letter messages.
 
-### 3.5 The migration, and what happens to rows mid-flight
+### 3.5 The migration: one transaction, and the lock window it costs
 
-**A single-transaction cutover is not safe and should not be attempted.** The backfill reads a
-consistent snapshot. A claim committing after that snapshot but before the cutover commits writes the
-old columns, which the new functions no longer read, so its lease would be lost and the row would
-look free while an instance is still working it. That is a double dispatch, which this system must
-never do. The window is small and the consequence is not, so the design does not rely on it being
-small.
+Customers take the latest package, so there is no sequence of releases to march anyone through. The
+cutover happens in one update or not at all. That rules out expand/migrate/contract and it makes the
+design simpler rather than harder, for the reason the hazard analysis already contained:
 
-**Expand, migrate, contract, across a release boundary:**
+**The danger was never the cutover. It was leaving the old columns in place while ignoring them.** A
+claim that writes a column nothing reads succeeds, believes it holds a lease, and dispatches work a
+second claimer will also take. A claim that *fails* is safe: no lease is taken, the row stays
+claimable, and the worker retries. **Erroring loudly is the property that makes a single cutover
+correct, and it is only available if the columns are gone rather than ignored.** So the migration
+drops them.
 
-1. **Expand.** Create the lease table and backfill it from `wh_inbox`. Add a trigger on `wh_inbox`
-   that mirrors every write of the claim-state columns into the lease table. Leave all sixteen
-   functions alone. Both representations are now authoritative and the trigger keeps them in step, so
-   a row mid-flight during this step is simply written twice. Old and new instances can both run.
-2. **Migrate.** In a later migration, switch the sixteen functions to read and write the lease table,
-   and drop the trigger. The lease table is already correct for every row, including rows claimed
-   during step 1, so there is no snapshot window to lose a write in.
-3. **Contract.** Drop the claim-state columns and their fifteen indexes from `wh_inbox`. This is the
-   step that collects the win, and it is deliberately last and separate, because it is the only
-   irreversible one.
+#### The statement order, and why the lock comes first
 
-Steps 2 and 3 must not land in the same release as step 1: an instance running old code against a
-schema that has had step 2 applied would write columns nothing reads.
+```
+BEGIN;
+LOCK TABLE wh_inbox IN ACCESS EXCLUSIVE MODE;   -- before the backfill, not after
+CREATE TABLE wh_inbox_lease (...);
+INSERT INTO wh_inbox_lease SELECT ... FROM wh_inbox;
+CREATE INDEX ... ON wh_inbox_lease ...;          -- three of them
+ALTER TABLE wh_inbox DROP COLUMN instance_id, DROP COLUMN lease_expiry,
+                     DROP COLUMN attempts, DROP COLUMN processed_at;
+CREATE OR REPLACE FUNCTION ...;                  -- the sixteen
+COMMIT;
+```
 
-The pre-v1 rule that migrations are editable in place does not apply to this one in the usual way,
-because it moves data. Each step is its own migration file and none of the three is edited after it
-has run anywhere.
+**Taking the lock first is load-bearing and is the answer to the consistent-snapshot question.** An
+`INSERT ... SELECT` takes only `ACCESS SHARE`, which does not block writers, and under `READ
+COMMITTED` each statement takes a fresh snapshot. Left to itself the backfill would therefore miss a
+claim that commits after it and before the `ALTER`, and that row's lease would be dropped with the
+column: claimed by a live worker, free in the new table, dispatched twice. An explicit
+`ACCESS EXCLUSIVE` before the backfill closes that window completely. Every concurrent claim either
+committed before the lock was granted, in which case the backfill sees it, or waits on the lock and
+then fails on a column that no longer exists.
+
+**This is why the lock window includes the backfill rather than just the drop**, and it is the cost
+the design is buying correctness with.
+
+#### The lock window, measured
+
+Faithful copy of `wh_inbox`: same columns, same 24 indexes, 1.4 KB payload per row. The whole
+transaction timed statement by statement.
+
+| | 100,000 rows | 500,000 rows |
+|---|---|---|
+| Table size | 156 MB heap, 71 MB index | 781 MB heap, 331 MB index |
+| `LOCK TABLE` | 0.03 ms | 0.06 ms |
+| `CREATE TABLE` | 4.9 ms | 2.0 ms |
+| **Backfill `INSERT ... SELECT`** | **373 ms** | **1,409 ms** |
+| Three `CREATE INDEX` | 307 ms | 700 ms |
+| **`ALTER TABLE ... DROP COLUMN` x4** | **1.7 ms** | **4.3 ms** |
+| `COMMIT` | 7.1 ms | 21.7 ms |
+| **Total stall** | **0.69 s** | **2.14 s** |
+
+**The drop itself is free.** PostgreSQL's `DROP COLUMN` is a catalog update rather than a table
+rewrite, and dropping the fifteen indexes that name those columns is a catalog update plus a file
+unlink. Single-digit milliseconds at both scales. **The stall is the backfill and the three index
+builds**, and those scale with the table.
+
+**The rule to scale by: roughly 4.3 microseconds per row** on this hardware, which extrapolates to
+about 4 seconds at one million rows and 43 seconds at ten million. Read those as the optimistic end.
+This was measured on a local container with a warm cache and local NVMe; a database on network
+storage with a cold cache can reasonably be several times slower.
+
+**Whether that is acceptable depends on what the table is, and the honest answer is that it is
+acceptable for a queue and not for an archive.** `wh_inbox` is a queue: rows are processed and
+reaped, so its steady-state size is the backlog rather than the history. A few hundred thousand rows
+is a service under load; ten million rows is a table that has stopped being reaped, which is a
+different problem that this migration would merely reveal. If a deployment is known to carry a very
+large inbox, the number to quote is the per-row rule and not the totals above.
+
+**What was considered and does not help.** Backfilling outside the lock and catching up changed rows
+under it would shorten the stall, but finding the changed rows means a full scan of the same wide
+heap, which is the cost being avoided. It also gives up the single-transaction property that makes
+rollback clean. The backfill has to read the wide heap once, and that read is the floor.
+
+#### It genuinely fits one transaction, and this was checked rather than assumed
+
+`SchemaCommandBoundary` applies a script with no commit-boundary marker as **one `NpgsqlCommand` on
+one fresh connection**, which PostgreSQL runs as a single implicit transaction. That is not inferred:
+`SchemaCommandBoundaryTests.WithoutTheBoundaryTheSameScriptStillFailsAsync` already pins it, by
+running a marker-free script whose later statement fails and asserting that the earlier data rewrite
+and index creation both rolled back. It was run again as part of this work and passes.
+
+So the migration must carry **no** boundary marker. Nothing in it depends on an earlier statement's
+committed effect: the three `CREATE INDEX` statements read rows the same transaction inserted, which
+is the ordinary case and was verified working in the timing run above. The marker exists for the
+opposite situation, an index over an expression on freshly rewritten data, which this migration does
+not contain.
+
+#### Old instances during the rolling deploy
+
+Verified in the code rather than assumed. Every worker loop is
+`while (!stoppingToken.IsCancellationRequested)` with a per-iteration `catch (Exception)` that hands
+the exception to `WorkerLoopRecovery`. That classifies it, reports it, waits, and **returns so the
+loop continues** on both branches: a `TransientDatabaseFailure` is reported as transient, anything
+else as a defect, and neither stops the loop. A missing column raises SQLSTATE 42703, which is not
+transient, so it is reported as a defect and the loop backs off from 250 ms doubling to a 30 second
+ceiling and keeps trying until the pod is replaced.
+
+**Nothing dead-letters the work.** Dead-lettering is driven by the attempt budget, and `attempts` is
+bumped only by a claim that succeeds. A claim that throws bumps nothing, so a message cannot be aged
+out by the failure window. Old instances take no work and lose none; new instances take it all.
+
+#### Rollback, including the awkward case
+
+If the migration fails at any point the transaction rolls back whole: no lease table, columns intact,
+functions unchanged. The fleet is on old code against an unchanged schema and keeps working. Because
+it is one transaction, the next instance to win the schema lock retries from exactly the same state,
+which is the property `SchemaCommandBoundary` exists to protect in the general case.
+
+**The case worth stating plainly is a failure after some instances have already restarted onto new
+code.** Those instances run new SQL against the old schema, so their statements reference a lease
+table that does not exist and raise SQLSTATE 42P01. That travels the same defect-and-retry path as
+above: they back off, take no work, and lose none. Old-code instances keep working normally
+throughout. The fleet degrades to reduced capacity rather than to data loss or double dispatch, and
+it recovers when the migration succeeds on a later start.
 
 ## 4. Scope
 
