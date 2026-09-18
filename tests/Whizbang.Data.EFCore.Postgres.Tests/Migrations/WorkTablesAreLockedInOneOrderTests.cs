@@ -46,7 +46,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </para>
 /// </remarks>
 [Category("Shard3")]
-public class WorkTablesAreLockedInOneOrderTests {
+public partial class WorkTablesAreLockedInOneOrderTests {
   /// <summary>
   /// The schema the migration text is rendered against, which the patterns below are built from.
   /// </summary>
@@ -151,9 +151,7 @@ public class WorkTablesAreLockedInOneOrderTests {
   /// </remarks>
   private static List<(string Name, string Body)> _functionBodies(string sql) {
     var bodies = new List<(string, string)>();
-    var starts = Regex.Matches(sql, @"^[ \t]*CREATE OR REPLACE FUNCTION\s+" + SCHEMA + @"\.(\w+)",
-                               RegexOptions.Multiline | RegexOptions.IgnoreCase)
-                      .ToList();
+    var starts = FunctionStart().Matches(sql).ToList();
     for (var i = 0; i < starts.Count; i++) {
       var from = starts[i].Index;
       var to = i + 1 < starts.Count ? starts[i + 1].Index : sql.Length;
@@ -200,14 +198,37 @@ public class WorkTablesAreLockedInOneOrderTests {
     return result.ToString();
   }
 
-  private static readonly Regex CONTROL_FLOW = new(
-    @"\G\b(CASE|WHEN|THEN|IF|ELSIF|ELSEIF|ELSE|END[ \t\r\n]+CASE|END[ \t\r\n]+IF|END)\b",
-    RegexOptions.IgnoreCase | RegexOptions.Compiled);
+  [GeneratedRegex(@"\G\b(CASE|WHEN|THEN|IF|ELSIF|ELSEIF|ELSE|END[ \t\r\n]+CASE|END[ \t\r\n]+IF|END)\b",
+    RegexOptions.IgnoreCase)]
+  private static partial Regex ControlFlow();
 
   /// <summary>A statement already opened by <c>EXIT</c> or <c>CONTINUE</c>, whose WHEN is a modifier.</summary>
-  private static readonly Regex LOOP_MODIFIER = new(
-    @"^\s*(EXIT|CONTINUE)\b",
-    RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+  [GeneratedRegex(@"^\s*(EXIT|CONTINUE)\b", RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+  private static partial Regex LoopModifier();
+
+  [GeneratedRegex(@"^[ \t]*CREATE OR REPLACE FUNCTION\s+" + SCHEMA + @"\.(\w+)", RegexOptions.Multiline | RegexOptions.IgnoreCase)]
+  private static partial Regex FunctionStart();
+
+  [GeneratedRegex(@"\s+")]
+  private static partial Regex Whitespace();
+
+  [GeneratedRegex(@"\bUPDATE\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase)]
+  private static partial Regex UpdateTarget();
+
+  [GeneratedRegex(@"\bDELETE\s+FROM\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase)]
+  private static partial Regex DeleteTarget();
+
+  [GeneratedRegex(@"\bINSERT\s+INTO\s+" + SCHEMA + @"\.(wh_\w+)(.*?)(?=\bINSERT\s+INTO\b|$)", RegexOptions.IgnoreCase)]
+  private static partial Regex InsertTarget();
+
+  [GeneratedRegex(@"\bON\s+CONFLICT\b", RegexOptions.IgnoreCase)]
+  private static partial Regex OnConflict();
+
+  [GeneratedRegex(@"\bFOR\s+UPDATE\b(?!\s+(?:OF\s+[\w,\s]+?\s+)?(?:SKIP\s+LOCKED|NOWAIT))", RegexOptions.IgnoreCase)]
+  private static partial Regex WaitingForUpdate();
+
+  [GeneratedRegex(@"\b(?:FROM|JOIN)\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase)]
+  private static partial Regex FromOrJoinTarget();
 
   /// <summary>
   /// Walks a function body and returns every statement that takes a row lock, tagged with the
@@ -267,10 +288,10 @@ public class WorkTablesAreLockedInOneOrderTests {
         continue;
       }
       if (depth <= 0) {
-        var keyword = CONTROL_FLOW.Match(body, i);
+        var keyword = ControlFlow().Match(body, i);
         // \G anchors the match at i; the index check says so in code rather than relying on it.
         if (keyword.Success && keyword.Index == i) {
-          var word = Regex.Replace(keyword.Groups[1].Value.ToUpperInvariant(), @"\s+", " ");
+          var word = Whitespace().Replace(keyword.Groups[1].Value.ToUpperInvariant(), " ");
 
           // Inside a CASE expression nothing is a branch: only its own nesting is tracked, and the
           // text is kept because the statement it belongs to is still being accumulated.
@@ -295,7 +316,7 @@ public class WorkTablesAreLockedInOneOrderTests {
           // splits a single arm in two, so statements on either side look mutually unreachable and
           // their pair is never derived -- the failure direction that HIDES an inversion rather
           // than inventing one. Sixteen of them exist in these migrations.
-          if (word == "WHEN" && LOOP_MODIFIER.IsMatch(statement.ToString())) {
+          if (word == "WHEN" && LoopModifier().IsMatch(statement.ToString())) {
             statement.Append(keyword.Groups[1].Value);
             i = keyword.Index + keyword.Length;
             continue;
@@ -339,7 +360,7 @@ public class WorkTablesAreLockedInOneOrderTests {
 
   /// <summary>Every table a single statement takes a row lock on, in the order it names them.</summary>
   private static List<string> _tablesLockedBy(string statement) {
-    var oneLine = Regex.Replace(statement, @"\s+", " ");
+    var oneLine = Whitespace().Replace(statement, " ");
     var tables = new List<string>();
 
     void Add(string table) {
@@ -348,24 +369,22 @@ public class WorkTablesAreLockedInOneOrderTests {
       }
     }
 
-    foreach (var m in Regex.Matches(oneLine, @"\bUPDATE\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
+    foreach (var m in UpdateTarget().Matches(oneLine).ToList()) {
       Add(m.Groups[1].Value);
     }
-    foreach (var m in Regex.Matches(oneLine, @"\bDELETE\s+FROM\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
+    foreach (var m in DeleteTarget().Matches(oneLine).ToList()) {
       Add(m.Groups[1].Value);
     }
     // INSERT ... ON CONFLICT locks the conflicting row. The ON CONFLICT can sit far below the
     // INSERT, so each INSERT is paired with the text up to the next one.
-    foreach (var m in Regex.Matches(oneLine, @"\bINSERT\s+INTO\s+" + SCHEMA + @"\.(wh_\w+)(.*?)(?=\bINSERT\s+INTO\b|$)",
-                                    RegexOptions.IgnoreCase).ToList()) {
-      if (Regex.IsMatch(m.Groups[2].Value, @"\bON\s+CONFLICT\b", RegexOptions.IgnoreCase)) {
+    foreach (var m in InsertTarget().Matches(oneLine).ToList()) {
+      if (OnConflict().IsMatch(m.Groups[2].Value)) {
         Add(m.Groups[1].Value);
       }
     }
     // FOR UPDATE waits, and therefore deadlocks -- unless it SKIP LOCKEDs or NOWAITs, which do not.
-    if (Regex.IsMatch(oneLine, @"\bFOR\s+UPDATE\b(?!\s+(?:OF\s+[\w,\s]+?\s+)?(?:SKIP\s+LOCKED|NOWAIT))",
-                      RegexOptions.IgnoreCase)) {
-      foreach (var m in Regex.Matches(oneLine, @"\b(?:FROM|JOIN)\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
+    if (WaitingForUpdate().IsMatch(oneLine)) {
+      foreach (var m in FromOrJoinTarget().Matches(oneLine).ToList()) {
         Add(m.Groups[1].Value);
       }
     }

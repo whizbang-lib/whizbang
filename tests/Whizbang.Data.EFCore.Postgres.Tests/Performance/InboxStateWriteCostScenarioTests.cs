@@ -87,7 +87,7 @@ public class InboxStateWriteCostScenarioTests : EFCoreTestBase {
     // flap it -- but tight enough that restoring all eleven orphans would fail here, which is the
     // regression this test is really guarding.
     await Assert.That(narrow.BlocksPerRow * 1.5).IsLessThan(wide.BlocksPerRow)
-      .Because($"the split's whole justification is that a claim writes less: wide is "
+      .Because("the split's whole justification is that a claim writes less: wide is "
         + $"{wide.BlocksPerRow:F1} blocks/row over {wide.Indexes} indexes, state is "
         + $"{narrow.BlocksPerRow:F1} over {narrow.Indexes}. If this fails, the state table's index "
         + "set has grown back toward the wide row's and the write win has been traded away");

@@ -3,6 +3,8 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.Postgres;
 
+using System.Text.RegularExpressions;
+
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
@@ -37,7 +39,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </para>
 /// </remarks>
 [Category("Shard3")]
-public class MigrationTransactionBoundaryGuardTests {
+public partial class MigrationTransactionBoundaryGuardTests {
   /// <summary>
   /// The columns migration 162 drops from <c>wh_inbox</c>, moved to <c>wh_inbox_state</c>.
   /// </summary>
@@ -228,25 +230,28 @@ public class MigrationTransactionBoundaryGuardTests {
   private static HashSet<string> _functionsDefinedIn(string sql) =>
     System.Text.RegularExpressions.Regex
       .Matches(sql, @"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[^\s.(]+\.([a-z_][a-z0-9_]*)\s*\(",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        RegexOptions.IgnoreCase)
       .Select(m => m.Groups[1].Value)
       .ToHashSet(StringComparer.Ordinal);
 
   /// <summary>The text of one function definition, from its CREATE to the terminating dollar quote.</summary>
   private static string? _bodyOf(string sql, string function) {
-    var m = System.Text.RegularExpressions.Regex.Match(
+    var m = Regex.Match(
       sql,
-      @"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[^\s.(]+\." + System.Text.RegularExpressions.Regex.Escape(function)
+      @"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[^\s.(]+\." + Regex.Escape(function)
         + @"\s*\(.*?\n\$\$",
-      System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline);
+      RegexOptions.IgnoreCase | RegexOptions.Singleline);
     return m.Success ? m.Value : null;
   }
 
   /// <summary>
   /// A reference to wh_inbox itself rather than to wh_inbox_state, which shares the prefix.
   /// </summary>
-  private static bool _referencesBareInbox(string body) =>
-    System.Text.RegularExpressions.Regex.IsMatch(body, @"\bwh_inbox\b(?!_)");
+  private static bool _referencesBareInbox(string body) => BareInbox().IsMatch(body);
+
+  /// <summary>wh_inbox itself, not wh_inbox_state, which shares the prefix.</summary>
+  [GeneratedRegex(@"\bwh_inbox\b(?!_)")]
+  private static partial Regex BareInbox();
 
   /// <summary>
   /// No C# source builds SQL that reads a column the cutover drops from <c>wh_inbox</c>.
@@ -284,7 +289,7 @@ public class MigrationTransactionBoundaryGuardTests {
       }
       var lines = await File.ReadAllLinesAsync(file);
       for (var i = 0; i < lines.Length; i++) {
-        if (!System.Text.RegularExpressions.Regex.IsMatch(lines[i], @"\bwh_inbox\b(?!_)")) {
+        if (!BareInbox().IsMatch(lines[i])) {
           continue;
         }
         // A window rather than the line, because the table name and the column it selects are

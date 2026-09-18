@@ -60,8 +60,23 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </para>
 /// </remarks>
 [Category("Shard3")]
-public class InboxDescriptorDefersToTheCutoverTests {
+public partial class InboxDescriptorDefersToTheCutoverTests {
   private const string INBOX_TABLE = "wh_inbox";
+
+  [GeneratedRegex(@"ALTER\s+TABLE\s+(?:[A-Za-z0-9_]+\.)?" + INBOX_TABLE + @"(?![_A-Za-z0-9])(.*?);",
+    RegexOptions.IgnoreCase | RegexOptions.Singleline)]
+  private static partial Regex AlterInbox();
+
+  [GeneratedRegex(@"DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?([A-Za-z0-9_]+)", RegexOptions.IgnoreCase)]
+  private static partial Regex DropColumnClause();
+
+  [GeneratedRegex(@"ALTER\s+TABLE\s+(?:[A-Za-z0-9_""]+\.)?" + INBOX_TABLE
+    + @"(?![_A-Za-z0-9])\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+([A-Za-z0-9_]+)", RegexOptions.IgnoreCase)]
+  private static partial Regex EnsureAddsInboxColumn();
+
+  [GeneratedRegex(@"CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+([A-Za-z0-9_]+)\s+ON\s+"
+    + @"(?:[A-Za-z0-9_""]+\.)?" + INBOX_TABLE + @"(?![_A-Za-z0-9])\s*\(([^)]*)\)([^;]*);", RegexOptions.IgnoreCase)]
+  private static partial Regex EnsureCreatesInboxIndex();
 
   /// <summary>
   /// Every column any migration drops from <c>wh_inbox</c>, read out of the migration text.
@@ -76,14 +91,8 @@ public class InboxDescriptorDefersToTheCutoverTests {
       var sql = _stripLineComments(migration.Sql);
       // An ALTER TABLE may carry several comma-separated DROP COLUMN clauses, so match each clause
       // inside a statement that targets this table rather than assuming one per statement.
-      foreach (Match statement in Regex.Matches(
-          sql,
-          @"ALTER\s+TABLE\s+(?:[A-Za-z0-9_]+\.)?" + INBOX_TABLE + @"(?![_A-Za-z0-9])(.*?);",
-          RegexOptions.IgnoreCase | RegexOptions.Singleline)) {
-        foreach (Match clause in Regex.Matches(
-            statement.Groups[1].Value,
-            @"DROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?([A-Za-z0-9_]+)",
-            RegexOptions.IgnoreCase)) {
+      foreach (Match statement in AlterInbox().Matches(sql)) {
+        foreach (Match clause in DropColumnClause().Matches(statement.Groups[1].Value)) {
           dropped.Add(clause.Groups[1].Value.ToLowerInvariant());
         }
       }
@@ -124,11 +133,7 @@ public class InboxDescriptorDefersToTheCutoverTests {
 
     // Table-scoped on purpose: wh_outbox declares columns of the same names, and a script-wide
     // search for "status" would report the outbox's ensure as an inbox violation.
-    var reAsserted = Regex.Matches(
-        ensure,
-        @"ALTER\s+TABLE\s+(?:[A-Za-z0-9_""]+\.)?" + INBOX_TABLE
-          + @"(?![_A-Za-z0-9])\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+([A-Za-z0-9_]+)",
-        RegexOptions.IgnoreCase)
+    var reAsserted = EnsureAddsInboxColumn().Matches(ensure)
       .Select(m => m.Groups[1].Value.ToLowerInvariant())
       .Where(dropped.Contains)
       .Distinct(StringComparer.Ordinal)
@@ -156,17 +161,13 @@ public class InboxDescriptorDefersToTheCutoverTests {
     var ensure = _ensureScript();
 
     var offenders = new List<string>();
-    foreach (Match index in Regex.Matches(
-        ensure,
-        @"CREATE\s+(?:UNIQUE\s+)?INDEX\s+IF\s+NOT\s+EXISTS\s+([A-Za-z0-9_]+)\s+ON\s+"
-          + @"(?:[A-Za-z0-9_""]+\.)?" + INBOX_TABLE + @"(?![_A-Za-z0-9])\s*\(([^)]*)\)([^;]*);",
-        RegexOptions.IgnoreCase)) {
+    foreach (Match index in EnsureCreatesInboxIndex().Matches(ensure)) {
       var name = index.Groups[1].Value;
       // The key list and the partial index's predicate both pin the index to the column: an index
       // keyed on a surviving column but filtered on a dropped one is just as broken.
       var referenced = index.Groups[2].Value + " " + index.Groups[3].Value;
       var named = dropped
-        .Where(c => Regex.IsMatch(referenced, $@"(?<![_A-Za-z0-9]){Regex.Escape(c)}(?![_A-Za-z0-9])"))
+        .Where(c => Regex.IsMatch(referenced, $"(?<![_A-Za-z0-9]){Regex.Escape(c)}(?![_A-Za-z0-9])"))
         .ToList();
       if (named.Count > 0) {
         offenders.Add($"{name} ({string.Join(", ", named)})");
