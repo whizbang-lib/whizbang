@@ -28,6 +28,10 @@ the next person deriving a boundary needs the question rather than the answer.**
 > For every column, ask **"what rewrites this?"** A column that anything rewrites must live in
 > exactly ONE table. A column that nothing rewrites after insert may be copied to both, and copying
 > it is often right, because copies of a value that never changes cannot disagree.
+>
+> Then ask a second question: **"what predicate reads it, and can that predicate still be covered by
+> one index?"** A rewritten column that is already single-homed passes the first test and can still
+> be in the wrong place, if leaving it behind splits a hot predicate across both tables.
 
 Asking instead "what does the claim read?" produces a boundary that looks correct and corrupts data.
 `scheduled_for` is the counterexample that proves it: it reads like static routing data, it is not in
@@ -413,6 +417,7 @@ not a regression**, and they are expected in the final commit rather than treate
 | `ALTER TABLE ... DROP COLUMN` | not written: cannot land until every function is rewritten |
 | `cleanup_stale_instances` (batch one b) | **landed** |
 | Batch two: `purge_orphan_inbox`, `process_inbox_completions`, `fetch_inbox_batch` | **landed, 77 tests green** |
+| `chain_emitted_at` moved to the lease table with its index | **landed** |
 | Batch two remainder: `move_to_dead_letters`, `store_inbox_messages`, `_emit_event_store_chain_for_inbox` | not written, 647 lines |
 | Batch three: `claim_orphaned_inbox` and `claim_work` | not written, 1,231 lines |
 
@@ -452,6 +457,30 @@ a documentation-side gap, not something to invent a path for. A function with no
 | Function | Status |
 |---|---|
 | `release_unprocessed_inbox` | **no page anywhere on the site** |
+
+### The second boundary question, found in batch two
+
+`chain_emitted_at` is rewritten, and it is already single-homed on `wh_inbox`, so the first boundary
+question says it may stay. **It has to move anyway**, and finding out why is the most useful thing
+batch two produced.
+
+The emit chain's driving read is:
+
+```sql
+WHERE instance_id = ... AND lease_expiry > ... AND processed_at IS NULL
+  AND is_event AND stream_id IS NOT NULL AND chain_emitted_at IS NULL
+```
+
+It runs on every claim poll, and `idx_inbox_chain_pending` serves it by keying on `instance_id` and
+predicating on `processed_at`. **Both of those move, so that index cannot survive on `wh_inbox`.**
+Leaving `chain_emitted_at` behind would split this predicate across two tables with no index able to
+cover it, in the path measured at roughly 870 blocks per poll. That is the single change that would
+have made this migration slower rather than faster, in its hottest path.
+
+With the column on the lease table every term is local again and one partial index
+(`idx_inbox_lease_chain_pending`) covers the whole predicate. **Eight mutable columns move, not
+seven.** The index count is unchanged at 24 down to 4, because the chain index was already counted as
+moving.
 
 ## 4. Scope
 

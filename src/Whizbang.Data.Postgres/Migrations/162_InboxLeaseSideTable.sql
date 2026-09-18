@@ -19,7 +19,7 @@
 --              3,084,970; 0 of 24,508. Under two tenths of one percent. A lab fixture independently
 --              measured 0 of 660. So every write to this table maintains every index on it.
 --
---              TWENTY of the twenty-four indexes in the fixture name one of the seven mutable
+--              TWENTY of the twenty-four indexes in the fixture name one of the EIGHT mutable
 --              columns. They belong to claiming and they leave with it, which is the real argument
 --              for this change: wh_inbox drops from twenty-four indexes to FOUR, so EVERY write to
 --              it gets cheaper, not only the claim.
@@ -94,7 +94,7 @@
 --              fails if a marker ever appears in this file; it is not decoration.
 --
 -- Dependencies: 149 (store_inbox_messages, _emit_event_store_chain_for_inbox), 150 (claim_orphaned_inbox, claim_work), 158, 159
--- Objects: wh_inbox_lease, wh_inbox (drops instance_id, lease_expiry, attempts, processed_at, scheduled_for, failure_reason, error)
+-- Objects: wh_inbox_lease, wh_inbox (drops instance_id, lease_expiry, attempts, processed_at, scheduled_for, failure_reason, error, chain_emitted_at)
 
 -- See "THE LOCK ON THE LINE BELOW IS NOT REDUNDANT" above before touching this statement.
 LOCK TABLE __SCHEMA__.wh_inbox IN ACCESS EXCLUSIVE MODE;
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_lease (
   partition_number INTEGER,
   priority         INTEGER     NOT NULL DEFAULT 100,
   is_event         BOOLEAN     NOT NULL DEFAULT FALSE,
-  -- THE SEVEN MUTABLE COLUMNS. These MOVE: they are dropped from wh_inbox, so each lives in exactly
+  -- THE EIGHT MUTABLE COLUMNS. These MOVE: they are dropped from wh_inbox, so each lives in exactly
   -- one place. The distinction that matters is mutability, not whether claiming reads them. An
   -- immutable column can safely be copied to both tables because the copies can never disagree; a
   -- MUTABLE column copied to both tables is a split brain waiting to happen, and the first draft of
@@ -137,6 +137,20 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_lease (
   -- bitmap and nothing else.
   failure_reason   INTEGER,
   error            TEXT,
+  -- chain_emitted_at is here for the SAME reason processed_at is, and it was nearly missed. It is
+  -- single-homed on wh_inbox today, so the boundary rule (a rewritten column lives in exactly one
+  -- table) does not by itself force it to move. What forces it is the predicate that reads it:
+  --
+  --   WHERE instance_id = ... AND lease_expiry > ... AND processed_at IS NULL
+  --     AND is_event AND stream_id IS NOT NULL AND chain_emitted_at IS NULL
+  --
+  -- That is the emit chain's driving read, it runs on every claim poll, and idx_inbox_chain_pending
+  -- serves it by keying on instance_id and predicating on processed_at. BOTH of those move, so the
+  -- index cannot survive on wh_inbox, and leaving chain_emitted_at behind would split the predicate
+  -- across two tables with no index able to cover it. That is the one change that would make this
+  -- migration slower rather than faster in its hottest path. With the column here, every term is on
+  -- this table and one partial index covers the whole predicate again.
+  chain_emitted_at TIMESTAMPTZ,
   -- A message with no lease row can never be claimed, and it would fail silently, which is the worst
   -- shape a defect can have. The key and the cascade make the pair impossible to half-create or
   -- half-delete; an invariant test covers the rest.
@@ -153,10 +167,12 @@ COMMENT ON TABLE __SCHEMA__.wh_inbox_lease IS
 
 INSERT INTO __SCHEMA__.wh_inbox_lease (
   message_id, stream_id, received_at, partition_number, priority, is_event,
-  processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error)
+  processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
+  chain_emitted_at)
 SELECT
   message_id, stream_id, received_at, partition_number, priority, is_event,
-  processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error
+  processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
+  chain_emitted_at
 FROM __SCHEMA__.wh_inbox
 ON CONFLICT (message_id) DO NOTHING;
 
@@ -170,6 +186,13 @@ CREATE INDEX IF NOT EXISTS idx_inbox_lease_expired
   WHERE processed_at IS NULL AND instance_id IS NOT NULL;
 -- The per-stream ordering gate walks a stream's pending rows in arrival order. Every column it reads
 -- is on this table, so the gate stays a single-table query rather than becoming a join.
+-- The emit chain's driving read, now entirely local to this table. Mirrors
+-- idx_inbox_chain_pending, which cannot survive on wh_inbox because it keys on instance_id and
+-- predicates on processed_at, both of which move.
+CREATE INDEX IF NOT EXISTS idx_inbox_lease_chain_pending
+  ON __SCHEMA__.wh_inbox_lease (instance_id)
+  WHERE processed_at IS NULL AND is_event = TRUE AND stream_id IS NOT NULL
+    AND chain_emitted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_inbox_lease_stream_order
   ON __SCHEMA__.wh_inbox_lease (stream_id, received_at, message_id)
   WHERE processed_at IS NULL;
@@ -197,16 +220,17 @@ BEGIN
   IF pg_trigger_depth() > 1 THEN RETURN NULL; END IF;
   INSERT INTO __SCHEMA__.wh_inbox_lease (
     message_id, stream_id, received_at, partition_number, priority, is_event,
-    processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error)
+    processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error,
+    chain_emitted_at)
   VALUES (
     NEW.message_id, NEW.stream_id, NEW.received_at, NEW.partition_number, NEW.priority,
     NEW.is_event, NEW.processed_at, NEW.instance_id, NEW.lease_expiry, NEW.attempts,
-    NEW.scheduled_for, NEW.failure_reason, NEW.error)
+    NEW.scheduled_for, NEW.failure_reason, NEW.error, NEW.chain_emitted_at)
   ON CONFLICT (message_id) DO UPDATE SET
     processed_at = EXCLUDED.processed_at, instance_id = EXCLUDED.instance_id,
     lease_expiry = EXCLUDED.lease_expiry, attempts = EXCLUDED.attempts,
     scheduled_for = EXCLUDED.scheduled_for, failure_reason = EXCLUDED.failure_reason,
-    error = EXCLUDED.error;
+    error = EXCLUDED.error, chain_emitted_at = EXCLUDED.chain_emitted_at;
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
@@ -217,7 +241,8 @@ BEGIN
   UPDATE __SCHEMA__.wh_inbox SET
     processed_at = NEW.processed_at, instance_id = NEW.instance_id,
     lease_expiry = NEW.lease_expiry, attempts = NEW.attempts,
-    scheduled_for = NEW.scheduled_for, failure_reason = NEW.failure_reason, error = NEW.error
+    scheduled_for = NEW.scheduled_for, failure_reason = NEW.failure_reason, error = NEW.error,
+    chain_emitted_at = NEW.chain_emitted_at
   WHERE message_id = NEW.message_id;
   RETURN NULL;
 END;
