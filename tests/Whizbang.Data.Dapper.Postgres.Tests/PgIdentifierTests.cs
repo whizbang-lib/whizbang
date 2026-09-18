@@ -62,6 +62,41 @@ public class PgIdentifierTests {
   }
 
   [Test]
+  [Arguments("wh_perspective_rows")]
+  [Arguments("Tenant42")]
+  [Arguments("_leading_underscore")]
+  [Arguments("a")]
+  public async Task RequireBare_ReturnsABareIdentifierUnchangedAsync(string identifier)
+    => await Assert.That(PgIdentifier.RequireBare(identifier, "tableName")).IsEqualTo(identifier);
+
+  [Test]
+  [Arguments("evil\"; DROP TABLE wh_outbox; --")]
+  [Arguments("has space")]
+  [Arguments("has-dash")]
+  [Arguments("has.dot")]
+  [Arguments("semi;colon")]
+  [Arguments("paren()")]
+  public async Task RequireBare_ThrowsOnAnythingThatIsNotLetterDigitOrUnderscoreAsync(string identifier)
+    => await Assert.That(() => PgIdentifier.RequireBare(identifier, "tableName"))
+      .Throws<ArgumentException>()
+      .Because("this identifier reaches SQL unquoted, so anything outside the bare set could change the statement");
+
+  [Test]
+  [Arguments(null)]
+  [Arguments("")]
+  [Arguments("   ")]
+  public async Task RequireBare_ThrowsOnAnAbsentIdentifierAsync(string? identifier)
+    => await Assert.That(() => PgIdentifier.RequireBare(identifier!, "tableName")).Throws<ArgumentException>();
+
+  [Test]
+  public async Task RequireBare_NamesTheOffendingParameterAsync() {
+    var ex = await Assert.That(() => PgIdentifier.RequireBare("bad name", "tableName"))
+      .Throws<ArgumentException>();
+    await Assert.That(ex!.ParamName).IsEqualTo("tableName")
+      .Because("the caller's parameter name is what makes the failure actionable, not the helper's");
+  }
+
+  [Test]
   public async Task Qualify_EscapesTheSchemaItQualifiesWithAsync()
     => await Assert.That(PgIdentifier.Qualify("a\"b", "claim_work")).IsEqualTo("\"a\"\"b\".claim_work")
       .Because("the qualified form must escape exactly as the bare quoted form does");

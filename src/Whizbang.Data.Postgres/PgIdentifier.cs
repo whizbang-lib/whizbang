@@ -53,13 +53,14 @@ internal static class PgIdentifier {
   /// </remarks>
   /// <exception cref="ArgumentException">The identifier contains anything else.</exception>
   internal static string RequireBare(string identifier, string paramName) {
-    ArgumentException.ThrowIfNullOrWhiteSpace(identifier, paramName);
-    foreach (var c in identifier) {
-      if (!char.IsLetterOrDigit(c) && c != '_') {
-        throw new ArgumentException(
-          $"'{identifier}' is not a bare SQL identifier. It is interpolated into SQL unquoted, so only "
-          + "letters, digits and underscores are accepted.", paramName);
-      }
+    // Same shape as PostgresSchemaInitializer's own identifier check, and one throw site so the
+    // absent case and the illegal-character case report identically. paramName is the CALLER's
+    // parameter, which is what makes the message actionable, so it is passed rather than inferred.
+    if (string.IsNullOrWhiteSpace(identifier)
+        || !identifier.All(c => char.IsLetterOrDigit(c) || c == '_')) {
+      throw new ArgumentException(
+        $"'{identifier}' is not a bare SQL identifier. It is interpolated into SQL unquoted, so only "
+        + "letters, digits and underscores are accepted.", paramName);
     }
     return identifier;
   }
