@@ -197,7 +197,19 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       f.Worker = new PerspectiveWorker(
         instanceProvider: instanceProvider,
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        // The drain accumulation window is timed on the worker's clock, so a fixture that injects a
+        // FAKE clock and never advances it would leave the accumulator waiting and no drain would
+        // ever be processed. These tests are about the affinity-hold watchdog, not about coalescing,
+        // so the window is zeroed: waitFor computes non-positive on the first pass and the
+        // accumulator returns without consulting the clock at all. Zeroing is deterministic, whereas
+        // advancing the clock here would race the creation of the timer it is meant to fire.
+        options: Options.Create(new PerspectiveWorkerOptions {
+          PollingIntervalMilliseconds = 50,
+          DrainBatcher = new SlidingWindowBatcherOptions {
+            SlidingWindow = TimeSpan.Zero,
+            MaxWait = TimeSpan.Zero
+          }
+        }),
         tracingOptions: null,
         completionStrategy: new InstantCompletionStrategy(),
         eventTypeProvider: null,
