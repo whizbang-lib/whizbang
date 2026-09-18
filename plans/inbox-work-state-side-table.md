@@ -939,6 +939,29 @@ down from eight to one, because an index has no equivalent flag and had to be re
 guard derives the dropped set from the migration text rather than listing it, with an anti-vacuity
 test that fails if the parse comes back empty.
 
+**A third declaration site, found in CI rather than by the enumeration.** Sections 6 and 6.1 and the
+descriptor guard all say this schema declares each table twice. It declares it three times.
+`CoreInfrastructureSchema.sql`, an embedded resource in the EFCore generator, creates the inbox and
+six of its indexes, and runs on every startup like the descriptor ensure does. Five of those indexes
+key columns the cutover moves. The hazard is the descriptor's mirror image and it fails loudly rather
+than silently: `CREATE INDEX IF NOT EXISTS` tests the index NAME, not its columns, so once the
+cutover has dropped a column and taken its index with it the name is free again and PostgreSQL builds
+the index against a column that no longer exists. That is a 42703 on the second boot, behind the
+schema-ready gate. No test caught it because every per-test database is a first boot, where the
+columns still exist when that script runs. The five stale indexes are removed; `idx_inbox_received_at`
+is the one that stays, because received_at stays.
+
+**The two runners disagreed about transactions, and this migration was the first to notice.**
+Migration 123 states the contract in as many words -- the runner wraps each file in a transaction,
+which is why CREATE INDEX CONCURRENTLY is unavailable to migrations. The EFCore runner honors it for
+free, because EF's `ExecuteSqlRawAsync` runs inside a transaction. The Dapper runner executed each
+migration on a bare command with none, and had done so all along. Invisible until a migration needed
+an explicit `LOCK TABLE`, which the cutover does because it moves rows between tables and then drops
+the columns they came from: PostgreSQL rejects one outside a transaction block with 25P01, so the
+same migration passed under one runner and failed the entire suite under the other. Each migration
+now runs in one transaction there too, with the ledger write inside it and the failure record
+deliberately outside, after the rollback, where it survives.
+
 **Index coverage is answered.** Five priority-lane indexes are restored on the state table, where
 they belong; the remaining six of the eleven that had no replacement were redundant with the
 covering index or with each other. The `idx_inbox_state_stream_order` index gained four `INCLUDE`

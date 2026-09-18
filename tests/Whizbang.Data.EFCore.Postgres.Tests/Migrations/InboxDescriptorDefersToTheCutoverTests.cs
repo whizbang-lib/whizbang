@@ -13,7 +13,16 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This schema has TWO declaration sites for the same table.
+/// This schema has THREE declaration sites for the same table, and this test covers one of them.
+/// </para>
+/// <para>
+/// The third was found only after the cutover reached CI, which is why it is named here rather
+/// than left to be rediscovered: <c>CoreInfrastructureSchema.sql</c> in the EFCore generator
+/// resources also creates the table and its indexes, and also runs on every startup. Its hazard
+/// is the opposite of the descriptor's and louder: <c>CREATE INDEX IF NOT EXISTS</c> tests the
+/// index NAME, so once the cutover drops a column and takes its index with it, the name is free
+/// and PostgreSQL builds the index against a column that is gone -- 42703, on the second boot,
+/// behind the schema-ready gate. Every per-test database is a first boot, so no test saw it.
 /// <see cref="PostgresSchemaBuilder.BuildInfrastructureSchema"/> renders the descriptors in
 /// <c>Whizbang.Data.Schema.Schemas</c> into a CREATE-and-ensure script, and the numbered SQL
 /// migrations evolve the table from there. Schema initialization runs them in that order on EVERY
