@@ -164,7 +164,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       // base class failed every test that uses it while the migration itself was correct. A harness
       // that applies migrations differently from the runner can reject what production accepts, and
       // accept what production rejects; both directions cost a day.
-      using var transaction = (NpgsqlTransaction)connection.BeginTransaction();
+      await using var transaction = (NpgsqlTransaction)connection.BeginTransaction();
       using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
       functionCommand.Transaction = transaction;
       functionCommand.CommandText = functionSql;
