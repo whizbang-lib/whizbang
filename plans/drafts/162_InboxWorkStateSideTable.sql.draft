@@ -1,4 +1,4 @@
--- Migration: 162_InboxLeaseSideTable.sql
+-- Migration: 162_InboxWorkStateSideTable.sql
 -- Date: 2026-09-17
 -- Description: The inbox lease moves into a narrow table of its own, so a claim stops paying for
 --              every index on a wide message row.
@@ -94,12 +94,12 @@
 --              fails if a marker ever appears in this file; it is not decoration.
 --
 -- Dependencies: 149 (store_inbox_messages, _emit_event_store_chain_for_inbox), 150 (claim_orphaned_inbox, claim_work), 158, 159
--- Objects: wh_inbox_lease, wh_inbox (drops instance_id, lease_expiry, attempts, processed_at, scheduled_for, failure_reason, error)
+-- Objects: wh_inbox_state, wh_inbox (drops instance_id, lease_expiry, attempts, processed_at, scheduled_for, failure_reason, error)
 
 -- See "THE LOCK ON THE LINE BELOW IS NOT REDUNDANT" above before touching this statement.
 LOCK TABLE __SCHEMA__.wh_inbox IN ACCESS EXCLUSIVE MODE;
 
-CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_lease (
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_state (
   -- The join key, and the only column shared with wh_inbox.
   message_id       UUID PRIMARY KEY,
   -- Everything below is a column claim_orphaned_inbox reads or writes. The set is DERIVED from the
@@ -140,18 +140,18 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_lease (
   -- A message with no lease row can never be claimed, and it would fail silently, which is the worst
   -- shape a defect can have. The key and the cascade make the pair impossible to half-create or
   -- half-delete; an invariant test covers the rest.
-  CONSTRAINT fk_inbox_lease_message FOREIGN KEY (message_id)
+  CONSTRAINT fk_inbox_state_message FOREIGN KEY (message_id)
     REFERENCES __SCHEMA__.wh_inbox (message_id) ON DELETE CASCADE
 );
 
-COMMENT ON TABLE __SCHEMA__.wh_inbox_lease IS
+COMMENT ON TABLE __SCHEMA__.wh_inbox_state IS
   'Claim state for wh_inbox rows (162), split out so a claim does not rewrite a wide, heavily '
   'indexed message row. instance_id and lease_expiry each appear in twelve of wh_inbox''s indexes, '
   'so a claim can never be a HOT update and pays full index maintenance on every write; measured '
   'HOT share across six million updates in a deployed fleet was under two tenths of one percent. '
   'One row per wh_inbox row, created and deleted with it.';
 
-INSERT INTO __SCHEMA__.wh_inbox_lease (
+INSERT INTO __SCHEMA__.wh_inbox_state (
   message_id, stream_id, received_at, partition_number, priority, is_event,
   processed_at, instance_id, lease_expiry, attempts, scheduled_for, failure_reason, error)
 SELECT
@@ -162,14 +162,14 @@ ON CONFLICT (message_id) DO NOTHING;
 
 -- The lanes the claim picks from. Partial on processed_at IS NULL so they track pending work rather
 -- than settled history, and split by ownership so neither lane reads the other's rows.
-CREATE INDEX IF NOT EXISTS idx_inbox_lease_unowned
-  ON __SCHEMA__.wh_inbox_lease (priority, received_at, message_id)
+CREATE INDEX IF NOT EXISTS idx_inbox_state_unowned
+  ON __SCHEMA__.wh_inbox_state (priority, received_at, message_id)
   WHERE processed_at IS NULL AND instance_id IS NULL;
-CREATE INDEX IF NOT EXISTS idx_inbox_lease_expired
-  ON __SCHEMA__.wh_inbox_lease (priority, lease_expiry, received_at)
+CREATE INDEX IF NOT EXISTS idx_inbox_state_expired
+  ON __SCHEMA__.wh_inbox_state (priority, lease_expiry, received_at)
   WHERE processed_at IS NULL AND instance_id IS NOT NULL;
 -- The per-stream ordering gate walks a stream's pending rows in arrival order. Every column it reads
 -- is on this table, so the gate stays a single-table query rather than becoming a join.
-CREATE INDEX IF NOT EXISTS idx_inbox_lease_stream_order
-  ON __SCHEMA__.wh_inbox_lease (stream_id, received_at, message_id)
+CREATE INDEX IF NOT EXISTS idx_inbox_state_stream_order
+  ON __SCHEMA__.wh_inbox_state (stream_id, received_at, message_id)
   WHERE processed_at IS NULL;

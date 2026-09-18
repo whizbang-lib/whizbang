@@ -20,6 +20,11 @@ keeping them together is measurable.
 | `lease_expiry` | 12 of 26 |
 | `attempts` | 2 of 26 |
 
+**The name.** `wh_inbox_state`, not `wh_inbox_lease`: the lease turned out to be one of nine mutable
+columns the table holds, and a name describing one of nine misleads. The pair is `wh_inbox`, the
+immutable message, and `wh_inbox_state`, its mutable work state. Renamed before release, when it cost
+nothing.
+
 ### The boundary test: two questions, and the second one is the one people skip
 
 **Applies to `wh_outbox` and `wh_perspective_events` when their turn comes. Deriving a column set
@@ -38,6 +43,13 @@ Question one alone is necessary and not sufficient. `scheduled_for` is what ques
 rewritten, copied to both, would have diverged. `chain_emitted_at` is what only question two catches:
 rewritten, single-homed, no split brain to avoid, passes question one cleanly, and still has to move
 because the six-column predicate that reads it loses its only covering index otherwise.
+
+`status` is the second column caught only by question two, and it is the one that settled the table's
+identity. `claim_work`'s held-lane re-offer projects it, and `idx_inbox_held_lanes` INCLUDEs it so
+that probe is index-only, one per stream, which is the bounded-cost property migration 150 exists to
+establish. That index keys on `instance_id` and predicates on `processed_at`, both of which move, so
+leaving `status` behind buys a heap fetch on the wide row per candidate stream: the exact cost this
+migration removes. **Nine mutable columns, and 21 of 24 indexes move, so `wh_inbox` ends with three.**
 
 
 **This is the rule, and it is stated as a rule because the column list is a consequence of it and
@@ -218,9 +230,9 @@ drops them.
 ```
 BEGIN;
 LOCK TABLE wh_inbox IN ACCESS EXCLUSIVE MODE;   -- before the backfill, not after
-CREATE TABLE wh_inbox_lease (...);
-INSERT INTO wh_inbox_lease SELECT ... FROM wh_inbox;
-CREATE INDEX ... ON wh_inbox_lease ...;          -- three of them
+CREATE TABLE wh_inbox_state (...);
+INSERT INTO wh_inbox_state SELECT ... FROM wh_inbox;
+CREATE INDEX ... ON wh_inbox_state ...;          -- three of them
 ALTER TABLE wh_inbox DROP COLUMN instance_id, DROP COLUMN lease_expiry,
                      DROP COLUMN attempts, DROP COLUMN processed_at;
 CREATE OR REPLACE FUNCTION ...;                  -- the sixteen
@@ -324,6 +336,32 @@ it recovers when the migration succeeds on a later start.
 The rule this follows: a rewrite verified by a suite that never calls it proves nothing, so coverage
 is established BEFORE the rewrite, and a gap gets a test first.
 
+### RULE: re-derive the function enumeration from the CURRENT drop list, every time it changes
+
+**Imperative, because this was got wrong once and the same shape has now been got wrong three times
+in this work.**
+
+> The list of functions to rewrite is **derived from the current drop list, every time the drop list
+> changes**. It is never carried forward from a previous derivation. Write the count beside the
+> derivation so a stale number is visible rather than invisible.
+
+What happened here: the first enumeration searched two columns (`instance_id|lease_expiry`) and
+found **16** functions. The drop list then grew to four, seven, eight and nine columns without the
+search being re-run. Re-derived against all nine it is **22**, and the six that were missing include
+`recover_dead_letter`, which has two `INSERT INTO wh_inbox` statements writing `status` and
+`attempts` and therefore constructs work state directly.
+
+| Drop list | Functions, re-derived |
+|---|---|
+| 2 columns (the original guess) | 16 |
+| 9 columns (current) | **22** |
+
+This is the third instance of one failure mode: **a claim described by a search narrower than the
+thing it describes.** The function-name search understated coverage; the `obj/generated` hits
+overstated it; a partial column list understated scope. In every case the number looked authoritative
+and was an artifact of the query. The rule generalizes: **state what a count was derived from, beside
+the count, so the derivation can be checked rather than trusted.**
+
 ### The method, for the next person: search by wrapper, exclude obj, confirm it reaches a database
 
 **Both errors appeared in the same search, in opposite directions, which is what makes this worth
@@ -425,7 +463,7 @@ not a regression**, and they are expected in the final commit rather than treate
 
 | Piece | State |
 |---|---|
-| Structural DDL: table, lock, backfill, indexes, foreign key | **landed** in `162_InboxLeaseSideTable.sql` |
+| Structural DDL: table, lock, backfill, indexes, foreign key | **landed** in `162_InboxWorkStateSideTable.sql` |
 | Build scaffold (temporary sync triggers) | **landed**, removed with the column drops |
 | Batch one: six claim-state-only functions rewritten, annotated | **landed, 92 tests green** |
 | Lease-table ownership tests | **landed and passing** |
@@ -496,7 +534,7 @@ cover it, in the path measured at roughly 870 blocks per poll. That is the singl
 have made this migration slower rather than faster, in its hottest path.
 
 With the column on the lease table every term is local again and one partial index
-(`idx_inbox_lease_chain_pending`) covers the whole predicate. **Eight mutable columns move, not
+(`idx_inbox_state_chain_pending`) covers the whole predicate. **Eight mutable columns move, not
 seven.** The index count is unchanged at 24 down to 4, because the chain index was already counted as
 moving.
 
@@ -507,10 +545,10 @@ verification rather than regressions. Listed as they are found so none is a surp
 
 | Test | Why it will fail, and what it becomes |
 |---|---|
-| `EmitChainInboxIndexTests.EmitChainInboxIndex_ExistsAfterMigrationsAsync` | Asserts `idx_inbox_chain_pending` exists on `wh_inbox`. That index keys on `instance_id` and predicates on `processed_at`, both of which move, so it cannot survive. Repoint at `idx_inbox_lease_chain_pending`. |
+| `EmitChainInboxIndexTests.EmitChainInboxIndex_ExistsAfterMigrationsAsync` | Asserts `idx_inbox_chain_pending` exists on `wh_inbox`. That index keys on `instance_id` and predicates on `processed_at`, both of which move, so it cannot survive. Repoint at `idx_inbox_state_chain_pending`. |
 | `EmitChainInboxIndexTests.EmitChainInboxIndex_HasExpectedPartialPredicateAsync` | Same index, same reason. |
-| Any test asserting on `wh_inbox.instance_id`, `lease_expiry`, `attempts`, `processed_at`, `scheduled_for`, `failure_reason`, `error` or `chain_emitted_at` | The column is gone. Move the assertion to `wh_inbox_lease`. |
-| `InboxLeaseTableIsTheOwnerSqlTests` (all four) | These PASS and become discriminating at that point. Their docstring says they are not discriminating yet and must be updated to say they now are. |
+| Any test asserting on `wh_inbox.instance_id`, `lease_expiry`, `attempts`, `processed_at`, `scheduled_for`, `failure_reason`, `error` or `chain_emitted_at` | The column is gone. Move the assertion to `wh_inbox_state`. |
+| `InboxWorkStateIsTheOwnerSqlTests` (all four) | These PASS and become discriminating at that point. Their docstring says they are not discriminating yet and must be updated to say they now are. |
 
 ## 4. Scope
 

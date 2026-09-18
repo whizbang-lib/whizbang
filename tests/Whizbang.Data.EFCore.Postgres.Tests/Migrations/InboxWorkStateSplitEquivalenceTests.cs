@@ -31,7 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </para>
 /// </remarks>
 [Category("Integration")]
-public class InboxLeaseSplitEquivalenceTests : EFCoreTestBase {
+public class InboxWorkStateSplitEquivalenceTests : EFCoreTestBase {
   private const int STREAMS = 40;
   private const int PER_STREAM = 25;
 

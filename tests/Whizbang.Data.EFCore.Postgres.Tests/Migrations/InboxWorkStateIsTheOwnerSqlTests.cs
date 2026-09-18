@@ -7,7 +7,7 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
 /// <summary>
-/// The rewritten claim-state functions write <c>wh_inbox_lease</c>, asserted by reading that table
+/// The rewritten claim-state functions write <c>wh_inbox_state</c>, asserted by reading that table
 /// and nothing else.
 /// </summary>
 /// <remarks>
@@ -21,7 +21,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// observable state transition, which is worth having and is not the same as confirming the rewrite.
 /// </para>
 /// <para>
-/// So these assertions read <c>wh_inbox_lease</c> directly, and it is worth being exact about what
+/// So these assertions read <c>wh_inbox_state</c> directly, and it is worth being exact about what
 /// that does and does not establish while the scaffold is in place. It does NOT prove the functions
 /// target the lease table: if one were left writing <c>wh_inbox</c>, the trigger would copy the
 /// value across and these assertions would still pass. **No runtime test can discriminate while a
@@ -42,7 +42,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </para>
 /// </remarks>
 [Category("Integration")]
-public class InboxLeaseTableIsTheOwnerSqlTests : EFCoreTestBase {
+public class InboxWorkStateIsTheOwnerSqlTests : EFCoreTestBase {
   [Test]
   [Timeout(600000)]
   public async Task ReleaseUnprocessedInbox_RefundsTheAttemptInTheLeaseTableAsync(
@@ -111,7 +111,7 @@ public class InboxLeaseTableIsTheOwnerSqlTests : EFCoreTestBase {
       cancellationToken, ("msg", message));
 
     var remaining = await _scalarDoubleAsync(conn,
-      "SELECT EXTRACT(EPOCH FROM (lease_expiry - NOW())) FROM wh_inbox_lease WHERE message_id = @msg",
+      "SELECT EXTRACT(EPOCH FROM (lease_expiry - NOW())) FROM wh_inbox_state WHERE message_id = @msg",
       cancellationToken, ("msg", message));
     await Assert.That(remaining).IsGreaterThan(1500d)
       .Because("a renewal to 1,800 seconds has to leave substantially more than the 300 seconds the "
@@ -132,7 +132,7 @@ public class InboxLeaseTableIsTheOwnerSqlTests : EFCoreTestBase {
     var expired = await _seedLeasedInboxRowAsync(conn, instance, attempts: 1, cancellationToken);
     // An expired lease is no longer this instance's work, whoever still has the row stamped.
     await _execAsync(conn,
-      "UPDATE wh_inbox_lease SET lease_expiry = NOW() - INTERVAL '1 minute' WHERE message_id = @msg",
+      "UPDATE wh_inbox_state SET lease_expiry = NOW() - INTERVAL '1 minute' WHERE message_id = @msg",
       cancellationToken, ("msg", expired));
 
     var held = await _scalarLongAsync(conn,
@@ -149,12 +149,12 @@ public class InboxLeaseTableIsTheOwnerSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid message, CancellationToken cancellationToken) {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText =
-      "SELECT attempts, instance_id IS NOT NULL FROM wh_inbox_lease WHERE message_id = @msg";
+      "SELECT attempts, instance_id IS NOT NULL FROM wh_inbox_state WHERE message_id = @msg";
     cmd.Parameters.AddWithValue("msg", message);
     await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
     if (!await reader.ReadAsync(cancellationToken)) {
       throw new InvalidOperationException(
-        "no wh_inbox_lease row for the seeded message: a message with no lease row can never be "
+        "no wh_inbox_state row for the seeded message: a message with no lease row can never be "
         + "claimed, so this is the invariant failing rather than the assertion");
     }
     return new LeaseState(reader.GetInt32(0), reader.GetBoolean(1));
