@@ -32,7 +32,7 @@ public sealed class EFCoreDeadLetterStore<TDbContext>(
   // includes the service schema, which is not guaranteed (multi-schema: 42883).
   private string _fn(string name) {
     var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    return string.IsNullOrWhiteSpace(schema) || schema == "public" ? name : $"\"{schema}\".{name}";
+    return Whizbang.Data.Postgres.PgIdentifier.Qualify(schema, name);
   }
 
   /// <inheritdoc />

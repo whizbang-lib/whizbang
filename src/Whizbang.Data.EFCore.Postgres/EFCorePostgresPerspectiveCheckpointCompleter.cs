@@ -94,7 +94,7 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
   /// a full rebuild resolves any prior rewind flagging since the entire event log has been
   /// replayed.
   /// </summary>
-#pragma warning disable S2077 // schema-qualified table name built from DbContext metadata; values are positional parameters.
+#pragma warning disable S2077 // schema escaped through PgIdentifier; values are positional parameters.
   private static string _buildCursorUpsertSql(string tableName) => $@"
       INSERT INTO {tableName}
         (stream_id, perspective_name, last_event_id, status, processed_at)
@@ -172,6 +172,6 @@ public sealed partial class EFCorePostgresPerspectiveCheckpointCompleter(
     if (string.IsNullOrWhiteSpace(schema) || schema == DEFAULT_SCHEMA) {
       return identifier;
     }
-    return $"\"{schema}\".{identifier}";
+    return Whizbang.Data.Postgres.PgIdentifier.Qualify(schema, identifier);
   }
 }

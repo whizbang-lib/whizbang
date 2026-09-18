@@ -23,7 +23,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <typeparam name="TDbContext">DbContext type containing outbox, inbox, and service instance tables</typeparam>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Work coordinator diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
-[System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Schema name comes from EF Core model configuration (Model.FindEntityType().GetSchema()), not user input. Schema-qualified function names are required for multi-tenant PostgreSQL databases.")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Schema-qualified identifiers cannot be parameterized, so the schema is interpolated. It is escaped through PgIdentifier, which doubles any embedded quote, so an identifier cannot be terminated early no matter where the schema came from. All values are bound parameters. Previously this justification rested on the schema being a developer constant, which does not hold under per-schema multi-tenancy.")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Major Code Smell", "S3265:Non-flags enums should not be used in bitwise operations", Justification = "NpgsqlDbType intentionally supports `Array | Uuid`, `Array | Integer`, etc. per the Npgsql API design — the Array bit is combined with the element type. The enum is not marked [Flags] upstream but the API expects bitwise composition.")]
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
@@ -101,7 +101,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return identifier;
     }
     // Quote schema name to handle PostgreSQL reserved words
-    return $"\"{schema}\".{identifier}";
+    return $"{Whizbang.Data.Postgres.PgIdentifier.Quote(schema)}.{identifier}";
   }
 #pragma warning restore RCS1158
 
@@ -2845,9 +2845,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
     return _withCoordinatorCommandAsync<IReadOnlyList<Whizbang.Core.Lifecycle.PerspectiveRowDestructionTarget>>(
       async (cmd, schema) => {
-#pragma warning disable S2077 // table identifier originates from wh_perspective_registry, not user input
+        // tableName is read from wh_perspective_registry and interpolated UNQUOTED, so unlike the
+        // schema it cannot be escaped without changing how PostgreSQL folds its case. Validated
+        // instead, which keeps the folding behavior and fails closed.
+        var safeTable = Whizbang.Data.Postgres.PgIdentifier.RequireBare(tableName, nameof(tableName));
+#pragma warning disable S2077 // identifier validated by PgIdentifier.RequireBare; ids are bound
         cmd.CommandText =
-          $"SELECT id, scope, data FROM {BuildSchemaQualifiedName(schema, tableName)} WHERE id = ANY(@ids)";
+          $"SELECT id, scope, data FROM {BuildSchemaQualifiedName(schema, safeTable)} WHERE id = ANY(@ids)";
 #pragma warning restore S2077
         cmd.Parameters.Add(new Npgsql.NpgsqlParameter("ids",
           NpgsqlTypes.NpgsqlDbType.Array | NpgsqlTypes.NpgsqlDbType.Uuid) { Value = rowIds.ToArray() });
