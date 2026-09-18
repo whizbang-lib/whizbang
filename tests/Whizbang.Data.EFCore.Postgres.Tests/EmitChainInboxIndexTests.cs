@@ -60,15 +60,15 @@ public class EmitChainInboxIndexTests : EFCoreTestBase {
     // and the planner is more likely to pick a sequential scan, losing the v0.685 win.
     await Assert.That(indexDef).IsNotNull()
       .Because("Index must exist; see EmitChainInboxIndex_ExistsAfterMigrationsAsync for the why.");
-    await Assert.That(indexDef!).Contains("processed_at IS NULL")
+    await Assert.That(indexDef).Contains("processed_at IS NULL")
       .Because("emit_chain filters out completed rows; the partial index must too.");
-    await Assert.That(indexDef!).Contains("is_event")
+    await Assert.That(indexDef).Contains("is_event")
       .Because("emit_chain only emits is_event=true rows; non-event commands are out of scope.");
-    await Assert.That(indexDef!).Contains("stream_id IS NOT NULL")
+    await Assert.That(indexDef).Contains("stream_id IS NOT NULL")
       .Because("emit_chain skips unscoped rows (stream_id IS NULL); the partial index excludes them so it stays narrow.");
-    await Assert.That(indexDef!).Contains("message_id")
+    await Assert.That(indexDef).Contains("message_id")
       .Because("message_id MUST be in the index key so PG can plan a merge / hash anti-join against wh_event_store.event_id (the PK on wh_event_store).");
-    await Assert.That(indexDef!).Contains("instance_id")
+    await Assert.That(indexDef).Contains("instance_id")
       .Because("instance_id MUST be in the index key — emit_chain's outer scan is bounded by `i.instance_id = p_instance_id`, and without it in the index PG would scan the whole partial-index range across all instances.");
   }
 

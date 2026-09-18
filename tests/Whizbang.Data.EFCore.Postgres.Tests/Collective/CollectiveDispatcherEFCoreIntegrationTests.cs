@@ -673,7 +673,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     public void Configure(ICollectiveApplyHookBuilder<TMarker> b, ApplyHookContext c) => body(b, c);
   }
 
-  private interface _unrelatedMarker { } // a marker _jobModel does NOT implement
+  private interface _unrelatedMarker; // a marker _jobModel does NOT implement
 
   private static async Task<int> _dispatchArchiveAsync(CollectiveDispatcher dispatcher, _jobDbContext ctx, string tenant) {
     var result = await dispatcher.DispatchAsync(

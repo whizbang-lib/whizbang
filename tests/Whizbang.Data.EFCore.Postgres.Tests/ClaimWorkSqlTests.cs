@@ -63,11 +63,11 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     var args = (string?)await command.ExecuteScalarAsync();
 
     await Assert.That(args).IsNotNull();
-    await Assert.That(args!).Contains("p_instance_id uuid");
-    await Assert.That(args!).Contains("p_service_name text");
-    await Assert.That(args!).Contains("p_max_streams integer");
-    await Assert.That(args!).Contains("p_partition_count integer");
-    await Assert.That(args!).Contains("p_lease_seconds integer");
+    await Assert.That(args).Contains("p_instance_id uuid");
+    await Assert.That(args).Contains("p_service_name text");
+    await Assert.That(args).Contains("p_max_streams integer");
+    await Assert.That(args).Contains("p_partition_count integer");
+    await Assert.That(args).Contains("p_lease_seconds integer");
   }
 
   /// <summary>

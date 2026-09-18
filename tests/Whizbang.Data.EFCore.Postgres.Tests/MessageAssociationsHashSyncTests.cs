@@ -42,7 +42,7 @@ public class MessageAssociationsHashSyncTests : EFCoreTestBase {
       .Because("First init must record a wh_schema_migrations row with owner='association' so subsequent startups can short-circuit");
     var dict = (IDictionary<string, object?>)row!;
     await Assert.That((string?)dict["owner"]).IsEqualTo("association");
-    await Assert.That(((string?)dict["content_hash"])!).IsNotEmpty();
+    await Assert.That(((string?)dict["content_hash"])).IsNotEmpty();
   }
 
   // ════════════════════════════════════════════════════════════════════════

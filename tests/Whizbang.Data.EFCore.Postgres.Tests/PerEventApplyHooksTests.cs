@@ -24,7 +24,7 @@ public class PerEventApplyHooksTests {
     public int Count { get; set; }
   }
 
-  private sealed class _unrelatedModel { }
+  private sealed class _unrelatedModel;
 
   private sealed class _perEventHook<TMarker>(Action<IApplyHookBuilder<TMarker>, ApplyHookContext> body)
       : IApplyHook<TMarker> {

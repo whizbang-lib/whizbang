@@ -42,7 +42,7 @@ public class CollectiveReplayApplierCoverageTests {
 
   private sealed record _probeEvent : IEvent;
 
-  private sealed class _probeHandler { }
+  private sealed class _probeHandler;
 
   private sealed class _otherModelExecutor : ICollectiveInMemoryExecutor {
     public Type ModelType => typeof(_otherModel);

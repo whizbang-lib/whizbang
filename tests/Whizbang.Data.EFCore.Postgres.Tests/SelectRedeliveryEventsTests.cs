@@ -85,7 +85,7 @@ public class SelectRedeliveryEventsTests : EFCoreTestBase {
     // Original stored form comes back.
     await Assert.That(stream1Rows[0].EventType).IsEqualTo("Contracts.ThingCreated");
     await Assert.That(stream1Rows[0].EventData).Contains("\"seeded\"");
-    await Assert.That(stream1Rows[0].Scope!).Contains(TENANT_A);
+    await Assert.That(stream1Rows[0].Scope).Contains(TENANT_A);
   }
 
   [Test]

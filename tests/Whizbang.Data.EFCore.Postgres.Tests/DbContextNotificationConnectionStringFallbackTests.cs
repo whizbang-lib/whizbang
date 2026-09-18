@@ -20,7 +20,7 @@ public class DbContextNotificationConnectionStringFallbackTests {
 
   private sealed class _FallbackTestDbContext(DbContextOptions<_FallbackTestDbContext> options) : DbContext(options) { }
 
-  private sealed class _NotADbContext { }
+  private sealed class _NotADbContext;
 
   [Test]
   public async Task GetConnectionString_WithNpgsqlConfiguredDbContext_ReturnsConnectionStringAsync() {

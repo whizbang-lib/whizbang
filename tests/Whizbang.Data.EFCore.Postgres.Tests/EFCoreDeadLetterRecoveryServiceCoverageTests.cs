@@ -82,7 +82,7 @@ public class EFCoreDeadLetterRecoveryServiceCoverageTests : EFCoreTestBase {
       .Because("discarding must settle the row as Recovered so it ages out through retention -- "
         + "never left mid-flight, and never picked up for another attempt");
     await Assert.That(notes).IsNotNull();
-    await Assert.That(notes!).Contains("subsystem disabled");
+    await Assert.That(notes).Contains("subsystem disabled");
   }
 
   // ===== Helpers =====

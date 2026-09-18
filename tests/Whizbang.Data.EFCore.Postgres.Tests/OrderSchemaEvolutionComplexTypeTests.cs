@@ -206,7 +206,7 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
 
     var dataJson = await connection.ExecuteScalarAsync<string>($"SELECT data::text FROM {TableName} WHERE id = @id", new { id });
     await Assert.That(dataJson).IsNotNull();
-    await Assert.That(dataJson!).DoesNotContain("InspectionTagIds")
+    await Assert.That(dataJson).DoesNotContain("InspectionTagIds")
       .Because("the seeded row must be genuinely old-shape — if the strip missed (JSON casing mismatch), the repro is invalid.");
   }
 
@@ -381,9 +381,9 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
 
     await Assert.That(row.Data.Shipments[0].Parcels[0].InspectionTagIds).IsNotNull()
       .Because("the coalescer replaces the JSON-absent nested collection (null on EF Core 10) with an empty list.");
-    await Assert.That(row.Data.Shipments[0].Parcels[0].InspectionTagIds!).Count().IsEqualTo(0)
+    await Assert.That(row.Data.Shipments[0].Parcels[0].InspectionTagIds).Count().IsEqualTo(0)
       .Because("old-shape rows must read back with an EMPTY collection, not null — the materialization-coalesce fix.");
-    await Assert.That(row.Data.Shipments[0].Parcels[1].InspectionTagIds!).Count().IsEqualTo(0)
+    await Assert.That(row.Data.Shipments[0].Parcels[1].InspectionTagIds).Count().IsEqualTo(0)
       .Because("every parcel's new nested collection is coalesced, not just the first.");
   }
 
@@ -437,7 +437,7 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await Assert.That(model).IsNotNull();
     await Assert.That(model!.Shipments[0].Parcels[0].InspectionTagIds).IsNotNull()
       .Because("the store's no-tracking read routes through CoalescedData, so the Apply path never sees a null-materialized nested collection (WORKAROUND(dotnet/efcore#38625)).");
-    await Assert.That(model.Shipments[0].Parcels[1].InspectionTagIds!).Count().IsEqualTo(0)
+    await Assert.That(model.Shipments[0].Parcels[1].InspectionTagIds).Count().IsEqualTo(0)
       .Because("the JSON-absent field reads back as an empty list on every parcel.");
   }
 
@@ -505,9 +505,9 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await connection.OpenAsync(ct);
     var dataJson = await connection.ExecuteScalarAsync<string>($"SELECT data::text FROM {TableName} WHERE id = @id", new { id });
     var scopeJson = await connection.ExecuteScalarAsync<string>($"SELECT scope::text FROM {TableName} WHERE id = @id", new { id });
-    await Assert.That(dataJson!).Contains("\"InspectionTagIds\": []")
+    await Assert.That(dataJson).Contains("\"InspectionTagIds\": []")
       .Because("EF ToJson writes an empty primitive collection with the key present — fresh rows are new-shape.");
-    await Assert.That(scopeJson!).Contains("\"ex\": []")
+    await Assert.That(scopeJson).Contains("\"ex\": []")
       .Because("the scope JSON also carries the empty Extensions key.");
 
     var row = await _context.Set<PerspectiveRow<OrderLikeModel>>().AsNoTracking().FirstAsync(r => r.Id == id, ct);
@@ -535,7 +535,7 @@ public class OrderSchemaEvolutionComplexTypeTests : IAsyncDisposable {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(ct);
     var dataJson = await connection.ExecuteScalarAsync<string>($"SELECT data::text FROM {TableName} WHERE id = @id", new { id });
-    await Assert.That(dataJson!).Contains("\"Parcels\": []")
+    await Assert.That(dataJson).Contains("\"Parcels\": []")
       .Because("the stored JSON has the key present and empty.");
 
     var row = await _context.Set<PerspectiveRow<OrderLikeModel>>().AsNoTracking().FirstAsync(r => r.Id == id, ct);
