@@ -101,18 +101,21 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
   /// No index is maintained on the inbox's failure reason, on either table, and that is a decision.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// The old <c>idx_inbox_failure_reason</c> keyed failure_reason and predicated on status, and both
   /// columns moved to wh_inbox_state in migration 162. It was one of the indexes the cutover dropped
   /// WITHOUT recreating, because nothing queries the inbox by failure reason: the column is read on a
   /// row already found by message id, and the diagnostics that group by it are ad hoc rather than on
   /// a hot path. An index costs a write on every claim, lease renewal, retry and completion, which is
   /// the entire cost the split exists to remove, so one that serves no query is not free.
-  ///
+  /// </para>
+  /// <para>
   /// Asserted as an absence rather than deleted, because a test that simply disappears takes the
   /// decision with it, and the next person to see failure_reason unindexed has no way to tell a
   /// deliberate removal from an oversight. If a query ever needs it, this test is the place that says
   /// what changed -- and the state table's index count is gated in the performance baseline, so
   /// adding one is a visible trade rather than a quiet one.
+  /// </para>
   /// </remarks>
   [Test]
   public async Task InboxTable_FailureReason_IsDeliberatelyNotIndexedAsync() {

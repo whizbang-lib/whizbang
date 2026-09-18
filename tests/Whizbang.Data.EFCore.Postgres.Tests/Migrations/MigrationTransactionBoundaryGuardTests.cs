@@ -227,9 +227,7 @@ public partial class MigrationTransactionBoundaryGuardTests {
 
   /// <summary>Function names a script defines, without the schema token.</summary>
   private static HashSet<string> _functionsDefinedIn(string sql) =>
-    System.Text.RegularExpressions.Regex
-      .Matches(sql, @"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[^\s.(]+\.([a-z_][a-z0-9_]*)\s*\(",
-        RegexOptions.IgnoreCase)
+    FunctionDefinition().Matches(sql)
       .Select(m => m.Groups[1].Value)
       .ToHashSet(StringComparer.Ordinal);
 
@@ -251,6 +249,10 @@ public partial class MigrationTransactionBoundaryGuardTests {
   /// <summary>wh_inbox itself, not wh_inbox_state, which shares the prefix.</summary>
   [GeneratedRegex(@"\bwh_inbox\b(?!_)")]
   private static partial Regex BareInbox();
+
+  /// <summary>A function definition's name, without the schema token.</summary>
+  [GeneratedRegex(@"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+[^\s.(]+\.([a-z_][a-z0-9_]*)\s*\(", RegexOptions.IgnoreCase)]
+  private static partial Regex FunctionDefinition();
 
   /// <summary>
   /// No C# source builds SQL that reads a column the cutover drops from <c>wh_inbox</c>.
