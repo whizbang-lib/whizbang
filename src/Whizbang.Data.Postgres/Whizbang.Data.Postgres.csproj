@@ -47,6 +47,7 @@
          (e.g., PgSharedNotifyConnection.RegistryForTesting + IsConnectionOpenForTesting). -->
     <InternalsVisibleTo Include="Whizbang.Core.Tests" />
     <InternalsVisibleTo Include="Whizbang.Data.Postgres.Tests" />
+    <InternalsVisibleTo Include="Whizbang.Data.EFCore.Postgres" />
     <InternalsVisibleTo Include="Whizbang.Data.EFCore.Postgres.Tests" />
     <InternalsVisibleTo Include="Whizbang.Data.Dapper.Postgres.Tests" />
   </ItemGroup>

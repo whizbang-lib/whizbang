@@ -49,7 +49,7 @@ public sealed class EFCoreClaimedEmissionStore(DbContext dbContext) : IClaimedEm
     var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
     return string.IsNullOrWhiteSpace(schema) || schema == "public"
       ? "wh_unique_emission_claims"
-      : $"\"{schema}\".wh_unique_emission_claims";
+      : $"{Whizbang.Data.Postgres.PgIdentifier.Quote(schema)}.wh_unique_emission_claims";
   }
 
   public async Task<bool> TryClaimAsync(string claimKey, Guid claimedByEventId, CancellationToken cancellationToken) {

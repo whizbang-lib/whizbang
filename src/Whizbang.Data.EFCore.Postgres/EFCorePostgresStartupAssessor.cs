@@ -105,12 +105,12 @@ public sealed class EFCorePostgresStartupAssessor : IStartupAssessor {
     using var scope = _scopeFactory.CreateScope();
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
     var schema = dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var prefix = string.IsNullOrWhiteSpace(schema) || schema == "public" ? "" : $"\"{schema}\".";
+    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema);
 
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken).ConfigureAwait(false);
     await using var cmd = connectionScope.Connection.CreateCommand();
-#pragma warning disable S2077 // schema comes from the EF model, not user input — same pattern as the coordinator
+#pragma warning disable S2077 // schema is escaped through PgIdentifier; values are bound parameters
     cmd.CommandText = $@"
       SELECT DISTINCT v.library_version
       FROM {prefix}wh_schema_migrations m
