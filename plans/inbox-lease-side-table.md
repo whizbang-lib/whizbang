@@ -20,7 +20,25 @@ keeping them together is measurable.
 | `lease_expiry` | 12 of 26 |
 | `attempts` | 2 of 26 |
 
-### The boundary test: ask what REWRITES a column, never what reads it
+### The boundary test: two questions, and the second one is the one people skip
+
+**Applies to `wh_outbox` and `wh_perspective_events` when their turn comes. Deriving a column set
+from question one alone produces a split that de-indexes a hot path, and `chain_emitted_at` below is
+the worked example of exactly that.**
+
+> **1. What rewrites this column?** Anything rewritten lives in exactly ONE table. A column nothing
+> rewrites after insert may be copied to both, and copying is often right, because copies of a value
+> that never changes cannot disagree.
+>
+> **2. What predicate reads it, and can that predicate still be covered by one index?** A rewritten
+> column that is already single-homed passes question one and can still be in the wrong place, if
+> leaving it behind splits a hot predicate across both tables.
+
+Question one alone is necessary and not sufficient. `scheduled_for` is what question one catches:
+rewritten, copied to both, would have diverged. `chain_emitted_at` is what only question two catches:
+rewritten, single-homed, no split brain to avoid, passes question one cleanly, and still has to move
+because the six-column predicate that reads it loses its only covering index otherwise.
+
 
 **This is the rule, and it is stated as a rule because the column list is a consequence of it and
 the next person deriving a boundary needs the question rather than the answer.**
@@ -418,7 +436,7 @@ not a regression**, and they are expected in the final commit rather than treate
 | `cleanup_stale_instances` (batch one b) | **landed** |
 | Batch two: `purge_orphan_inbox`, `process_inbox_completions`, `fetch_inbox_batch` | **landed, 77 tests green** |
 | `chain_emitted_at` moved to the lease table with its index | **landed** |
-| Batch two remainder: `move_to_dead_letters`, `store_inbox_messages`, `_emit_event_store_chain_for_inbox` | not written, 647 lines |
+| Batch two remainder: `move_to_dead_letters`, `store_inbox_messages`, `_emit_event_store_chain_for_inbox` | **landed, 78 tests green** |
 | Batch three: `claim_orphaned_inbox` and `claim_work` | not written, 1,231 lines |
 
 The migration is deliberately NOT in `src/Whizbang.Data.Postgres/Migrations/` yet. Shipped
@@ -481,6 +499,18 @@ With the column on the lease table every term is local again and one partial ind
 (`idx_inbox_lease_chain_pending`) covers the whole predicate. **Eight mutable columns move, not
 seven.** The index count is unchanged at 24 down to 4, because the chain index was already counted as
 moving.
+
+## 3.12 Expected failures in the final commit
+
+The final commit removes the scaffold and drops the eight columns, and these failures are the
+verification rather than regressions. Listed as they are found so none is a surprise.
+
+| Test | Why it will fail, and what it becomes |
+|---|---|
+| `EmitChainInboxIndexTests.EmitChainInboxIndex_ExistsAfterMigrationsAsync` | Asserts `idx_inbox_chain_pending` exists on `wh_inbox`. That index keys on `instance_id` and predicates on `processed_at`, both of which move, so it cannot survive. Repoint at `idx_inbox_lease_chain_pending`. |
+| `EmitChainInboxIndexTests.EmitChainInboxIndex_HasExpectedPartialPredicateAsync` | Same index, same reason. |
+| Any test asserting on `wh_inbox.instance_id`, `lease_expiry`, `attempts`, `processed_at`, `scheduled_for`, `failure_reason`, `error` or `chain_emitted_at` | The column is gone. Move the assertion to `wh_inbox_lease`. |
+| `InboxLeaseTableIsTheOwnerSqlTests` (all four) | These PASS and become discriminating at that point. Their docstring says they are not discriminating yet and must be updated to say they now are. |
 
 ## 4. Scope
 
