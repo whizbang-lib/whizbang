@@ -104,6 +104,21 @@ public class StoreProbeCostScenarioTests : EFCoreTestBase {
   /// An outbox mid-import: pending, unpublished rows for many streams. Not settled rows -- the old
   /// plan's only index condition was published_at IS NULL, so settled rows are invisible to it.
   /// </summary>
+  /// <remarks>
+  /// wh_perspective_events is seeded to the same shape even though this scenario is about the
+  /// outbox, because the same loop probes it and an EMPTY table cannot price that probe. Left
+  /// unseeded, the perspective measures read four sequential scans of nothing and reported zero
+  /// tuples; a scan of an empty table is what the planner picks for an empty table, and in these
+  /// counters it is indistinguishable from a probe answered by an index. A measure taken against a
+  /// table the fixture never fills reads as clean whether the defect is present or not, and a gate
+  /// that cannot fail is worse than no gate, because it is counted as coverage.
+  /// <para>
+  /// What this gate covers, exactly: this scenario stores to FRESH streams, which is one of the
+  /// probe's three stream states. It would not have caught the drained-stream defect that
+  /// <see cref="PerspectiveProbeCostScenarioTests"/> exists for. Seeding makes this number mean
+  /// something; it does not make it sufficient.
+  /// </para>
+  /// </remarks>
   private static async Task _seedPendingBacklogAsync(NpgsqlConnection conn) {
     await using var seed = conn.CreateCommand();
     seed.CommandText = @"
@@ -118,6 +133,14 @@ public class StoreProbeCostScenarioTests : EFCoreTestBase {
              ('00000000-0000-0000-0000-' || lpad(s::text, 12, '0'))::uuid,
              compute_partition(('00000000-0000-0000-0000-' || lpad(s::text, 12, '0'))::uuid)
       FROM generate_series(1, @streams) s CROSS JOIN generate_series(1, @per_stream);
+
+      INSERT INTO wh_perspective_events
+        (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, priority)
+      SELECT ('00000000-0000-0000-0000-' || lpad(s::text, 12, '0'))::uuid, 'TestPerspective',
+             ('00000000-0000-7000-8000-' || lpad((s * 1000 + r)::text, 12, '0'))::uuid,
+             0, 0, NOW(),
+             compute_partition(('00000000-0000-0000-0000-' || lpad(s::text, 12, '0'))::uuid), 150
+      FROM generate_series(1, @streams) s CROSS JOIN generate_series(1, @per_stream) r;
 
       ANALYZE wh_outbox; ANALYZE wh_perspective_events;";
     seed.Parameters.AddWithValue("streams", BACKLOG_STREAMS);
