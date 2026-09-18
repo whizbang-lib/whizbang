@@ -475,7 +475,8 @@ not a regression**, and they are expected in the final commit rather than treate
 | Batch two: `purge_orphan_inbox`, `process_inbox_completions`, `fetch_inbox_batch` | **landed, 77 tests green** |
 | `chain_emitted_at` moved to the lease table with its index | **landed** |
 | Batch two remainder: `move_to_dead_letters`, `store_inbox_messages`, `_emit_event_store_chain_for_inbox` | **landed, 78 tests green** |
-| Batch three: `claim_orphaned_inbox` and `claim_work` | not written, 1,231 lines |
+| Batch three: `claim_orphaned_inbox` and `claim_work` | **landed, 127 tests green. Both became PURE state-table functions** |
+| Batch four: the six functions the re-derived enumeration found | not written |
 
 The migration is deliberately NOT in `src/Whizbang.Data.Postgres/Migrations/` yet. Shipped
 incomplete it would take `ACCESS EXCLUSIVE` on every startup and backfill a table nothing reads, and
