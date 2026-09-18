@@ -669,7 +669,7 @@ public partial class PerspectiveWorker(
       if (drainReader is not null && drainStreamIds.Count > 0
           && drainStreamIds.Count < drainBatcherOpts.MaxSize) {
         await _accumulateDrainSignalsWithinWindowAsync(
-          drainReader, drainStreamIds, drainBatcherOpts, stoppingToken).ConfigureAwait(false);
+          drainReader, drainStreamIds, drainBatcherOpts, _timeProvider, stoppingToken).ConfigureAwait(false);
       }
 
       var containedBefore = Volatile.Read(ref _containedBatchFailures);
@@ -783,17 +783,26 @@ public partial class PerspectiveWorker(
   /// coherent set of streams whose events landed in <c>wh_perspective_events</c> close in
   /// time. Bounded by <c>MaxWait</c> from the first arrival and <c>MaxSize</c> on count.
   /// </summary>
+  /// <param name="timeProvider">
+  /// The worker's clock, NOT <see cref="TimeProvider.System"/>. This loop used the system clock
+  /// directly in all four places while the worker already had an injected provider, so the one
+  /// control a test has over this window did not reach the mechanism it names. The window was
+  /// therefore only ever drivable by real elapsed time, and the test for the coalescing property had
+  /// to write its second signal into a 150 ms wall-clock race -- which a loaded runner loses. That
+  /// test dequeued a green pull request from the merge queue.
+  /// </param>
   private static async Task _accumulateDrainSignalsWithinWindowAsync(
       System.Threading.Channels.ChannelReader<Guid> drainReader,
       List<Guid> drainStreamIds,
       SlidingWindowBatcherOptions opts,
+      TimeProvider timeProvider,
       CancellationToken stoppingToken) {
-    var firstArrival = TimeProvider.System.GetTimestamp();
+    var firstArrival = timeProvider.GetTimestamp();
     var lastArrival = firstArrival;
 
     while (drainStreamIds.Count < opts.MaxSize) {
-      var elapsedSinceLast = TimeProvider.System.GetElapsedTime(lastArrival);
-      var elapsedSinceFirst = TimeProvider.System.GetElapsedTime(firstArrival);
+      var elapsedSinceLast = timeProvider.GetElapsedTime(lastArrival);
+      var elapsedSinceFirst = timeProvider.GetElapsedTime(firstArrival);
       var slidingRemaining = opts.SlidingWindow - elapsedSinceLast;
       var maxWaitRemaining = opts.MaxWait - elapsedSinceFirst;
       var waitFor = slidingRemaining < maxWaitRemaining ? slidingRemaining : maxWaitRemaining;
@@ -803,7 +812,9 @@ public partial class PerspectiveWorker(
 
       using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
       var arrivalTask = drainReader.WaitToReadAsync(waitCts.Token).AsTask();
-      var timerTask = Task.Delay(waitFor, waitCts.Token);
+      // Delayed THROUGH the provider, the same way SlidingWindowBatcher does it, so a fake clock
+      // controls when the window closes instead of only what the elapsed arithmetic reads.
+      var timerTask = Task.Delay(waitFor, timeProvider, waitCts.Token);
       var completed = await Task.WhenAny(arrivalTask, timerTask).ConfigureAwait(false);
       await waitCts.CancelAsync();
 
@@ -820,7 +831,7 @@ public partial class PerspectiveWorker(
         moreDrained = true;
       }
       if (moreDrained) {
-        lastArrival = TimeProvider.System.GetTimestamp();
+        lastArrival = timeProvider.GetTimestamp();
       }
     }
   }

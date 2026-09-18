@@ -9,8 +9,11 @@
   A bare `wh_` table reference inside a CREATE FUNCTION $$...$$ body is NOT rewritten by either
   migration runner, so it resolves against the connection's search_path at execution time and
   silently reads `public` (empty) on a service-schema connection. Every table ref inside a
-  function body must be `__SCHEMA__.`-qualified. See the "Writing SQL migrations" contributor doc
-  (rule 3) and src/Whizbang.Data.Postgres/Migrations/README.md.
+  function body must be `__SCHEMA__.`-qualified. The rules are numbered in
+  src/Whizbang.Data.Postgres/Migrations/README.md; this script enforces 3, 4, 12 and 13.
+  (The previous reference here was to a "Writing SQL migrations" contributor page on the docs site,
+  which does not exist. A dangling pointer to a rule list invites inventing the rule, so it names the
+  file that actually carries them.)
 
   This lint lexes each migration (tracking strings, line/block comments, and dollar-quoted bodies
   so it doesn't false-positive on those) and reports bare `wh_` refs after a table-introducing
@@ -37,9 +40,13 @@
 param(
   [string]$MigrationsPath = (Join-Path $PSScriptRoot '..' 'src' 'Whizbang.Data.Postgres' 'Migrations'),
   [string]$BaselinePath   = (Join-Path $PSScriptRoot 'migration-sql-lint-baseline.txt'),
+  [string]$DocsBaselinePath = (Join-Path $PSScriptRoot 'migration-sql-docs-baseline.txt'),
   [switch]$UpdateBaseline,
   [switch]$Fix
 )
+
+# Repository root, for resolving the paths a <tests> tag names.
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
 $ErrorActionPreference = 'Stop'
 
@@ -226,6 +233,96 @@ function Get-DropColumnViolations {
   return $results
 }
 
+function Get-FunctionAnnotationViolations {
+  <#
+    Rule 13 — SQL is code, so a function a migration defines carries the same <docs> and <tests>
+    links every C# type and test file in this repository carries.
+
+    The gap this closes, measured: 271 test files carry <docs> tags and the C# types carry both,
+    while 0 of 159 migrations carried either — and the data layer is where the load-bearing
+    behavior actually lives. 110 migrations already use COMMENT ON FUNCTION across 128 functions,
+    so the habit of annotating existed; only the standard was missing.
+
+    Ownership is per FUNCTION, not per migration. A function persists across many migrations, so
+    the annotation belongs in whichever migration most recently defines it, and requiring it at
+    every definition site is what makes that true without anyone tracking it: the newest migration
+    that redefines a function has to carry the links, and the older sites keep the links that were
+    accurate when they were written.
+
+    A <tests> tag is VALIDATED, not merely present. It names <path>:<Method>, and both the file and
+    the method have to exist. A link to a test that does not exercise the function is worse than an
+    admitted gap because it reads as coverage — the same trap as a <tests> tag on a catch no test
+    can reach. This checks the weaker property (the target exists) because that is what a script
+    can know; whether the test truly reaches the function stays a review question.
+
+    Baselined, because 263 existing definitions predate the rule and nothing is served by
+    backfilling them in one change. The baseline only shrinks, so every function touched from here
+    on carries its links.
+  #>
+  $results = [System.Collections.Generic.List[object]]::new()
+  $files = Get-ChildItem -Path $MigrationsPath -Filter '*.sql' | Sort-Object Name
+  $createRegex = [regex]::new(
+    '(?is)CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:__SCHEMA__\.)?([A-Za-z0-9_]+)\s*\(')
+  foreach ($f in $files) {
+    $text = Get-Content -Path $f.FullName -Raw
+    if (-not $text) { continue }
+    # Detect against the comment-and-string-blanked copy so a CREATE FUNCTION written in prose does
+    # not count as a definition, but read the preceding block from the ORIGINAL text, because the
+    # tags live in comments and the mask blanks exactly those.
+    $masked = Remove-SqlCommentsAndStrings $text
+    $lines = $text -split "`n"
+    $maskedLines = $masked -split "`n"
+    foreach ($m in $createRegex.Matches($masked)) {
+      $fn = $m.Groups[1].Value
+      $line = ($masked.Substring(0, $m.Index) -split "`n").Count
+      $i = $line - 1
+      # Walk up to the end of the previous statement, the same way rule 4 does: a fixed line window
+      # silently fails an annotation block longer than the window, which is the failure this rule
+      # exists to prevent. The ';' test runs against the masked text so a semicolon inside a comment
+      # cannot end the walk early.
+      $j = $i - 1
+      $block = [System.Collections.Generic.List[string]]::new()
+      while ($j -ge 0) {
+        $block.Add($lines[$j])
+        if ($maskedLines[$j] -match ';') { break }
+        $j--
+      }
+      $blockText = ($block -join "`n")
+      $missing = [System.Collections.Generic.List[string]]::new()
+      if ($blockText -notmatch '<docs>\s*\S') { $missing.Add('<docs>') }
+      $testTags = [regex]::Matches($blockText, '<tests>\s*([^<]+?)\s*</tests>')
+      if ($testTags.Count -eq 0) { $missing.Add('<tests>') }
+      $badLinks = [System.Collections.Generic.List[string]]::new()
+      foreach ($t in $testTags) {
+        $spec = $t.Groups[1].Value.Trim()
+        $path, $method = $spec -split ':', 2
+        $full = Join-Path $RepoRoot $path
+        if (-not (Test-Path $full)) {
+          $badLinks.Add("no such file: $path")
+          continue
+        }
+        if ($method) {
+          $content = Get-Content -Path $full -Raw
+          if ($content -notmatch [regex]::Escape($method)) {
+            $badLinks.Add("$path has no $method")
+          }
+        }
+      }
+      if ($missing.Count -gt 0 -or $badLinks.Count -gt 0) {
+        $results.Add([pscustomobject]@{
+            File    = $f.Name
+            Line    = $line
+            Fn      = $fn
+            Missing = ($missing -join ' ')
+            BadLink = ($badLinks -join '; ')
+            Key     = "$($f.Name)::$fn"
+          })
+      }
+    }
+  }
+  return $results
+}
+
 # ---------------------------------------------------------------------------------------------
 $violations = Get-Violations
 
@@ -258,6 +355,17 @@ if ($UpdateBaseline) {
   )
   Set-Content -Path $BaselinePath -Value ($header + $currentKeys) -Encoding utf8
   Write-Host "Baseline written: $BaselinePath ($($currentKeys.Count) known refs across function bodies)."
+
+  $docsKeys = Get-FunctionAnnotationViolations | Where-Object { $_.Missing } |
+    Select-Object -ExpandProperty Key -Unique | Sort-Object
+  $docsHeader = @(
+    '# Whizbang migration SQL lint baseline — functions with no <docs>/<tests> links (rule 13).',
+    '# Each line is <migration file>::<function>. Generated by Lint-MigrationSql.ps1 -UpdateBaseline.',
+    '# GOAL: this list only shrinks. A function is OWNED by whichever migration most recently',
+    '# defines it, so add the links at that definition site, then remove its line here.'
+  )
+  Set-Content -Path $DocsBaselinePath -Value ($docsHeader + $docsKeys) -Encoding utf8
+  Write-Host "Baseline written: $DocsBaselinePath ($($docsKeys.Count) functions without docs/tests links)."
   exit 0
 }
 
@@ -355,7 +463,62 @@ if ($ruleTwelve.Count -gt 0) {
   Write-Host 'The literals the migrations share are defined once in Migrations/constants.txt and substituted'
   Write-Host 'at apply time on the same path as __SCHEMA__. Write the token, never the value.'
 }
+# Rule 13 — a function a migration defines carries <docs> and <tests> links, and a <tests> link
+# points at something that exists.
+$docsViolations = Get-FunctionAnnotationViolations
+# The baseline tracks ABSENT annotations only. A function whose tags are present but whose link is
+# broken is a different, never-forgiven finding, so it must not also appear as missing-annotation
+# debt with an empty list of what is missing.
+$docsKeysNow = $docsViolations | Where-Object { $_.Missing } |
+  Select-Object -ExpandProperty Key -Unique | Sort-Object
+$docsBaseline = @()
+if (Test-Path $DocsBaselinePath) {
+  $docsBaseline = Get-Content $DocsBaselinePath | Where-Object { $_ -and -not $_.StartsWith('#') }
+}
+$docsNew = $docsKeysNow | Where-Object { $docsBaseline -notcontains $_ }
+$docsFixed = $docsBaseline | Where-Object { $docsKeysNow -notcontains $_ }
+
+# A broken <tests> link fails whether or not the function is baselined. The baseline forgives an
+# ABSENT annotation, which is honest debt; it must never forgive a link that points at nothing,
+# because that reads as coverage and is the more expensive of the two mistakes.
+$brokenLinks = $docsViolations | Where-Object { $_.BadLink }
+if ($brokenLinks) {
+  $exit = 1
+  Write-Host ''
+  Write-Host 'A <tests> link points at something that does not exist (rule 13 — these fail CI):' -ForegroundColor Red
+  foreach ($v in $brokenLinks) {
+    Write-Host ("  {0}:{1}  {2}  ->  {3}" -f $v.File, $v.Line, $v.Fn, $v.BadLink)
+  }
+  Write-Host ''
+  Write-Host 'Name a test you have confirmed reaches the function. A link to a test that does not'
+  Write-Host 'exercise it is worse than no link, because it reads as coverage.'
+}
+if ($docsNew) {
+  $exit = 1
+  Write-Host ''
+  Write-Host 'Functions defined without <docs>/<tests> links (rule 13 — these fail CI):' -ForegroundColor Red
+  foreach ($k in $docsNew) {
+    $docsViolations | Where-Object Key -eq $k | ForEach-Object {
+      Write-Host ("  {0}:{1}  {2}  missing {3}" -f $_.File, $_.Line, $_.Fn, $_.Missing)
+    }
+  }
+  Write-Host ''
+  Write-Host 'SQL is code and follows the same standard. In a comment immediately above the function:'
+  Write-Host '  -- <docs>fundamentals/work-coordinator/store-outbox-messages</docs>'
+  Write-Host '  -- <tests>tests/.../StoreProbeCostScenarioTests.cs:StoreProbe_DrainedStream_AnswersAsync</tests>'
+  Write-Host 'Multiple <tests> lines are fine, as in C#. When a function genuinely has no docs page,'
+  Write-Host 'say so and list it rather than inventing a path — a missing page is a real gap.'
+}
+if ($docsFixed) {
+  $exit = 1
+  Write-Host ''
+  Write-Host 'Baselined functions that now carry links — remove these lines (ratchet down):' -ForegroundColor Yellow
+  $docsFixed | ForEach-Object { Write-Host "  $_" }
+  Write-Host ''
+  Write-Host 'Run:  pwsh scripts/Lint-MigrationSql.ps1 -UpdateBaseline'
+}
+
 if ($exit -eq 0) {
-  Write-Host "migration SQL lint OK — $($currentKeys.Count) known refs, all baselined; 0 new; DROP COLUMN notes present." -ForegroundColor Green
+  Write-Host ("migration SQL lint OK — {0} known refs and {1} un-annotated functions, all baselined; 0 new; DROP COLUMN notes present; every <tests> link resolves." -f $currentKeys.Count, $docsKeysNow.Count) -ForegroundColor Green
 }
 exit $exit

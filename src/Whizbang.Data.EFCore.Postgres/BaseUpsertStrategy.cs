@@ -332,7 +332,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
     var schema = entityType?.GetSchema();
     var qualifiedTable = string.IsNullOrEmpty(schema)
       ? args.TableName
-      : $"\"{schema}\".{args.TableName}";
+      : $"{Whizbang.Data.Postgres.PgIdentifier.Quote(schema)}.{args.TableName}";
 
     // Opt-in via IVersionedApplyTarget: a model that implements the marker gets a stricter
     // WHERE clause that adds a UUIDv7 EventId tie-breaker on top of the legacy CommitSequence

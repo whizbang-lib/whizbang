@@ -194,22 +194,35 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       services.AddLogging();
       var sp = services.BuildServiceProvider();
 
+      // Named arguments follow the constructor's parameter order (RCS1205).
       f.Worker = new PerspectiveWorker(
         instanceProvider: instanceProvider,
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
-        options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+        // The drain accumulation window is timed on the worker's clock, so a fixture that injects a
+        // FAKE clock and never advances it would leave the accumulator waiting and no drain would
+        // ever be processed. These tests are about the affinity-hold watchdog, not about coalescing,
+        // so the window is zeroed: waitFor computes non-positive on the first pass and the
+        // accumulator returns without consulting the clock at all. Zeroing is deterministic, whereas
+        // advancing the clock here would race the creation of the timer it is meant to fire.
+        options: Options.Create(new PerspectiveWorkerOptions {
+          PollingIntervalMilliseconds = 50,
+          DrainBatcher = new SlidingWindowBatcherOptions {
+            SlidingWindow = TimeSpan.Zero,
+            MaxWait = TimeSpan.Zero
+          }
+        }),
+        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         tracingOptions: null,
         completionStrategy: new InstantCompletionStrategy(),
         eventTypeProvider: null,
         logger: f.Logger,
         streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions { LongHoldWarning = longHoldWarning }),
+        timeProvider: timeProvider,
         perspectiveChannelWriter: f.Harness.ChannelWriter,
         perspectiveCompletionChannel: f.Harness.CompletionCapture,
         failureChannel: f.Harness.FailureCapture,
         perspectiveDrainChannel: f.Harness.DrainChannel,
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null,
-        timeProvider: timeProvider);
+        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null);
       // Await StartAsync so ExecuteTask is populated before any test touches the worker. Its own
       // returned task is NOT the worker body -- .NET 10 hands back Task.CompletedTask as soon as
       // ExecuteAsync is queued to the thread pool.

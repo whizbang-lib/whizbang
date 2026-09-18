@@ -33,12 +33,12 @@ public sealed class EFCorePostgresStartupFleetStatusSource : IStartupFleetStatus
     var dbContext = (DbContext)scope.ServiceProvider.GetRequiredService(_dbContextType);
 
     var schema = dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    var prefix = string.IsNullOrWhiteSpace(schema) || schema == "public" ? "" : $"\"{schema}\".";
+    var prefix = Whizbang.Data.Postgres.PgIdentifier.QualifyPrefix(schema);
 
     await using var connectionScope = await Whizbang.Data.Postgres.CoordinatorConnectionScope.AcquireForEfCoreAsync(
       (NpgsqlConnection)dbContext.Database.GetDbConnection(), cancellationToken).ConfigureAwait(false);
     await using var cmd = connectionScope.Connection.CreateCommand();
-#pragma warning disable S2077 // schema comes from the EF model, not user input — same pattern as the coordinator
+#pragma warning disable S2077 // schema is escaped through PgIdentifier; values are bound parameters
     // Capabilities ride along as a join, not a fan-out — "which instance is the migrator right
     // now" answered from the recorded holdings (derived state: the lock decides, the row reports).
     cmd.CommandText = $@"
