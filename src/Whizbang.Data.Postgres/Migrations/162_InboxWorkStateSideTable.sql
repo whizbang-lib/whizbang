@@ -303,6 +303,7 @@ CREATE INDEX IF NOT EXISTS idx_inbox_state_stuck_sentinel
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PreservesRecentStuckInboxMessages_WithinRetentionAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PreservesLeasedInboxMessages_EvenIfOldAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MaintenanceTests.cs:PerformMaintenance_PreservesClaimedInboxMessages_EvenIfOldAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/WorkTablesAreLockedInOneOrderTests.cs:NoFunctionLocksTheWorkTablesOutOfCanonicalOrderAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.perform_maintenance()
 RETURNS TABLE(
   task_name TEXT,
@@ -3453,6 +3454,7 @@ $$ LANGUAGE plpgsql SET plan_cache_mode = force_custom_plan;
 
 -- <docs>operations/infrastructure/partitioning</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorDeepPathTests.cs:RecomputePartitionNumbersAsync_MismatchedRows_RecomputesAllThreeTablesAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/Migrations/WorkTablesAreLockedInOneOrderTests.cs:NoFunctionLocksTheWorkTablesOutOfCanonicalOrderAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.recompute_partition_numbers(
   p_partition_count INTEGER
 ) RETURNS TABLE(
