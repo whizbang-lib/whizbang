@@ -221,9 +221,12 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
-    // Inbox indexes
-    await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_inbox_processed_at");
+    // Inbox indexes. Only received_at: the work-state split moved the other seven to
+    // wh_inbox_state, and the ensure must not re-create one the cutover migration dropped.
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_inbox_received_at");
+    await Assert.That(sql).DoesNotContain("idx_inbox_processed_at")
+      .Because("processed_at lives on wh_inbox_state now, and the ensure runs before the migrations "
+        + "on every startup, so emitting this would put the index back the boot after it was dropped");
 
     // Outbox indexes
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_outbox_status_created_at");

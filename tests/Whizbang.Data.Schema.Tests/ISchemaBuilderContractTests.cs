@@ -185,8 +185,10 @@ public abstract class ISchemaBuilderContractTests {
     // Act
     var sql = builder.BuildInfrastructureSchema(config);
 
-    // Assert - Verify critical indexes exist
-    await Assert.That(sql).Contains("idx_inbox_processed_at");
+    // Assert - Verify critical indexes exist. The inbox's representative is received_at: the
+    // work-state split moved processed_at and the six other indexed work-state columns to
+    // wh_inbox_state, and every builder that shares these descriptors must stop emitting them.
+    await Assert.That(sql).Contains("idx_inbox_received_at");
     await Assert.That(sql).Contains("idx_outbox_published_at");
     await Assert.That(sql).Contains("idx_event_store_aggregate");
   }
