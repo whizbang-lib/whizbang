@@ -127,7 +127,7 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
       "Host=ignored;Database=ignored;Username=x;Password=x;Timeout=1",
       CancellationToken.None);
 
-    await Assert.That(scope.Connection).IsSameReferenceAs(borrow.Connection!)
+    await Assert.That(scope.Connection).IsSameReferenceAs(borrow.Connection)
       .Because("Pinned conn in context MUST be returned by AcquireAsync without touching the fresh-conn-string fallback.");
 
     // Dispose the SCOPE — the conn MUST stay open (pool owns it).
@@ -156,5 +156,5 @@ public class PinnedConnectionPoolIntegrationTests : PostgresTestBase {
   }
 
   /// <summary>Stand-in worker type used as the eligibility key; not a real BackgroundService.</summary>
-  private sealed class _pinnedWorker { }
+  private sealed class _pinnedWorker;
 }

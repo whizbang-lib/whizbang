@@ -24,7 +24,7 @@ public class DapperPostgresPerspectiveStoreTests : PostgresTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
 
-    var createSql = $"CREATE TABLE IF NOT EXISTS {TABLE_NAME} (" +
+    const string createSql = $"CREATE TABLE IF NOT EXISTS {TABLE_NAME} (" +
         "id UUID PRIMARY KEY, " +
         "data JSONB NOT NULL, " +
         "metadata JSONB NOT NULL DEFAULT '{}'::jsonb, " +

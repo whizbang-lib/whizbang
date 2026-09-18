@@ -34,7 +34,7 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task ScopeFilter_SingleEquality_CompilesToScopeJsonbShortKeyWhereAsync() {
-    var tenantId = "t-A";
+    const string tenantId = "t-A";
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => row.Scope.TenantId == tenantId;
 
     var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
@@ -55,8 +55,8 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task ScopeFilter_AndChain_ComposesBothPredicatesAsync() {
-    var tenantId = "t-A";
-    var customer = "c-1";
+    const string tenantId = "t-A";
+    const string customer = "c-1";
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       row => row.Scope.TenantId == tenantId && row.Scope.CustomerId == customer;
 
@@ -68,7 +68,7 @@ public class DapperCollectiveUnitTests {
 
   [Test]
   public async Task ScopeFilter_ReversedOperands_StillMatchesScopeMemberAsync() {
-    var tenantId = "t-A";
+    const string tenantId = "t-A";
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter = row => tenantId == row.Scope.TenantId;
     var result = CollectivePredicateSqlCompiler<_jobModel>.Compile(filter);
     await Assert.That(result.SqlFragment).IsEqualTo("scope->>'t' = @where_tenantid");
@@ -117,7 +117,7 @@ public class DapperCollectiveUnitTests {
   public async Task ScopeFilter_ScopeAndDataMix_ComposesBothColumnsAsync() {
     // The Framework path AND-composes a scope-column envelope with a data-column handler Where — both
     // column kinds appear in one predicate tree and must translate side by side.
-    var tenant = "t-A";
+    const string tenant = "t-A";
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       row => row.Scope.TenantId == tenant && row.Data.Status == "Draft";
 
@@ -191,7 +191,7 @@ public class DapperCollectiveUnitTests {
   [Test]
   public async Task ScopeFilter_ScopeAndCrossPerspectiveAny_ComposesEnvelopeAndExistsAsync() {
     var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
-    var tenant = "t-A";
+    const string tenant = "t-A";
     var eligible = new[] { "Draft" };
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       r => r.Scope.TenantId == tenant
@@ -228,7 +228,7 @@ public class DapperCollectiveUnitTests {
   public async Task ReferencedJsonPaths_ScopeAndData_RecordsBothColumnsForOuterTableAsync() {
     // Every value-comparison on a scope/data jsonb column is a candidate for a btree expression index.
     // The scope->>'t' tenant filter (added on every apply after the D0 fix) is the single most important one.
-    var tenant = "t-A";
+    const string tenant = "t-A";
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       row => row.Scope.TenantId == tenant && row.Data.Status == "Draft";
 
@@ -260,7 +260,7 @@ public class DapperCollectiveUnitTests {
   public async Task ReferencedJsonPaths_CrossPerspectiveAny_RecordsSiblingTableColumnAsync() {
     // The inner EXISTS filters the SIBLING table — the index belongs on the sibling, not the outer table.
     var q = new DapperCollectiveQuery(new Dictionary<Type, string> { [typeof(_statusModel)] = "wh_per_status" });
-    var tenant = "t-A";
+    const string tenant = "t-A";
     var eligible = new[] { "Draft" };
     Expression<Func<PerspectiveRow<_jobModel>, bool>> filter =
       r => r.Scope.TenantId == tenant

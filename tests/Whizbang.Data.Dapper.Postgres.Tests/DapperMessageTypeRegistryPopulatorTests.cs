@@ -255,9 +255,9 @@ public class DapperMessageTypeRegistryPopulatorTests : IAsyncDisposable {
 
     var summary = logger.Messages.FirstOrDefault(m => m.Contains("Message type registry populated", StringComparison.Ordinal));
     await Assert.That(summary).IsNotNull();
-    await Assert.That(summary!).Contains("3 entries");
-    await Assert.That(summary!).Contains("2 pinned");
-    await Assert.That(summary!).Contains("1 unpinned");
+    await Assert.That(summary).Contains("3 entries");
+    await Assert.That(summary).Contains("2 pinned");
+    await Assert.That(summary).Contains("1 unpinned");
   }
 
   [Test]

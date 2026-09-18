@@ -59,7 +59,7 @@ public class PinnedConnectionPoolCoverageTests {
 public class PinnedConnectionPoolActiveBorrowCoverageTests : PostgresTestBase {
 
   /// <summary>Stand-in worker type used as the eligibility key; not a real BackgroundService.</summary>
-  private sealed class _pinnedWorker { }
+  private sealed class _pinnedWorker;
 
   // A borrowed connection is normally released via `await using`; a caller path that also
   // disposes explicitly must not attempt a second return-to-pool of a connection that's already
