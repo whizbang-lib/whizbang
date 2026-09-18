@@ -838,11 +838,11 @@ of them. The split creates five on `wh_inbox_state`.**
 
 | dropped from `wh_inbox` | replacement on `wh_inbox_state` |
 |---|---|
-| `idx_inbox_chain_pending` | `idx_inbox_state_chain_pending` — same keys, same predicate |
-| `idx_inbox_held_lanes` | `idx_inbox_state_held_lanes` — same keys, INCLUDE preserved |
-| `idx_inbox_pending_stream_order` | `idx_inbox_state_stream_order` — same keys, **INCLUDE dropped** |
-| `idx_inbox_unowned_bucket_arrival` | `idx_inbox_state_unowned` — keyed on raw `priority`, **not the bucket CASE expression**, no INCLUDE |
-| `idx_inbox_expired_bucket_arrival` | `idx_inbox_state_expired` — same, plus `lease_expiry` |
+| `idx_inbox_chain_pending` | `idx_inbox_state_chain_pending` -- same keys, same predicate |
+| `idx_inbox_held_lanes` | `idx_inbox_state_held_lanes` -- same keys, INCLUDE preserved |
+| `idx_inbox_pending_stream_order` | `idx_inbox_state_stream_order` -- same keys, **INCLUDE dropped** |
+| `idx_inbox_unowned_bucket_arrival` | `idx_inbox_state_unowned` -- keyed on raw `priority`, **not the bucket CASE expression**, no INCLUDE |
+| `idx_inbox_expired_bucket_arrival` | `idx_inbox_state_expired` -- same, plus `lease_expiry` |
 | `idx_inbox_pending_interactive` | none |
 | `idx_inbox_pending_arrival_standard` | none |
 | `idx_inbox_pending_commands` | none |
@@ -871,7 +871,7 @@ longer exist. Both were left red on purpose. Rewriting what they assert would co
 into a green suite, which is the one outcome to avoid.
 
 **A quieter version of the same hazard, in the measurements themselves.** Several performance guards
-still name `wh_inbox` only in their scaffolding — `DoorbellCostScenarioTests`' `QUEUE_TABLES`,
+still name `wh_inbox` only in their scaffolding -- `DoorbellCostScenarioTests`' `QUEUE_TABLES`,
 `NotifyInstanceOwnersScanShapeSqlTests`' `INBOX` and its `TUPLE_CEILING`, `ClaimWorkPlanShapeTests`'
 `pg_stat_user_tables` filters and `VACUUM (ANALYZE)` lists. None of them errors, because none names
 a moved column. They simply measure a table the hot path barely touches now, so a regression on
@@ -928,3 +928,119 @@ options are a design decision rather than an edit:
 This is a **third blocker**, independent of the index coverage, and it should be settled before
 either of the others: options 2 and 3 change what replay means for every future column move, and the
 outbox and perspective splits will hit the identical wall.
+
+## 7. Settled: all three blockers closed, and the number re-measured on the shipped set
+
+Section 6 and 6.1 record three reasons this was not shippable. All three are closed.
+
+**The descriptor no longer undoes the migration.** The nine moved columns carry `BackfillExempt`, so
+the ensure stops emitting `ADD COLUMN IF NOT EXISTS` for them, and the descriptor's index list is
+down from eight to one, because an index has no equivalent flag and had to be removed outright. The
+guard derives the dropped set from the migration text rather than listing it, with an anti-vacuity
+test that fails if the parse comes back empty.
+
+**Index coverage is answered.** Five priority-lane indexes are restored on the state table, where
+they belong; the remaining six of the eleven that had no replacement were redundant with the
+covering index or with each other. The `idx_inbox_state_stream_order` index gained four `INCLUDE`
+columns so the lane probes stay index-only.
+
+**Replay survives the cutover.** Seventeen of the eighteen `CREATE INDEX` statements on the message
+table are gated on the column they name still existing, along with twelve `COMMENT` statements; the
+eighteenth names two columns the cutover does not move and correctly needs no guard.
+`find_stuck_inbox_rows` became `plpgsql` rather than `SQL`, because PostgreSQL resolves a
+`LANGUAGE SQL` body's columns at create time and a replay reaching it against the post-cutover shape
+failed there before the later definition could replace it. And migration 158's
+`ADD COLUMN IF NOT EXISTS chain_emitted_at` is gated too: it was resurrecting the very column that
+fourteen of those guards were testing, so the guard passed and the index failed on its own predicate.
+
+### The number, on the index set that actually ships
+
+Section 3.14 reported 69 percent against a state table with six indexes. Five lanes have been
+restored since, taking it to eleven, and the number moved with them. Measured by
+`InboxStateWriteCostScenarioTests`, which reconstructs the pre-cutover row rather than comparing two
+cheap numbers, and which asserts the wide side cost more than one block per row so it cannot pass on
+a fixture that failed to build the shape:
+
+| | Wide row, as it was | **State row, as it ships** |
+|---|---|---|
+| Indexes | 17 | **11** |
+| Blocks written per row stamped | 37.2 | **18.3** |
+| Reduction | - | **50.9 percent**, a 2.03x cut |
+
+**51 percent, not 69, and the plan said 69.** Restoring the lanes cost about eighteen points of the
+reduction. The case still holds comfortably -- a claim write costs half what it did -- but the
+headline figure in section 3.14 is now history rather than the current number.
+
+The gate in `baseline.tsv` is the state table's **index count**, ceiling twelve, not the block
+figure. The index count is the thing a later change trades away without noticing: six indexes bought
+69 percent, eleven buy 51, and a drift back toward seventeen gives up the entire reason the split
+exists. Twelve leaves room for one more lane. The reduction percent is recorded and not gated,
+because a ceiling is an upper bound and that number wants a floor; the ratio is asserted in the test.
+
+### A second justification the block figure does not capture
+
+PostgreSQL gives a backend sixteen fast-path slots for relation locks, and a statement needing more
+takes its locks through the shared lock manager's partitioned hash instead, where the contention
+reads as `LWLock:LockManager` and says nothing about the query. A statement against the pre-split
+table locked the table plus every index on it, which exceeded the limit on its own. After the cutover
+the message table carries three relations and the state table eleven, so a statement against either
+is inside the fast path, and one joining both still is. That is a different kind of win from write
+cost and it is invisible to a blocks-per-row measurement.
+
+## 8. Deadlocks found in the same load run, and the order that fixes them
+
+Deadlocks on message-table row locks appeared under load with the server's detail redacted, so the
+log named neither the pair of tables nor the pair of functions. Deriving each function's reachable
+lock order from the migration text found two inversions.
+
+`recompute_partition_numbers` locked the state table before the outbox, while `renew_leases`,
+`deregister_instance` and `cleanup_stale_instances` all lock the outbox first. Their row sets overlap
+at exactly the wrong moment, because a partition recompute is triggered by the same scale event that
+runs a deregistration and a stale-instance sweep. The order was pre-existing: migration 041 already
+had it, and the cutover only retargeted the first statement, so this is not a regression the split
+introduced.
+
+`perform_maintenance` inverted against itself, deleting from the perspective-event table, then the
+active-stream table, then the perspective-event table again in one transaction, with message-table
+deletes on both sides of the first. Every instance runs it on the same tick, so two copies deadlock
+each other with no scale event involved at all.
+
+With both fixed, all twelve functions that lock more than one work table agree on a single total
+order rather than merely avoiding pairwise disagreement: outbox, message table, state table,
+perspective events, active streams. That is the order work moves through them, so the rule describes
+the design instead of constraining it. A pairwise check would have been satisfied by a cycle across
+three tables, which deadlocks just as readily.
+
+### The derivation was wrong three times, each in a different direction
+
+Worth recording, because the analysis is what found the defects and a narrower one gets the answer
+wrong rather than merely incomplete.
+
+`UPDATE` and `DELETE` are not the only row locks. `INSERT ... ON CONFLICT` locks the row it conflicts
+with, which is the only way `store_inbox_messages` reaches the active-stream table, and
+`SELECT ... FOR UPDATE` locks unless it `SKIP LOCKED`s or `NOWAIT`s -- neither of which ever waits,
+so neither can be half of a deadlock. Missing these understates the graph.
+
+plpgsql branches are mutually exclusive. `renew_leases` is a `CASE` over the work category, and
+flattening its three arms invents the order outbox then state table, which no single call takes, and
+reports two inversions that do not exist. This one overstates.
+
+A `CASE` expression is not a branch. Every task in `perform_maintenance` reports through
+`RETURN QUERY SELECT ..., CASE WHEN ... ELSE 'ok' END::TEXT`, at parenthesis depth zero, so depth
+cannot tell them apart from a `CASE` statement; a statement closes with `END CASE` and an expression
+with a bare `END` that pops nothing, so each one leaked a construct onto the branch stack.
+Separately, `EXIT WHEN` and `CONTINUE WHEN` are loop modifiers rather than arms, and there are
+sixteen of them here: reading one as an arm splits a single arm in two, so statements either side
+look mutually unreachable and their pair is never derived -- the direction that HIDES an inversion.
+
+Each correction was checked by re-deriving and diffing rather than by the output looking wrong. The
+answer held every time, which is the only reason the two fixes can be trusted.
+
+### Still open
+
+The server supplies a stack of the active routines on any canceled operation, most recent first, and
+supplies it whether or not the connection includes detailed error text -- so nothing about a
+deployment has to change to get it. The platform reads the error code and discards the rest, which is
+why this deadlock had to be derived from structure instead of read from a log. Tracked separately;
+the fix needs a design decision rather than a patch, because the code that classifies these failures
+deliberately reads only what any provider exposes while the context is specific to one of them.
