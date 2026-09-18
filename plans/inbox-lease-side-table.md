@@ -329,16 +329,58 @@ shipping strategy. The distinction is not cosmetic: the reason staging was rejec
 would run a version where the old columns exist but are ignored, and a claim writing an ignored column
 believes it holds a lease it does not. No consumer ever sees the scaffold.
 
+## 3.9 Documentation and test annotations on the functions
+
+SQL is code, so the `<docs>` and `<tests>` convention C# types already follow applies to the
+functions too, in the migration that most recently defines each one. Ownership is by function rather
+than by migration, since a function outlives the migration that introduced it.
+
+Only a test confirmed to reach the function is named. `renew_leases` is the worked example of why
+that matters: `RenewLeasesSqlTests` contains an existence check and an OUTBOX renewal, neither of
+which exercises the inbox arm being rewritten. The inbox arm is covered, but by
+`ActiveStreamLeaseExpirySqlTests`, whose helper passes the category through as a parameter, so the
+link points there.
+
+**One documentation gap, recorded rather than papered over:** `release_unprocessed_inbox` has no
+documentation page anywhere on the site. Its `<tests>` links are present and its `<docs>` tag is
+deliberately absent, with a comment in the migration saying so. Pages that do exist and are now
+linked: `operations/workers/claim-backpressure`, `fundamentals/work-coordinator/claim-loop`,
+`fundamentals/work-coordinator/overview`, `messaging/work-coordinator`,
+`messaging/failure-handling`.
+
+## 3.10 What a batch verification proves, and what it does not
+
+Stated because the scaffold weakens it in a way that is easy to miss and easy to overclaim.
+
+The scaffold keeps both representations equal by construction. So a test asserting on
+`wh_inbox.instance_id` passes whether the function wrote the lease table and the trigger copied it
+back, or wrote `wh_inbox` as before. **No runtime test can discriminate between those two while the
+scaffold is in place.**
+
+What a green batch therefore proves: the rewritten function applies, and it still computes the same
+values and produces the same observable state transitions. That is behavior preservation, and it is
+what a batch is for.
+
+What proves the rewrite actually moved: removing the scaffold and dropping the columns. At that point
+every function still reading `wh_inbox` for claim state fails loudly, and the tests that assert on
+those columns fail too and have to move to the lease table. **Those failures are the verification,
+not a regression**, and they are expected in the final commit rather than treated as a surprise.
+
 ## 3.6 Build status
 
 | Piece | State |
 |---|---|
-| Structural DDL: table, lock, backfill, indexes, foreign key | drafted, `plans/drafts/162_InboxLeaseSideTable.sql.draft` |
+| Structural DDL: table, lock, backfill, indexes, foreign key | **landed** in `162_InboxLeaseSideTable.sql` |
+| Build scaffold (temporary sync triggers) | **landed**, removed with the column drops |
+| Batch one: six claim-state-only functions rewritten, annotated | **landed, 92 tests green** |
+| Lease-table ownership tests | **landed and passing** |
 | Commit-boundary guard test | **landed and passing** |
 | Ordering set-equality test | **landed and passing** |
 | Missing-lease-row invariant test | **landed and passing** |
 | `ALTER TABLE ... DROP COLUMN` | not written: cannot land until every function is rewritten |
-| The sixteen function rewrites | **not written. 2,828 lines of plpgsql, 466 column references** |
+| `cleanup_stale_instances` (batch one b) | not written, 132 lines |
+| Batch two: seven functions needing a join back for the payload | not written |
+| Batch three: `claim_orphaned_inbox` and `claim_work` | not written, 1,231 lines |
 
 The migration is deliberately NOT in `src/Whizbang.Data.Postgres/Migrations/` yet. Shipped
 incomplete it would take `ACCESS EXCLUSIVE` on every startup and backfill a table nothing reads, and
