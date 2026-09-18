@@ -155,7 +155,7 @@ public class EFCoreWorkCoordinatorObservationAndStatsTests : EFCoreTestBase {
     await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "UPDATE wh_inbox SET processed_at = now() WHERE message_id = @id";
+    cmd.CommandText = "UPDATE wh_inbox_state SET processed_at = now() WHERE message_id = @id";
     cmd.Parameters.AddWithValue("id", messageId);
     await cmd.ExecuteNonQueryAsync();
   }

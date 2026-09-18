@@ -285,9 +285,15 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
 
     await using (var ins = connection.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 0, 0, NOW(), @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 0, 0, 0 FROM m";
       ins.Parameters.AddWithValue("msg", messageId);
       ins.Parameters.AddWithValue("stream", streamId);
       await ins.ExecuteNonQueryAsync();
@@ -888,13 +894,20 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
     // by all four inbox predicates, but its event_id is already in wh_event_store.
     await using (var inbox = connection.CreateCommand()) {
       inbox.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, scope,
-           stream_id, instance_id, lease_expiry, processed_at, is_event,
-           status, attempts, received_at, partition_number)
-        VALUES (@mid, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, NULL,
-                @stream, @inst, NOW() + INTERVAL '5 minutes', NULL, true,
-                0, 0, NOW(), 1)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, scope,
+             stream_id, is_event, received_at)
+          VALUES (@mid, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, NULL,
+                  @stream, true, NOW())
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           instance_id, lease_expiry, processed_at, status, attempts, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               @inst, NOW() + INTERVAL '5 minutes', NULL::timestamptz,
+               0, 0, 1 FROM m";
       inbox.Parameters.AddWithValue("mid", eventId);
       inbox.Parameters.AddWithValue("stream", streamId);
       inbox.Parameters.AddWithValue("inst", instanceId);
@@ -981,13 +994,20 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       // event_data carries a 'p' payload key — _emit_event_store_chain_for_inbox
       // COALESCE-extracts that into wh_event_store.event_data, which is NOT NULL.
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, scope,
-           stream_id, instance_id, lease_expiry, processed_at, is_event,
-           status, attempts, received_at, partition_number)
-        VALUES (@msg, 'TestHandler', 'Test', '{""p"": {}}'::jsonb, '{}'::jsonb, NULL,
-                @stream, NULL, NULL, NULL, true,
-                0, 0, NOW(), 1)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, scope,
+             stream_id, is_event, received_at)
+          VALUES (@msg, 'TestHandler', 'Test', '{""p"": {}}'::jsonb, '{}'::jsonb, NULL,
+                  @stream, true, NOW())
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           instance_id, lease_expiry, processed_at, status, attempts, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               NULL::uuid, NULL::timestamptz, NULL::timestamptz,
+               0, 0, 1 FROM m";
       ins.Parameters.AddWithValue("msg", Guid.NewGuid());
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
       await ins.ExecuteNonQueryAsync();

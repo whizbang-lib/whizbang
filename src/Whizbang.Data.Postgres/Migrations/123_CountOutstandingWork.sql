@@ -32,9 +32,20 @@
 -- accordingly. Same pattern and same trade-off as the index work in 031 and 115.
 -- ============================================================================
 
-CREATE INDEX IF NOT EXISTS idx_inbox_outstanding_by_instance
-ON __SCHEMA__.wh_inbox (instance_id, lease_expiry)
-WHERE processed_at IS NULL;
+-- 162 moves instance_id, lease_expiry, processed_at to wh_inbox_state and drops them here, so a replayed
+-- ledger reaches this statement against the post-split shape. It must no-op rather than
+-- fail with 42703 and wedge the init behind the schema-ready gate. Same guard as 072's
+-- already-dropped inline body columns; to_regclass takes __SCHEMA__ verbatim.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_attribute
+             WHERE attrelid = to_regclass('__SCHEMA__.wh_inbox')
+               AND attname = 'processed_at' AND NOT attisdropped) THEN
+    CREATE INDEX IF NOT EXISTS idx_inbox_outstanding_by_instance
+    ON __SCHEMA__.wh_inbox (instance_id, lease_expiry)
+    WHERE processed_at IS NULL;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_outbox_outstanding_by_instance
 ON __SCHEMA__.wh_outbox (instance_id, lease_expiry)

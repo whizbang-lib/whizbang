@@ -545,7 +545,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
     await using var holderTx = await holderConn.BeginTransactionAsync();
     await using (var complete = holderConn.CreateCommand()) {
       complete.Transaction = holderTx;
-      complete.CommandText = "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @mid";
+      complete.CommandText = "UPDATE wh_inbox_state SET processed_at = NOW() WHERE message_id = @mid";
       complete.Parameters.AddWithValue("mid", firstMsgId);
       _ = await complete.ExecuteNonQueryAsync();
     }
@@ -628,7 +628,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
   private static async Task _markInboxDrainedAsync(NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @mid";
+    cmd.CommandText = "UPDATE wh_inbox_state SET processed_at = NOW() WHERE message_id = @mid";
     cmd.Parameters.AddWithValue("mid", messageId);
     await cmd.ExecuteNonQueryAsync();
   }
@@ -649,7 +649,7 @@ public class NotifyAfterStoreSqlTests : EFCoreTestBase {
 
   private static async Task _deferInboxRowAsync(NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "UPDATE wh_inbox SET scheduled_for = NOW() + INTERVAL '1 hour' WHERE message_id = @mid";
+    cmd.CommandText = "UPDATE wh_inbox_state SET scheduled_for = NOW() + INTERVAL '1 hour' WHERE message_id = @mid";
     cmd.Parameters.AddWithValue("mid", messageId);
     await cmd.ExecuteNonQueryAsync();
   }

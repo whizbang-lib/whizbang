@@ -127,8 +127,13 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { messageId = outboxMessageId, instanceId = staleInstanceId, leaseExpiry = staleTime.AddMinutes(5), now = staleTime });
 
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, instance_id, lease_expiry, received_at)
-      VALUES (@messageId, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @instanceId, @leaseExpiry, @now)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at)
+        VALUES (@messageId, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, @now)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @instanceId, @leaseExpiry FROM m",
       new { messageId = inboxMessageId, instanceId = staleInstanceId, leaseExpiry = staleTime.AddMinutes(5), now = staleTime });
 
     await connection.ExecuteAsync(@"
@@ -164,7 +169,7 @@ public class PostgresFunctionTests : PostgresTestBase {
     await Assert.That(outboxInstanceId).IsNull();
 
     var inboxInstanceId = await connection.QuerySingleOrDefaultAsync<Guid?>(@"
-      SELECT instance_id FROM wh_inbox WHERE message_id = @messageId",
+      SELECT instance_id FROM wh_inbox_state WHERE message_id = @messageId",
       new { messageId = inboxMessageId });
     await Assert.That(inboxInstanceId).IsNull();
   }
@@ -500,8 +505,13 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert inbox message
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, received_at)
-      VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @now)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, stream_id, received_at)
+        VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, @streamId, @now)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1 FROM m",
       new { messageId, streamId, now });
 
     // Prepare completion with EventStored flag (2)
@@ -1147,8 +1157,13 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert inbox message with high attempt count
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, attempts, received_at)
-      VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @highAttempts, @now)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, stream_id, received_at)
+        VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, @streamId, @now)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @highAttempts FROM m",
       new { messageId, streamId, highAttempts, now });
 
     // Prepare failure
@@ -1163,7 +1178,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Assert - scheduled_for should be capped at approximately 5 minutes
     var scheduledFor = await connection.QuerySingleAsync<DateTimeOffset>(@"
-      SELECT scheduled_for FROM wh_inbox WHERE message_id = @messageId",
+      SELECT scheduled_for FROM wh_inbox_state WHERE message_id = @messageId",
       new { messageId });
 
     // Maximum backoff is 30s * 10 = 300s = 5 minutes
@@ -1469,10 +1484,15 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert orphaned inbox messages for different streams
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, received_at, instance_id, lease_expiry)
-      VALUES
-        (@message1Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @stream1Id, @now, NULL, NULL),
-        (@message2Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @stream2Id, @now, NULL, NULL)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, stream_id, received_at)
+        VALUES
+          (@message1Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, @stream1Id, @now),
+          (@message2Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, @stream2Id, @now)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, NULL::uuid, NULL::timestamptz FROM m",
       new { message1Id, message2Id, stream1Id, stream2Id, now });
 
     // Register both instances as heartbeating so the claim's liveness check treats them as live.

@@ -80,20 +80,41 @@ public class InboxSchemaTests {
     // Arrange & Act
     var indexes = InboxSchema.Table.Indexes;
 
-    // Assert - Verify index count
-    await Assert.That(indexes).Count().IsEqualTo(8);
+    // Assert - one index, on the only indexed column this table still owns. The work-state split
+    // moved the other seven to wh_inbox_state along with the columns they key or filter on.
+    await Assert.That(indexes).Count().IsEqualTo(1);
 
-    // Verify processed_at index
-    var processedAtIndex = indexes[0];
-    await Assert.That(processedAtIndex.Name).IsEqualTo("idx_inbox_processed_at");
-    await Assert.That(processedAtIndex.Columns).Count().IsEqualTo(1);
-    await Assert.That(processedAtIndex.Columns[0]).IsEqualTo("processed_at");
-
-    // Verify received_at index
-    var receivedAtIndex = indexes[1];
+    var receivedAtIndex = indexes[0];
     await Assert.That(receivedAtIndex.Name).IsEqualTo("idx_inbox_received_at");
     await Assert.That(receivedAtIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(receivedAtIndex.Columns[0]).IsEqualTo("received_at");
+  }
+
+  /// <summary>
+  /// No index on a column the work-state split moved may be declared here.
+  /// </summary>
+  /// <remarks>
+  /// A count assertion alone would pass if someone swapped one of these back in while removing
+  /// another, so the seven are named. They must not return, because the ensure emits
+  /// CREATE INDEX IF NOT EXISTS on every startup and runs before the migrations: a declaration here
+  /// re-creates the index on the boot after the cutover dropped it, and it is then maintained on
+  /// every write for columns whose values live in another table.
+  /// </remarks>
+  [Test]
+  [Category("Schema")]
+  public async Task Table_ShouldNotIndexAColumnTheWorkStateSplitMovedAsync() {
+    string[] moved = [
+      "idx_inbox_processed_at", "idx_inbox_lease_expiry", "idx_inbox_status_lease",
+      "idx_inbox_failure_reason", "idx_inbox_scheduled_for", "idx_inbox_partition_claiming",
+      "idx_inbox_instance_lease",
+    ];
+
+    var declared = InboxSchema.Table.Indexes.Select(static i => i.Name).ToHashSet(StringComparer.Ordinal);
+
+    await Assert.That(moved.Where(declared.Contains)).IsEmpty()
+      .Because("each of these keys or filters on a column that now lives on wh_inbox_state, so "
+        + "declaring it here puts the index back on the next startup and restores the write "
+        + "amplification the split removed");
   }
 
   [Test]

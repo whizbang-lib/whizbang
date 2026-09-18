@@ -96,10 +96,19 @@ public static class InboxSchema {
         DataType: WhizbangDataType.UUID,
         Nullable: true
       ),
+      // BackfillExempt from here on marks a column the work-state split MOVED to wh_inbox_state.
+      // It stays declared so a fresh database still gets it from CREATE TABLE and the cutover
+      // migration has something to read the state out of, but the ensure must not re-assert it:
+      // the ensure runs BEFORE the migrations on every startup, and an
+      // ALTER TABLE ADD COLUMN IF NOT EXISTS would put the column back on the boot after the
+      // migration dropped it, silently, because every one of these is either nullable or carries a
+      // default and so is added without a table rewrite or an error. The result would be a wide
+      // table of permanently NULL duplicates, which is the cost the split exists to remove.
       new ColumnDefinition(
         Name: "partition_number",
         DataType: WhizbangDataType.INTEGER,
-        Nullable: true
+        Nullable: true,
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: "is_event",
@@ -111,44 +120,52 @@ public static class InboxSchema {
         Name: "status",
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
-        DefaultValue: DefaultValue.Integer(1)
+        DefaultValue: DefaultValue.Integer(1),
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: "attempts",
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
-        DefaultValue: DefaultValue.Integer(0)
+        DefaultValue: DefaultValue.Integer(0),
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: "error",
         DataType: WhizbangDataType.STRING,
-        Nullable: true
+        Nullable: true,
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: "instance_id",
         DataType: WhizbangDataType.UUID,
-        Nullable: true
+        Nullable: true,
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: Columns.LEASE_EXPIRY,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
-        Nullable: true
+        Nullable: true,
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: Columns.FAILURE_REASON,
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
-        DefaultValue: DefaultValue.Integer(99)
+        DefaultValue: DefaultValue.Integer(99),
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: Columns.SCHEDULED_FOR,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
-        Nullable: true
+        Nullable: true,
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: Columns.PROCESSED_AT,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
-        Nullable: true
+        Nullable: true,
+        BackfillExempt: true
       ),
       new ColumnDefinition(
         Name: Columns.RECEIVED_AT,
@@ -169,44 +186,16 @@ public static class InboxSchema {
         DefaultValue: DefaultValue.Integer(150)
       )
     ),
+    // Only indexes on columns this table still owns after the work-state split. Seven others used
+    // to live here, keyed or filtered on the columns that moved, and every one of them had to go
+    // rather than be exempted: there is no BackfillExempt for an index, and the ensure's
+    // CREATE INDEX IF NOT EXISTS runs on every startup, so a declaration here re-creates the index
+    // on the boot after the migration dropped it. Their equivalents live on wh_inbox_state, which is
+    // where the columns they index now live.
     Indexes: ImmutableArray.Create(
-      new IndexDefinition(
-        Name: "idx_inbox_processed_at",
-        Columns: [Columns.PROCESSED_AT]
-      ),
       new IndexDefinition(
         Name: "idx_inbox_received_at",
         Columns: [Columns.RECEIVED_AT]
-      ),
-      new IndexDefinition(
-        Name: "idx_inbox_lease_expiry",
-        Columns: [Columns.LEASE_EXPIRY],
-        WhereClause: "lease_expiry IS NOT NULL"
-      ),
-      new IndexDefinition(
-        Name: "idx_inbox_status_lease",
-        Columns: [Columns.STATUS, Columns.LEASE_EXPIRY],
-        WhereClause: "(status & 32768) = 0 AND (status & 2) != 2"
-      ),
-      new IndexDefinition(
-        Name: "idx_inbox_failure_reason",
-        Columns: [Columns.FAILURE_REASON],
-        WhereClause: "(status & 32768) = 32768"
-      ),
-      new IndexDefinition(
-        Name: "idx_inbox_scheduled_for",
-        Columns: [Columns.STREAM_ID, Columns.SCHEDULED_FOR, Columns.RECEIVED_AT],
-        WhereClause: "scheduled_for IS NOT NULL"
-      ),
-      new IndexDefinition(
-        Name: "idx_inbox_partition_claiming",
-        Columns: [Columns.PARTITION_NUMBER, Columns.SCHEDULED_FOR, Columns.RECEIVED_AT],
-        WhereClause: "(status & 2) != 2 AND (status & 32768) = 0"
-      ),
-      new IndexDefinition(
-        Name: "idx_inbox_instance_lease",
-        Columns: [Columns.INSTANCE_ID, Columns.LEASE_EXPIRY],
-        WhereClause: "instance_id IS NOT NULL AND lease_expiry IS NOT NULL"
       )
     )
   );

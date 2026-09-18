@@ -90,7 +90,8 @@ public sealed class PostgresTableStatisticsProvider(
     await using var connection = await dataSource.OpenConnectionAsync(ct);
 
     // Schema-qualify table names for multi-schema deployments
-    var inboxTable = $"{schema}.wh_inbox";
+    // 162: the inbox depth gauge counts unprocessed rows, and processed_at is work state.
+    var inboxTable = $"{schema}.wh_inbox_state";
     var outboxTable = $"{schema}.wh_outbox";
     var deadLettersTable = $"{schema}.wh_dead_letters";
 

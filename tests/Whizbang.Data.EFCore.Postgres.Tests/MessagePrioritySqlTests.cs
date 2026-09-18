@@ -91,7 +91,7 @@ public class MessagePrioritySqlTests : EFCoreTestBase {
 
   private static async Task _leaseInboxAsync(NpgsqlConnection conn, Guid messageId, Guid instance) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
+    cmd.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = @id";
     cmd.Parameters.AddWithValue("inst", instance);
     cmd.Parameters.AddWithValue("id", messageId);
     await cmd.ExecuteNonQueryAsync();

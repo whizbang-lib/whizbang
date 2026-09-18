@@ -377,11 +377,19 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid messageId, Guid streamId, Guid instanceId, DateTimeOffset receivedAt) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, scope, status, attempts,
-         received_at, instance_id, lease_expiry, stream_id, partition_number, is_event)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{""p"":1}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, 0,
-              @received, @inst, NOW() + INTERVAL '5 minutes', @stream, 0, true)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, scope,
+           received_at, stream_id, is_event)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{""p"":1}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+                @received, @stream, true)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event,
+         status, attempts, instance_id, lease_expiry, partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event,
+             1, 0, @inst, NOW() + INTERVAL '5 minutes', 0 FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("inst", instanceId);

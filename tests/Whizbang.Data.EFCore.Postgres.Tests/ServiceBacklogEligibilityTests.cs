@@ -30,12 +30,20 @@ public class ServiceBacklogEligibilityTests : EFCoreTestBase {
 
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-           received_at, stream_id, partition_number, scheduled_for)
-        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 3,
-               NOW() - INTERVAL '2 days', gen_random_uuid(), 0, NOW() + INTERVAL '30 days'
-        FROM generate_series(1, 25)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata,
+             received_at, stream_id)
+          SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}',
+                 NOW() - INTERVAL '2 days', gen_random_uuid()
+          FROM generate_series(1, 25)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           status, attempts, partition_number, scheduled_for)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               1, 3, 0, NOW() + INTERVAL '30 days' FROM m";
       await ins.ExecuteNonQueryAsync();
     }
 
@@ -59,11 +67,19 @@ public class ServiceBacklogEligibilityTests : EFCoreTestBase {
 
     await using (var ins = conn.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-           received_at, stream_id, partition_number, scheduled_for)
-        VALUES (gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 0,
-                NOW() - INTERVAL '1 minute', gen_random_uuid(), 0, NOW() - INTERVAL '1 second')";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata,
+             received_at, stream_id)
+          VALUES (gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}',
+                  NOW() - INTERVAL '1 minute', gen_random_uuid())
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event,
+           status, attempts, partition_number, scheduled_for)
+        SELECT message_id, stream_id, received_at, priority, is_event,
+               1, 0, 0, NOW() - INTERVAL '1 second' FROM m";
       await ins.ExecuteNonQueryAsync();
     }
 

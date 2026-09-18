@@ -233,12 +233,20 @@ public class NotifyInstanceOwnersScanShapeSqlTests : EFCoreTestBase {
   private static async Task _fillInboxAsync(NpgsqlConnection conn, Guid streamId) {
     await using var fill = conn.CreateCommand();
     fill.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, is_event, processed_at)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 0, 0, NOW(),
-             @sid, compute_partition(@sid), TRUE, NOW()
-      FROM generate_series(1, @n);
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', NOW(),
+               @sid, TRUE
+        FROM generate_series(1, @n)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event,
+         status, attempts, partition_number, processed_at)
+      SELECT message_id, stream_id, received_at, priority, is_event,
+             0, 0, compute_partition(@sid), NOW() FROM m;
       DELETE FROM wh_active_streams WHERE stream_id = @sid;
       ANALYZE wh_inbox;";
     fill.Parameters.AddWithValue("sid", streamId);

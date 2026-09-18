@@ -109,10 +109,17 @@ public class EFCoreFindStuckRowsTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid messageId, Guid streamId, string messageType, int attempts) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-         received_at, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', @type, '{}', '{}', 1, @attempts, NOW(), @stream, 0)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', @type, '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @attempts, 0, 99
+      FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
     ins.Parameters.AddWithValue("stream", streamId);

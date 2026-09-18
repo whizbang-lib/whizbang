@@ -38,9 +38,16 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 /// <docs>fundamentals/dispatcher/routing#poison-messages</docs>
 public class RedeliveryObservationWiringSqlTests : PostgresTestBase {
 
+  // 162: attempts is work state, so the row is a pair. status (1) and failure_reason (99) are
+  // named explicitly because they were the old wh_inbox defaults this seed relied on.
   private const string INSERT_INBOX = @"
-    INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, attempts)
-    VALUES (@MessageId, 'TestHandler', 'TestMessage', '{}'::jsonb, '{}'::jsonb, @Attempts)";
+    WITH m AS (
+      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata)
+      VALUES (@MessageId, 'TestHandler', 'TestMessage', '{}'::jsonb, '{}'::jsonb)
+      RETURNING message_id, stream_id, received_at, priority, is_event
+    )
+    INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, attempts, status, failure_reason)
+    SELECT message_id, stream_id, received_at, priority, is_event, @Attempts, 1, 99 FROM m";
 
   private const string INSERT_DEDUP = @"
     INSERT INTO wh_message_deduplication (message_id, observation_count)

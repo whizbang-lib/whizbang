@@ -139,8 +139,13 @@ public class PriorityOnTheWireSqlTests : EFCoreTestBase {
     var conn = await _openAsync(ctx);
     var messageId = (Guid)TrackedGuid.NewMedo();
     await _execAsync(conn, @"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number, priority)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 11, NOW(), @stream, 0, 50)",
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id, priority)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream, 50)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 11, 0 FROM m",
       ("msg", messageId), ("stream", (Guid)TrackedGuid.NewMedo()));
     var dlqId = await _moveToDlqAsync(conn, "wh_inbox", messageId);
 

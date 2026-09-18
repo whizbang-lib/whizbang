@@ -147,8 +147,13 @@ public class MaintenanceTests : EFCoreTestBase {
     await using var conn = await _openConnectionAsync();
     var stuckId = Guid.CreateVersion7();
     await conn.ExecuteAsync($@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, status, attempts, received_at)
-      VALUES ('{stuckId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, 1, 0, NOW() - INTERVAL '8 days')");
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, received_at)
+        VALUES ('{stuckId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, NOW() - INTERVAL '8 days')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0 FROM m");
 
     // Act
     var results = await _runMaintenanceAsync(conn);
@@ -169,8 +174,13 @@ public class MaintenanceTests : EFCoreTestBase {
     await using var conn = await _openConnectionAsync();
     var recentId = Guid.CreateVersion7();
     await conn.ExecuteAsync($@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, status, attempts, received_at)
-      VALUES ('{recentId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, 1, 0, NOW() - INTERVAL '3 days')");
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, received_at)
+        VALUES ('{recentId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, NOW() - INTERVAL '3 days')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0 FROM m");
 
     // Act
     await _runMaintenanceAsync(conn);
@@ -188,8 +198,13 @@ public class MaintenanceTests : EFCoreTestBase {
     var leasedId = Guid.CreateVersion7();
     var instanceId = Guid.CreateVersion7();
     await conn.ExecuteAsync($@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, status, attempts, received_at, instance_id, lease_expiry)
-      VALUES ('{leasedId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, 1, 0, NOW() - INTERVAL '30 days', '{instanceId}', NOW() + INTERVAL '5 minutes')");
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, received_at)
+        VALUES ('{leasedId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, NOW() - INTERVAL '30 days')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, '{instanceId}', NOW() + INTERVAL '5 minutes' FROM m");
 
     // Act
     await _runMaintenanceAsync(conn);
@@ -207,8 +222,13 @@ public class MaintenanceTests : EFCoreTestBase {
     var claimedId = Guid.CreateVersion7();
     var instanceId = Guid.CreateVersion7();
     await conn.ExecuteAsync($@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, status, attempts, received_at, instance_id)
-      VALUES ('{claimedId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, 1, 0, NOW() - INTERVAL '30 days', '{instanceId}')");
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, received_at)
+        VALUES ('{claimedId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, NOW() - INTERVAL '30 days')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts, instance_id)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, '{instanceId}' FROM m");
 
     // Act
     await _runMaintenanceAsync(conn);
@@ -225,8 +245,13 @@ public class MaintenanceTests : EFCoreTestBase {
     await using var conn = await _openConnectionAsync();
     var processedId = Guid.CreateVersion7();
     await conn.ExecuteAsync($@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, status, attempts, received_at, processed_at)
-      VALUES ('{processedId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, 3, 0, NOW() - INTERVAL '30 days', NOW() - INTERVAL '29 days')");
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, received_at)
+        VALUES ('{processedId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, NOW() - INTERVAL '30 days')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts, processed_at)
+      SELECT message_id, stream_id, received_at, priority, is_event, 3, 0, NOW() - INTERVAL '29 days' FROM m");
 
     // Act
     var results = await _runMaintenanceAsync(conn);
@@ -251,8 +276,13 @@ public class MaintenanceTests : EFCoreTestBase {
 
     var stuckId = Guid.CreateVersion7();
     await conn.ExecuteAsync($@"
-      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, status, attempts, received_at)
-      VALUES ('{stuckId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, 1, 0, NOW() - INTERVAL '2 days')");
+      WITH m AS (
+        INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, scope, received_at)
+        VALUES ('{stuckId}', 'test', 'TestEvent', '{{}}'::jsonb, '{{}}'::jsonb, 'null'::jsonb, NOW() - INTERVAL '2 days')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state (message_id, stream_id, received_at, priority, is_event, status, attempts)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0 FROM m");
 
     // Act
     await _runMaintenanceAsync(conn);
@@ -456,9 +486,15 @@ public class MaintenanceTests : EFCoreTestBase {
     var msgId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
     await conn.ExecuteAsync($@"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, stream_id, partition_number, processed_at)
-      VALUES ('{msgId}', 'TestHandler', 'Type', '{{}}', '{{}}', 5, 0, NOW(), '{streamId}', 0, NOW())");
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES ('{msgId}', 'TestHandler', 'Type', '{{}}', '{{}}', NOW(), '{streamId}')
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number, processed_at)
+      SELECT message_id, stream_id, received_at, priority, is_event, 5, 0, 0, NOW() FROM m");
 
     var results = await _runMaintenanceAsync(conn);
 

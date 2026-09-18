@@ -53,14 +53,23 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
     var streamIds = Enumerable.Range(0, streams).Select(_ => Guid.CreateVersion7()).ToList();
     await using var ins = conn.CreateCommand();
     ins.CommandText = """
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, is_event, instance_id, lease_expiry, error, failure_reason)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}', 1, 0,
-             NOW() - (@age || ' seconds')::INTERVAL + ((r.seq - 1) * @streams + s.ordinality) * INTERVAL '1 millisecond',
-             s.stream_id, @partition, @isEvent, NULL, NULL, NULL, 99
-      FROM unnest(@ids::uuid[]) WITH ORDINALITY AS s(stream_id, ordinality)
-      CROSS JOIN generate_series(1, @rows) AS r(seq)
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}',
+               NOW() - (@age || ' seconds')::INTERVAL + ((r.seq - 1) * @streams + s.ordinality) * INTERVAL '1 millisecond',
+               s.stream_id, @isEvent
+        FROM unnest(@ids::uuid[]) WITH ORDINALITY AS s(stream_id, ordinality)
+        CROSS JOIN generate_series(1, @rows) AS r(seq)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, instance_id, lease_expiry, error, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+             @partition, NULL::uuid, NULL::timestamptz, NULL::text, 99
+      FROM m
       """;
     ins.Parameters.AddWithValue("ids", streamIds.ToArray());
     ins.Parameters.AddWithValue("rows", rowsPerStream);
@@ -98,7 +107,7 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
       SELECT message_id FROM (
         SELECT message_id, is_event, received_at,
                ROW_NUMBER() OVER (PARTITION BY stream_id ORDER BY received_at, message_id) AS stream_seq
-        FROM wh_inbox WHERE instance_id = @inst AND processed_at IS NULL
+        FROM wh_inbox_state WHERE instance_id = @inst AND processed_at IS NULL
       ) r
       ORDER BY CASE WHEN is_event THEN 1 ELSE 0 END, stream_seq, received_at, message_id";
     cmd.Parameters.AddWithValue("inst", instance);
@@ -156,16 +165,16 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
     seq.CommandText = @"
       SELECT count(*) FROM (
         SELECT stream_id, ROW_NUMBER() OVER (PARTITION BY stream_id ORDER BY received_at, message_id) AS n
-        FROM wh_inbox WHERE processed_at IS NULL
-      ) x JOIN wh_inbox i ON i.stream_id = x.stream_id AND i.instance_id = @inst
-      WHERE x.n = 1 AND i.message_id IN (SELECT message_id FROM wh_inbox WHERE instance_id = @inst)";
+        FROM wh_inbox_state WHERE processed_at IS NULL
+      ) x JOIN wh_inbox_state i ON i.stream_id = x.stream_id AND i.instance_id = @inst
+      WHERE x.n = 1 AND i.message_id IN (SELECT message_id FROM wh_inbox_state WHERE instance_id = @inst)";
     seq.Parameters.AddWithValue("inst", instance);
     // Every leased row is the head of its stream: 80 heads out of 120 streams, no second row taken.
     await using var heads = conn.CreateCommand();
     heads.CommandText = @"
-      SELECT count(*) FROM wh_inbox i
+      SELECT count(*) FROM wh_inbox_state i
       WHERE i.instance_id = @inst AND NOT EXISTS (
-        SELECT 1 FROM wh_inbox j WHERE j.stream_id = i.stream_id AND j.processed_at IS NULL
+        SELECT 1 FROM wh_inbox_state j WHERE j.stream_id = i.stream_id AND j.processed_at IS NULL
           AND (j.received_at, j.message_id) < (i.received_at, i.message_id))";
     heads.Parameters.AddWithValue("inst", instance);
     var headCount = Convert.ToInt32(await heads.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
@@ -191,7 +200,7 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
       per.CommandText = @"
         SELECT count(*), bool_and(rn <= 10) FROM (
           SELECT instance_id, ROW_NUMBER() OVER (ORDER BY received_at, message_id) AS rn
-          FROM wh_inbox WHERE stream_id = @sid AND processed_at IS NULL
+          FROM wh_inbox_state WHERE stream_id = @sid AND processed_at IS NULL
         ) x WHERE instance_id = @inst";
       per.Parameters.AddWithValue("sid", sid);
       per.Parameters.AddWithValue("inst", instance);
@@ -242,7 +251,7 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
     var streams = await _seedStreamsAsync(conn, streams: 2, rowsPerStream: 2, isEvent: true, partition: 0, ageSeconds: 600);
     await using var lease = conn.CreateCommand();
     lease.CommandText = @"
-      UPDATE wh_inbox SET instance_id = @owner, lease_expiry = NOW() + INTERVAL '5 minutes', attempts = 1
+      UPDATE wh_inbox_state SET instance_id = @owner, lease_expiry = NOW() + INTERVAL '5 minutes', attempts = 1
       WHERE message_id = (SELECT message_id FROM wh_inbox WHERE stream_id = @sid ORDER BY received_at, message_id LIMIT 1)";
     lease.Parameters.AddWithValue("owner", owner);
     lease.Parameters.AddWithValue("sid", streams[0]);
@@ -251,7 +260,7 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
     var stolen = await _acquireAsync(conn, idle, rank: 1, count: 2, limit: 10, allowSteal: true);
 
     await using var where = conn.CreateCommand();
-    where.CommandText = "SELECT DISTINCT stream_id FROM wh_inbox WHERE instance_id = @idle";
+    where.CommandText = "SELECT DISTINCT stream_id FROM wh_inbox_state WHERE instance_id = @idle";
     where.Parameters.AddWithValue("idle", idle);
     var stolenStreams = new List<Guid>();
     await using (var reader = await where.ExecuteReaderAsync()) {
@@ -283,7 +292,7 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
     _ = await cmd.ExecuteScalarAsync();
 
     await using var leased = conn.CreateCommand();
-    leased.CommandText = "SELECT count(*) FROM wh_inbox WHERE instance_id = @inst AND processed_at IS NULL AND lease_expiry > NOW()";
+    leased.CommandText = "SELECT count(*) FROM wh_inbox_state WHERE instance_id = @inst AND processed_at IS NULL AND lease_expiry > NOW()";
     leased.Parameters.AddWithValue("inst", instance);
     var count = Convert.ToInt32(await leased.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
 
@@ -386,7 +395,7 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
     state.CommandText = @"
       SELECT stream_id, count(*) FILTER (WHERE instance_id IS NULL AND lease_expiry IS NULL) AS unleased,
              count(*) FILTER (WHERE attempts = 0) AS refunded
-      FROM wh_inbox WHERE processed_at IS NULL GROUP BY stream_id";
+      FROM wh_inbox_state WHERE processed_at IS NULL GROUP BY stream_id";
     var unleasedByStream = new Dictionary<Guid, (long unleased, long refunded)>();
     await using (var reader = await state.ExecuteReaderAsync()) {
       while (await reader.ReadAsync()) {
@@ -404,7 +413,7 @@ public class BoundedAcquisitionRewriteSqlTests : EFCoreTestBase {
     await Assert.That(taken.Count).IsEqualTo(4)
       .Because("the release ended the stuck instance's ownership of the named streams, so the unowned path opens to a sibling");
     await using var owner = conn.CreateCommand();
-    owner.CommandText = "SELECT count(DISTINCT stream_id) FROM wh_inbox WHERE instance_id = @sib";
+    owner.CommandText = "SELECT count(DISTINCT stream_id) FROM wh_inbox_state WHERE instance_id = @sib";
     owner.Parameters.AddWithValue("sib", sibling);
     await Assert.That(Convert.ToInt32(await owner.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(2);
   }

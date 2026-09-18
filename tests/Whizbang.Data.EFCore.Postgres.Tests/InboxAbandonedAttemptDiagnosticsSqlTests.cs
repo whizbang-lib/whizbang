@@ -127,11 +127,17 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
       string? error = null, int failureReason = 99) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, instance_id, lease_expiry, error, failure_reason)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, @att, NOW(),
-              @stream, 0, @inst, @lease, @err, @reason)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event,
+         status, attempts, partition_number, instance_id, lease_expiry, error, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event,
+             1, @att, 0, @inst::uuid, @lease::timestamptz, @err::text, @reason FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("att", attempts);
@@ -155,7 +161,7 @@ public class InboxAbandonedAttemptDiagnosticsSqlTests : EFCoreTestBase {
   private static async Task<(int Attempts, int FailureReason, string? Error)> _readInboxRowAsync(
       NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT attempts, failure_reason, error FROM wh_inbox WHERE message_id = @msg";
+    cmd.CommandText = "SELECT attempts, failure_reason, error FROM wh_inbox_state WHERE message_id = @msg";
     cmd.Parameters.AddWithValue("msg", messageId);
     await using var reader = await cmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {

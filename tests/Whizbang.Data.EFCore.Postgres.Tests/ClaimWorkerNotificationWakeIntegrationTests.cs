@@ -220,7 +220,7 @@ public class ClaimWorkerNotificationWakeIntegrationTests : EFCoreTestBase {
     var firstMsgId = (Guid)Whizbang.Core.ValueObjects.TrackedGuid.NewMedo();
     await _storeInboxMessageAsync(conn, ownerInstanceId, firstMsgId, streamId);
     await using (var drain = conn.CreateCommand()) {
-      drain.CommandText = "UPDATE wh_inbox SET processed_at = NOW() WHERE message_id = @mid";
+      drain.CommandText = "UPDATE wh_inbox_state SET processed_at = NOW() WHERE message_id = @mid";
       drain.Parameters.AddWithValue("mid", firstMsgId);
       _ = await drain.ExecuteNonQueryAsync();
     }

@@ -71,7 +71,7 @@ public partial class DapperWorkCoordinator(
       SELECT
         (SELECT COUNT(*) FROM wh_perspective_events WHERE processed_at IS NULL) as PendingPerspectiveEvents,
         (SELECT COUNT(*) FROM wh_outbox WHERE processed_at IS NULL) as PendingOutbox,
-        (SELECT COUNT(*) FROM wh_inbox WHERE processed_at IS NULL) as PendingInbox,
+        (SELECT COUNT(*) FROM wh_inbox_state WHERE processed_at IS NULL) as PendingInbox,
         (SELECT COUNT(*) FROM wh_active_streams) as ActiveStreams");
   }
 
@@ -643,7 +643,15 @@ public partial class DapperWorkCoordinator(
   private const string DISCARD_PENDING_WHERE =
     "WHERE r.processed_at IS NULL AND r.instance_id IS NULL " +
     "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
-  private const string DISCARD_PENDING_INBOX_SQL = "DELETE FROM public.wh_inbox r " + DISCARD_PENDING_WHERE;
+  // 162: the inbox variant can no longer share DISCARD_PENDING_WHERE. message_type is a property
+  // of the message and stays on wh_inbox; processed_at and instance_id are work state and moved,
+  // so the predicate spans both tables. The DELETE stays on wh_inbox because that is the row being
+  // removed, and its state row goes with it through ON DELETE CASCADE. USING keeps this one
+  // statement so the caller's row count still measures it.
+  private const string DISCARD_PENDING_INBOX_SQL =
+    "DELETE FROM public.wh_inbox r USING public.wh_inbox_state s " +
+    "WHERE s.message_id = r.message_id AND s.processed_at IS NULL AND s.instance_id IS NULL " +
+    "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
   private const string DISCARD_PENDING_OUTBOX_SQL = "DELETE FROM public.wh_outbox r " + DISCARD_PENDING_WHERE;
 
   /// <summary>
