@@ -551,11 +551,59 @@ verification rather than regressions. Listed as they are found so none is a surp
 | Any test asserting on `wh_inbox.instance_id`, `lease_expiry`, `attempts`, `processed_at`, `scheduled_for`, `failure_reason`, `error` or `chain_emitted_at` | The column is gone. Move the assertion to `wh_inbox_state`. |
 | `InboxWorkStateIsTheOwnerSqlTests` (all four) | These PASS and become discriminating at that point. Their docstring says they are not discriminating yet and must be updated to say they now are. |
 
-## 3.13 The exhaustive column pass: all 25 columns, both questions, provably complete
+## 3.12b RULE: derive an enumeration by machine, then check it against an independently known fact
+
+**Stated because this has now failed four times in one piece of work, always silently and always in
+the direction of too few.**
+
+> Any mechanical enumeration is **derived by machine and then checked against at least one fact
+> established independently of the machine.** The failure mode of a pattern narrower than the thing
+> it describes is silence, not error, so nothing in the output announces it.
+
+The four instances, all one cause:
+
+| Enumeration | The pattern | Direction of the error |
+|---|---|---|
+| Which tests cover a function | searched the SQL function name | **understated** to zero; tests call the C# wrapper |
+| The same search | counted `obj/generated` hits | **overstated**; those are embedded migration text |
+| Which functions to rewrite | searched two of the columns | **understated**, 16 against 22 |
+| Which columns are mutable | `SET ... (?:WHERE\|FROM)` capture | **understated**; it terminated on the word "from" inside a comment, losing `scheduled_for` and `error` |
+| The column count itself | enumerated my own lab fixture | **overstated**, 25 against 23; the fixture had drifted |
+
+Each output looked authoritative. In every case the check that caught it was comparing the machine's
+answer to something already known to be true: "`process_inbox_failures` writes `scheduled_for`, so
+why is it absent?" is what found the fourth, and "the migrations contain only four `ADD COLUMN`
+statements" is what found the fifth.
+
+### The count was wrong, and the reason was the worse of the two possibilities
+
+`wh_inbox` has **23 live columns.** I reported 25. The cause was not unfiltered `pg_attribute`,
+which would have been harmless: **I enumerated my own lab fixture, which had drifted from the product
+schema.** Earlier in this work I hand-patched that fixture with `ALTER TABLE ... ADD COLUMN IF NOT
+EXISTS` to get a probe running, and two of those columns do not exist in the product at all:
+**`envelope_type` and `envelope_data`.**
+
+Reconciled against the authority that settles it: databases initialized by the product's own schema
+pass report 23. The migrations contain four `ADD COLUMN` statements against this table and no
+`DROP COLUMN`, which matches.
+
+**Effect on the partition: none.** Both phantom columns were classified write-once, in no index,
+payload, "stays", so they contributed nothing and no mutable column was missed. The partition is over
+**23 live columns: 10 move, 5 are copied, 8 stay.** Effect on the measurements: negligible, because
+both columns were always NULL in the fixture and cost a bit in the null bitmap, but the fixture has
+been corrected so later numbers are taken against the real shape.
+
+**A fixture that has drifted from the schema is worse than a miscount, because the measurements rest
+on it.** The rule that follows: measure schema shape from a database the product initialized, never
+from a fixture that has been hand-patched, and if a fixture must be patched, record what was patched
+so a later enumeration cannot mistake it for the product.
+
+## 3.13 The exhaustive column pass: all 23 live columns, both questions
 
 Done because the set had grown four, seven, eight, nine by discovery, each time triggered by hitting
-something. That is not evidence the set has stopped growing. `wh_inbox` has **25 columns** (not 23),
-which is small enough to answer definitively.
+something. That is not evidence the set has stopped growing. `wh_inbox` has **23 live columns**,
+which is small enough to answer definitively. (An earlier version of this section said 25, counted
+from a drifted fixture; see 3.12b.)
 
 Question one was answered mechanically rather than by reading: every `UPDATE` statement in every
 function body that targets `wh_inbox`, comments stripped, matched against each column name. Eleven
@@ -586,12 +634,10 @@ such statements exist. **Ten columns are mutable, fifteen are write-once.**
 | `priority` | nothing | yes, the lane bucket expression | **copy** |
 | `chain_emitted_at` | `_emit_event_store_chain_for_inbox` | the chain's partial predicate | **MOVE** |
 | `flags` | nothing | no, in no index | stays |
-| `envelope_type` | nothing | no, payload | stays |
-| `envelope_data` | nothing | no, payload | stays |
 
-**Ten move, five are copied, ten stay.** `wh_inbox` keeps its fifteen write-once columns and three
+**Ten move, five are copied, eight stay: 23 columns accounted for.** `wh_inbox` keeps its thirteen write-once columns and three
 indexes (`wh_inbox_pkey`, `idx_inbox_received_at`, `idx_inbox_source_cursor`). `wh_inbox_state` holds
-fifteen columns and six indexes. **21 of 24 indexes move.**
+fifteen columns (ten mutable plus five write-once copies) and six indexes. **21 of 24 indexes move.**
 
 `partition_number` is the tenth and it was found only by this pass. It looks like static routing
 data, which is exactly what `scheduled_for` looked like, and `recompute_partition_numbers` rewrites
