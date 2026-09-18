@@ -140,3 +140,25 @@ ephemeral_reap.indexed.wh_event_store.tuples_read_per_cycle	0	tuples/cycle	100	G
 ephemeral_reap.indexed.wh_event_body.tuples_read_per_cycle	0	tuples/cycle	100	GATED: same property on the other side of the join
 ephemeral_reap.tuples_read_per_cycle_total.no_index	20000	tuples/cycle		recorded, not gated
 ephemeral_reap.tuples_read_per_cycle_total.indexed	0	tuples/cycle	200	GATED: the whole cycle. Measured on a deployed fleet at 2,119 s of statement time and 9.6M block reads across 410 calls that returned zero rows
+
+# --- Claim write cost, narrow state row versus the wide row it replaced ------------------------
+# 20,000 rows each side, 500 stamped per measured batch. The BEFORE side is reconstructed -- a row
+# of the same width carrying the same moved columns and the indexes the cutover removed -- because
+# after the cutover the comparison no longer exists: the message row has no mutable columns left to
+# stamp. Synthetic on identity, faithful on the two dimensions that drive the cost.
+#
+# An update can only take PostgreSQL cheap in-place path when it touches NO indexed column and the
+# page has room. Claiming writes indexed columns by definition, so that path is unreachable and the
+# index count IS the cost. Blocks per row stamped, never wall clock.
+#
+# The gate is the state row INDEX COUNT, because that is the thing a future change trades away
+# without noticing: the plan carried 69 percent off every write, measured when the state table held
+# six indexes, and restoring the five priority lanes took it to eleven and the reduction to 51.
+# Twelve leaves room for one more lane while failing a drift back toward the seventeen the wide row
+# carried. The reduction percent is recorded and NOT gated, because a ceiling is an upper bound and
+# this number wants a floor; the ratio is asserted in the test instead, at 1.5x.
+claim_write.wide_row.blocks_per_row	37.2	blocks/row		recorded, not gated: the shape the split replaced, kept so the pair reads as a before and after
+claim_write.wide_row.indexes	17	indexes		recorded: the index set the cutover removed
+claim_write.state_row.blocks_per_row	18.3	blocks/row		recorded, not gated: follows the index count below, which is the gate
+claim_write.state_row.indexes	11	indexes	12	GATED: a design property. The write win IS the index count on the hot table; 6 indexes gave 69 percent off, 11 gives 51, and a return toward 17 gives back the whole reason the split exists
+claim_write.reduction_percent	50.9	percent		recorded, not gated: a ceiling cannot express a floor. The test asserts the wide/narrow ratio exceeds 1.5x; measured 2.03x
