@@ -20,6 +20,23 @@ keeping them together is measurable.
 | `lease_expiry` | 12 of 26 |
 | `attempts` | 2 of 26 |
 
+### The boundary test: ask what REWRITES a column, never what reads it
+
+**This is the rule, and it is stated as a rule because the column list is a consequence of it and
+the next person deriving a boundary needs the question rather than the answer.**
+
+> For every column, ask **"what rewrites this?"** A column that anything rewrites must live in
+> exactly ONE table. A column that nothing rewrites after insert may be copied to both, and copying
+> it is often right, because copies of a value that never changes cannot disagree.
+
+Asking instead "what does the claim read?" produces a boundary that looks correct and corrupts data.
+`scheduled_for` is the counterexample that proves it: it reads like static routing data, it is not in
+the claim's predicate in any obvious way, and `process_inbox_failures` **rewrites it on every
+failure** to compute the retry backoff. Left on both tables, the two copies diverge, and the symptom
+is a retry firing at the wrong time or never firing at all, with nothing anywhere naming the cause.
+That is close to the worst failure mode available: silent, intermittent, and attributable to
+anything.
+
 **Correction to an earlier version of this document, and it was a latent bug rather than a wording
 problem.** The split boundary is not "the columns claiming reads" but **the columns anything
 rewrites**. Seven are mutable and must move: `instance_id`, `lease_expiry`, `attempts`,
@@ -285,6 +302,22 @@ it recovers when the migration succeeds on a later start.
 The rule this follows: a rewrite verified by a suite that never calls it proves nothing, so coverage
 is established BEFORE the rewrite, and a gap gets a test first.
 
+### The method, for the next person: search by wrapper, exclude obj, confirm it reaches a database
+
+**Both errors appeared in the same search, in opposite directions, which is what makes this worth
+writing down rather than remembering.**
+
+| Step | Why |
+|---|---|
+| Search for the **C# wrapper name**, not the SQL function name | Tests call `PurgeOrphanInboxAsync` and never name `purge_orphan_inbox`, so the function name **understates** coverage to the point of reading as zero |
+| Exclude `obj/` | Migration text is embedded in generated code, so most raw name hits are not tests at all and **overstate** coverage at the same time |
+| Confirm the test runs against a real database | A hit in a mock, a `WorkCoordinatorMocks` helper, or a default-interface-implementation test executes no SQL |
+| Confirm the test reaches the **arm** being changed | `RenewLeasesSqlTests` covers an existence check and the outbox arm; neither touches the inbox arm |
+
+This is the same class of trap as a `<tests>` tag naming a test that cannot reach the line it claims,
+and as a gate measure whose fixture never seeds the table it counts. A link or a count that looks
+like coverage and is not is worse than an admitted gap.
+
 **Searching for the SQL function name understates coverage badly, and nearly sent this work down a
 false path.** Grepping the test tree for `purge_orphan_inbox` returns zero real test files, and for
 `deregister_instance` returns a single code comment. Both look untested. Both are in fact covered,
@@ -378,8 +411,9 @@ not a regression**, and they are expected in the final commit rather than treate
 | Ordering set-equality test | **landed and passing** |
 | Missing-lease-row invariant test | **landed and passing** |
 | `ALTER TABLE ... DROP COLUMN` | not written: cannot land until every function is rewritten |
-| `cleanup_stale_instances` (batch one b) | not written, 132 lines |
-| Batch two: seven functions needing a join back for the payload | not written |
+| `cleanup_stale_instances` (batch one b) | **landed** |
+| Batch two: `purge_orphan_inbox`, `process_inbox_completions`, `fetch_inbox_batch` | **landed, 77 tests green** |
+| Batch two remainder: `move_to_dead_letters`, `store_inbox_messages`, `_emit_event_store_chain_for_inbox` | not written, 647 lines |
 | Batch three: `claim_orphaned_inbox` and `claim_work` | not written, 1,231 lines |
 
 The migration is deliberately NOT in `src/Whizbang.Data.Postgres/Migrations/` yet. Shipped
@@ -408,6 +442,16 @@ simpler. Functions that also read the message body (`fetch_inbox_batch`,
 `process_inbox_completions`, `move_to_dead_letters`, `store_inbox_messages`,
 `_emit_event_store_chain_for_inbox`, and the two claim functions) need a real rewrite with a join
 back to `wh_inbox` on the paths that need the payload.
+
+## 3.11 Documentation gaps found while annotating
+
+Running list, to be taken to the owner as a whole rather than fixed mid-migration: a missing page is
+a documentation-side gap, not something to invent a path for. A function with no page carries its
+`<tests>` links and no `<docs>` tag, with a comment in the migration saying why.
+
+| Function | Status |
+|---|---|
+| `release_unprocessed_inbox` | **no page anywhere on the site** |
 
 ## 4. Scope
 

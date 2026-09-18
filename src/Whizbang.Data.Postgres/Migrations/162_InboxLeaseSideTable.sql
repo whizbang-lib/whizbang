@@ -516,3 +516,361 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ===========================================================================================
+-- BATCH ONE B and TWO: the remaining claim-state release, and the functions that need the
+-- message row as well as its claim state.
+-- ===========================================================================================
+
+-- <docs>fundamentals/workers/instance-liveness</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CleanupStaleInstancesOrphanNotifySqlTests.cs:CleanupStaleInstances_OneStaleOneLive_EmitsOrphanOnLiveChannelAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CleanupStaleInstancesDefinitiveDeathSqlTests.cs:CleanupStaleInstances_HeartbeatPastDefinitiveCutoff_DeletesEvenWhenLockHeldAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CleanupStaleInstancesDefinitiveDeathSqlTests.cs:CleanupStaleInstances_HeartbeatBeforeDefinitiveCutoff_LockGuardStillAppliesAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.cleanup_stale_instances(
+  p_stale_cutoff TIMESTAMPTZ,
+  p_definitive_dead_cutoff TIMESTAMPTZ DEFAULT NULL
+) RETURNS TABLE(deleted_instance_id UUID) AS $$
+DECLARE
+  v_deleted_ids UUID[];
+BEGIN
+
+  -- Find and delete stale instances (older than cutoff). v0.681 — also skip rows
+  -- whose session-level alive-lock is still held (migration 055): the adaptive
+  -- heartbeat cadence may legitimately delay the heartbeat write past p_stale_cutoff
+  -- when the direct conn is healthy. The lock is the primary liveness signal in
+  -- that mode; the heartbeat-table check remains the fallback.
+  --
+  -- v0.687 — the alive-lock guard has a long-tail failure mode under OOMKill +
+  -- half-open TCP. The kernel SIGKILLs the process before any graceful socket
+  -- teardown, so the server-side session keeps holding the advisory lock until
+  -- OS-level TCP keepalive notices (defaults to 7200 s = 2 h on Linux). Within
+  -- that window cleanup_stale_instances refuses to remove the dead row, which
+  -- in turn keeps that instance_id on every claimed lease in wh_inbox / wh_outbox
+  -- / wh_perspective_events — claim_orphaned_* can't release the work because
+  -- those rows still have a future lease_expiry and a non-null instance_id.
+  --
+  -- The optional p_definitive_dead_cutoff lets callers say: "if the heartbeat
+  -- table has been silent for THIS long, the instance is definitely dead — bypass
+  -- the alive-lock guard and clean it up." The lock guard still applies in the
+  -- short window (heartbeat stale but newer than the definitive cutoff) so we
+  -- preserve the adaptive-heartbeat correctness case. NULL preserves pre-v0.687
+  -- behavior (single-arg callers get the legacy semantics).
+  WITH deleted AS (
+    DELETE FROM __SCHEMA__.wh_service_instances
+    WHERE last_heartbeat_at < p_stale_cutoff
+      AND (
+        -- v0.687 definitive-dead bypass: heartbeat is older than the caller's
+        -- "we don't trust the lock past this point" threshold. Skip the guard.
+        (p_definitive_dead_cutoff IS NOT NULL
+          AND last_heartbeat_at < p_definitive_dead_cutoff)
+        OR
+        -- v0.681 alive-lock guard: respect the lock as the primary liveness
+        -- signal within the adaptive-heartbeat window.
+        NOT EXISTS (
+          -- pg_locks.classid/objid are oid (uint32). hashtext() returns signed int4 — when
+          -- negative, the lower-32-bit lane evaluates >2^31-1 as bigint, which overflows
+          -- ::int (22003). Compare against the bigint expression and cast to ::oid so the
+          -- comparison stays in oid-space without sign-flip.
+          SELECT 1 FROM pg_locks
+          WHERE locktype = 'advisory'
+            AND classid = ((hashtext('wh_instance_alive:' || wh_service_instances.instance_id::text)::bigint >> 32) & x'FFFFFFFF'::bigint)::oid
+            AND objid = (hashtext('wh_instance_alive:' || wh_service_instances.instance_id::text)::bigint & x'FFFFFFFF'::bigint)::oid
+            AND granted = true
+        )
+      )
+    RETURNING instance_id
+  )
+  SELECT ARRAY_AGG(instance_id) INTO v_deleted_ids
+  FROM deleted;
+
+  -- Release all work from deleted instances
+  IF v_deleted_ids IS NOT NULL THEN
+    -- Tombstone every reaped instance so a paused process that resumes and calls
+    -- record_heartbeat again is refused rather than silently rejoining — see migration 106.
+    -- ON CONFLICT is defensive only: an instance_id cannot be re-deleted once gone, so a
+    -- collision here would mean a caller reused an id, which this must not paper over by
+    -- discarding the earlier eviction's timestamp.
+    INSERT INTO __SCHEMA__.wh_instance_evictions (instance_id, evicted_at, reason)
+    SELECT unnest(v_deleted_ids), NOW(), 'stale heartbeat (last_heartbeat_at < ' || p_stale_cutoff || ')'
+    ON CONFLICT (instance_id) DO NOTHING;
+
+    -- Release outbox messages
+    UPDATE __SCHEMA__.wh_outbox
+    SET instance_id = NULL,
+        lease_expiry = NULL
+    WHERE instance_id = ANY(v_deleted_ids);
+
+    -- Release inbox messages
+    -- 162: the inbox's claim state lives in wh_inbox_lease, so releasing a dead instance's inbox
+    -- leases no longer rewrites the message rows. This is the reclaim path that runs most often on
+    -- a fleet losing pods, and it was the one paying the most per row released.
+    UPDATE __SCHEMA__.wh_inbox_lease
+    SET instance_id = NULL,
+        lease_expiry = NULL
+    WHERE instance_id = ANY(v_deleted_ids);
+
+    -- Release perspective events
+    UPDATE __SCHEMA__.wh_perspective_events
+    SET instance_id = NULL,
+        lease_expiry = NULL
+    WHERE instance_id = ANY(v_deleted_ids);
+
+    -- Release active stream assignments from deleted instances
+    UPDATE __SCHEMA__.wh_active_streams
+    SET assigned_instance_id = NULL,
+        lease_expiry = NULL
+    WHERE assigned_instance_id = ANY(v_deleted_ids);
+
+    -- Release receptor processing leases from deleted instances
+    UPDATE __SCHEMA__.wh_receptor_processing
+    SET instance_id = NULL,
+        lease_expiry = NULL
+    WHERE instance_id = ANY(v_deleted_ids);
+
+    -- Log stale instance removal to wh_log for audit trail
+    INSERT INTO __SCHEMA__.wh_log (log_level, source, message_id, error_message, metadata)
+    SELECT
+      2,  -- Warning
+      'stale_cleanup',
+      unnest(v_deleted_ids),
+      'Stale instance removed — all leases released',
+      jsonb_build_object(
+        'deleted_instance_count', array_length(v_deleted_ids, 1),
+        'stale_cutoff', p_stale_cutoff
+      );
+
+    -- v0.502 slice B.3 — orphan-redistribution NOTIFY.
+    -- After releasing leases owned by the dead instances, wake every LIVE instance so it
+    -- runs a catch-up claim_orphaned_* over the newly-unowned rows. Without this, live
+    -- instances only discover the released work on their next poll tick — which under the
+    -- new v0.502 NotifyHealthyPollingIntervalMilliseconds=30000 default could be up to
+    -- 30 seconds away. Emitting a NOTIFY here turns orphan recovery from polling-bound to
+    -- NOTIFY-bound, the architectural goal of v0.502.
+    --
+    -- Per-instance channel naming matches existing PgWorkNotificationListener.ChannelName:
+    --   wh_work_i_{instance_id}
+    -- Payload "orphan" signals "go run claim_orphaned_*" to ClaimWorker._onSignal.
+    PERFORM pg_notify('wh_work_i_' || si.instance_id::text, 'orphan')
+    FROM __SCHEMA__.wh_service_instances si
+    WHERE si.last_heartbeat_at >= p_stale_cutoff;  -- live instances only
+  END IF;
+
+  -- Return deleted IDs for orchestrator logging
+  RETURN QUERY
+  SELECT UNNEST(COALESCE(v_deleted_ids, ARRAY[]::UUID[]));
+END;
+$$ LANGUAGE plpgsql;
+
+-- <docs>messaging/work-coordinator</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:PurgeOrphanInboxAsync_UnhandledUnleasedRows_DeletesAndReturnsThemAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:PurgeOrphanInboxAsync_EmptyHandledTypes_IsSafeNoOpAsync</tests>
+-- <tests>tests/Whizbang.Data.Dapper.Postgres.Tests/DapperWorkCoordinatorWithDataTests.cs:PurgeOrphanInboxAsync_OrphanRow_DeletesAndReturnsMappedRowAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.purge_orphan_inbox(p_handled_types TEXT[])
+RETURNS TABLE(message_id UUID, message_type TEXT, handler_name TEXT) AS $$
+BEGIN
+  IF p_handled_types IS NULL OR array_length(p_handled_types, 1) IS NULL THEN
+    -- No types handed in: do nothing. Caller has nothing to filter against,
+    -- and we don't want to accidentally truncate the inbox if the registry
+    -- is empty during cold start.
+    RETURN;
+  END IF;
+
+  -- 162: message_type is a property of the message and stays on wh_inbox, while processed_at and
+  -- instance_id are claim state and moved, so this needs both tables. The DELETE stays on wh_inbox
+  -- because that is the row being removed; the lease row goes with it through the foreign key's
+  -- ON DELETE CASCADE rather than a second statement that could be forgotten.
+  RETURN QUERY
+  DELETE FROM __SCHEMA__.wh_inbox AS i
+  USING __SCHEMA__.wh_inbox_lease il
+  WHERE il.message_id = i.message_id
+    AND i.message_type <> ALL(p_handled_types)
+    AND il.processed_at IS NULL
+    AND il.instance_id IS NULL
+  -- ::TEXT casts required: the columns are VARCHAR(500) but the RETURNS TABLE
+  -- declares TEXT, and plpgsql RETURN QUERY rejects the varchar->text mismatch (42804)
+  RETURNING i.message_id, i.message_type::TEXT, i.handler_name::TEXT;
+END;
+$$ LANGUAGE plpgsql;
+-- <docs>fundamentals/work-coordinator/handler-commit</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CommitHandlerResultSqlTests.cs:CommitHandlerResult_HappyPath_MarksInboxProcessedAndStoresOutboxAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CommitHandlerResultSqlTests.cs:CommitHandlerResult_DebugModeInRequest_RetainsInboxRowEvenWhenEventStoredAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/CommitHandlerResultSqlTests.cs:CommitHandlerResult_ProductionMode_DeletesInboxRowOnEventStoredCompletionAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.process_inbox_completions(
+  p_completions JSONB,
+  p_now TIMESTAMPTZ,
+  p_debug_mode BOOLEAN DEFAULT FALSE
+) RETURNS TABLE(
+  message_id UUID,
+  stream_id UUID,
+  was_deleted BOOLEAN
+) AS $$
+DECLARE
+  v_completion RECORD;
+  v_current_status INTEGER;
+  v_new_status INTEGER;
+  v_stream_id UUID;
+BEGIN
+  IF jsonb_array_length(p_completions) = 0 THEN RETURN; END IF;
+
+  FOR v_completion IN
+    SELECT
+      (elem->>'MessageId')::UUID as msg_id,
+      (elem->>'Status')::INTEGER as status_flags
+    FROM jsonb_array_elements(p_completions) as elem
+  LOOP
+    -- Get current status and stream_id
+    SELECT i.status, i.stream_id
+    INTO v_current_status, v_stream_id
+    FROM __SCHEMA__.wh_inbox i
+    WHERE i.message_id = v_completion.msg_id;
+
+    -- Skip if message not found (already deleted or never existed)
+    IF NOT FOUND THEN
+      CONTINUE;
+    END IF;
+
+    v_new_status := v_current_status | v_completion.status_flags;
+
+    IF p_debug_mode THEN
+      -- Debug mode: Retain message for troubleshooting
+      -- 162: status belongs to the message; processed_at and the lease are claim state. Two
+      -- statements in one transaction rather than one across two tables.
+      UPDATE __SCHEMA__.wh_inbox i
+      SET status = v_new_status
+      WHERE i.message_id = v_completion.msg_id;
+      UPDATE __SCHEMA__.wh_inbox_lease il
+      SET processed_at = p_now,
+          instance_id = NULL,
+          lease_expiry = NULL
+      WHERE il.message_id = v_completion.msg_id;
+
+      RETURN QUERY SELECT v_completion.msg_id AS message_id, v_stream_id AS stream_id, FALSE AS was_deleted;
+
+    ELSE
+      -- Production: Delete if EventStored flag set (inbox completion = event stored)
+      IF (v_new_status & 2) = 2 THEN
+        -- 162: unchanged. The lease row goes with it through ON DELETE CASCADE, which is why the
+        -- foreign key exists rather than being tidiness: a lease left behind for a deleted message
+        -- is a row every reclaim path would keep considering forever.
+        DELETE FROM __SCHEMA__.wh_inbox i WHERE i.message_id = v_completion.msg_id;
+        RETURN QUERY SELECT v_completion.msg_id AS message_id, v_stream_id AS stream_id, TRUE AS was_deleted;
+      ELSE
+        -- Event not yet stored, retain with updated status
+        -- 162: same split as the debug branch above.
+        UPDATE __SCHEMA__.wh_inbox i
+        SET status = v_new_status
+        WHERE i.message_id = v_completion.msg_id;
+        UPDATE __SCHEMA__.wh_inbox_lease il
+        SET processed_at = p_now,
+            instance_id = NULL,
+            lease_expiry = NULL
+        WHERE il.message_id = v_completion.msg_id;
+        RETURN QUERY SELECT v_completion.msg_id AS message_id, v_stream_id AS stream_id, FALSE AS was_deleted;
+      END IF;
+    END IF;
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+-- <docs>fundamentals/work-coordinator/claim-loop</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchSqlTests.cs:FetchInboxBatch_ReturnsRowsForOwnedStreams_InReceivedAtOrderAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchSqlTests.cs:FetchInboxBatch_FiltersOutOtherInstancesRowsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchSqlTests.cs:FetchInboxBatch_FiltersRowsWithProcessedAtSet_DebugModeRetainedAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.fetch_inbox_batch(
+  p_stream_ids UUID[],
+  p_instance_id UUID,
+  p_max_per_stream INTEGER DEFAULT 100,
+  p_max_bytes BIGINT DEFAULT NULL
+) RETURNS TABLE(
+  message_id UUID,
+  stream_id UUID,
+  handler_name VARCHAR(200),
+  message_type VARCHAR(500),
+  event_data TEXT,
+  metadata JSONB,
+  scope JSONB,
+  status INTEGER,
+  attempts INTEGER,
+  partition_number INTEGER,
+  is_event BOOLEAN,
+  error TEXT,
+  priority INTEGER
+) AS $$
+BEGIN
+  IF p_stream_ids IS NULL OR array_length(p_stream_ids, 1) IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- Ordering invariant: sort by (stream_id, message_id). UUIDv7 message_ids ARE chronological;
+  -- received_at is wall-clock at insert and may diverge under parallel transport delivery.
+  -- See plans/ordered-stream-invariant.md.
+  --
+  -- 162: this function needs both tables, because it returns the message and selects on its claim
+  -- state. The LEASE table drives the join: every predicate below is on it, so the narrow table is
+  -- scanned and the wide row is fetched only for the rows that survive. The previous form scanned
+  -- the wide row to apply the same predicate. i.* is enumerated rather than starred because the
+  -- moved columns are no longer on wh_inbox and a star would silently change the result shape.
+  RETURN QUERY
+  WITH ranked AS (
+    SELECT
+      i.message_id,
+      il.stream_id,
+      i.handler_name,
+      i.message_type,
+      i.event_data,
+      i.metadata,
+      i.scope,
+      i.status,
+      il.attempts,
+      i.partition_number,
+      i.is_event,
+      il.error,
+      i.priority,
+      ROW_NUMBER() OVER (PARTITION BY il.stream_id ORDER BY i.message_id) AS rank_in_stream
+    FROM __SCHEMA__.wh_inbox_lease il
+    JOIN __SCHEMA__.wh_inbox i ON i.message_id = il.message_id
+    -- v0.658 slice 7: mirror of fetch_outbox_batch's Empty/NULL stream handling -- see the matching
+    -- comment in the outbox query for the full rationale.
+    WHERE (
+        il.stream_id = ANY(p_stream_ids)
+        OR ((il.stream_id IS NULL OR il.stream_id = __EMPTY_UUID__::uuid)
+            AND il.message_id = ANY(p_stream_ids))
+      )
+      AND il.instance_id = p_instance_id
+      AND il.lease_expiry > NOW()
+      AND il.processed_at IS NULL  -- inbox uses processed_at as both production-marker and debug-kept-marker
+      AND (il.scheduled_for IS NULL OR il.scheduled_for <= NOW())
+  ),
+  -- Running byte total in the SAME order the rows are returned, so the cut is a suffix of the
+  -- slice and stream-FIFO is preserved. Measured on the payload columns because those are what
+  -- cross the wire and land on the heap; the fixed-width columns are noise by comparison.
+  budgeted AS (
+    SELECT
+      r.*,
+      SUM(COALESCE(octet_length(r.event_data::TEXT), 0)
+          + COALESCE(octet_length(r.metadata::TEXT), 0))
+        OVER (PARTITION BY r.stream_id ORDER BY r.message_id
+              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_bytes
+    FROM ranked r
+    WHERE r.rank_in_stream <= p_max_per_stream
+  )
+  SELECT
+    b.message_id,
+    b.stream_id,
+    b.handler_name::VARCHAR(200),
+    b.message_type::VARCHAR(500),
+    b.event_data::TEXT,
+    b.metadata,
+    b.scope,
+    b.status,
+    b.attempts,
+    b.partition_number,
+    b.is_event,
+    b.error,
+    b.priority
+  FROM budgeted b
+  WHERE p_max_bytes IS NULL
+     OR b.rank_in_stream = 1              -- never starve a stream on an oversized head message
+     OR b.running_bytes <= p_max_bytes
+  ORDER BY b.stream_id, b.message_id;
+END;
+$$ LANGUAGE plpgsql;
