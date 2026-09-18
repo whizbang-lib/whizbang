@@ -59,12 +59,25 @@ doorbell.perspective.wh_perspective_events.tuples_read_per_ring	0	tuples/ring	10
 # Measured before the fix: 80,078 tuples and 4 sequential scans per call, 20,019.5 tuples per row
 # written. Every stream_id index on wh_outbox is partial on a condition this predicate cannot
 # satisfy, so nothing served it and it scanned every unpublished row to prove a fresh stream empty.
+#
+# The perspective measures below were noise until wh_perspective_events was seeded. The same loop
+# probes that table, and the fixture left it EMPTY, so the measure read four sequential scans of
+# nothing and zero tuples. A scan of an empty table is what the planner picks for an empty table,
+# and it is indistinguishable in these counters from a probe answered by an index. A measure taken
+# against a table the fixture never fills reads as clean whether the defect is there or not, and a
+# gate that cannot fail is worse than no gate because it is counted as coverage. Seeded, the same
+# measure prices a real probe and the four scans become none.
+#
+# Being exact about what this gate does and does not cover: it stores to FRESH streams only, so it
+# exercises one of the probe's three stream states. It would NOT have caught the drained-stream
+# defect, which is why that lives in its own scenario below with all three states measured
+# separately. Seeding this one makes its number mean something; it does not make it sufficient.
 store.rows_written_per_call	4	rows/call		
 store.wh_outbox.seq_scans_per_call	0	scans/call		was 4 per call before the fix, one per fresh stream
 store.wh_outbox.tuples_read_per_call	0	tuples/call	1000	was 80078; a probe by stream id must not read the table
 store.wh_outbox.tuples_read_per_row_written	0	tuples/row	50	was 20019.5; a deployed fleet reported 4550
-store.wh_perspective_events.seq_scans_per_call	4	scans/call		
-store.wh_perspective_events.tuples_read_per_call	0	tuples/call	1000	
+store.wh_perspective_events.seq_scans_per_call	0	scans/call	0.5	was 4 per call against an EMPTY table, which priced nothing
+store.wh_perspective_events.tuples_read_per_call	0	tuples/call	100	
 
 # --- Claim poll cost per call, by stream depth ------------------------------------------------
 # 100 streams and a batch of 10 at two depths: 12 pending perspective events per stream, then 200.
@@ -101,7 +114,7 @@ claim.rows_leased_per_call.depth_50	5	rows/call
 # long-lived stream becomes and what it stays between bursts, so it is the common state rather than
 # an edge, and it was the one that read the whole table.
 #
-# Measured before the fix, on the drained stream: 359 blocks and 20,400 tuples for ONE probe, from a
+# Measured before the fix, on the drained stream: 337.8 blocks and 20,400 tuples for ONE probe, from a
 # sequential scan the planner chose because processed_at IS NULL is true of nearly every row, so it
 # expected to stop at the first one. There is no match on a drained stream, so it read all of them.
 #
@@ -110,9 +123,9 @@ claim.rows_leased_per_call.depth_50	5	rows/call
 # ceiling that held only for a fresh stream is the measurement that missed this the first time.
 # Sequential scans carry the tightest gate because the defect is binary -- an index answers it or a
 # scan does -- and half a scan per call is not a thing that can happen.
-probe.wh_perspective_events.blocks_per_call.drained	0	blocks/call	50	was 359; a drained stream read the whole table
-probe.wh_perspective_events.blocks_per_call.fresh	0	blocks/call	50	
-probe.wh_perspective_events.blocks_per_call.pending	0	blocks/call	50	
+probe.wh_perspective_events.blocks_per_call.drained	5	blocks/call	50	was 337.8; a drained stream read the whole table
+probe.wh_perspective_events.blocks_per_call.fresh	2.2	blocks/call	50	
+probe.wh_perspective_events.blocks_per_call.pending	4	blocks/call	50	
 probe.wh_perspective_events.seq_scans_per_call.drained	0	scans/call	0.5	was 1 per call; the probe must answer from an index
 probe.wh_perspective_events.seq_scans_per_call.fresh	0	scans/call	0.5	
 probe.wh_perspective_events.seq_scans_per_call.pending	0	scans/call	0.5	
