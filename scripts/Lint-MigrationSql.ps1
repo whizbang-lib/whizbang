@@ -9,8 +9,11 @@
   A bare `wh_` table reference inside a CREATE FUNCTION $$...$$ body is NOT rewritten by either
   migration runner, so it resolves against the connection's search_path at execution time and
   silently reads `public` (empty) on a service-schema connection. Every table ref inside a
-  function body must be `__SCHEMA__.`-qualified. See the "Writing SQL migrations" contributor doc
-  (rule 3) and src/Whizbang.Data.Postgres/Migrations/README.md.
+  function body must be `__SCHEMA__.`-qualified. The rules are numbered in
+  src/Whizbang.Data.Postgres/Migrations/README.md; this script enforces 3, 4, 12 and 13.
+  (The previous reference here was to a "Writing SQL migrations" contributor page on the docs site,
+  which does not exist. A dangling pointer to a rule list invites inventing the rule, so it names the
+  file that actually carries them.)
 
   This lint lexes each migration (tracking strings, line/block comments, and dollar-quoted bodies
   so it doesn't false-positive on those) and reports bare `wh_` refs after a table-introducing
