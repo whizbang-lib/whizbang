@@ -35,7 +35,7 @@ public class MessageJsonContextCompositeEnvelopeTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_CompositeInheritingBase_EmitsEnvelopeJsonTypeInfoAsync() {
-    var source = @"
+    const string source = @"
 using Whizbang.Core.Minting;
 
 namespace ConsumerApp.Job;
@@ -66,7 +66,7 @@ public sealed class DraftJobEventsComposite : CompositeEventBase {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_CompositeImplementingInterfaceDirectly_EmitsEnvelopeJsonTypeInfoAsync() {
-    var source = @"
+    const string source = @"
 using System.Collections.Generic;
 using Whizbang.Core;
 using Whizbang.Core.Minting;

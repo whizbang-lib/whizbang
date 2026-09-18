@@ -102,7 +102,7 @@ public partial class OrderSaga {
     // The tick type is declared HERE rather than in the shared surface, because the companion
     // test asserts the handler is omitted without it — putting it in the surface would quietly
     // disarm that one.
-    var source = SAGA_ATTRIBUTE_DECL + @"
+    const string source = SAGA_ATTRIBUTE_DECL + @"
 namespace Whizbang.Sagas {
   public sealed class SagaCompletionWatchdogTickEvent : global::Whizbang.Core.IEvent {
     public System.Guid SagaId { get; set; }

@@ -30,7 +30,7 @@ public class MessageJsonContextRenameAliasTests {
   [RequiresAssemblyFiles]
   public async Task Generator_LedgerRecordsFormerName_EmitsAliasRegistrationAsync() {
     // Ledger says the current type TestApp.OrderPlacedEvent was formerly TestApp.OrderCreatedEvent.
-    var ledger = """
+    const string ledger = """
       { "version": 1, "types": [
         { "pinnedId": "11111111-2222-3333-4444-555555555555",
           "clrTypeName": "TestApp.OrderPlacedEvent",
@@ -82,7 +82,7 @@ public class MessageJsonContextRenameAliasTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task Generator_LedgerFormerName_GeneratedAliasCompilesAsync() {
-    var ledger = """
+    const string ledger = """
       { "version": 1, "types": [
         { "pinnedId": "11111111-2222-3333-4444-555555555555",
           "clrTypeName": "TestApp.OrderPlacedEvent",
@@ -119,7 +119,7 @@ public class MessageJsonContextRenameAliasTests {
         [PinnedId("22222222-3333-4444-5555-666666666666")]
         public record OrderCreatedEvent : IEvent;
         """;
-    var ledger = """
+    const string ledger = """
       { "version": 1, "types": [
         { "pinnedId": "11111111-2222-3333-4444-555555555555",
           "clrTypeName": "TestApp.OrderPlacedEvent",

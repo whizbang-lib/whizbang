@@ -126,7 +126,7 @@ public class PhysicalFieldTypeMappingTests {
   public async Task PhysicalField_UnknownType_FallsBackToTextAsync() {
     // The fallback has to hold: an unmapped type must land in a column that can hold its
     // serialized form rather than failing the whole migration over one property.
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -190,7 +190,7 @@ public class PhysicalFieldTypeMappingTests {
   public async Task VectorField_ColumnCarriesItsDeclaredDimensionAsync() {
     // pgvector fixes the dimension in the column type, so it has to come from the attribute —
     // a mismatch is rejected on every insert.
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -227,7 +227,7 @@ public class PhysicalFieldTypeMappingTests {
     // Indexing is opt-out rather than opt-in, and IVFFlat is the default method. That is the
     // right way round: a vector column exists to be searched, and an unindexed one degrades to
     // a sequential scan over every row — which looks like a working query until the table grows.
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;
@@ -265,7 +265,7 @@ public class PhysicalFieldTypeMappingTests {
   public async Task VectorField_DefaultDistanceMetric_IsCosineAsync() {
     // Cosine is the metric normalized embeddings are trained for, so it is the right default —
     // and an index built for the wrong metric returns wrong neighbors rather than failing.
-    var source = """
+    const string source = """
             using System;
             using Whizbang.Core;
             using Whizbang.Core.Perspectives;

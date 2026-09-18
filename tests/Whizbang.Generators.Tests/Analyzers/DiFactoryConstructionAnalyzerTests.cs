@@ -48,7 +48,7 @@ public class DiFactoryConstructionAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task OmittingAnOptionalDependencyInsideAFactoryIsReportedAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       namespace App2 {
         using Microsoft.Extensions.DependencyInjection;
         using App;
@@ -69,7 +69,7 @@ public class DiFactoryConstructionAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task SupplyingEveryDependencyIsNotReportedAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       namespace App2 {
         using Microsoft.Extensions.DependencyInjection;
         using App;
@@ -91,7 +91,7 @@ public class DiFactoryConstructionAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task ConstructionOutsideAFactoryIsNotReportedAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       namespace App2 {
         using App;
         public static class Elsewhere {
@@ -110,7 +110,7 @@ public class DiFactoryConstructionAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task NonInterfaceOptionalParametersAreNotReportedAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       namespace App3 {
         using Microsoft.Extensions.DependencyInjection;
         public interface IThing { }
@@ -135,7 +135,7 @@ public class DiFactoryConstructionAnalyzerTests {
   [Test]
   [RequiresAssemblyFiles]
   public async Task TheDiagnosticNamesTheOmittedParameterAsync() {
-    var source = PRELUDE + """
+    const string source = PRELUDE + """
       namespace App2 {
         using Microsoft.Extensions.DependencyInjection;
         using App;

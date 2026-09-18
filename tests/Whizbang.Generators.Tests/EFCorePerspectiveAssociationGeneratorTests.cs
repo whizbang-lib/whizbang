@@ -568,7 +568,7 @@ namespace TestNamespace {
     var sourceA = GeneratorTestHelper.GetGeneratedSource(resultA, "EFCorePerspectiveAssociations.g.cs");
     var sourceB = GeneratorTestHelper.GetGeneratedSource(resultB, "EFCorePerspectiveAssociations.g.cs");
 
-    var pattern = @"AssociationsHash\s*=\s*""([0-9a-f]{64})""";
+    const string pattern = @"AssociationsHash\s*=\s*""([0-9a-f]{64})""";
     var hashA = System.Text.RegularExpressions.Regex.Match(sourceA!, pattern).Groups[1].Value;
     var hashB = System.Text.RegularExpressions.Regex.Match(sourceB!, pattern).Groups[1].Value;
 
@@ -616,7 +616,7 @@ namespace TestNamespace {
     var sourceOne = GeneratorTestHelper.GetGeneratedSource(resultOne, "EFCorePerspectiveAssociations.g.cs");
     var sourceTwo = GeneratorTestHelper.GetGeneratedSource(resultTwo, "EFCorePerspectiveAssociations.g.cs");
 
-    var pattern = @"AssociationsHash\s*=\s*""([0-9a-f]{64})""";
+    const string pattern = @"AssociationsHash\s*=\s*""([0-9a-f]{64})""";
     var hashOne = System.Text.RegularExpressions.Regex.Match(sourceOne!, pattern).Groups[1].Value;
     var hashTwo = System.Text.RegularExpressions.Regex.Match(sourceTwo!, pattern).Groups[1].Value;
 
