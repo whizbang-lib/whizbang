@@ -111,7 +111,7 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
     var staleRows = await _countAsync(connection, @"
       SELECT
         (SELECT COUNT(*) FROM wh_outbox WHERE partition_number NOT BETWEEN 0 AND 7)
-      + (SELECT COUNT(*) FROM wh_inbox WHERE partition_number NOT BETWEEN 0 AND 7)
+      + (SELECT COUNT(*) FROM wh_inbox_state WHERE partition_number NOT BETWEEN 0 AND 7)
       + (SELECT COUNT(*) FROM wh_active_streams WHERE partition_number NOT BETWEEN 0 AND 7)");
     await Assert.That(staleRows).IsEqualTo(0L);
   }
@@ -227,7 +227,7 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
       "SELECT COUNT(*) FROM wh_outbox WHERE message_id = @msg AND error = 'outbox transport exploded'",
       ("msg", outboxMsgId));
     var inboxFailed = await _countAsync(connection,
-      "SELECT COUNT(*) FROM wh_inbox WHERE message_id = @msg AND error = 'inbox handler exploded'",
+      "SELECT COUNT(*) FROM wh_inbox_state WHERE message_id = @msg AND error = 'inbox handler exploded'",
       ("msg", inboxMsgId));
     await Assert.That(outboxFailed).IsEqualTo(1L);
     await Assert.That(inboxFailed).IsEqualTo(1L);
@@ -395,11 +395,15 @@ public class EFCoreWorkCoordinatorDeepPathTests : EFCoreTestBase {
       int partitionNumber = 0) {
     await using var ins = connection.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', @type, '{""payload"":1}', '{""hop"":1}', 1, 0, NOW(),
-              @stream, @partition)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', @type, '{""payload"":1}', '{""hop"":1}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts, partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, @partition FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
     ins.Parameters.AddWithValue("stream", streamId);

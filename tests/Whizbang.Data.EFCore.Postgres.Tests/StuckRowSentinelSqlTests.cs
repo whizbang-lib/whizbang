@@ -180,10 +180,16 @@ public class StuckRowSentinelSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid messageId, Guid streamId, int attempts) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts,
-         received_at, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', 'Stuck.TestEvent', '{}', '{}', 1, @attempts, NOW(), @stream, 0)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'Stuck.TestEvent', '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @attempts, 0 FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("attempts", attempts);

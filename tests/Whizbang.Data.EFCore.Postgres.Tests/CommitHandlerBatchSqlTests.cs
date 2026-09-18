@@ -58,11 +58,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -100,7 +106,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
 
     // Verify all three inbox rows are now processed.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT count(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
+    verify.CommandText = "SELECT count(*) FROM wh_inbox_state WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
     var processedCount = (long)(await verify.ExecuteScalarAsync())!;
     await Assert.That(processedCount).IsEqualTo(3L);
@@ -126,11 +132,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -174,7 +186,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
 
     // Verify SAVEPOINT isolation: handlers 0 and 2 applied; handler 1 (failing) did NOT.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT message_id, processed_at IS NOT NULL FROM wh_inbox WHERE message_id = ANY(@ids) ORDER BY message_id";
+    verify.CommandText = "SELECT message_id, processed_at IS NOT NULL FROM wh_inbox_state WHERE message_id = ANY(@ids) ORDER BY message_id";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
     var states = new Dictionary<Guid, bool>();
     await using (var reader = await verify.ExecuteReaderAsync()) {
@@ -239,11 +251,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -271,7 +289,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     // happy path (processed_at stamped via the debug-mode test DB) but without
     // per-handler savepoint overhead.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
+    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox_state WHERE message_id = ANY(@ids) AND processed_at IS NOT NULL";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
     var processed = (long)(await verify.ExecuteScalarAsync())!;
     await Assert.That(processed).IsEqualTo(3L)
@@ -299,11 +317,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -339,7 +363,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
 
     // Zero rows applied: all three inbox completions rolled back atomically.
     await using var verify = connection.CreateCommand();
-    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox WHERE message_id = ANY(@ids) AND processed_at IS NULL";
+    verify.CommandText = "SELECT COUNT(*) FROM wh_inbox_state WHERE message_id = ANY(@ids) AND processed_at IS NULL";
     verify.Parameters.Add(new NpgsqlParameter("ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid) { Value = msgIds });
     var stillPending = (long)(await verify.ExecuteScalarAsync())!;
     await Assert.That(stillPending).IsEqualTo(3L)
@@ -362,11 +386,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     foreach (var msgId in msgIds) {
       await using var ins = connection.CreateCommand();
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
@@ -421,11 +451,17 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     var msgId = Guid.NewGuid();
     await using (var ins = connection.CreateCommand()) {
       ins.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           instance_id, lease_expiry, stream_id, partition_number)
-        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(),
-                @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           instance_id, lease_expiry, partition_number)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               @inst, NOW() + INTERVAL '60 seconds', 0 FROM m";
       ins.Parameters.AddWithValue("msg", msgId);
       ins.Parameters.AddWithValue("inst", instanceId);
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());

@@ -5217,15 +5217,29 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public Task<long> DiscardPendingInboxMessagesAsync(
       IReadOnlyList<string> messageTypeNames,
       CancellationToken cancellationToken = default)
+    // 162: the inbox variant can no longer share the outbox's predicate. message_type is a property
+    // of the message and stays on wh_inbox; processed_at and instance_id are work state and moved to
+    // wh_inbox_state, so the predicate now spans both tables. The DELETE stays on wh_inbox because
+    // that is the row being removed, and its state row goes with it through ON DELETE CASCADE.
+    // USING keeps this one statement. Mirrors DapperWorkCoordinator's DISCARD_PENDING_INBOX_SQL --
+    // both coordinators implement this sweep, and only one of them was redirected the first time.
     => _discardPendingAsync(
-      "wh_inbox", _dbContext.Model.FindEntityType(typeof(InboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
+      static schema =>
+        $"DELETE FROM \"{schema}\".wh_inbox r USING \"{schema}\".wh_inbox_state s "
+        + "WHERE s.message_id = r.message_id AND s.processed_at IS NULL AND s.instance_id IS NULL "
+        + "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)",
+      _dbContext.Model.FindEntityType(typeof(InboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
 
   /// <inheritdoc />
   public Task<long> DiscardPendingOutboxMessagesAsync(
       IReadOnlyList<string> messageTypeNames,
       CancellationToken cancellationToken = default)
     => _discardPendingAsync(
-      OUTBOX_TABLE, _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
+      static schema =>
+        $"DELETE FROM \"{schema}\".{OUTBOX_TABLE} r "
+        + "WHERE r.processed_at IS NULL AND r.instance_id IS NULL "
+        + "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)",
+      _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema(), messageTypeNames, cancellationToken);
 
   /// <summary>
   /// The maintenance sweep behind "a feature that is off leaves nothing behind", for one table.
@@ -5233,8 +5247,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// wrapper around the normalized name. Unleased only: a leased row is mid-flight and its own seam
   /// (the dispatch worker for the inbox, the publisher for the outbox) applies the same mode check.
   /// </summary>
+  /// <param name="buildSql">
+  /// Renders the statement for the resolved schema. The two tables no longer share a predicate, so
+  /// the caller supplies the whole statement rather than a table name substituted into one shape.
+  /// </param>
   private async Task<long> _discardPendingAsync(
-      string table, string? entitySchema, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
+      Func<string, string> buildSql, string? entitySchema, IReadOnlyList<string> messageTypeNames, CancellationToken cancellationToken) {
+    ArgumentNullException.ThrowIfNull(buildSql);
     ArgumentNullException.ThrowIfNull(messageTypeNames);
     if (messageTypeNames.Count == 0) {
       return 0;
@@ -5244,10 +5263,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         (Npgsql.NpgsqlConnection)_dbContext.Database.GetDbConnection(), cancellationToken);
     var connection = __scope.Connection;
     await using var command = connection.CreateCommand().WithCoordinatorTimeout();
-    command.CommandText =
-      $"DELETE FROM \"{schema}\".{table} r " +
-      "WHERE r.processed_at IS NULL AND r.instance_id IS NULL " +
-      "AND EXISTS (SELECT 1 FROM unnest(@type_names) AS t(name) WHERE strpos(r.message_type, t.name) > 0)";
+    command.CommandText = buildSql(schema);
     var param = Whizbang.Data.Postgres.PostgresArrayHelper.ToVarcharArray([.. messageTypeNames]);
     param.ParameterName = "type_names";
     command.Parameters.Add(param);

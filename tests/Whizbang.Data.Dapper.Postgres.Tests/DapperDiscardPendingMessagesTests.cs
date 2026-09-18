@@ -37,11 +37,19 @@ public class DapperDiscardPendingMessagesTests : PostgresTestBase {
   private static async Task<Guid> _seedAsync(NpgsqlConnection conn, string table, string messageType, bool leased) {
     var id = (Guid)TrackedGuid.NewMedo();
     var sql = table == "wh_inbox"
-      ? @"INSERT INTO wh_inbox
-            (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-             stream_id, partition_number, instance_id, lease_expiry, error, failure_reason, scheduled_for)
-          VALUES (@id, 'TestHandler', @type, '{}', '{}', 1, 1, NOW() - INTERVAL '1 hour',
-                  @stream, 0, @inst, @lease, NULL, 0, NOW() + INTERVAL '30 days')"
+      ? @"WITH m AS (
+            INSERT INTO wh_inbox
+              (message_id, handler_name, message_type, event_data, metadata, received_at,
+               stream_id)
+            VALUES (@id, 'TestHandler', @type, '{}', '{}', NOW() - INTERVAL '1 hour',
+                    @stream)
+            RETURNING message_id, stream_id, received_at, priority, is_event
+          )
+          INSERT INTO wh_inbox_state
+            (message_id, stream_id, received_at, priority, is_event, status, attempts,
+             partition_number, instance_id, lease_expiry, error, failure_reason, scheduled_for)
+          SELECT message_id, stream_id, received_at, priority, is_event, 1, 1,
+                 0, @inst, @lease, NULL::text, 0, NOW() + INTERVAL '30 days' FROM m"
       : @"INSERT INTO wh_outbox
             (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
              created_at, stream_id, partition_number, instance_id, lease_expiry)

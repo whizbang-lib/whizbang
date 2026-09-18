@@ -51,12 +51,20 @@ public class InboxAcquisitionIndexSqlTests : EFCoreTestBase {
     await using (var seed = conn.CreateCommand()) {
       // Distinct streams, one pending unleased row each - the shape the claim cycle ranks.
       seed.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           stream_id, partition_number, instance_id, lease_expiry, error, failure_reason)
-        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW() - (g || ' seconds')::INTERVAL,
-               gen_random_uuid(), 0, NULL, NULL, NULL, 99
-        FROM generate_series(1, 5000) AS g;
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', NOW() - (g || ' seconds')::INTERVAL,
+                 gen_random_uuid()
+          FROM generate_series(1, 5000) AS g
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           partition_number, instance_id, lease_expiry, error, failure_reason)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               0, NULL::uuid, NULL::timestamptz, NULL::text, 99
+        FROM m;
         ANALYZE wh_inbox;";
       await seed.ExecuteNonQueryAsync();
     }
@@ -111,11 +119,19 @@ public class InboxAcquisitionIndexSqlTests : EFCoreTestBase {
       // Identical received_at for all three; inserted largest-id first so physical (scan) order
       // disagrees with message-id order. Only a total order claims 1 and 2 for a bound of 2.
       seed.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           stream_id, partition_number, instance_id, lease_expiry, error, failure_reason)
-        SELECT unnest(@ids), 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, TIMESTAMPTZ '2026-01-01 00:00:00+00',
-               @stream, 0, NULL, NULL, NULL, 99";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          SELECT unnest(@ids), 'TestHandler', 'TestEvent', '{}', '{}', TIMESTAMPTZ '2026-01-01 00:00:00+00',
+                 @stream
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           partition_number, instance_id, lease_expiry, error, failure_reason)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+               0, NULL::uuid, NULL::timestamptz, NULL::text, 99
+        FROM m";
       seed.Parameters.AddWithValue("ids", new[] { id3, id2, id1 });
       seed.Parameters.AddWithValue("stream", stream);
       await seed.ExecuteNonQueryAsync();

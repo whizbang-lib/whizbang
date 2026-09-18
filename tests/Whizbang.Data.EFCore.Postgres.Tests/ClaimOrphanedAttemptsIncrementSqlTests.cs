@@ -59,7 +59,7 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
 
     await _callClaimOrphanedInboxAsync(conn, meId);
 
-    var attempts = await _readAttemptsAsync(conn, "wh_inbox", "message_id", msgId);
+    var attempts = await _readAttemptsAsync(conn, "wh_inbox_state", "message_id", msgId);
     await Assert.That(attempts).IsEqualTo(1)
       .Because("first claim makes this the first attempt — attempts must read 1, not 0");
   }
@@ -86,7 +86,7 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
 
     await _callClaimOrphanedInboxAsync(conn, meId);
 
-    var attempts = await _readAttemptsAsync(conn, "wh_inbox", "message_id", msgId);
+    var attempts = await _readAttemptsAsync(conn, "wh_inbox_state", "message_id", msgId);
     await Assert.That(attempts).IsEqualTo(3)
       .Because("rows we don't claim must keep their attempts unchanged");
   }
@@ -111,7 +111,7 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
 
     await _callClaimOrphanedInboxAsync(conn, meId);
 
-    var attempts = await _readAttemptsAsync(conn, "wh_inbox", "message_id", msgId);
+    var attempts = await _readAttemptsAsync(conn, "wh_inbox_state", "message_id", msgId);
     await Assert.That(attempts).IsEqualTo(2)
       .Because("re-claim is the second attempt — bump from 1 to 2");
   }
@@ -134,7 +134,7 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
 
     await _callClaimOrphanedInboxAsync(conn, meId);
 
-    var attempts = await _readAttemptsAsync(conn, "wh_inbox", "message_id", msgId);
+    var attempts = await _readAttemptsAsync(conn, "wh_inbox_state", "message_id", msgId);
     await Assert.That(attempts).IsEqualTo(2);
   }
 
@@ -155,7 +155,7 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
 
     await _callClaimOrphanedInboxAsync(conn, meId);
 
-    var attempts = await _readAttemptsAsync(conn, "wh_inbox", "message_id", msgId);
+    var attempts = await _readAttemptsAsync(conn, "wh_inbox_state", "message_id", msgId);
     await Assert.That(attempts).IsEqualTo(4)
       .Because("subsequent re-claims continue to bump from the existing attempts value");
   }
@@ -186,7 +186,7 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       await cmd.ExecuteScalarAsync();
     }
 
-    var attempts = await _readAttemptsAsync(conn, "wh_inbox", "message_id", msgId);
+    var attempts = await _readAttemptsAsync(conn, "wh_inbox_state", "message_id", msgId);
     await Assert.That(attempts).IsEqualTo(1)
       .Because("failure path records error + releases lease + schedules retry but does NOT bump attempts; the next claim's bump captures attempt #2");
   }
@@ -387,11 +387,17 @@ public class ClaimOrphanedAttemptsIncrementSqlTests : EFCoreTestBase {
       Guid? instanceId, DateTimeOffset? leaseExpiry, int attempts) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, @att, NOW(),
-              @inst, @lease, @stream, 0)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event,
+         status, attempts, instance_id, lease_expiry, partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event,
+             1, @att, @inst, @lease, 0 FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("att", attempts);

@@ -169,13 +169,20 @@ public class InboxWorkStateIsTheOwnerSqlTests : EFCoreTestBase {
       NpgsqlConnection conn, Guid instance, int attempts, CancellationToken cancellationToken) {
     var message = Guid.NewGuid();
     await _execAsync(conn, @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, scope, stream_id,
-         partition_number, is_event, status, attempts, received_at, source_service_id,
-         source_commit_sequence, priority, instance_id, lease_expiry)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
-              @stream, 1, TRUE, 0, @attempts, NOW(), @svc, 1, 150,
-              @inst, NOW() + INTERVAL '5 minutes')",
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, scope, stream_id,
+           is_event, received_at, source_service_id, source_commit_sequence, priority)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+                @stream, TRUE, NOW(), @svc, 1, 150)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, partition_number, status,
+         attempts, instance_id, lease_expiry)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+             @attempts, @inst, NOW() + INTERVAL '5 minutes'
+      FROM m",
       cancellationToken,
       ("msg", message), ("stream", Guid.NewGuid()), ("attempts", attempts),
       ("svc", Guid.NewGuid()), ("inst", instance));

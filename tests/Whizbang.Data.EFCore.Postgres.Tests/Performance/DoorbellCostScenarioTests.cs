@@ -102,12 +102,21 @@ public class DoorbellCostScenarioTests : EFCoreTestBase {
              s, compute_partition(s), NOW()
       FROM unnest(@streams::uuid[]) AS s CROSS JOIN generate_series(1, @per_stream);
 
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, is_event, processed_at)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', 0, 0, NOW(),
-             s, compute_partition(s), TRUE, NOW()
-      FROM unnest(@streams::uuid[]) AS s CROSS JOIN generate_series(1, @per_stream);
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{}', '{}', NOW(),
+               s, TRUE
+        FROM unnest(@streams::uuid[]) AS s CROSS JOIN generate_series(1, @per_stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, processed_at)
+      SELECT message_id, stream_id, received_at, priority, is_event, 0, 0,
+             compute_partition(stream_id), NOW()
+      FROM m;
 
       INSERT INTO wh_perspective_events
         (stream_id, perspective_name, event_id, status, attempts, created_at, partition_number, processed_at)

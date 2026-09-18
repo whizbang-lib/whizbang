@@ -36,17 +36,25 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   private static async Task _seedEveryBandAsync(NpgsqlConnection conn) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = """
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, is_event, instance_id, lease_expiry, error, failure_reason, priority)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}', 1, 0,
-             NOW() - (g * INTERVAL '1 second'), gen_random_uuid(), 0, TRUE, NULL, NULL, NULL, 99,
-             CASE g % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
-      FROM generate_series(1, 600) g
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event, priority)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}',
+               NOW() - (g * INTERVAL '1 second'), gen_random_uuid(), TRUE,
+               CASE g % 3 WHEN 0 THEN 50 WHEN 1 THEN 150 ELSE 250 END
+        FROM generate_series(1, 600) g
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, instance_id, lease_expiry, error, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, 0, NULL, NULL, NULL, 99
+      FROM m
       """;
     await ins.ExecuteNonQueryAsync();
     await using var analyze = conn.CreateCommand();
-    analyze.CommandText = "ANALYZE wh_inbox";
+    analyze.CommandText = "ANALYZE wh_inbox, wh_inbox_state";
     await analyze.ExecuteNonQueryAsync();
   }
 
@@ -65,7 +73,7 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await using var cmd = conn.CreateCommand();
     cmd.CommandText = $"""
       EXPLAIN SELECT i.stream_id, i.received_at, i.message_id
-      FROM wh_inbox i
+      FROM wh_inbox_state i
       WHERE i.processed_at IS NULL
         AND (i.instance_id IS NULL OR i.lease_expiry < NOW())
         AND (i.scheduled_for IS NULL OR i.scheduled_for <= NOW())

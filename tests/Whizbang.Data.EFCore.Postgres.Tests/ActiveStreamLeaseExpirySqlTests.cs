@@ -42,13 +42,22 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
     var streamId = Guid.CreateVersion7();
     await using var ins = conn.CreateCommand();
     ins.CommandText = """
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         stream_id, partition_number, is_event, instance_id, lease_expiry, error, failure_reason)
-      SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}', 1, 0,
-             NOW() - INTERVAL '10 minutes' + (r.seq * INTERVAL '1 second'),
-             @sid, 0, TRUE, NULL, NULL, NULL, 99
-      FROM generate_series(1, @rows) AS r(seq)
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at,
+           stream_id, is_event)
+        SELECT gen_random_uuid(), 'TestHandler', 'TestEvent', '{"p": {}}', '{}',
+               NOW() - INTERVAL '10 minutes' + (r.seq * INTERVAL '1 second'),
+               @sid, TRUE
+        FROM generate_series(1, @rows) AS r(seq)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         partition_number, instance_id, lease_expiry, error, failure_reason)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
+             0, NULL::uuid, NULL::timestamptz, NULL::text, 99
+      FROM m
       """;
     ins.Parameters.AddWithValue("sid", streamId);
     ins.Parameters.AddWithValue(nameof(rows), rows);
@@ -142,7 +151,7 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
 
   private static async Task<List<Guid>> _streamsHeldByAsync(NpgsqlConnection conn, Guid instance) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT DISTINCT stream_id FROM wh_inbox WHERE instance_id = @inst";
+    cmd.CommandText = "SELECT DISTINCT stream_id FROM wh_inbox_state WHERE instance_id = @inst";
     cmd.Parameters.AddWithValue("inst", instance);
     var streams = new List<Guid>();
     await using var reader = await cmd.ExecuteReaderAsync();
@@ -264,7 +273,7 @@ public class ActiveStreamLeaseExpirySqlTests : EFCoreTestBase {
 
   private static async Task _leaseRowsToAsync(NpgsqlConnection conn, IReadOnlyList<Guid> ids, Guid instance) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "UPDATE wh_inbox SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = ANY(@ids)";
+    cmd.CommandText = "UPDATE wh_inbox_state SET instance_id = @inst, lease_expiry = NOW() + INTERVAL '5 minutes' WHERE message_id = ANY(@ids)";
     cmd.Parameters.AddWithValue("inst", instance);
     cmd.Parameters.Add(new NpgsqlParameter<Guid[]>(nameof(ids), [.. ids]));
     await cmd.ExecuteNonQueryAsync();

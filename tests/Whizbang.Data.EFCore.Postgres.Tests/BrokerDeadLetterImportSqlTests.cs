@@ -135,7 +135,8 @@ public class BrokerDeadLetterImportSqlTests : EFCoreTestBase {
     await Assert.That(recovered).IsTrue();
 
     await using (var inboxCmd = conn.CreateCommand()) {
-      inboxCmd.CommandText = "SELECT event_data ->> 'v', stream_id, attempts FROM wh_inbox WHERE message_id = @id";
+      inboxCmd.CommandText = "SELECT i.event_data ->> 'v', i.stream_id, s.attempts "
+                           + "FROM wh_inbox i JOIN wh_inbox_state s USING (message_id) WHERE i.message_id = @id";
       inboxCmd.Parameters.AddWithValue("id", messageId);
       await using var reader = await inboxCmd.ExecuteReaderAsync();
       await Assert.That(await reader.ReadAsync()).IsTrue()

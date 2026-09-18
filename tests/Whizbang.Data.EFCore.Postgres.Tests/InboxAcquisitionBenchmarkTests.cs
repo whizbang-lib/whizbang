@@ -43,20 +43,36 @@ public class InboxAcquisitionBenchmarkTests : EFCoreTestBase {
     await using (var seed = conn.CreateCommand()) {
       // Fat streams: deterministic ids, received_at bucketed to 500 distinct values so ties are common.
       seed.CommandText = @"
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           stream_id, partition_number, instance_id, lease_expiry, error, failure_reason)
-        SELECT gen_random_uuid(), 'BenchHandler', 'BenchEvent', '{}', '{}', 1, 0,
-               NOW() - ((g % 500) || ' seconds')::INTERVAL,
-               ('00000000-0000-0000-0000-' || lpad(s::text, 12, '0'))::uuid, 0, NULL, NULL, NULL, 99
-        FROM generate_series(1, @fat) AS s CROSS JOIN generate_series(1, @perFat) AS g;
-        INSERT INTO wh_inbox
-          (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-           stream_id, partition_number, instance_id, lease_expiry, error, failure_reason)
-        SELECT gen_random_uuid(), 'BenchHandler', 'BenchEvent', '{}', '{}', 1, 0,
-               NOW() - ((g % 500) || ' seconds')::INTERVAL,
-               gen_random_uuid(), 0, NULL, NULL, NULL, 99
-        FROM generate_series(1, @singles) AS g;";
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          SELECT gen_random_uuid(), 'BenchHandler', 'BenchEvent', '{}', '{}',
+                 NOW() - ((g % 500) || ' seconds')::INTERVAL,
+                 ('00000000-0000-0000-0000-' || lpad(s::text, 12, '0'))::uuid
+          FROM generate_series(1, @fat) AS s CROSS JOIN generate_series(1, @perFat) AS g
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           partition_number, instance_id, lease_expiry, error, failure_reason)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, 0,
+               NULL::uuid, NULL::timestamptz, NULL::text, 99
+        FROM m;
+        WITH m AS (
+          INSERT INTO wh_inbox
+            (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+          SELECT gen_random_uuid(), 'BenchHandler', 'BenchEvent', '{}', '{}',
+                 NOW() - ((g % 500) || ' seconds')::INTERVAL,
+                 gen_random_uuid()
+          FROM generate_series(1, @singles) AS g
+          RETURNING message_id, stream_id, received_at, priority, is_event
+        )
+        INSERT INTO wh_inbox_state
+          (message_id, stream_id, received_at, priority, is_event, status, attempts,
+           partition_number, instance_id, lease_expiry, error, failure_reason)
+        SELECT message_id, stream_id, received_at, priority, is_event, 1, 0, 0,
+               NULL::uuid, NULL::timestamptz, NULL::text, 99
+        FROM m;";
       seed.Parameters.AddWithValue("fat", FAT_STREAMS);
       seed.Parameters.AddWithValue("perFat", ROWS_PER_FAT_STREAM);
       seed.Parameters.AddWithValue("singles", SINGLETON_STREAMS);
@@ -64,7 +80,7 @@ public class InboxAcquisitionBenchmarkTests : EFCoreTestBase {
       await seed.ExecuteNonQueryAsync();
     }
     await using (var vacuum = conn.CreateCommand()) {
-      vacuum.CommandText = "VACUUM (ANALYZE) wh_inbox";
+      vacuum.CommandText = "VACUUM (ANALYZE) wh_inbox, wh_inbox_state";
       vacuum.CommandTimeout = 300;
       await vacuum.ExecuteNonQueryAsync();
     }

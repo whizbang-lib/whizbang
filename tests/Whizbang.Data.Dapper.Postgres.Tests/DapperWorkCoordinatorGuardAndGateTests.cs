@@ -299,7 +299,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
       "SELECT error FROM wh_outbox WHERE message_id = @m", new { m = outboxId });
     await Assert.That(outboxError).IsEqualTo("outbox flush failure");
     var inboxError = await conn.ExecuteScalarAsync<string?>(
-      "SELECT error FROM wh_inbox WHERE message_id = @m", new { m = inboxId });
+      "SELECT error FROM wh_inbox_state WHERE message_id = @m", new { m = inboxId });
     await Assert.That(inboxError).IsEqualTo("inbox flush failure");
   }
 
@@ -372,7 +372,7 @@ public class DapperWorkCoordinatorGuardAndGateTests : PostgresTestBase {
     await conn.OpenAsync();
     // 9999 is outside any partition range so both rows are guaranteed mismatches.
     await conn.ExecuteAsync("UPDATE wh_outbox SET partition_number = 9999 WHERE message_id = @m", new { m = outboxId });
-    await conn.ExecuteAsync("UPDATE wh_inbox SET partition_number = 9999 WHERE message_id = @m", new { m = inboxId });
+    await conn.ExecuteAsync("UPDATE wh_inbox_state SET partition_number = 9999 WHERE message_id = @m", new { m = inboxId });
     await conn.ExecuteAsync(@"
       INSERT INTO wh_active_streams (stream_id, partition_number, assigned_instance_id, lease_expiry)
       VALUES (@s, 9999, NULL, NULL)",

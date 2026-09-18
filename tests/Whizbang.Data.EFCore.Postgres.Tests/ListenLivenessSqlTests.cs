@@ -381,7 +381,7 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
 
   private static async Task<Guid?> _readInboxInstanceIdAsync(NpgsqlConnection conn, Guid messageId) {
     await using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT instance_id FROM wh_inbox WHERE message_id = @msg";
+    cmd.CommandText = "SELECT instance_id FROM wh_inbox_state WHERE message_id = @msg";
     cmd.Parameters.AddWithValue("msg", messageId);
     var result = await cmd.ExecuteScalarAsync();
     return result switch {
@@ -452,11 +452,17 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
       Guid? instanceId, DateTimeOffset? leaseExpiry, int attempts) {
     await using var ins = conn.CreateCommand();
     ins.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', 1, @att, NOW(),
-              @inst, @lease, @stream, @part)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'TestHandler', 'TestEvent', '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at, priority, is_event
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, priority, is_event, status, attempts,
+         instance_id, lease_expiry, partition_number)
+      SELECT message_id, stream_id, received_at, priority, is_event, 1, @att,
+             @inst, @lease, @part FROM m";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("part", partitionNumber);
