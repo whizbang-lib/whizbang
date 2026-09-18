@@ -1434,7 +1434,7 @@ $$ LANGUAGE plpgsql;
 -- <docs>messaging/dead-letters</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MoveToDeadLettersSqlTests.cs:MoveToDeadLetters_InboxRow_MovesIntoDlqAndDeletesSourceAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DlqStackTracePreservationSqlTests.cs:MoveToDeadLetters_PreservesFullStackTextAcrossAllSourceTablesAsync</tests>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MoveToDeadLettersFingerprintSqlTests.cs:MoveToDeadLetters_AllSourcesProduceDistinctFingerprintsAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/MoveToDeadLettersFingerprintSqlTests.cs:MoveToDeadLetters_DistinctErrorTexts_DistinctFingerprintsAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.move_to_dead_letters(
   p_dead_letter_id UUID,                                       -- caller generates (TrackedGuid.NewMedo on C# side)
   p_source_table  TEXT,
@@ -3631,7 +3631,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- <docs>operations/workers/stuck-rows</docs>
--- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFindStuckRowsTests.cs:FindStuckInboxRows_RowExceedsThreshold_ReturnedAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFindStuckRowsTests.cs:FindStuckInboxRows_PostgresBacking_DelegatesToSqlFunctionAsync</tests>
 CREATE OR REPLACE FUNCTION __SCHEMA__.find_stuck_inbox_rows(
   p_max_attempts INTEGER,
   p_limit INTEGER
