@@ -47,6 +47,19 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 [Category("Shard3")]
 public class WorkTablesAreLockedInOneOrderTests {
+  /// <summary>
+  /// The schema the migration text is rendered against, which the patterns below are built from.
+  /// </summary>
+  /// <remarks>
+  /// <see cref="PostgresMigrationProvider.GetMigrations"/> does not hand back the file on disk: it
+  /// substitutes the schema placeholder and applies the shared constants first. Patterns written
+  /// against the placeholder therefore match nothing, every function parses as empty, and the rule
+  /// passes on a set with no members -- a permanently green test that proves nothing, which is what
+  /// <see cref="TheDerivationFindsTheMultiTableFunctionsAsync"/> caught here. Naming the schema
+  /// explicitly keeps the guard reading the shipped resource while the patterns stay exact.
+  /// </remarks>
+  private const string SCHEMA = "wh_lock_order_check";
+
   /// <summary>The order the work tables are locked in, which is the order work moves through them.</summary>
   private static readonly string[] CANONICAL = [
     "wh_outbox",
@@ -70,7 +83,8 @@ public class WorkTablesAreLockedInOneOrderTests {
 
     // Migrations arrive in execution order, so a later definition of a function simply overwrites
     // an earlier one -- exactly what replay leaves behind on the server.
-    foreach (var script in new PostgresMigrationProvider().GetMigrations()) {
+    foreach (var script in new PostgresMigrationProvider(
+        typeof(PostgresMigrationProvider).Assembly, SCHEMA).GetMigrations()) {
       foreach (var (name, body) in _functionBodies(script.Sql)) {
         var statements = _lockingStatements(body);
         var pairs = new HashSet<(string, string)>();
@@ -137,7 +151,7 @@ public class WorkTablesAreLockedInOneOrderTests {
   /// </remarks>
   private static List<(string Name, string Body)> _functionBodies(string sql) {
     var bodies = new List<(string, string)>();
-    var starts = Regex.Matches(sql, @"^[ \t]*CREATE OR REPLACE FUNCTION\s+__SCHEMA__\.(\w+)",
+    var starts = Regex.Matches(sql, @"^[ \t]*CREATE OR REPLACE FUNCTION\s+" + SCHEMA + @"\.(\w+)",
                                RegexOptions.Multiline | RegexOptions.IgnoreCase)
                       .ToList();
     for (var i = 0; i < starts.Count; i++) {
@@ -190,21 +204,38 @@ public class WorkTablesAreLockedInOneOrderTests {
     @"\G\b(CASE|WHEN|THEN|IF|ELSIF|ELSEIF|ELSE|END[ \t\r\n]+CASE|END[ \t\r\n]+IF|END)\b",
     RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+  /// <summary>A statement already opened by <c>EXIT</c> or <c>CONTINUE</c>, whose WHEN is a modifier.</summary>
+  private static readonly Regex LOOP_MODIFIER = new(
+    @"^\s*(EXIT|CONTINUE)\b",
+    RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+
   /// <summary>
   /// Walks a function body and returns every statement that takes a row lock, tagged with the
   /// branch arms enclosing it.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// Statements are cut at semicolons outside parentheses. A <c>CASE</c> or <c>IF</c> opens a
   /// construct and each <c>WHEN</c>/<c>ELSIF</c>/<c>ELSE</c> advances its arm, so two statements in
-  /// different arms of the same construct are never compared. Only control flow at parenthesis depth
-  /// zero counts: a <c>CASE</c> expression inside a <c>SELECT</c> list is an expression, not a branch.
+  /// different arms of the same construct are never compared.
+  /// </para>
+  /// <para>
+  /// A <c>CASE</c> <em>expression</em> is not a branch, and telling the two apart is not optional.
+  /// A <c>CASE</c> statement closes with <c>END CASE</c>; an expression closes with a bare <c>END</c>
+  /// that closes nothing here, so treating every <c>CASE</c> as a branch pushes a construct that is
+  /// never popped and leaves every later statement carrying a stale arm.
+  /// <c>perform_maintenance</c> is full of them: each task reports through
+  /// <c>RETURN QUERY SELECT ..., CASE WHEN v_debug_mode THEN ... ELSE 'ok' END::TEXT</c>, and those
+  /// sit at parenthesis depth zero, so depth cannot be the discriminator. Position can: a statement
+  /// <c>CASE</c> begins a statement, so nothing has accumulated in the buffer when it is reached,
+  /// while an expression <c>CASE</c> always follows something.
   /// </remarks>
   private static List<LockingStatement> _lockingStatements(string body) {
     var found = new List<LockingStatement>();
     var stack = new List<(int Construct, int Arm)>();
     var nextConstruct = 0;
     var depth = 0;
+    var expressionCase = 0;
     var statement = new StringBuilder();
     var i = 0;
 
@@ -237,9 +268,40 @@ public class WorkTablesAreLockedInOneOrderTests {
       }
       if (depth <= 0) {
         var keyword = CONTROL_FLOW.Match(body, i);
-        if (keyword.Success) {
-          Flush();
+        // \G anchors the match at i; the index check says so in code rather than relying on it.
+        if (keyword.Success && keyword.Index == i) {
           var word = Regex.Replace(keyword.Groups[1].Value.ToUpperInvariant(), @"\s+", " ");
+
+          // Inside a CASE expression nothing is a branch: only its own nesting is tracked, and the
+          // text is kept because the statement it belongs to is still being accumulated.
+          if (expressionCase > 0) {
+            if (word == "CASE") {
+              expressionCase++;
+            } else if (word == "END") {
+              expressionCase--;
+            }
+            statement.Append(keyword.Groups[1].Value);
+            i = keyword.Index + keyword.Length;
+            continue;
+          }
+          // A CASE reached mid-statement is an expression, not a branch.
+          if (word == "CASE" && statement.ToString().Trim().Length > 0) {
+            expressionCase = 1;
+            statement.Append(keyword.Groups[1].Value);
+            i = keyword.Index + keyword.Length;
+            continue;
+          }
+          // EXIT WHEN and CONTINUE WHEN are loop modifiers, not CASE arms. Reading one as an arm
+          // splits a single arm in two, so statements on either side look mutually unreachable and
+          // their pair is never derived -- the failure direction that HIDES an inversion rather
+          // than inventing one. Sixteen of them exist in these migrations.
+          if (word == "WHEN" && LOOP_MODIFIER.IsMatch(statement.ToString())) {
+            statement.Append(keyword.Groups[1].Value);
+            i = keyword.Index + keyword.Length;
+            continue;
+          }
+
+          Flush();
           switch (word) {
             case "CASE":
             case "IF":
@@ -260,7 +322,8 @@ public class WorkTablesAreLockedInOneOrderTests {
               }
               break;
             default:
-              // A bare END closes the function body or a CASE expression; neither is an arm.
+              // A bare END closes the function body or a nested BEGIN block; neither is an arm, and
+              // a CASE expression's END was consumed above.
               break;
           }
           i = keyword.Index + keyword.Length;
@@ -285,15 +348,15 @@ public class WorkTablesAreLockedInOneOrderTests {
       }
     }
 
-    foreach (var m in Regex.Matches(oneLine, @"\bUPDATE\s+__SCHEMA__\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
+    foreach (var m in Regex.Matches(oneLine, @"\bUPDATE\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
       Add(m.Groups[1].Value);
     }
-    foreach (var m in Regex.Matches(oneLine, @"\bDELETE\s+FROM\s+__SCHEMA__\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
+    foreach (var m in Regex.Matches(oneLine, @"\bDELETE\s+FROM\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
       Add(m.Groups[1].Value);
     }
     // INSERT ... ON CONFLICT locks the conflicting row. The ON CONFLICT can sit far below the
     // INSERT, so each INSERT is paired with the text up to the next one.
-    foreach (var m in Regex.Matches(oneLine, @"\bINSERT\s+INTO\s+__SCHEMA__\.(wh_\w+)(.*?)(?=\bINSERT\s+INTO\b|$)",
+    foreach (var m in Regex.Matches(oneLine, @"\bINSERT\s+INTO\s+" + SCHEMA + @"\.(wh_\w+)(.*?)(?=\bINSERT\s+INTO\b|$)",
                                     RegexOptions.IgnoreCase).ToList()) {
       if (Regex.IsMatch(m.Groups[2].Value, @"\bON\s+CONFLICT\b", RegexOptions.IgnoreCase)) {
         Add(m.Groups[1].Value);
@@ -302,7 +365,7 @@ public class WorkTablesAreLockedInOneOrderTests {
     // FOR UPDATE waits, and therefore deadlocks -- unless it SKIP LOCKEDs or NOWAITs, which do not.
     if (Regex.IsMatch(oneLine, @"\bFOR\s+UPDATE\b(?!\s+(?:OF\s+[\w,\s]+?\s+)?(?:SKIP\s+LOCKED|NOWAIT))",
                       RegexOptions.IgnoreCase)) {
-      foreach (var m in Regex.Matches(oneLine, @"\b(?:FROM|JOIN)\s+__SCHEMA__\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
+      foreach (var m in Regex.Matches(oneLine, @"\b(?:FROM|JOIN)\s+" + SCHEMA + @"\.(wh_\w+)", RegexOptions.IgnoreCase).ToList()) {
         Add(m.Groups[1].Value);
       }
     }
