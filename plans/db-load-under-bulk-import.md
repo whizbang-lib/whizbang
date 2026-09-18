@@ -142,3 +142,105 @@ be the same mistake as tuning on any stale measurement.
 the state machine through the `SKIP LOCKED` miss is worth a second look at the same time: it is a
 correctness-preserving fall-through (a contended watermark rings rather than waits), but it means the
 measured suppression rate understates what the state machine would do if it saw every ring.
+
+## 5. Measured and deliberately not changed: the emit chain's `chain_emitted_at` stamp
+
+The emit chain costs about 1,920 block reads per claim poll, and the question was which part pays.
+From `auto_explain` with `log_nested_statements` on a single poll in a lab fixture (100 streams at
+depth 200, four claimants, churning, autovacuum off, deliberately not vacuumed):
+
+| Statement | Blocks | Rows |
+|---|---|---|
+| `pg_advisory_xact_lock(hashtext('wh_event_store:' ...))` | 25 | 0 |
+| `WITH inbox_events AS (...)`, the chain proper | 25 | 0 |
+| `UPDATE wh_inbox SET chain_emitted_at = ...` | **276**, 6 buffers dirtied | 6 |
+
+**The reading is already cheap and the writing is not.** Both chain queries found nothing to chain
+and cost 25 blocks each, which is what the `idx_inbox_chain_pending` index of migration 158 was for:
+that optimization works. Of the UPDATE's 276 blocks, the Nested Loop that finds the rows is 30, so
+about 246 blocks went to stamping six rows, roughly **41 blocks per row stamped**.
+
+**Why it costs that.** `chain_emitted_at` appears in `idx_inbox_chain_pending`'s partial predicate,
+so writing it removes the row from that index. Changing index membership makes the update non-HOT by
+definition, and a non-HOT update maintains every index on the table. `wh_inbox` carries 26.
+
+**Why nothing changed here, and why reversing 158 would be wrong.** The stamp is a one-time cost per
+row that exists to stop the chain re-examining the same rows on every later poll. Trading 41 blocks
+once against a scan every poll is the right direction; removing the index to cheapen the stamp would
+restore the recurring scan that cost more. The cost is real but it is bounded by the number of rows
+chained, not by the backlog, which is the property that matters.
+
+**Rule:** a partial index whose predicate names a column the writer sets makes every write to that
+column non-HOT. That is usually still the right trade when the write is once per row and the read is
+once per poll. State the trade when adding such an index, so the write cost is not later mistaken
+for a defect.
+
+## 6. Investigated and declined: `wh_active_streams` is two pages
+
+A fleet's statistics showed `wh_active_streams` at 6,079 sequential scans reading 1,543,468 tuples,
+which is 698 tuples read per row in the table and looks alarming next to every other ratio. It is
+not worth changing, and the reason is the page count:
+
+| Measure | Value |
+|---|---|
+| Rows | 88 |
+| Heap pages | **2** |
+| Cost inside one claim poll | **68 blocks**, about 2 percent of the poll |
+
+A sequential scan of a two-page table is two block reads, and the planner picks it over an index
+scan because it is genuinely cheaper. The 698 tuples per row is the same two pages read many times,
+not work. **Tuples read per row only implies pages read when the table is large enough for the two
+to correlate**; on a table that fits in two pages the ratio is noise. Record the page count beside
+any tuples-per-row figure before treating the ratio as a finding.
+
+## 7. Open investigation: `wh_inbox` takes no HOT updates, and declares its indexes in two places
+
+Raised rather than acted on. The write amplification is structural and measured; the question of
+what to do about it is not answerable from the data available today, and the reason why is worth
+recording as carefully as the finding.
+
+**HOT is effectively zero at production scale.** Across three databases in one deployed fleet, two
+high-volume and one low-volume, over roughly six million updates to `wh_inbox`:
+
+| Database | HOT updates | Total updates | HOT share |
+|---|---|---|---|
+| High-volume A | 4,006 | 2,969,674 | 0.13 percent |
+| High-volume B | 5,434 | 3,084,970 | 0.18 percent |
+| Low-volume C | 0 | 24,508 | 0 percent |
+
+A lab fixture independently measured 0 of 660. `fillfactor` is default everywhere, but raising it
+would not help: the claim update writes `instance_id`, `lease_expiry` and `attempts`, and
+`idx_inbox_instance_lease` indexes the first two by design, so the update changes index membership
+no matter how much free space the page has. Wide payloads close the other door by fitting few
+tuples per page. **So every one of the 26 indexes is maintained on every update**, which is the
+write amplification section 5 measured at one statement's scale.
+
+**One source-code fact belongs with this, independent of any statistics.** `wh_inbox` indexes are
+declared in two places: the SQL migrations and `src/Whizbang.Data.Schema/Schemas/InboxSchema.cs`.
+Grepping the migrations for an inbox index therefore does not enumerate them, and a migration that
+drops an index the schema descriptor still declares will see it recreated. Anyone counting or
+changing indexes on this table has to read both sites. This is a fact about the repository rather
+than a claim about any index, and it holds whatever a workload's statistics say.
+
+**The index count is the open question, and it cannot be answered from statistics.** Whether 26 is
+the right number for this table is exactly the kind of question scan counts look like they answer
+and do not. An index that guards a condition a given workload never reaches records zero scans and
+is indistinguishable from an index nothing will ever need. Every environment available to measure
+today is lightly exercised, so its statistics can say where to look and can never say what to
+change.
+
+**What this investigation is blocked on.** A workload that actually exercises the paths each index
+was added for, so that a scan count means "not needed" rather than "not reached". That is a
+measurement to build, not an opinion to gather, and until it exists no index on this table should be
+proposed for removal on the strength of how unused it looks.
+
+**Calibrate the ceiling before anyone spends time here.** Even a correct reduction in the index count
+cannot make the claim update HOT, because the columns that update writes are indexed by live indexes
+that lease reclamation and orphan detection need. The available win is proportional to the indexes
+removed, and it is a fraction of the amplification rather than an end to it. Worth knowing before
+the work starts.
+
+**Rule that generalizes past this table:** a number from a controlled fixture at a stated data shape
+is reproducible and falsifiable, and a number from a lightly exercised environment is neither. Both
+are worth reading. Only the first is worth concluding from. Section 6 is an instance of the same
+error caught earlier: a ratio that looked like a finding until the page count explained it.
