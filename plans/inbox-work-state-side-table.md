@@ -891,3 +891,40 @@ this order:
 
 Until step 1 has an answer this should not be a PR. The write win would ship alongside an unmeasured
 read regression, which is precisely the trade this work exists to avoid making by accident.
+
+### 6.1 Migration REPLAY does not survive the cutover
+
+Full suite after the fixture sweep: **5,714 tests, 5,701 passed, 13 failed.** Eleven of the thirteen
+are the index and lane assertions above, left red deliberately. The other two are a separate defect
+and they are the more serious of the two findings:
+
+```
+SchemaInitializationTests.EnsureWhizbangDatabaseInitialized_ReplaysLedgerAgainstSplitStore_WhenTrackingLostAsync
+SchemaInitializationTests.EnsureWhizbangDatabaseInitialized_EarlierRedefinerReRun_PullsLastWordViaClosureAsync
+  PostgresException 42703: column "processed_at" does not exist
+  at ...ExecuteMigrationsAsync
+```
+
+Both tests deliberately force migrations to run again -- one by losing the tracking rows, one by
+re-running an earlier redefiner -- and both fail inside the migration executor. After the cutover has
+dropped the ten columns, **re-executing an earlier migration fails**, because earlier migrations were
+written against the schema that had them.
+
+Checked before concluding: no function's last-word definition reads a moved column off `wh_inbox`.
+Derived per statement from every migration, the only four hits are false positives (two are
+`wh_perspective_events`' own identically-named columns, one is the redirected
+`find_stuck_inbox_rows`, one is the cutover's own `DROP COLUMN`). So the steady-state function set is
+correct and this is specifically about re-running DDL, not about a missed rewrite.
+
+Why it matters more than a failing test: a database that loses its migration tracking cannot recover
+past the cutover, and "lost tracking" is exactly the situation that replay exists to handle. The
+options are a design decision rather than an edit:
+
+1. Make the inbox DDL in earlier migrations tolerant of the post-cutover shape. Pre-v1.0 migrations
+   are mutable and edited in place, so this is permitted, but it means touching many files.
+2. Treat the cutover as a rebase point, so replay starts from it rather than from migration 000.
+3. Have the replay path apply only function last words, never DDL.
+
+This is a **third blocker**, independent of the index coverage, and it should be settled before
+either of the others: options 2 and 3 change what replay means for every future column move, and the
+outbox and perspective splits will hit the identical wall.
