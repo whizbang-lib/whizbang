@@ -89,3 +89,33 @@ claim.depth_cost_multiple	6.8	x		recorded, not gated: 14.7 before the row bound,
 claim.rows_leased_per_call.depth_12	5	rows/call		
 claim.rows_leased_per_call.depth_200	5	rows/call	50	was 1766.7 before the row bound
 claim.rows_leased_per_call.depth_50	5	rows/call		
+
+# --- Store perspective emptiness probe, by stream state ---------------------------------------
+# 200 streams holding 100 pending perspective events each, plus one stream carrying 400 PROCESSED
+# events and nothing pending, plus store calls on stream ids the table has never held. One message
+# per call, so exactly one stream is probed per call, and one stream state per measured window.
+#
+# The three states exist as separate measures because averaging them is how this defect stayed
+# hidden. Migration 160 recorded this probe as costing three buffers, which was true of a stream the
+# table had never held and false of a stream whose work was all done. A drained stream is what every
+# long-lived stream becomes and what it stays between bursts, so it is the common state rather than
+# an edge, and it was the one that read the whole table.
+#
+# Measured before the fix, on the drained stream: 359 blocks and 20,400 tuples for ONE probe, from a
+# sequential scan the planner chose because processed_at IS NULL is true of nearly every row, so it
+# expected to stop at the first one. There is no match on a drained stream, so it read all of them.
+#
+# The ceiling is declared ONCE and applies to all three states, which is the property worth gating:
+# what the probe costs follows the question asked, not the history the stream happens to carry. A
+# ceiling that held only for a fresh stream is the measurement that missed this the first time.
+# Sequential scans carry the tightest gate because the defect is binary -- an index answers it or a
+# scan does -- and half a scan per call is not a thing that can happen.
+probe.wh_perspective_events.blocks_per_call.drained	0	blocks/call	50	was 359; a drained stream read the whole table
+probe.wh_perspective_events.blocks_per_call.fresh	0	blocks/call	50	
+probe.wh_perspective_events.blocks_per_call.pending	0	blocks/call	50	
+probe.wh_perspective_events.seq_scans_per_call.drained	0	scans/call	0.5	was 1 per call; the probe must answer from an index
+probe.wh_perspective_events.seq_scans_per_call.fresh	0	scans/call	0.5	
+probe.wh_perspective_events.seq_scans_per_call.pending	0	scans/call	0.5	
+probe.wh_perspective_events.tuples_read_per_call.drained	0	tuples/call	100	was 20400 for a single existence question
+probe.wh_perspective_events.tuples_read_per_call.fresh	0	tuples/call	100	
+probe.wh_perspective_events.tuples_read_per_call.pending	0	tuples/call	100	
