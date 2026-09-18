@@ -217,7 +217,7 @@ public class AsbReceiveDecisionMakerTests {
       ContentHash: "sha256-deadbeef",
       ContentType: "application/json",
       UploadedAt: DateTimeOffset.UtcNow);
-    var originalEnvelopeType =
+    const string originalEnvelopeType =
       "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Commands.BigCommand, MyApp.Contracts]], Whizbang.Core";
 
     var envelope = new MessageEnvelope<BodyClaimEnvelopePayload> {
@@ -273,7 +273,7 @@ public class AsbReceiveDecisionMakerTests {
     // produces a typeInfo that successfully deserializes the body.
     var combinedOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var envelope = _makeEnvelope();
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[JsonElement]], Whizbang.Core";
     var typeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)combinedOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
@@ -332,7 +332,7 @@ public class AsbReceiveDecisionMakerTests {
 
   [Test]
   public async Task Decide_TypeInfoMisses_RawReceptorRegistered_ReturnsInvokeRawReceptorAsync() {
-    var envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
+    const string envelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.Events.Foo, MyApp.Contracts]], Whizbang.Core";
     var receptor = new FakeRawReceptor("MyApp.Events.Foo, MyApp.Contracts");
     var rawRegistry = new Whizbang.Core.Messaging.RawReceptorRegistry([receptor]);
     var decider = new AsbReceiveDecisionMaker();

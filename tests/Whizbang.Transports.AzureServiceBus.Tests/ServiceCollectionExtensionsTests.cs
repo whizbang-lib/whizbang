@@ -294,7 +294,7 @@ public class ServiceCollectionExtensionsTests {
   // --- configuration binding: Whizbang:Transports:AzureServiceBus ---
 
   private static IConfiguration _configWith(params (string Key, string Value)[] pairs) {
-    var section = "Whizbang:Transports:AzureServiceBus:";
+    const string section = "Whizbang:Transports:AzureServiceBus:";
     var data = pairs.ToDictionary(p => section + p.Key, p => (string?)p.Value);
     return new ConfigurationBuilder().AddInMemoryCollection(data).Build();
   }

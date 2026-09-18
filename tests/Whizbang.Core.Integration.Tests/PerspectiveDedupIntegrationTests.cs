@@ -470,7 +470,7 @@ public class PerspectiveDedupIntegrationTests {
     // Degenerate case: 1 perspective. PostLifecycle fires at batch end.
     var streamId = Guid.CreateVersion7();
     var eventId = Guid.CreateVersion7();
-    var perspectiveName = "Test.SinglePerspective";
+    const string perspectiveName = "Test.SinglePerspective";
 
     var lifecycleCoordinator = new LifecycleCoordinator();
     var postLifecycleSpy = new PostLifecycleSpyInvoker();

@@ -209,7 +209,7 @@ public class AzureServiceBusErrorHandlingTests {
     var receiver = new FakeReceiver();
 
     await client.LastProcessor!.RaiseMessageAsync(
-      _messageArgs(_rawMessage("{{{not-json", typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!), receiver));
+      _messageArgs(_rawMessage("{{{not-json", typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName), receiver));
 
     await Assert.That(receiver.Completed).Count().IsEqualTo(1);
     await Assert.That(handlerInvoked).IsFalse();
@@ -680,7 +680,7 @@ public class AzureServiceBusErrorHandlingTests {
   private static ServiceBusReceivedMessage _envelopeMessage(MessageEnvelope<TestMessage> envelope, int deliveryCount = 1) {
     var typeInfo = _combinedOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var body = JsonSerializer.Serialize(envelope, typeInfo);
-    return _rawMessage(body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName!, deliveryCount);
+    return _rawMessage(body, typeof(MessageEnvelope<TestMessage>).AssemblyQualifiedName, deliveryCount);
   }
 
   /// <summary>Builds a broker message with an arbitrary body and optional EnvelopeType property.</summary>
@@ -811,8 +811,7 @@ public class AzureServiceBusErrorHandlingTests {
 
     public Task RaiseErrorAsync(ProcessErrorEventArgs args) => OnProcessErrorAsync(args);
 
-    private sealed class InnerFakeProcessor : ServiceBusProcessor {
-    }
+    private sealed class InnerFakeProcessor : ServiceBusProcessor;
   }
 
   /// <summary>

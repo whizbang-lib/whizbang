@@ -107,8 +107,8 @@ public class RabbitMQTransportBatchPathTests {
     await Assert.That(results[0].Success).IsTrue();
     await Assert.That(results[0].Error).IsNull();
     await Assert.That(results[1].Success).IsFalse();
-    await Assert.That(results[1].Error!).Contains("InvalidOperationException");
-    await Assert.That(results[1].Error!).Contains("broker rejected");
+    await Assert.That(results[1].Error).Contains("InvalidOperationException");
+    await Assert.That(results[1].Error).Contains("broker rejected");
     await Assert.That(channel.Published).Count().IsEqualTo(1)
       .Because("Only the successful item reaches the wire; the failing item is reported per-item.");
   }
@@ -128,8 +128,8 @@ public class RabbitMQTransportBatchPathTests {
     await Assert.That(results).Count().IsEqualTo(2)
       .Because("_failRemainingItems must add a failure result for every item not yet recorded.");
     await Assert.That(results.All(r => !r.Success)).IsTrue();
-    await Assert.That(results[0].Error!).Contains("AlreadyClosedException");
-    await Assert.That(results[1].Error!).Contains("AlreadyClosedException");
+    await Assert.That(results[0].Error).Contains("AlreadyClosedException");
+    await Assert.That(results[1].Error).Contains("AlreadyClosedException");
     await Assert.That(results[0].MessageId).IsEqualTo(items[0].MessageId);
     await Assert.That(results[1].MessageId).IsEqualTo(items[1].MessageId);
   }
@@ -150,8 +150,8 @@ public class RabbitMQTransportBatchPathTests {
 
     await Assert.That(results).Count().IsEqualTo(2);
     await Assert.That(results.All(r => !r.Success)).IsTrue();
-    await Assert.That(results[0].Error!).Contains("InvalidOperationException");
-    await Assert.That(results[0].Error!).Contains("declare failed");
+    await Assert.That(results[0].Error).Contains("InvalidOperationException");
+    await Assert.That(results[0].Error).Contains("declare failed");
     await Assert.That(channel.Published).IsEmpty();
   }
 

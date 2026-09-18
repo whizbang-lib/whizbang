@@ -54,7 +54,7 @@ public class AsbMessageHeaderReaderTests {
   public async Task Read_ValidMessageWithLiftedHeaders_ReturnsHeadersWithBodyBytesPreservedAsync() {
     var msgId = (Guid)TrackedGuid.NewMedo();
     var streamId = (Guid)TrackedGuid.NewMedo();
-    var body = """{"id":"00000000-0000-0000-0000-000000000000","p":{},"h":[],"v":2}""";
+    const string body = """{"id":"00000000-0000-0000-0000-000000000000","p":{},"h":[],"v":2}""";
     var message = _build(
       envelopeJson: body,
       envelopeTypeName: "Whizbang.Core.Observability.MessageEnvelope`1[[MyEvent, MyContracts]]",
@@ -97,7 +97,7 @@ public class AsbMessageHeaderReaderTests {
     // Proves slice 1's invariant: malformed payloads do NOT block storage. The header reader
     // never touches the body when MessageId is available from the ApplicationProperty fast path.
     var msgId = (Guid)TrackedGuid.NewMedo();
-    var garbage = "not even close to JSON{{{{{{";
+    const string garbage = "not even close to JSON{{{{{{";
     var message = _build(
       envelopeJson: garbage,
       envelopeTypeName: "Whizbang.Core.Observability.MessageEnvelope`1[[Anything]]",

@@ -76,7 +76,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_CanCombineFlagsAsync() {
     // Arrange & Act
-    var combined = TransportCapabilities.RequestResponse | TransportCapabilities.Reliable;
+    const TransportCapabilities combined = TransportCapabilities.RequestResponse | TransportCapabilities.Reliable;
 
     // Assert
     await Assert.That(combined.HasFlag(TransportCapabilities.RequestResponse)).IsTrue();
@@ -87,7 +87,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_AllFlag_ContainsAllCapabilitiesAsync() {
     // Arrange & Act
-    var all = TransportCapabilities.All;
+    const TransportCapabilities all = TransportCapabilities.All;
 
     // Assert
     await Assert.That(all.HasFlag(TransportCapabilities.RequestResponse)).IsTrue();
@@ -111,7 +111,7 @@ public class TransportCapabilitiesTests {
   [Test]
   public async Task TransportCapabilities_BulkPublish_CanCombineWithOtherFlagsAsync() {
     // Arrange & Act
-    var combined = TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable | TransportCapabilities.BulkPublish;
+    const TransportCapabilities combined = TransportCapabilities.PublishSubscribe | TransportCapabilities.Reliable | TransportCapabilities.BulkPublish;
 
     // Assert
     await Assert.That(combined.HasFlag(TransportCapabilities.PublishSubscribe)).IsTrue();

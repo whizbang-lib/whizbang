@@ -99,9 +99,7 @@ public class RabbitMQFifoIntegrationTests {
     var expectedIds = new List<Guid>(50);
 
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, _, ct) => {
-        await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct);
-      },
+      async (envelope, _, ct) => await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct),
       subscribeDestination,
       cancellationToken
     );
@@ -147,9 +145,7 @@ public class RabbitMQFifoIntegrationTests {
     var receivedChannel = Channel.CreateUnbounded<Guid>();
 
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, _, ct) => {
-        await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct);
-      },
+      async (envelope, _, ct) => await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct),
       subscribeDestination,
       cancellationToken
     );

@@ -56,7 +56,7 @@ public class RewindScenarioTests {
     var event4Id = events[3].MessageId.Value;
     var event5Id = events[4].MessageId.Value;
 
-    var perspectiveName = "Test.RewindPerspective";
+    const string perspectiveName = "Test.RewindPerspective";
 
     // Cursor says: last processed was event 5, but a rewind is required because event 3 arrived late.
     var cursor = new PerspectiveCursorInfo {
@@ -149,7 +149,7 @@ public class RewindScenarioTests {
     var event6Id = events[5].MessageId.Value;
     var event7Id = events[6].MessageId.Value;
 
-    var perspectiveName = "Test.PostRewindPerspective";
+    const string perspectiveName = "Test.PostRewindPerspective";
 
     // Pre-rewind cursor: 1,2,4,5 processed, event 3 flagged out-of-order.
     var preRewindCursor = new PerspectiveCursorInfo {

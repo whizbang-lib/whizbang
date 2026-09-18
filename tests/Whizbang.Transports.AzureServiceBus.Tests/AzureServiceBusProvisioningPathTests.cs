@@ -1063,8 +1063,7 @@ public class AzureServiceBusProvisioningPathTests {
 
     public override Task CloseAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    private sealed class InnerFakeProcessor : ServiceBusProcessor {
-    }
+    private sealed class InnerFakeProcessor : ServiceBusProcessor;
   }
 
   /// <summary>

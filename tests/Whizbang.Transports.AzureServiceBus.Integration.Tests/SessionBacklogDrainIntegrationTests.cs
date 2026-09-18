@@ -154,9 +154,7 @@ public class SessionBacklogDrainIntegrationTests(ServiceBusEmulatorFixtureSource
 
     var handled = Channel.CreateUnbounded<Guid>();
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => {
-        await handled.Writer.WriteAsync(envelope.MessageId.Value, ct);
-      },
+      async (envelope, _, ct) => await handled.Writer.WriteAsync(envelope.MessageId.Value, ct),
       new TransportDestination(SAFE_TOPIC, DRAIN_SUB));
 
     var publishedIds = new HashSet<Guid>();

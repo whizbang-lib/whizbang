@@ -121,5 +121,5 @@ public class HostConfigurationDisposalTests {
     public void TriggerReload() => OnReload();
   }
 
-  private sealed class MarkerService { }
+  private sealed class MarkerService;
 }

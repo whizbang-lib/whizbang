@@ -59,9 +59,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
 
     // Subscribe with session processor
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => {
-        await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct);
-      },
+      async (envelope, _, ct) => await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct),
       subscribeDestination
     );
 
@@ -195,9 +193,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     var receivedChannel = Channel.CreateUnbounded<Guid>();
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => {
-        await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct);
-      },
+      async (envelope, _, ct) => await receivedChannel.Writer.WriteAsync(envelope.MessageId.Value, ct),
       subscribeDestination
     );
 
