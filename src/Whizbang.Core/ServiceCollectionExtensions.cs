@@ -125,6 +125,23 @@ public static class ServiceCollectionExtensions {
   public static WhizbangBuilder AddWhizbang(
       this IServiceCollection services,
       Action<WhizbangCoreOptions>? configure) {
+    // Logging is a dependency of the framework, not an optional extra. Every component that logs
+    // resolves its logger with GetService<ILogger...>() and falls back to NullLogger, so a
+    // container that never registered logging produced a framework that ran correctly and said
+    // nothing — no error at registration, none at construction, none at the first log call. The
+    // only symptom was absent logs, which is expensive to diagnose precisely because nothing
+    // failed. A generic host calls AddLogging itself; a bare ServiceCollection does not, and that
+    // is the case this closes.
+    //
+    // AddLogging is TryAdd-based internally, so it never overrides a host's own logging
+    // configuration — it only guarantees ILoggerFactory and ILogger<T> resolve.
+    //
+    // Deliberately NOT paired with converting those GetService calls to GetRequiredService: a
+    // component must keep working when constructed against a minimal provider that never saw
+    // AddWhizbang, which is a property the test suite relies on in over a thousand places.
+    // Registration is guaranteed here; resolution stays tolerant.
+    services.AddLogging();
+
     // Register startup logger (logs Whizbang version via ILogger on first call only)
     if (!services.Any(s => s.ServiceType == typeof(WhizbangCoreOptions))) {
       services.AddSingleton<IHostedService, WhizbangStartupLogger>();
