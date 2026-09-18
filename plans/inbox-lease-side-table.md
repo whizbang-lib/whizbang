@@ -262,6 +262,44 @@ above: they back off, take no work, and lose none. Old-code instances keep worki
 throughout. The fleet degrades to reduced capacity rather than to data loss or double dispatch, and
 it recovers when the migration succeeds on a later start.
 
+## 3.6 Build status
+
+| Piece | State |
+|---|---|
+| Structural DDL: table, lock, backfill, indexes, foreign key | drafted, `plans/drafts/162_InboxLeaseSideTable.sql.draft` |
+| Commit-boundary guard test | **landed and passing** |
+| Ordering set-equality test | **landed and passing** |
+| Missing-lease-row invariant test | **landed and passing** |
+| `ALTER TABLE ... DROP COLUMN` | not written: cannot land until every function is rewritten |
+| The sixteen function rewrites | **not written. 2,828 lines of plpgsql, 466 column references** |
+
+The migration is deliberately NOT in `src/Whizbang.Data.Postgres/Migrations/` yet. Shipped
+incomplete it would take `ACCESS EXCLUSIVE` on every startup and backfill a table nothing reads, and
+the file has to ship whole or not at all: the columns cannot be dropped while fourteen other
+functions still reference them.
+
+The remaining work by function, measured from the live catalog rather than estimated:
+
+| Function | Lines | References to the four columns |
+|---|---|---|
+| `claim_orphaned_inbox` | 619 | 139 |
+| `claim_work` | 612 | 100 |
+| `perform_maintenance` | 433 | 17 |
+| `_emit_event_store_chain_for_inbox` | 345 | 43 |
+| `move_to_dead_letters` | 161 | 23 |
+| `store_inbox_messages` | 141 | 10 |
+| `cleanup_stale_instances` | 132 | 28 |
+| the other nine | 385 | 106 |
+
+They divide into two kinds, and the division is what makes the job tractable rather than uniform.
+Functions that touch only claim state (`release_unstarted_leases`, `renew_leases`,
+`count_outstanding_work`, `deregister_instance`, `cleanup_stale_instances`, `purge_orphan_inbox`,
+`release_unprocessed_inbox`, `process_inbox_failures`) become pure lease-table operations and get
+simpler. Functions that also read the message body (`fetch_inbox_batch`,
+`process_inbox_completions`, `move_to_dead_letters`, `store_inbox_messages`,
+`_emit_event_store_chain_for_inbox`, and the two claim functions) need a real rewrite with a join
+back to `wh_inbox` on the paths that need the payload.
+
 ## 4. Scope
 
 `wh_inbox` only, as the proof. `wh_outbox` and `wh_perspective_events` have the same shape and very

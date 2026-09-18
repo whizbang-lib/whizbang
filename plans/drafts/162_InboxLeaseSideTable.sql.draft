@@ -1,0 +1,163 @@
+-- Migration: 162_InboxLeaseSideTable.sql
+-- Date: 2026-09-17
+-- Description: The inbox lease moves into a narrow table of its own, so a claim stops paying for
+--              every index on a wide message row.
+--
+--              wh_inbox holds a row that is wide, heavily indexed and written once, beside a lease
+--              that is narrow and rewritten constantly. Keeping them together costs more than it
+--              looks:
+--
+--                instance_id   appears in 12 of the table's 26 indexes
+--                lease_expiry  appears in 12
+--                attempts      appears in 2
+--
+--              The claim writes all three, so a heap-only (HOT) update is impossible BY
+--              CONSTRUCTION: HOT requires that no indexed column changes. No fillfactor setting can
+--              help, because free space on the page is not what is missing, and a wide row closes
+--              the other door by fitting few tuples to a page. Measured across three databases in a
+--              deployed fleet, over roughly six million updates: 4,006 HOT of 2,969,674; 5,434 of
+--              3,084,970; 0 of 24,508. Under two tenths of one percent. A lab fixture independently
+--              measured 0 of 660. So every write to this table maintains every index on it.
+--
+--              Fifteen of the twenty-four indexes in the fixture name instance_id or lease_expiry.
+--              They belong to claiming and they leave with it, which is the real argument for this
+--              change: wh_inbox drops to nine indexes, so EVERY write to it gets cheaper, not only
+--              the claim.
+--
+--              Measured on a churned fixture, same ids picked by primary key, five paired runs:
+--
+--                                                     before        after
+--                lease stamp                     41.5 blocks/row   7.5 blocks/row
+--                any other write to wh_inbox     41.0 blocks/row  12.5 blocks/row
+--                gated pick, batch of 10          582,640 blocks   1,317 blocks
+--                heap                    14,968 pages @ 6,130 B    249 pages @ 101 B
+--
+--              On the pick, the durable part is the plan shape rather than the ratio: today the
+--              planner sequential-scans 19,460 rows and runs the per-stream ordering probe on every
+--              one before sorting and taking ten; on the narrow table it walks the priority-ordered
+--              partial index and stops after 206. The bound is reached before the per-row work.
+--
+-- WHY THIS IS ONE TRANSACTION, AND WHY THE COLUMNS ARE DROPPED RATHER THAN LEFT
+--
+--              Consumers take the latest package, so there is no sequence of releases to stage this
+--              through. It happens in one update or not at all.
+--
+--              That is what makes it safe, not what makes it risky. The hazard in a staged cutover
+--              is leaving the old columns PRESENT BUT IGNORED: a claim that writes a column nothing
+--              reads succeeds, believes it holds a lease, and dispatches work a second claimer will
+--              also take. A claim that FAILS is safe, because no lease is taken, the row stays
+--              claimable, and the worker retries. Failing loudly is the property that makes a single
+--              cutover correct, and it is only available if the columns are gone.
+--
+--              An instance still running older code during a rolling deploy therefore raises
+--              SQLSTATE 42703 (undefined_column) on every claim. That is not a transient failure, so
+--              WorkerLoopRecovery reports it as a defect -- and its loop CONTINUES, backing off from
+--              250 ms to a 30 second ceiling until the pod is replaced. Nothing dead-letters the
+--              work: the attempt budget only advances on a claim that succeeds, so a claim that
+--              throws ages nothing out. Old instances take no work and lose none.
+--
+-- THE LOCK ON THE LINE BELOW IS NOT REDUNDANT. DO NOT REMOVE IT.
+--
+--              It looks redundant, because the ALTER TABLE further down takes ACCESS EXCLUSIVE on
+--              the same table anyway. Taking it there instead is a data-loss bug, and here is the
+--              sequence that produces it:
+--
+--                1. The backfill below is an INSERT ... SELECT. It takes ACCESS SHARE on wh_inbox,
+--                   which DOES NOT BLOCK WRITERS, and under READ COMMITTED it reads its own fresh
+--                   snapshot.
+--                2. A concurrent claim commits after that snapshot is taken. Its lease is written to
+--                   wh_inbox's columns and is NOT in the copy.
+--                3. The ALTER TABLE then drops those columns, taking the lease with them.
+--                4. The row is now unleased in the only table that has leases, so the next poll
+--                   claims it while the first worker is still processing it. Two dispatches of one
+--                   message, which is the exact failure this whole design exists to prevent.
+--
+--              Holding ACCESS EXCLUSIVE from before the backfill closes the window completely. Every
+--              concurrent claim either committed before the lock was granted, in which case the
+--              backfill sees it, or waits on the lock and then fails on a column that is gone -- and
+--              a claim that fails is safe.
+--
+--              The cost of that correctness is that the lock is held for the length of the backfill
+--              rather than the length of the drop. Measured on a faithful copy of this table at
+--              1.4 KB a row: 0.69 s at 100,000 rows and 2.14 s at 500,000, about 4.3 microseconds
+--              per row, on local storage with a warm cache, so treat it as the optimistic end. The
+--              DROP COLUMN itself is catalog-only and costs single-digit milliseconds at both
+--              scales; the stall is the backfill and the three index builds.
+--
+-- THIS FILE MUST NEVER CARRY A COMMIT BOUNDARY MARKER
+--
+--              SchemaCommandBoundary applies a marker-free script as ONE command on one connection,
+--              which PostgreSQL runs as a single implicit transaction. That is what makes everything
+--              above hold. A marker anywhere in this file splits it into separately committed
+--              pieces and reintroduces every hazard described here, including a window where the
+--              columns are dropped but the functions still reference them. There is a test that
+--              fails if a marker ever appears in this file; it is not decoration.
+--
+-- Dependencies: 149 (store_inbox_messages, _emit_event_store_chain_for_inbox), 150 (claim_orphaned_inbox, claim_work), 158, 159
+-- Objects: wh_inbox_lease, wh_inbox (drops instance_id, lease_expiry, attempts, processed_at)
+
+-- See "THE LOCK ON THE LINE BELOW IS NOT REDUNDANT" above before touching this statement.
+LOCK TABLE __SCHEMA__.wh_inbox IN ACCESS EXCLUSIVE MODE;
+
+CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_lease (
+  -- The join key, and the only column shared with wh_inbox.
+  message_id       UUID PRIMARY KEY,
+  -- Everything below is a column claim_orphaned_inbox reads or writes. The set is DERIVED from the
+  -- function rather than chosen: a column the claim path needs that stays behind turns the
+  -- per-stream ordering gate into a cross-table join, which is the one thing that would make this
+  -- slower rather than faster.
+  stream_id        UUID,
+  received_at      TIMESTAMPTZ NOT NULL,
+  partition_number INTEGER,
+  priority         INTEGER     NOT NULL DEFAULT 100,
+  is_event         BOOLEAN     NOT NULL DEFAULT FALSE,
+  scheduled_for    TIMESTAMPTZ,
+  -- The four claim-state columns. processed_at is here for a correctness reason rather than a
+  -- performance one: the claim predicate filters on it, and if it stayed on wh_inbox while the row
+  -- lock moved here, a completion landing between the read and the lock would no longer be
+  -- excluded. Excluding exactly that is what the old FOR UPDATE on the inbox row did.
+  processed_at     TIMESTAMPTZ,
+  instance_id      UUID,
+  lease_expiry     TIMESTAMPTZ,
+  attempts         INTEGER     NOT NULL DEFAULT 0,
+  -- The claim writes these two when it finds a lease that expired without anyone reporting why, so
+  -- they are claim state as well. error is NULL for every row that has not failed, which costs a bit
+  -- in the null bitmap and nothing else.
+  failure_reason   INTEGER,
+  error            TEXT,
+  -- A message with no lease row can never be claimed, and it would fail silently, which is the worst
+  -- shape a defect can have. The key and the cascade make the pair impossible to half-create or
+  -- half-delete; an invariant test covers the rest.
+  CONSTRAINT fk_inbox_lease_message FOREIGN KEY (message_id)
+    REFERENCES __SCHEMA__.wh_inbox (message_id) ON DELETE CASCADE
+);
+
+COMMENT ON TABLE __SCHEMA__.wh_inbox_lease IS
+  'Claim state for wh_inbox rows (162), split out so a claim does not rewrite a wide, heavily '
+  'indexed message row. instance_id and lease_expiry each appear in twelve of wh_inbox''s indexes, '
+  'so a claim can never be a HOT update and pays full index maintenance on every write; measured '
+  'HOT share across six million updates in a deployed fleet was under two tenths of one percent. '
+  'One row per wh_inbox row, created and deleted with it.';
+
+INSERT INTO __SCHEMA__.wh_inbox_lease (
+  message_id, stream_id, received_at, partition_number, priority, is_event, scheduled_for,
+  processed_at, instance_id, lease_expiry, attempts, failure_reason, error)
+SELECT
+  message_id, stream_id, received_at, partition_number, priority, is_event, scheduled_for,
+  processed_at, instance_id, lease_expiry, attempts, failure_reason, error
+FROM __SCHEMA__.wh_inbox
+ON CONFLICT (message_id) DO NOTHING;
+
+-- The lanes the claim picks from. Partial on processed_at IS NULL so they track pending work rather
+-- than settled history, and split by ownership so neither lane reads the other's rows.
+CREATE INDEX IF NOT EXISTS idx_inbox_lease_unowned
+  ON __SCHEMA__.wh_inbox_lease (priority, received_at, message_id)
+  WHERE processed_at IS NULL AND instance_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inbox_lease_expired
+  ON __SCHEMA__.wh_inbox_lease (priority, lease_expiry, received_at)
+  WHERE processed_at IS NULL AND instance_id IS NOT NULL;
+-- The per-stream ordering gate walks a stream's pending rows in arrival order. Every column it reads
+-- is on this table, so the gate stays a single-table query rather than becoming a join.
+CREATE INDEX IF NOT EXISTS idx_inbox_lease_stream_order
+  ON __SCHEMA__.wh_inbox_lease (stream_id, received_at, message_id)
+  WHERE processed_at IS NULL;
