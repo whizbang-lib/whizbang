@@ -1122,7 +1122,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       invCmd.CommandText = @"
         SELECT
           (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_outbox WHERE (status & 4) = 0) as outbox,
-          (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0) as inbox,
+          (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox_state WHERE (status & 2) = 0) as inbox,
           (SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0) as perspectives";
       await using var invReader = await invCmd.ExecuteReaderAsync();
       await invReader.ReadAsync();
@@ -1142,7 +1142,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       bffCmd.CommandText = @"
         SELECT
           (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_outbox WHERE (status & 4) = 0) as outbox,
-          (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_inbox WHERE (status & 2) = 0) as inbox,
+          (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_inbox_state WHERE (status & 2) = 0) as inbox,
           (SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0) as perspectives";
       await using var bffReader = await bffCmd.ExecuteReaderAsync();
       await bffReader.ReadAsync();
@@ -1214,17 +1214,22 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     logger.LogInformation("[SQL Diagnostic] Current UTC time: {Now}", DateTimeOffset.UtcNow);
 
     // Query 1: Check inbox for event
+    // 162 split the inbox: message_type, stream_id, is_event and received_at describe the message
+    // and stay on wh_inbox, while status is work state and moved to wh_inbox_state. A diagnostic
+    // that reads both therefore joins both. LEFT JOIN rather than JOIN on purpose: a message row
+    // with no state row would be a defect worth seeing here, not a row worth hiding.
     var inboxQuery = @"
       SELECT
-        message_id AS MessageId,
-        message_type AS MessageType,
-        stream_id AS StreamId,
-        is_event AS IsEvent,
-        status AS Status,
-        received_at AS ReceivedAt
-      FROM inventory.wh_inbox
-      WHERE message_type LIKE '%' || {0} || '%'
-      ORDER BY received_at DESC
+        i.message_id AS MessageId,
+        i.message_type AS MessageType,
+        i.stream_id AS StreamId,
+        i.is_event AS IsEvent,
+        s.status AS Status,
+        i.received_at AS ReceivedAt
+      FROM inventory.wh_inbox i
+      LEFT JOIN inventory.wh_inbox_state s ON s.message_id = i.message_id
+      WHERE i.message_type LIKE '%' || {0} || '%'
+      ORDER BY i.received_at DESC
       LIMIT 5";
 
     var inboxResults = await inventoryDbContext.Database

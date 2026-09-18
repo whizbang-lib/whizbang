@@ -26,7 +26,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// </remarks>
 [Category("Shard4")]
 public class InboxAcquisitionIndexSqlTests : EFCoreTestBase {
-  private const string PICK_INDEX = "idx_inbox_pending_stream_order";
+  // 162 moved every column this pick filters on to wh_inbox_state, so the covering index in window
+  // order moved with them. Same shape: (stream_id, received_at, message_id) keyed for the window,
+  // INCLUDEing instance_id, lease_expiry and scheduled_for so the pick stays index-only, partial on
+  // processed_at IS NULL.
+  private const string PICK_INDEX = "idx_inbox_state_stream_order";
 
   private async Task<NpgsqlConnection> _openAsync() {
     var conn = new NpgsqlConnection(ConnectionString);
@@ -65,14 +69,18 @@ public class InboxAcquisitionIndexSqlTests : EFCoreTestBase {
         SELECT message_id, stream_id, received_at, priority, is_event, 1, 0,
                0, NULL::uuid, NULL::timestamptz, NULL::text, 99
         FROM m;
-        ANALYZE wh_inbox;";
+        ANALYZE wh_inbox;
+        ANALYZE wh_inbox_state;";
       await seed.ExecuteNonQueryAsync();
     }
     // Set the visibility map: the planner picks an Index Only Scan only when it expects no heap
     // fetches, and freshly inserted rows have none of their pages marked all-visible. VACUUM must
     // run outside a transaction, so it is its own command.
     await using (var vacuum = conn.CreateCommand()) {
-      vacuum.CommandText = "VACUUM (ANALYZE) wh_inbox";
+      // The plan under test reads wh_inbox_state now, so that is the table whose pages must be
+      // marked all-visible; vacuuming only wh_inbox would leave the planner refusing an Index
+      // Only Scan for a reason that has nothing to do with the index.
+      vacuum.CommandText = "VACUUM (ANALYZE) wh_inbox, wh_inbox_state";
       await vacuum.ExecuteNonQueryAsync();
     }
 
@@ -88,7 +96,7 @@ public class InboxAcquisitionIndexSqlTests : EFCoreTestBase {
       EXPLAIN (COSTS OFF)
       SELECT i.message_id,
              ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at, i.message_id) AS stream_seq
-      FROM wh_inbox i
+      FROM wh_inbox_state i
       WHERE (i.instance_id IS NULL OR i.lease_expiry < NOW())
         AND (i.scheduled_for IS NULL OR i.scheduled_for <= NOW())
         AND i.processed_at IS NULL";
@@ -101,7 +109,7 @@ public class InboxAcquisitionIndexSqlTests : EFCoreTestBase {
     var plan = string.Join("\n", lines);
 
     await Assert.That(plan).Contains($"Index Only Scan using {PICK_INDEX}");
-    await Assert.That(plan).DoesNotContain("Seq Scan on wh_inbox");
+    await Assert.That(plan).DoesNotContain("Seq Scan on wh_inbox_state");
     await Assert.That(plan).DoesNotContain("Sort Key");
   }
 

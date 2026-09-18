@@ -41,12 +41,22 @@ public class HandlerCommitBenchmarks {
   public void IterationSetup() {
     _messageIds = new Guid[BatchSize];
     using var insert = _conn.CreateCommand();
+    // 162 split the inbox in two: the message row carries what describes the message, and a state
+    // row carries what a claim rewrites. Seeding a claimed row therefore writes both, in one
+    // statement so the benchmark's setup cost stays one round trip per row rather than two.
     insert.CommandText = @"
-      INSERT INTO wh_inbox
-        (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
-         instance_id, lease_expiry, stream_id, partition_number)
-      VALUES (@msg, 'BenchHandler', 'BenchEvent', '{}', '{}', 1, 0, NOW(),
-              @inst, NOW() + INTERVAL '60 seconds', @stream, 0)";
+      WITH m AS (
+        INSERT INTO wh_inbox
+          (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id)
+        VALUES (@msg, 'BenchHandler', 'BenchEvent', '{}', '{}', NOW(), @stream)
+        RETURNING message_id, stream_id, received_at
+      )
+      INSERT INTO wh_inbox_state
+        (message_id, stream_id, received_at, status, attempts, instance_id, lease_expiry,
+         partition_number)
+      SELECT m.message_id, m.stream_id, m.received_at, 1, 0, @inst,
+             NOW() + INTERVAL '60 seconds', 0
+      FROM m";
     var msgParam = insert.Parameters.Add(new NpgsqlParameter("msg", System.Data.DbType.Guid));
     var instParam = insert.Parameters.Add(new NpgsqlParameter("inst", System.Data.DbType.Guid) { Value = _instanceId });
     var streamParam = insert.Parameters.Add(new NpgsqlParameter("stream", System.Data.DbType.Guid));

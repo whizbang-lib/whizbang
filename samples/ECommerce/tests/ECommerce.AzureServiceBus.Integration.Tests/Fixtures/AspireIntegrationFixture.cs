@@ -618,7 +618,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       var pendingOutbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // Check inbox: any messages not marked as Completed (status & 2 = 0)
-      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0";
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox_state WHERE (status & 2) = 0";
       var pendingInbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // Check perspective cursors: any not marked as Completed (status & 2 = 0) AND not Failed (status & 4 = 0)
@@ -688,7 +688,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_outbox WHERE (status & 4) = 0";
     var finalOutbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0";
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox_state WHERE (status & 2) = 0";
     var finalInbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
     finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_cursors WHERE (status & 2) = 0 AND (status & 4) = 0";
