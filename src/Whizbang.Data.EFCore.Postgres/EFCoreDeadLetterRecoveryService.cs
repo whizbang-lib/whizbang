@@ -29,7 +29,7 @@ public sealed class EFCoreDeadLetterRecoveryService<TDbContext>(
   // guaranteed (e.g. the ECommerce per-service schemas: 42883 "function ... does not exist").
   private string _fn(string name) {
     var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema();
-    return string.IsNullOrWhiteSpace(schema) || schema == "public" ? name : $"\"{schema}\".{name}";
+    return Whizbang.Data.Postgres.PgIdentifier.Qualify(schema, name);
   }
 
   /// <inheritdoc />
