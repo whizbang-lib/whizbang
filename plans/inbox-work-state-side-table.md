@@ -569,9 +569,10 @@ The four instances, all one cause:
 | Which functions to rewrite | searched two of the columns | **understated**, 16 against 22 |
 | Which columns are mutable | `SET ... (?:WHERE\|FROM)` capture | **understated**; it terminated on the word "from" inside a comment, losing `scheduled_for` and `error` |
 | The column count itself | enumerated my own lab fixture | **overstated**, 25 against 23; the fixture had drifted |
+| The index count | the same fixture | **understated**, 24 against 26; the fixture was built from migrations only and never got `InboxSchema.cs`'s indexes |
 
-Each output looked authoritative. In every case the check that caught it was comparing the machine's
-answer to something already known to be true: "`process_inbox_failures` writes `scheduled_for`, so
+Six instances now. Each output looked authoritative. In every case the check that caught it was
+comparing the machine's answer to something already known to be true: "`process_inbox_failures` writes `scheduled_for`, so
 why is it absent?" is what found the fourth, and "the migrations contain only four `ADD COLUMN`
 statements" is what found the fifth.
 
@@ -594,9 +595,36 @@ both columns were always NULL in the fixture and cost a bit in the null bitmap, 
 been corrected so later numbers are taken against the real shape.
 
 **A fixture that has drifted from the schema is worse than a miscount, because the measurements rest
-on it.** The rule that follows: measure schema shape from a database the product initialized, never
-from a fixture that has been hand-patched, and if a fixture must be patched, record what was patched
-so a later enumeration cannot mistake it for the product.
+on it.**
+
+> **RULE, for a fixture specifically:** the independent check is a **schema diff against a
+> product-initialized database**, never a recollection of what was patched. A fixture is the one case
+> where the machine and the check can be the same wrong artifact, so the check has to come from
+> outside the fixture entirely.
+
+### The diff, run rather than reasoned about, and it was not empty
+
+Removing the two columns I remembered patching answered the wrong question. The risk was not "were
+those two material", it was "the fixture had drifted and I did not know". So: columns, types,
+nullability, defaults, indexes and constraints across all six tables the measurements touch, diffed
+against a database the product had just initialized. **Eighteen differing lines.**
+
+**The material one: my lab had 24 indexes on `wh_inbox`. The product creates 26.** Missing were
+`idx_inbox_instance_lease` and `idx_inbox_partition_claiming`, and the cause is systematic rather
+than random: **both are declared in `InboxSchema.cs`, and my lab was built from the SQL migrations
+alone**, so it never received the schema descriptor's indexes. That is the same two-declaration-sites
+trap recorded in the bulk-import findings, arriving from the other direction. 26 also matches the
+figure measured on a deployed fleet, so two independent sources agree and my fixture was the outlier.
+
+The remaining differences do not touch the partition: `flags` nullability on three tables, an
+`updated_at` column on `wh_active_streams`, `wh_outbox.destination` nullability, a `CURRENT_TIMESTAMP`
+against `now()` default, and two indexes I had created by hand during the probe experiments.
+
+**The direction matters and it is the favorable one: the drift made the BEFORE number optimistic.**
+A 24-index table is cheaper to write than a 26-index table, so every "cost today" figure taken on
+that fixture understated today's cost, and therefore understated the improvement. Corrected, the
+stamp reduction is 69 percent rather than 65. That is luck, not method: it could as easily have gone
+the other way, which is the whole argument for running the diff rather than reasoning about it.
 
 ## 3.13 The exhaustive column pass: all 23 live columns, both questions
 
@@ -648,35 +676,36 @@ it.
 Like for like, same fixture, same method, five paired runs. The prototype's figures were taken
 against a subset of the columns and a smaller index set, so they were optimistic.
 
-| | Prototype (subset) | **Final (all 25 assessed)** |
+| | Prototype (subset, drifted fixture) | **Final (23 columns, 26 indexes, diffed fixture)** |
 |---|---|---|
-| Stamp on `wh_inbox` | 41.5 blocks/row | 34.7 blocks/row |
-| **Stamp on the state table** | **7.5 blocks/row** | **12.0 blocks/row** |
-| Reduction on the stamp | 82 percent | **65 percent** |
-| Gated pick, before | 582,640 blocks | 562,200 blocks |
-| **Gated pick, after** | **1,317 blocks** | **822 blocks** |
+| Stamp on `wh_inbox` | 41.5 blocks/row | **36.7 blocks/row** |
+| **Stamp on the state table** | **7.5 blocks/row** | **11.3 blocks/row** |
+| Reduction on the stamp | 82 percent | **69 percent** |
+| Gated pick, before | 582,640 blocks | 562,170 blocks, sequential scan |
+| **Gated pick, after** | **1,317 blocks** | **799 blocks, index scan** |
 | State table | 249 pages, 101 B/row, 3 indexes | 267 pages, 109 B/row, **6 indexes** |
 | `wh_inbox` after | not measured | 5,056 pages, 2,070 B/row, **3 indexes** |
-| Lock window, 100k rows | 0.69 s | 0.42 s |
-| Lock window, 500k rows | 2.14 s | 2.37 s |
-| Per row | 4.3 microseconds | 4.7 microseconds |
-| `DROP COLUMN` | 1.7 to 4.3 ms | 1.0 ms for all ten |
+| Index partition | 15 of 24 moving | **23 of 26 move, 3 stay** |
+| Lock window, 100k rows | 0.69 s | **0.37 s** |
+| Lock window, 500k rows | 2.14 s | **2.51 s** |
+| Per row | 4.3 microseconds | **5.0 microseconds** |
+| `DROP COLUMN` | 1.7 to 4.3 ms | **1.1 ms for all ten** |
 
-**The stamp got worse and it should be read as worse: 7.5 to 12.0 blocks per row, so the reduction
-is 65 percent rather than 82.** The cause is not a surprise in hindsight: the state table now
+**The stamp got worse and it should be read as worse: 7.5 to 11.3 blocks per row, so the reduction
+is 69 percent rather than 82.** The cause is not a surprise in hindsight: the state table now
 carries six indexes rather than three, and one of them (`idx_inbox_state_held_lanes`) is a wide
 covering index carrying five INCLUDE columns. That is the price of keeping the held-lane re-offer
 probe index-only, and it is worth paying, but it is a cost the prototype did not have and did not
 predict.
 
-**The gated pick got better**, 1,317 to 822 blocks, and the plan is now an index scan on the driving
+**The gated pick got better**, 1,317 to 799 blocks, and the plan is now an index scan on the driving
 side rather than a sequential scan. The lock window is unchanged in substance at roughly 4.7
 microseconds per row, and `DROP COLUMN` remains catalog-only at about a millisecond for all ten.
 
 **The case still holds and it is no longer improving with every column added.** The honest summary:
-a 65 percent cut on every write to the work state, a roughly 680x cut on the gated pick at this
-fixture's shape, `wh_inbox` down from 24 indexes to three, for a stall of about 4.7 microseconds per
-row once.
+a 69 percent cut on every write to the work state, a roughly 700x cut on the gated pick at this
+fixture's shape, `wh_inbox` down from 26 indexes to three, for a one-time stall of about 5.0
+microseconds per row.
 
 ## 4. Scope
 
