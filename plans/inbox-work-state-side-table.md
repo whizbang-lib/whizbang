@@ -570,6 +570,14 @@ The four instances, all one cause:
 | Which columns are mutable | `SET ... (?:WHERE\|FROM)` capture | **understated**; it terminated on the word "from" inside a comment, losing `scheduled_for` and `error` |
 | The column count itself | enumerated my own lab fixture | **overstated**, 25 against 23; the fixture had drifted |
 | The index count | the same fixture | **understated**, 24 against 26; the fixture was built from migrations only and never got `InboxSchema.cs`'s indexes |
+| Whether the SUITE had the same gap | grepped the generated `.g.cs` for the index name | **would have understated**; that DDL is built at RUNTIME from the descriptor, so the name is never in the generated file by design. Caught by reading the call, not the output |
+
+**The reusable mechanism, which is the part worth keeping:** the trap is not "fixtures drift". It is
+that **a schema with two sources of truth has build paths, and a build path may read only one of
+them.** Here the two sources are the SQL migrations and `InboxSchema.cs`. The product's path reads
+both. My hand-built lab read only the migrations. Any future build path, tool, fixture or diagnostic
+that constructs this schema has to be checked against both sources, and "it produced a working
+database" does not distinguish a path that read one from a path that read two.
 
 Six instances now. Each output looked authoritative. In every case the check that caught it was
 comparing the machine's answer to something already known to be true: "`process_inbox_failures` writes `scheduled_for`, so
@@ -625,6 +633,37 @@ A 24-index table is cheaper to write than a 26-index table, so every "cost today
 that fixture understated today's cost, and therefore understated the improvement. Corrected, the
 stamp reduction is 69 percent rather than 65. That is luck, not method: it could as easily have gone
 the other way, which is the whole argument for running the diff rather than reasoning about it.
+
+## 3.12c The integration suite was checked and is sound
+
+The question the fixture drift raised: does the suite the performance scenarios run on initialize
+through the product's own schema pass, or through the migrations alone? If the latter, every SQL
+measurement in that suite was taken against a 24-index table while production has 26, and the
+ceilings we are promoting into CI would be calibrated against a schema no consumer has.
+
+**Answered by reading the path, because tests passing cannot distinguish these.** The chain:
+
+1. `EFCoreTestBase.InitializeDatabaseAsync()` calls `dbContext.EnsureWhizbangDatabaseInitializedAsync()`.
+2. That generated method calls **`PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig)`
+   at runtime** (`DbContextSchemaExtensionTemplate.cs`, and the generator's own comment says "Core
+   infrastructure schema is generated at runtime by PostgresSchemaBuilder" precisely so it is not
+   baked into the generated file).
+3. `PostgresSchemaBuilder` reads `InboxSchema.Table`, which declares `idx_inbox_partition_claiming`
+   and `idx_inbox_instance_lease`.
+4. Then the SQL migrations are applied on top, hash-tracked in `wh_schema_migrations`.
+
+**So the product's path reads BOTH declaration sites, and the suite's databases carry 26 indexes**,
+which is what they measure at and what a deployed fleet measures at. Only the hand-built lab was
+short. The performance scenarios and their ceilings are calibrated against the production shape.
+
+**This nearly became the seventh instance of the pattern.** Grepping the generated `.g.cs` for
+`idx_inbox_partition_claiming` returns zero, which reads exactly like "the suite does not create it".
+It returns zero because that DDL is assembled at runtime from the descriptor and is deliberately not
+in the generated file. The answer came from following the call, not from searching the output.
+
+One incidental correction: the per-test databases are **pooled and reused** rather than created per
+run, so none of them is a reliable "current head" reference either. A run that creates no new database
+is evidence of reuse, not of a fresh build.
 
 ## 3.13 The exhaustive column pass: all 23 live columns, both questions
 
