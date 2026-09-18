@@ -194,6 +194,7 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
       services.AddLogging();
       var sp = services.BuildServiceProvider();
 
+      // Named arguments follow the constructor's parameter order (RCS1205).
       f.Worker = new PerspectiveWorker(
         instanceProvider: instanceProvider,
         scopeFactory: sp.GetRequiredService<IServiceScopeFactory>(),
@@ -210,18 +211,18 @@ public class PerspectiveWorkerAffinityHoldWatchdogTests {
             MaxWait = TimeSpan.Zero
           }
         }),
+        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
         tracingOptions: null,
         completionStrategy: new InstantCompletionStrategy(),
         eventTypeProvider: null,
         logger: f.Logger,
         streamAffinityOptions: Options.Create(new PerspectiveStreamAffinityOptions { LongHoldWarning = longHoldWarning }),
+        timeProvider: timeProvider,
         perspectiveChannelWriter: f.Harness.ChannelWriter,
         perspectiveCompletionChannel: f.Harness.CompletionCapture,
         failureChannel: f.Harness.FailureCapture,
         perspectiveDrainChannel: f.Harness.DrainChannel,
-        schemaReadyGate: SchemaReadyGate.AlreadyReady(),
-        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null,
-        timeProvider: timeProvider);
+        gate: gateMaxConcurrent > 0 ? new WorkCoordinatorGate(maxConcurrent: gateMaxConcurrent) : null);
       // Await StartAsync so ExecuteTask is populated before any test touches the worker. Its own
       // returned task is NOT the worker body -- .NET 10 hands back Task.CompletedTask as soon as
       // ExecuteAsync is queued to the thread pool.

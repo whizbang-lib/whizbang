@@ -455,22 +455,24 @@ public class PerspectiveWorkerDeepPathMiscTests {
     };
     configure?.Invoke(options);
 
+    // Named arguments follow the constructor's parameter order (RCS1205): schemaReadyGate is the
+    // fourth parameter and timeProvider precedes the channels.
     var worker = new PerspectiveWorker(
       instanceProvider: instanceProvider,
       scopeFactory: provider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(options),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: new InstantCompletionStrategy(),
       eventTypeProvider: registry,
       streamLocker: streamLocker,
       streamLockOptions: streamLockOptions is null ? null : Options.Create(streamLockOptions),
       streamAffinityOptions: affinityOptions is null ? null : Options.Create(affinityOptions),
+      timeProvider: timeProvider,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
-      perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel,
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
-      timeProvider: timeProvider);
+      perspectiveDrainChannel: drainChannelOverride ?? harness.DrainChannel);
     return (worker, harness, provider);
   }
 
