@@ -363,6 +363,13 @@ $$ LANGUAGE plpgsql;
 -- ============================================================================
 -- claim_work — reproduced verbatim from 133; the watermark stamp no longer waits.
 -- ============================================================================
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('claim_work');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_work(
   p_instance_id UUID,
   p_service_name TEXT,
@@ -825,6 +832,13 @@ $$ LANGUAGE plpgsql;
 -- claim_orphaned_perspective_events — reproduced verbatim from 027; the lease is taken under
 -- FOR UPDATE SKIP LOCKED like the inbox (138) and outbox (115) claims already are.
 -- ============================================================================
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_perspective_events');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,

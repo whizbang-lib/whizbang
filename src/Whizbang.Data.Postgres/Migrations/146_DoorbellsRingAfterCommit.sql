@@ -90,6 +90,13 @@ COMMENT ON FUNCTION __SCHEMA__.ring_doorbells(INTEGER) IS
   'right after a hot-path call, so the NOTIFY serialization lock is held only for this tiny commit. Returns the '
   'number of distinct notifications sent. Any instance may ring what any other queued.';
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('_notify_debounced');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__._notify_debounced(
   p_instance_id UUID,
   p_kind TEXT,
