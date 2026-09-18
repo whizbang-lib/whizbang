@@ -394,6 +394,39 @@ BEGIN
     CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
 
   -- ========================================
+  -- Task 5: Purge ancient stuck inbox messages
+  -- ========================================
+  -- POSITION: this sweep sits beside Task 2 because both DELETE from wh_inbox, and a transaction
+  -- that locks a table, moves on, and comes back to it can deadlock against a sibling that took
+  -- the two tables the other way round. Every pod runs this function on the same tick, so the
+  -- sibling here is another copy of this very function: one holds a wh_perspective_events row and
+  -- wants wh_active_streams, the other holds wh_active_streams and wants wh_perspective_events.
+  -- Each table is therefore visited exactly once, in the canonical order wh_outbox, wh_inbox,
+  -- wh_inbox_state, wh_perspective_events, wh_active_streams. The report is looked up by task
+  -- name everywhere it is read, never by position, so moving a block is free.
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
+    7
+  ) INTO v_stuck_inbox_retention_days;
+
+  v_start := clock_timestamp();
+  -- 162: same shape as the purge above. Every term of this predicate is on the state table,
+  -- received_at as a write-once copy, so the sweep never reads the wide message row to decide.
+  DELETE FROM __SCHEMA__.wh_inbox i
+  USING __SCHEMA__.wh_inbox_state ist
+  WHERE ist.message_id = i.message_id
+    AND ist.processed_at IS NULL
+    AND ist.lease_expiry IS NULL
+    AND ist.instance_id IS NULL
+    AND ist.received_at < NOW() - (v_stuck_inbox_retention_days || ' days')::INTERVAL;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'purge_stuck_inbox'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
+
+  -- ========================================
   -- Task 3: Purge completed perspective events
   -- ========================================
   v_start := clock_timestamp();
@@ -408,6 +441,42 @@ BEGIN
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
+
+  -- ========================================
+  -- Task 12: Reap orphaned perspective-event rows (issue #687)
+  -- ========================================
+  -- POSITION: beside Task 3 for the same reason Task 5 sits beside Task 2 -- both DELETE from
+  -- wh_perspective_events, and this one used to run after the wh_active_streams purge, which put
+  -- the two tables in both orders inside one transaction. Nothing here depends on the blocks it
+  -- moved past: the grace hours are read from wh_settings by this block itself, the predicate
+  -- reads wh_event_store which this function never writes, and Task 13 still runs after it and
+  -- still sees v_orphan_grace_hours set.
+  -- A wh_perspective_events row whose source event no longer exists in wh_event_store is
+  -- UNPROJECTABLE forever: the drainer's inner join (get_stream_events) returns nothing, so the
+  -- row is re-claimed every cycle with attempts climbing and no error, livelocking the pipeline
+  -- (root cause of #679). These arise when an event is reaped/purged after its perspective work
+  -- was created. Deleting is correct: the event is gone, so there is nothing to project and the
+  -- projection cursor never advanced past the row. Age-bounded on created_at so a row whose event
+  -- write has simply not committed yet (a legitimate in-flight window) is never reaped out from
+  -- under itself. Not gated on debug_mode: this is unprojectable garbage, not forensic evidence,
+  -- and leaving it keeps the pipeline wedged.
+  v_start := clock_timestamp();
+  SELECT COALESCE(
+    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'orphan_perspective_grace_hours'),
+    1
+  ) INTO v_orphan_grace_hours;
+  DELETE FROM __SCHEMA__.wh_perspective_events pe
+  WHERE pe.processed_at IS NULL
+    AND pe.created_at < NOW() - (v_orphan_grace_hours * INTERVAL '1 hour')
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = pe.event_id
+    );
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  RETURN QUERY SELECT
+    'reap_orphaned_perspective_events'::TEXT,
+    v_rows,
+    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
+    'ok'::TEXT;
 
   -- ========================================
   -- Task 4: Purge old deduplication entries
@@ -428,31 +497,6 @@ BEGIN
   GET DIAGNOSTICS v_rows = ROW_COUNT;
   RETURN QUERY SELECT
     'purge_old_deduplication'::TEXT,
-    v_rows,
-    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
-    'ok'::TEXT;
-
-  -- ========================================
-  -- Task 5: Purge ancient stuck inbox messages
-  -- ========================================
-  SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'stuck_inbox_retention_days'),
-    7
-  ) INTO v_stuck_inbox_retention_days;
-
-  v_start := clock_timestamp();
-  -- 162: same shape as the purge above. Every term of this predicate is on the state table,
-  -- received_at as a write-once copy, so the sweep never reads the wide message row to decide.
-  DELETE FROM __SCHEMA__.wh_inbox i
-  USING __SCHEMA__.wh_inbox_state ist
-  WHERE ist.message_id = i.message_id
-    AND ist.processed_at IS NULL
-    AND ist.lease_expiry IS NULL
-    AND ist.instance_id IS NULL
-    AND ist.received_at < NOW() - (v_stuck_inbox_retention_days || ' days')::INTERVAL;
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  RETURN QUERY SELECT
-    'purge_stuck_inbox'::TEXT,
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     'ok'::TEXT;
@@ -679,36 +723,6 @@ BEGIN
     v_rows,
     EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
     CASE WHEN v_debug_mode THEN 'skipped (debug_mode=true)' ELSE 'ok' END::TEXT;
-
-  -- ========================================
-  -- Task 12: Reap orphaned perspective-event rows (issue #687)
-  -- ========================================
-  -- A wh_perspective_events row whose source event no longer exists in wh_event_store is
-  -- UNPROJECTABLE forever: the drainer's inner join (get_stream_events) returns nothing, so the
-  -- row is re-claimed every cycle with attempts climbing and no error, livelocking the pipeline
-  -- (root cause of #679). These arise when an event is reaped/purged after its perspective work
-  -- was created. Deleting is correct: the event is gone, so there is nothing to project and the
-  -- projection cursor never advanced past the row. Age-bounded on created_at so a row whose event
-  -- write has simply not committed yet (a legitimate in-flight window) is never reaped out from
-  -- under itself. Not gated on debug_mode: this is unprojectable garbage, not forensic evidence,
-  -- and leaving it keeps the pipeline wedged.
-  v_start := clock_timestamp();
-  SELECT COALESCE(
-    (SELECT setting_value::INTEGER FROM __SCHEMA__.wh_settings WHERE setting_key = 'orphan_perspective_grace_hours'),
-    1
-  ) INTO v_orphan_grace_hours;
-  DELETE FROM __SCHEMA__.wh_perspective_events pe
-  WHERE pe.processed_at IS NULL
-    AND pe.created_at < NOW() - (v_orphan_grace_hours * INTERVAL '1 hour')
-    AND NOT EXISTS (
-      SELECT 1 FROM __SCHEMA__.wh_event_store es WHERE es.event_id = pe.event_id
-    );
-  GET DIAGNOSTICS v_rows = ROW_COUNT;
-  RETURN QUERY SELECT
-    'reap_orphaned_perspective_events'::TEXT,
-    v_rows,
-    EXTRACT(MILLISECONDS FROM clock_timestamp() - v_start)::DOUBLE PRECISION,
-    'ok'::TEXT;
 
   -- ========================================
   -- Task 13: Settle orphaned perspective-event DEAD LETTERS (issue #687)
@@ -3454,6 +3468,28 @@ BEGIN
     RAISE EXCEPTION 'recompute_partition_numbers: p_partition_count must be a positive integer (got %)', p_partition_count;
   END IF;
 
+  -- wh_outbox goes FIRST, and the order is the whole point rather than a preference. This
+  -- function is the only multi-table writer that took the work tables in a different order from
+  -- the rest: it locked wh_inbox_state before wh_outbox, while renew_leases, deregister_instance
+  -- and cleanup_stale_instances all lock wh_outbox before wh_inbox_state. Two transactions that
+  -- take the same two tables in opposite orders deadlock the moment their row sets overlap, and
+  -- these do overlap at exactly the worst moment: a partition recompute is triggered by the same
+  -- scale event that runs a deregistration and a stale-instance sweep. The victim is reported
+  -- waiting on a wh_outbox row lock, which says nothing about which pair caused it.
+  --
+  -- The two statements are independent -- separate tables, separate counters, and the report is
+  -- built from a fixed VALUES list below -- so the order is free to be the canonical one:
+  -- wh_outbox, wh_inbox, wh_inbox_state, wh_perspective_events, wh_active_streams.
+  WITH updated AS (
+    UPDATE __SCHEMA__.wh_outbox
+    SET partition_number = __SCHEMA__.compute_partition(stream_id, p_partition_count)
+    WHERE stream_id IS NOT NULL
+      AND processed_at IS NULL
+      AND partition_number IS DISTINCT FROM __SCHEMA__.compute_partition(stream_id, p_partition_count)
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO v_outbox_count FROM updated;
+
   -- wh_inbox: only recompute rows that have a stream binding AND whose stored
   -- partition_number disagrees with the canonical value. NULL partition_number
   -- (no stream binding) is the explicitly-tolerated fallback path in claim_orphaned_inbox
@@ -3471,16 +3507,6 @@ BEGIN
     RETURNING 1
   )
   SELECT COUNT(*) INTO v_inbox_count FROM updated;
-
-  WITH updated AS (
-    UPDATE __SCHEMA__.wh_outbox
-    SET partition_number = __SCHEMA__.compute_partition(stream_id, p_partition_count)
-    WHERE stream_id IS NOT NULL
-      AND processed_at IS NULL
-      AND partition_number IS DISTINCT FROM __SCHEMA__.compute_partition(stream_id, p_partition_count)
-    RETURNING 1
-  )
-  SELECT COUNT(*) INTO v_outbox_count FROM updated;
 
   -- wh_active_streams: refresh stale partition_numbers. Lease/ownership are untouched ,
   -- a recompute does not change who currently owns a stream, only the partition_number
