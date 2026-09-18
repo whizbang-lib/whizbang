@@ -1,9 +1,8 @@
+using System.Text.RegularExpressions;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.Postgres;
-
-using System.Text.RegularExpressions;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 
