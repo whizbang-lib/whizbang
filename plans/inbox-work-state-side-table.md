@@ -827,3 +827,67 @@ likely the same problem, and they follow only if this one lands and pays.
 - **No conclusion about which indexes are unused.** The 15-of-24 count is a fact about which columns
   are indexed. Whether any of the nine that stay is needed is a separate question that scan counts
   from a lightly exercised environment cannot answer.
+
+## 6. The read side is under-covered, and this is what blocks the PR
+
+The write-side result is real and measured. The read side is not, and the shape of the gap is now
+exact rather than a caveat. Derived from the migration text by machine, not from the failing tests:
+
+**Sixteen indexes on `wh_inbox` name a moved column, so the cutover's `DROP COLUMN` takes every one
+of them. The split creates five on `wh_inbox_state`.**
+
+| dropped from `wh_inbox` | replacement on `wh_inbox_state` |
+|---|---|
+| `idx_inbox_chain_pending` | `idx_inbox_state_chain_pending` — same keys, same predicate |
+| `idx_inbox_held_lanes` | `idx_inbox_state_held_lanes` — same keys, INCLUDE preserved |
+| `idx_inbox_pending_stream_order` | `idx_inbox_state_stream_order` — same keys, **INCLUDE dropped** |
+| `idx_inbox_unowned_bucket_arrival` | `idx_inbox_state_unowned` — keyed on raw `priority`, **not the bucket CASE expression**, no INCLUDE |
+| `idx_inbox_expired_bucket_arrival` | `idx_inbox_state_expired` — same, plus `lease_expiry` |
+| `idx_inbox_pending_interactive` | none |
+| `idx_inbox_pending_arrival_standard` | none |
+| `idx_inbox_pending_commands` | none |
+| `idx_inbox_stuck_sentinel` | none |
+| `idx_inbox_stream_blocked` | none |
+| `idx_inbox_stream_pending` | none |
+| `idx_inbox_instance_id` | none |
+| `idx_inbox_lease_expiry` | none |
+| `idx_inbox_outstanding_by_instance` | none |
+| `idx_inbox_unprocessed_claiming` | none |
+
+Two of sixteen carry over exactly. Three are near-equivalents with a real difference. **Eleven have
+no replacement at all.**
+
+**Why "26 indexes to 3" is both the win and the problem.** Dropping the indexes is exactly what buys
+the 69 percent off every write, so the number is not a mistake. But a dropped index is only free if
+the query it served has another path, and for eleven of these nobody has shown that it does. The
+three priority lanes and the bucket-expression keys are the ones to worry about: migration 159
+deliberately replaced one disjunctive pick with bucket-ordered partial-index lanes, and the state
+table keys on raw `priority` instead, which cannot serve a `CASE`-bucket ordering.
+
+**The failing tests are the symptom, not the problem.** Three separate passes over the fixtures
+arrived here independently: `InboxAcquisitionIndexSqlTests` asserts an index-only scan that no state
+index can now satisfy, and `PriorityLaneIndexUsabilityTests` asserts three lane indexes that no
+longer exist. Both were left red on purpose. Rewriting what they assert would convert a real finding
+into a green suite, which is the one outcome to avoid.
+
+**A quieter version of the same hazard, in the measurements themselves.** Several performance guards
+still name `wh_inbox` only in their scaffolding — `DoorbellCostScenarioTests`' `QUEUE_TABLES`,
+`NotifyInstanceOwnersScanShapeSqlTests`' `INBOX` and its `TUPLE_CEILING`, `ClaimWorkPlanShapeTests`'
+`pg_stat_user_tables` filters and `VACUUM (ANALYZE)` lists. None of them errors, because none names
+a moved column. They simply measure a table the hot path barely touches now, so a regression on
+`wh_inbox_state` would make them go **quiet rather than breach**. That is the same class as a quality
+gate that cannot see a project, and it has to be fixed before any number from those guards means
+anything on the split.
+
+**What this leaves.** The column set, the migration, the function rewrites, the C# sweep and the
+fixtures are done and the projects compile. What remains is a design decision plus a measurement, in
+this order:
+
+1. Decide, per dropped index, whether its query keeps a path: add the replacement on
+   `wh_inbox_state` (with the bucket expression and the INCLUDE columns where 159 and 138 needed
+   them), or show the query no longer runs.
+2. Re-point the measurement scaffolding above at both tables, so the guards can breach.
+3. Re-measure the read side, which section 5 has always said was unmeasured.
+
+Until step 1 has an answer this should not be a PR. The write win would ship alongside an unmeasured
+read regression, which is precisely the trade this work exists to avoid making by accident.
