@@ -111,15 +111,20 @@ CREATE TABLE IF NOT EXISTS __SCHEMA__.wh_inbox_state (
   -- function rather than chosen: a column the claim path needs that stays behind turns the
   -- per-stream ordering gate into a cross-table join, which is the one thing that would make this
   -- slower rather than faster.
-  -- IMMUTABLE COPIES. These stay on wh_inbox as well, and that is safe precisely because nothing
+  -- WRITE-ONCE COPIES. These stay on wh_inbox as well, and that is safe precisely because nothing
   -- rewrites them after the row is inserted: two copies of a value that never changes cannot
   -- diverge. They are copied here so the per-stream ordering gate and the lane picks read one narrow
-  -- table instead of joining back to a wide one, which is the whole performance case.
+  -- table instead of joining back to a wide one, which is the whole performance case. The exhaustive
+  -- pass over all 25 columns settled this set at exactly five: the other ten write-once columns are
+  -- payload, appear in no index, and are read only as projections by paths that join anyway.
   stream_id        UUID,
   received_at      TIMESTAMPTZ NOT NULL,
-  partition_number INTEGER,
   priority         INTEGER     NOT NULL DEFAULT 100,
   is_event         BOOLEAN     NOT NULL DEFAULT FALSE,
+  -- partition_number is the TENTH mutable column and was found only by the exhaustive pass.
+  -- recompute_partition_numbers rewrites it, so question one forbids it being copied: it moves.
+  -- It looks like static routing data, which is exactly what scheduled_for looked like.
+  partition_number INTEGER,
   -- THE NINE MUTABLE COLUMNS. These MOVE: they are dropped from wh_inbox, so each lives in exactly
   -- one place. The distinction that matters is mutability, not whether claiming reads them. An
   -- immutable column can safely be copied to both tables because the copies can never disagree; a
@@ -870,8 +875,8 @@ BEGIN
       i.scope,
       ist.status,
       ist.attempts,
-      i.partition_number,
-      i.is_event,
+      ist.partition_number,
+      ist.is_event,
       ist.error,
       i.priority,
       ROW_NUMBER() OVER (PARTITION BY ist.stream_id ORDER BY i.message_id) AS rank_in_stream
@@ -1217,7 +1222,6 @@ BEGIN
       metadata,
       scope,
       stream_id,
-      partition_number,
       is_event,
       flags,
       received_at,
@@ -1232,7 +1236,6 @@ BEGIN
       COALESCE(v_msg.metadata, '{}'::jsonb),
       COALESCE(v_msg.scope, 'null'::jsonb),
       v_msg.stream_id,
-      v_partition,
       COALESCE(v_msg.is_event, false),
       COALESCE(v_msg.flags, 0),
       p_now,

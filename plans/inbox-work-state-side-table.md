@@ -551,6 +551,87 @@ verification rather than regressions. Listed as they are found so none is a surp
 | Any test asserting on `wh_inbox.instance_id`, `lease_expiry`, `attempts`, `processed_at`, `scheduled_for`, `failure_reason`, `error` or `chain_emitted_at` | The column is gone. Move the assertion to `wh_inbox_state`. |
 | `InboxWorkStateIsTheOwnerSqlTests` (all four) | These PASS and become discriminating at that point. Their docstring says they are not discriminating yet and must be updated to say they now are. |
 
+## 3.13 The exhaustive column pass: all 25 columns, both questions, provably complete
+
+Done because the set had grown four, seven, eight, nine by discovery, each time triggered by hitting
+something. That is not evidence the set has stopped growing. `wh_inbox` has **25 columns** (not 23),
+which is small enough to answer definitively.
+
+Question one was answered mechanically rather than by reading: every `UPDATE` statement in every
+function body that targets `wh_inbox`, comments stripped, matched against each column name. Eleven
+such statements exist. **Ten columns are mutable, fifteen are write-once.**
+
+| Column | Q1: what rewrites it | Q2: needs index coverage on the state table | Verdict |
+|---|---|---|---|
+| `message_id` | nothing | yes, the join key and every lane's tiebreak | **copy** |
+| `handler_name` | nothing | no, in no index; a projection only | stays |
+| `message_type` | nothing | no, in no index | stays |
+| `event_data` | nothing | no, payload | stays |
+| `metadata` | nothing | no, payload | stays |
+| `scope` | nothing | no, payload | stays |
+| `stream_id` | nothing | yes, the ordering gate and the lane walk | **copy** |
+| `partition_number` | **`recompute_partition_numbers`** | keyed in 0, included in 8 | **MOVE** |
+| `is_event` | nothing | yes, the gate and the lane bucket | **copy** |
+| `status` | `process_inbox_completions`, `process_inbox_failures` | included in the held-lane index for an index-only probe | **MOVE** |
+| `attempts` | `claim_orphaned_inbox`, `release_unprocessed_inbox`, `release_unstarted_leases` | in the lane's fresh/retry split | **MOVE** |
+| `error` | `claim_orphaned_inbox`, `process_inbox_failures` | no | **MOVE** |
+| `instance_id` | six functions | keyed in 4, included in 2 | **MOVE** |
+| `lease_expiry` | seven functions | keyed in 4, included in 6 | **MOVE** |
+| `failure_reason` | `claim_orphaned_inbox`, `process_inbox_failures` | no | **MOVE** |
+| `scheduled_for` | `process_inbox_failures` | keyed in 1, included in 7 | **MOVE** |
+| `processed_at` | `process_inbox_completions` | the partial predicate of 15 indexes | **MOVE** |
+| `received_at` | nothing | yes, arrival order in every lane | **copy** |
+| `source_service_id` | nothing | no, only the source-cursor index, which stays | stays |
+| `source_commit_sequence` | nothing | no, same | stays |
+| `priority` | nothing | yes, the lane bucket expression | **copy** |
+| `chain_emitted_at` | `_emit_event_store_chain_for_inbox` | the chain's partial predicate | **MOVE** |
+| `flags` | nothing | no, in no index | stays |
+| `envelope_type` | nothing | no, payload | stays |
+| `envelope_data` | nothing | no, payload | stays |
+
+**Ten move, five are copied, ten stay.** `wh_inbox` keeps its fifteen write-once columns and three
+indexes (`wh_inbox_pkey`, `idx_inbox_received_at`, `idx_inbox_source_cursor`). `wh_inbox_state` holds
+fifteen columns and six indexes. **21 of 24 indexes move.**
+
+`partition_number` is the tenth and it was found only by this pass. It looks like static routing
+data, which is exactly what `scheduled_for` looked like, and `recompute_partition_numbers` rewrites
+it.
+
+## 3.14 Re-measured against the final set, and one number got worse
+
+Like for like, same fixture, same method, five paired runs. The prototype's figures were taken
+against a subset of the columns and a smaller index set, so they were optimistic.
+
+| | Prototype (subset) | **Final (all 25 assessed)** |
+|---|---|---|
+| Stamp on `wh_inbox` | 41.5 blocks/row | 34.7 blocks/row |
+| **Stamp on the state table** | **7.5 blocks/row** | **12.0 blocks/row** |
+| Reduction on the stamp | 82 percent | **65 percent** |
+| Gated pick, before | 582,640 blocks | 562,200 blocks |
+| **Gated pick, after** | **1,317 blocks** | **822 blocks** |
+| State table | 249 pages, 101 B/row, 3 indexes | 267 pages, 109 B/row, **6 indexes** |
+| `wh_inbox` after | not measured | 5,056 pages, 2,070 B/row, **3 indexes** |
+| Lock window, 100k rows | 0.69 s | 0.42 s |
+| Lock window, 500k rows | 2.14 s | 2.37 s |
+| Per row | 4.3 microseconds | 4.7 microseconds |
+| `DROP COLUMN` | 1.7 to 4.3 ms | 1.0 ms for all ten |
+
+**The stamp got worse and it should be read as worse: 7.5 to 12.0 blocks per row, so the reduction
+is 65 percent rather than 82.** The cause is not a surprise in hindsight: the state table now
+carries six indexes rather than three, and one of them (`idx_inbox_state_held_lanes`) is a wide
+covering index carrying five INCLUDE columns. That is the price of keeping the held-lane re-offer
+probe index-only, and it is worth paying, but it is a cost the prototype did not have and did not
+predict.
+
+**The gated pick got better**, 1,317 to 822 blocks, and the plan is now an index scan on the driving
+side rather than a sequential scan. The lock window is unchanged in substance at roughly 4.7
+microseconds per row, and `DROP COLUMN` remains catalog-only at about a millisecond for all ten.
+
+**The case still holds and it is no longer improving with every column added.** The honest summary:
+a 65 percent cut on every write to the work state, a roughly 680x cut on the gated pick at this
+fixture's shape, `wh_inbox` down from 24 indexes to three, for a stall of about 4.7 microseconds per
+row once.
+
 ## 4. Scope
 
 `wh_inbox` only, as the proof. `wh_outbox` and `wh_perspective_events` have the same shape and very
