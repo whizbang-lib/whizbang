@@ -559,23 +559,23 @@ DECLARE
   v_deleted_ids UUID[];
 BEGIN
 
-  -- Find and delete stale instances (older than cutoff). v0.681 — also skip rows
+  -- Find and delete stale instances (older than cutoff). v0.681: also skip rows
   -- whose session-level alive-lock is still held (migration 055): the adaptive
   -- heartbeat cadence may legitimately delay the heartbeat write past p_stale_cutoff
   -- when the direct conn is healthy. The lock is the primary liveness signal in
   -- that mode; the heartbeat-table check remains the fallback.
   --
-  -- v0.687 — the alive-lock guard has a long-tail failure mode under OOMKill +
+  -- v0.687: the alive-lock guard has a long-tail failure mode under OOMKill +
   -- half-open TCP. The kernel SIGKILLs the process before any graceful socket
   -- teardown, so the server-side session keeps holding the advisory lock until
   -- OS-level TCP keepalive notices (defaults to 7200 s = 2 h on Linux). Within
   -- that window cleanup_stale_instances refuses to remove the dead row, which
   -- in turn keeps that instance_id on every claimed lease in wh_inbox / wh_outbox
-  -- / wh_perspective_events — claim_orphaned_* can't release the work because
+  -- / wh_perspective_events, and claim_orphaned_* cannot release the work because
   -- those rows still have a future lease_expiry and a non-null instance_id.
   --
   -- The optional p_definitive_dead_cutoff lets callers say: "if the heartbeat
-  -- table has been silent for THIS long, the instance is definitely dead — bypass
+  -- table has been silent for THIS long, the instance is definitely dead, so bypass
   -- the alive-lock guard and clean it up." The lock guard still applies in the
   -- short window (heartbeat stale but newer than the definitive cutoff) so we
   -- preserve the adaptive-heartbeat correctness case. NULL preserves pre-v0.687
@@ -592,7 +592,7 @@ BEGIN
         -- v0.681 alive-lock guard: respect the lock as the primary liveness
         -- signal within the adaptive-heartbeat window.
         NOT EXISTS (
-          -- pg_locks.classid/objid are oid (uint32). hashtext() returns signed int4 — when
+          -- pg_locks.classid/objid are oid (uint32). hashtext() returns signed int4, so when
           -- negative, the lower-32-bit lane evaluates >2^31-1 as bigint, which overflows
           -- ::int (22003). Compare against the bigint expression and cast to ::oid so the
           -- comparison stays in oid-space without sign-flip.
@@ -611,7 +611,7 @@ BEGIN
   -- Release all work from deleted instances
   IF v_deleted_ids IS NOT NULL THEN
     -- Tombstone every reaped instance so a paused process that resumes and calls
-    -- record_heartbeat again is refused rather than silently rejoining — see migration 106.
+    -- record_heartbeat again is refused rather than silently rejoining. See migration 106.
     -- ON CONFLICT is defensive only: an instance_id cannot be re-deleted once gone, so a
     -- collision here would mean a caller reused an id, which this must not paper over by
     -- discarding the earlier eviction's timestamp.
@@ -658,16 +658,16 @@ BEGIN
       2,  -- Warning
       'stale_cleanup',
       unnest(v_deleted_ids),
-      'Stale instance removed — all leases released',
+      'Stale instance removed, all leases released',
       jsonb_build_object(
         'deleted_instance_count', array_length(v_deleted_ids, 1),
         'stale_cutoff', p_stale_cutoff
       );
 
-    -- v0.502 slice B.3 — orphan-redistribution NOTIFY.
+    -- v0.502 slice B.3: orphan-redistribution NOTIFY.
     -- After releasing leases owned by the dead instances, wake every LIVE instance so it
     -- runs a catch-up claim_orphaned_* over the newly-unowned rows. Without this, live
-    -- instances only discover the released work on their next poll tick — which under the
+    -- instances only discover the released work on their next poll tick, which under the
     -- new v0.502 NotifyHealthyPollingIntervalMilliseconds=30000 default could be up to
     -- 30 seconds away. Emitting a NOTIFY here turns orphan recovery from polling-bound to
     -- NOTIFY-bound, the architectural goal of v0.502.
