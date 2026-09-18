@@ -20,6 +20,24 @@ keeping them together is measurable.
 | `lease_expiry` | 12 of 26 |
 | `attempts` | 2 of 26 |
 
+**Correction to an earlier version of this document, and it was a latent bug rather than a wording
+problem.** The split boundary is not "the columns claiming reads" but **the columns anything
+rewrites**. Seven are mutable and must move: `instance_id`, `lease_expiry`, `attempts`,
+`processed_at`, `scheduled_for`, `failure_reason`, `error`. The first draft kept `scheduled_for` on
+both tables because it reads like static routing data, and it is not: `process_inbox_failures`
+rewrites it on every failure to compute the retry backoff. Two copies of a value something rewrites
+is a split brain, and it would have shown up as a retry firing at the wrong time or not at all.
+
+The immutable columns are copied to both tables deliberately and safely, because copies of a value
+that never changes after insert cannot diverge: `stream_id`, `received_at`, `is_event`,
+`partition_number`, `priority`. They are on the lease table so the ordering gate and the lane picks
+read one narrow table instead of joining back to a wide one.
+
+**Correcting the count with the right drop list: 20 of the 24 indexes name one of the seven mutable
+columns, so `wh_inbox` goes from 24 indexes to four** (the primary key, `idx_inbox_received_at`,
+`idx_inbox_stream_pending`, `idx_inbox_source_cursor`). That is a larger win than the 15-of-24 this
+document claimed before.
+
 **A heap-only update is therefore impossible by construction.** A HOT update requires that no indexed
 column changes; the claim changes three, all indexed. No `fillfactor` setting can help, because free
 space on the page is not what is missing. A wide row closes the other door by fitting few tuples to a
@@ -261,6 +279,55 @@ table that does not exist and raise SQLSTATE 42P01. That travels the same defect
 above: they back off, take no work, and lose none. Old-code instances keep working normally
 throughout. The fleet degrades to reduced capacity rather than to data loss or double dispatch, and
 it recovers when the migration succeeds on a later start.
+
+## 3.7 Test coverage established before rewriting, and one methodology trap
+
+The rule this follows: a rewrite verified by a suite that never calls it proves nothing, so coverage
+is established BEFORE the rewrite, and a gap gets a test first.
+
+**Searching for the SQL function name understates coverage badly, and nearly sent this work down a
+false path.** Grepping the test tree for `purge_orphan_inbox` returns zero real test files, and for
+`deregister_instance` returns a single code comment. Both look untested. Both are in fact covered,
+because the tests call the C# wrapper (`PurgeOrphanInboxAsync`, `DeregisterInstanceAsync`) and never
+name the function. The reverse trap is also present: most raw name hits are in `obj/generated`, where
+the migration text is embedded in generated code, so a naive count overstates coverage at the same
+time as the name search understates it. **Search by wrapper, exclude `obj/`, and confirm the test
+runs against a real database rather than a mock or a default interface implementation.**
+
+Measured baseline, all green before any rewrite: **128 tests across 18 classes**, covering all eight
+of the claim-state functions.
+
+| Function | Reached by |
+|---|---|
+| `release_unstarted_leases` | `BoundedAcquisitionRewriteSqlTests` (two direct calls) |
+| `renew_leases` | `RenewLeasesSqlTests`, `ActiveStreamLeaseExpirySqlTests` |
+| `count_outstanding_work` | `CountOutstandingWorkSqlTests` and three more |
+| `deregister_instance` | `EFCoreWorkCoordinatorDeepPathTests`, `DapperWorkCoordinatorBroadTests` |
+| `cleanup_stale_instances` | twelve classes |
+| `purge_orphan_inbox` | `EFCoreWorkCoordinatorLifecycleAndJanitorTests`, `DapperWorkCoordinatorWithDataTests` |
+| `release_unprocessed_inbox` | `InboxGracefulReleaseSqlTests`, `InboxAttemptAccountingBoundaryTests` |
+| `process_inbox_failures` | `OutboxInboxFailureReasonSqlTests` and five more |
+
+**One reclassification.** `purge_orphan_inbox` filters on `message_type`, which stays on `wh_inbox`,
+so it needs a join and belongs in the second batch rather than the first. Batch one is seven
+functions, not eight.
+
+## 3.8 The build scaffold, and why it is not the staged migration the owner rejected
+
+Verifying a batch at a time needs every intermediate state to be consistent, and it is not: a
+rewritten function reading the lease table beside an un-rewritten one still writing `wh_inbox` gives
+two representations that disagree, and the 128 baseline tests would fail for reasons that say nothing
+about the rewrite.
+
+So the migration carries a **temporary bidirectional sync trigger while the branch is being built**,
+guarded against recursion by trigger depth. It keeps both representations in step so every batch can
+be verified against the real suite. It is removed in the same commit that adds the column drops, and
+the migration that ships is the single-transaction cutover described above.
+
+This is the expand/migrate/contract mechanism used as a development scaffold rather than as a
+shipping strategy. The distinction is not cosmetic: the reason staging was rejected is that consumers
+would run a version where the old columns exist but are ignored, and a claim writing an ignored column
+believes it holds a lease it does not. No consumer ever sees the scaffold.
 
 ## 3.6 Build status
 
