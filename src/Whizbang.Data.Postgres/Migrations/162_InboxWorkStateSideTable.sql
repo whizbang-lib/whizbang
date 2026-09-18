@@ -245,6 +245,12 @@ CREATE INDEX IF NOT EXISTS idx_inbox_state_stream_order
 -- believes it holds a lease it does not, and dispatches work a second claimer will also take. No
 -- consumer ever sees these triggers: they and the column drops are one commit.
 --
+-- THE COLUMN LIST HERE IS THE DROP LIST AND MUST BE RE-DERIVED WITH IT. It was not, once:
+-- partition_number joined the drop list when the exhaustive pass found recompute_partition_numbers
+-- rewrites it, and this scaffold kept a list from before that, so a recomputed partition stopped
+-- reaching wh_inbox and a test that reads it there failed. Same failure mode as every other list in
+-- this work that was carried forward rather than re-derived.
+--
 -- Created AFTER the backfill above, deliberately, so the backfill does not fire them once per row.
 -- pg_trigger_depth() > 1 means we were fired by the other trigger rather than by a statement, which
 -- is how the two directions avoid recursing into each other.
@@ -264,7 +270,7 @@ BEGIN
     lease_expiry = EXCLUDED.lease_expiry, attempts = EXCLUDED.attempts,
     scheduled_for = EXCLUDED.scheduled_for, failure_reason = EXCLUDED.failure_reason,
     error = EXCLUDED.error, chain_emitted_at = EXCLUDED.chain_emitted_at,
-    status = EXCLUDED.status;
+    status = EXCLUDED.status, partition_number = EXCLUDED.partition_number;
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
@@ -276,7 +282,8 @@ BEGIN
     processed_at = NEW.processed_at, instance_id = NEW.instance_id,
     lease_expiry = NEW.lease_expiry, attempts = NEW.attempts,
     scheduled_for = NEW.scheduled_for, failure_reason = NEW.failure_reason, error = NEW.error,
-    chain_emitted_at = NEW.chain_emitted_at, status = NEW.status
+    chain_emitted_at = NEW.chain_emitted_at, status = NEW.status,
+    partition_number = NEW.partition_number
   WHERE message_id = NEW.message_id;
   RETURN NULL;
 END;
@@ -3191,5 +3198,378 @@ BEGIN
     RETURNING ast.stream_id AS pinned_stream_id
   )
   SELECT c.c_event_work_id AS event_work_id, c.c_stream_id AS stream_id, c.c_perspective_name AS perspective_name FROM claimed c;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ===========================================================================================
+-- BATCH FOUR: the five functions the re-derived enumeration found.
+-- ===========================================================================================
+-- Six were found; one needs no change. commit_handler_batch_bulk matched the search only through a
+-- COMMENT mentioning wh_inbox, and has no statement against the table. Recorded rather than silently
+-- skipped, because "matched a text search" and "touches the table" are different claims and this
+-- work has now conflated them six times.
+
+
+-- <docs>operations/infrastructure/partitioning</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorDeepPathTests.cs:RecomputePartitionNumbersAsync_MismatchedRows_RecomputesAllThreeTablesAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.recompute_partition_numbers(
+  p_partition_count INTEGER
+) RETURNS TABLE(
+  table_name TEXT,
+  rows_recomputed BIGINT
+) AS $$
+DECLARE
+  v_inbox_count BIGINT;
+  v_outbox_count BIGINT;
+  v_active_streams_count BIGINT;
+BEGIN
+  IF p_partition_count IS NULL OR p_partition_count <= 0 THEN
+    RAISE EXCEPTION 'recompute_partition_numbers: p_partition_count must be a positive integer (got %)', p_partition_count;
+  END IF;
+
+  -- wh_inbox: only recompute rows that have a stream binding AND whose stored
+  -- partition_number disagrees with the canonical value. NULL partition_number
+  -- (no stream binding) is the explicitly-tolerated fallback path in claim_orphaned_inbox
+  -- and must not be touched.
+  WITH updated AS (
+    -- 162: this is the function that makes partition_number MUTABLE, and therefore the reason it
+    -- had to move rather than be copied. It looks like static routing data derived from the stream
+    -- id, and it is rewritten whenever the partition count changes. Every column here is on the
+    -- state table, so the update never touches the message row.
+    UPDATE __SCHEMA__.wh_inbox_state
+    SET partition_number = __SCHEMA__.compute_partition(stream_id, p_partition_count)
+    WHERE stream_id IS NOT NULL
+      AND processed_at IS NULL
+      AND partition_number IS DISTINCT FROM __SCHEMA__.compute_partition(stream_id, p_partition_count)
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO v_inbox_count FROM updated;
+
+  WITH updated AS (
+    UPDATE __SCHEMA__.wh_outbox
+    SET partition_number = __SCHEMA__.compute_partition(stream_id, p_partition_count)
+    WHERE stream_id IS NOT NULL
+      AND processed_at IS NULL
+      AND partition_number IS DISTINCT FROM __SCHEMA__.compute_partition(stream_id, p_partition_count)
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO v_outbox_count FROM updated;
+
+  -- wh_active_streams: refresh stale partition_numbers. Lease/ownership are untouched ,
+  -- a recompute does not change who currently owns a stream, only the partition_number
+  -- column used by claim_orphaned_inbox/_outbox modulo routing.
+  WITH updated AS (
+    UPDATE __SCHEMA__.wh_active_streams
+    SET partition_number = __SCHEMA__.compute_partition(stream_id, p_partition_count)
+    WHERE partition_number IS DISTINCT FROM __SCHEMA__.compute_partition(stream_id, p_partition_count)
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO v_active_streams_count FROM updated;
+
+  RETURN QUERY VALUES
+    ('wh_inbox'::TEXT, v_inbox_count),
+    ('wh_outbox'::TEXT, v_outbox_count),
+    ('wh_active_streams'::TEXT, v_active_streams_count);
+END;
+$$ LANGUAGE plpgsql;
+
+-- <docs>fundamentals/work-coordinator/overview</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorDeepPathTests.cs:CleanupCompletedStreamsAsync_NullStreamList_ReturnsZeroAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.cleanup_completed_streams(
+  p_stream_ids UUID[]
+) RETURNS INTEGER AS $$
+DECLARE
+  v_evicted INTEGER;
+BEGIN
+  IF p_stream_ids IS NULL OR array_length(p_stream_ids, 1) IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  -- Single set-based DELETE: remove active_streams rows for input stream_ids that
+  -- have no pending work across the three work tables. The "no pending" check filters
+  -- on processed_at IS NULL (outbox, inbox, perspective_events), same shape used by
+  -- claim_orphaned_*. Eviction is safe because the next event-store call for that
+  -- stream re-runs the wh_active_streams UPSERT.
+  WITH evicted AS (
+    DELETE FROM __SCHEMA__.wh_active_streams a
+    WHERE a.stream_id = ANY(p_stream_ids)
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_outbox o
+        WHERE o.stream_id = a.stream_id
+          AND o.processed_at IS NULL
+      )
+      AND NOT EXISTS (
+        -- 162: stream_id is a write-once copy here and processed_at moved, so the probe reads the
+        -- narrow table. This runs per candidate stream, so keeping it off the wide row matters.
+        SELECT 1 FROM __SCHEMA__.wh_inbox_state ist
+        WHERE ist.stream_id = a.stream_id
+          AND ist.processed_at IS NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM __SCHEMA__.wh_perspective_events pe
+        WHERE pe.stream_id = a.stream_id
+          AND pe.processed_at IS NULL
+      )
+    RETURNING a.stream_id
+  )
+  SELECT COUNT(*)::INTEGER INTO v_evicted FROM evicted;
+
+  RETURN COALESCE(v_evicted, 0);
+END;
+$$ LANGUAGE plpgsql;
+
+-- <docs>fundamentals/work-coordinator/failure-and-recovery</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:NotifyScheduledRetryDueAsync_DueOutboxAndInboxRows_ReturnsDistinctStreamCountAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorLifecycleAndJanitorTests.cs:NotifyScheduledRetryDueAsync_NoQualifyingRows_ReturnsZeroAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.notify_scheduled_retry_due()
+RETURNS TABLE(category TEXT, stream_count INTEGER) AS $$
+DECLARE
+  v_outbox_streams UUID[];
+  v_inbox_streams UUID[];
+  v_now TIMESTAMPTZ := NOW();
+BEGIN
+  -- Outbox rows whose scheduled_for time has elapsed and which haven't been processed.
+  -- Filter to NOT NULL stream_id because notify_instance_owners can't deliver to a row
+  -- with no owning stream. (Stream-less retries are handled by the regular claim poll.)
+  --
+  -- Multi-schema fix: tables MUST be __SCHEMA__-qualified. Unqualified FROM clauses get
+  -- resolved via search_path which defaults to public, when the function is invoked
+  -- from an inventory/bff schema (the InMemory + ECommerce hosts pattern) it tried to
+  -- read public.wh_outbox / public.wh_inbox, which don't exist; every 10 s cycle threw
+  -- 42P01 and the surrounding noise stalled perspective discovery.
+  SELECT ARRAY_AGG(DISTINCT stream_id) INTO v_outbox_streams
+  FROM __SCHEMA__.wh_outbox
+  WHERE processed_at IS NULL
+    AND scheduled_for IS NOT NULL
+    AND scheduled_for <= v_now
+    AND stream_id IS NOT NULL;
+
+  -- Inbox rows, same shape.
+  SELECT ARRAY_AGG(DISTINCT stream_id) INTO v_inbox_streams
+  -- 162: processed_at and scheduled_for moved and stream_id is a write-once copy, so every term is
+  -- on the state table.
+  FROM __SCHEMA__.wh_inbox_state
+  WHERE processed_at IS NULL
+    AND scheduled_for IS NOT NULL
+    AND scheduled_for <= v_now
+    AND stream_id IS NOT NULL;
+
+  -- Note on wh_perspective_events: the current schema doesn't carry a scheduled_for column.
+  -- Retries on perspective events ride the claim_orphaned_perspective_events lease-expiry
+  -- path, which is NOTIFY-eligible via the regular work signals. If scheduled_for is added
+  -- to wh_perspective_events in the future, add a third SELECT/notify call here.
+
+  IF v_outbox_streams IS NOT NULL AND array_length(v_outbox_streams, 1) > 0 THEN
+    PERFORM __SCHEMA__.notify_instance_owners('outbox', v_outbox_streams);
+    category := 'outbox';
+    stream_count := array_length(v_outbox_streams, 1);
+    RETURN NEXT;
+  END IF;
+
+  IF v_inbox_streams IS NOT NULL AND array_length(v_inbox_streams, 1) > 0 THEN
+    PERFORM __SCHEMA__.notify_instance_owners('inbox', v_inbox_streams);
+    category := 'inbox';
+    stream_count := array_length(v_inbox_streams, 1);
+    RETURN NEXT;
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- <docs>operations/workers/stuck-rows</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreFindStuckRowsTests.cs:FindStuckInboxRows_RowExceedsThreshold_ReturnedAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.find_stuck_inbox_rows(
+  p_max_attempts INTEGER,
+  p_limit INTEGER
+) RETURNS TABLE (
+  message_id UUID,
+  message_type TEXT,
+  stream_id UUID,
+  attempts INTEGER,
+  claimed_since TIMESTAMPTZ
+) LANGUAGE SQL STABLE AS $$
+  -- 162: message_type is a property of the message and stays; attempts and processed_at moved. The
+  -- STATE table drives the join, so selection and ordering happen on the narrow table and the wide
+  -- row is fetched only for the rows that come back, which p_limit already bounds.
+  SELECT ist.message_id,
+         i.message_type::TEXT,
+         ist.stream_id,
+         ist.attempts,
+         ist.received_at
+  FROM __SCHEMA__.wh_inbox_state ist
+  JOIN __SCHEMA__.wh_inbox i ON i.message_id = ist.message_id
+  WHERE ist.attempts > p_max_attempts
+    AND ist.processed_at IS NULL
+  ORDER BY ist.attempts DESC, ist.received_at ASC
+  LIMIT p_limit;
+$$;
+
+-- <docs>messaging/dead-letters</docs>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PriorityOnTheWireSqlTests.cs:RecoverDeadLetter_InboxRow_ReentersAsBackgroundAsync</tests>
+-- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/DeadLetterRecoverySqlTests.cs:RecoverDeadLetter_InboxRowWithEmptyStreamId_NormalizesToNullAsync</tests>
+CREATE OR REPLACE FUNCTION __SCHEMA__.recover_dead_letter(
+  p_dead_letter_id UUID
+) RETURNS BOOLEAN AS $$
+DECLARE
+  v_source_table   TEXT;
+  v_source_id      UUID;
+  v_redelivered    BIGINT;
+  v_stream_id      UUID;
+  v_message_type   TEXT;
+  v_destination    TEXT;
+  v_perspective    TEXT;
+  v_envelope       JSONB;
+  v_metadata       JSONB;
+  v_event_data     JSONB;
+  v_partition      INTEGER;
+BEGIN
+  -- Atomically claim the row by transitioning to Recovering AND fetch its forensic
+  -- payload. If another worker raced us OR the row is already terminal, the UPDATE
+  -- affects zero rows and we return false.
+  WITH claimed AS (
+    UPDATE __SCHEMA__.wh_dead_letters
+    SET recovery_status = 1,                  -- Recovering
+        recovery_attempts = recovery_attempts + 1,
+        last_recovery_at = NOW()
+    WHERE dead_letter_id = p_dead_letter_id
+      AND recovery_status NOT IN (1, 2, 3, 4)  -- not already Recovering, HoldForReview, Recovered, PermanentlyFailed
+      AND recovered_at IS NULL
+    RETURNING source_table, source_id, stream_id, message_type, destination, perspective_name, envelope, metadata
+  )
+  SELECT c.source_table, c.source_id, c.stream_id, c.message_type, c.destination, c.perspective_name, c.envelope, c.metadata
+  INTO v_source_table, v_source_id, v_stream_id, v_message_type, v_destination, v_perspective, v_envelope, v_metadata
+  FROM claimed c;
+
+  IF v_source_table IS NULL THEN
+    RETURN FALSE;  -- already claimed by another worker or already terminal
+  END IF;
+
+  -- v0.657 slice 4: DLQ replay self-repair. If the DLQ row preserves a
+  -- Guid.Empty stream_id (a pattern observed in production, producer bug from before the
+  -- v0.657 storage-time Reject guard shipped), normalize to NULL on the
+  -- INSERT back into the source table. Otherwise the recovered row immediately
+  -- re-sticks under the same silent-stuck pattern that DLQ'd it in the first
+  -- place: stream_id=Empty bypasses the NULL-only `??` coalesce in the C#
+  -- coordinator (pre-v0.657) and the slice-3 coordinator backstop sees Empty
+  -- as "no real stream identity" → WorkId fallback. NULL is the documented
+  -- singleton-stream marker; that's the value we want on recovery.
+  IF v_stream_id = __EMPTY_UUID__::uuid THEN
+    v_stream_id := NULL;
+  END IF;
+
+  -- Extract the original event_data from the envelope JSONB.
+  v_event_data := v_envelope -> 'event_data';
+  v_partition := CASE WHEN v_stream_id IS NULL THEN 0 ELSE 0 END;  -- partition recomputed on store_*_messages path; fixed to 0 here is fine because claim_orphaned_* recomputes via wh_active_streams
+
+  -- Re-emit into the appropriate source table with attempts=0.
+  IF v_source_table = 'wh_outbox' THEN
+    INSERT INTO __SCHEMA__.wh_outbox (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts, created_at, stream_id, partition_number, priority)
+    VALUES (v_source_id, v_destination, v_message_type, 'recovered', v_event_data, v_metadata, 0, 0, NOW(), v_stream_id, v_partition, __PRIORITY_BACKGROUND__)
+    ON CONFLICT (message_id) DO NOTHING;  -- already re-published; idempotent
+  ELSIF v_source_table = 'wh_inbox' THEN
+    INSERT INTO __SCHEMA__.wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id, priority)
+    VALUES (v_source_id, COALESCE(v_perspective, 'recovered'), v_message_type, v_event_data, v_metadata, NOW(), v_stream_id, __PRIORITY_BACKGROUND__)
+    ON CONFLICT (message_id) DO NOTHING;
+    -- 125: count the re-delivery this recovery just caused.
+    --
+    -- 121 replaced count-based poison detection with an observation counter the framework keeps
+    -- itself, because a broker delivery counter cannot bound a redelivery loop. store_inbox_messages
+    -- increments wh_message_deduplication.observation_count on every arrival and
+    -- PoisonMessageDetector reads that count. Recovery re-delivers by INSERTing straight into
+    -- wh_inbox, which bypasses that path, so before this every recovery-driven arrival was
+    -- invisible: a message could be recovered without limit because no pass was ever observed and
+    -- attempts is reset to 0 on the way in.
+    --
+    -- Charged only when the INSERT actually inserted. ON CONFLICT DO NOTHING means a double-recovery
+    -- race delivered nothing, and charging for a delivery that did not happen would push a healthy
+    -- message toward quarantine.
+    -- 162: this GET DIAGNOSTICS reads ROW_COUNT of the statement IMMEDIATELY above it, so nothing
+    -- may be inserted between them. An earlier draft put the work-state INSERT here and the counter
+    -- silently began measuring that instead, which zeroed the redelivery charge and made recovery
+    -- invisible to poison detection. The state row is created below, after the count is taken.
+    GET DIAGNOSTICS v_redelivered = ROW_COUNT;
+    IF v_redelivered > 0 THEN
+      INSERT INTO __SCHEMA__.wh_message_deduplication AS dedup
+        (message_id, first_seen_at, observation_count)
+      VALUES (v_source_id, NOW(), 1)
+      ON CONFLICT ON CONSTRAINT wh_message_deduplication_pkey DO UPDATE
+        SET observation_count = dedup.observation_count + 1;
+    END IF;
+    -- status, attempts and partition_number are work state, so recovery constructs the state row as
+    -- well as the message. A recovered message with no state row could never be claimed and would
+    -- fail silently, which is the shape this pair exists to prevent. attempts resets to 0 on the way
+    -- in, which is the point of recovery: the budget is deliberately refunded.
+    INSERT INTO __SCHEMA__.wh_inbox_state (
+      message_id, stream_id, received_at, partition_number, priority, is_event,
+      status, processed_at, instance_id, lease_expiry, attempts)
+    VALUES (v_source_id, v_stream_id, NOW(), v_partition, __PRIORITY_BACKGROUND__, FALSE,
+            0, NULL, NULL, NULL, 0)
+    ON CONFLICT (message_id) DO NOTHING;
+
+  ELSIF v_source_table = 'wh_perspective_events' THEN
+    -- Perspective recovery uses the event_id snapshot to recreate the work row.
+    INSERT INTO __SCHEMA__.wh_perspective_events (event_work_id, stream_id, perspective_name, event_id, partition_number, status, attempts, created_at, priority)
+    VALUES (v_source_id, v_stream_id, v_perspective, (v_envelope ->> 'event_id')::UUID, v_partition, 0, 0, NOW(), __PRIORITY_BACKGROUND__)
+    ON CONFLICT (event_work_id) DO NOTHING;
+  ELSIF v_source_table = 'broker' THEN
+    -- Broker-imported rows (wh_import_dead_letter, migration 119) re-enter through the inbox
+    -- front door: normal dispatch, composite fan-out, and the internal max-attempts ladder all
+    -- apply unchanged. A row that still cannot be processed on the current build parks again in
+    -- wh_dead_letters via move_to_dead_letters, visible, fingerprinted, attempt-accounted ,
+    -- instead of orbiting the broker's opaque DLQ.
+    INSERT INTO __SCHEMA__.wh_inbox (message_id, handler_name, message_type, event_data, metadata, received_at, stream_id, priority)
+    VALUES (v_source_id, 'broker-recovered', v_message_type, v_event_data, v_metadata, NOW(), v_stream_id, __PRIORITY_BACKGROUND__)
+    ON CONFLICT (message_id) DO NOTHING;
+    -- 125: count the re-delivery this recovery just caused.
+    --
+    -- 121 replaced count-based poison detection with an observation counter the framework keeps
+    -- itself, because a broker delivery counter cannot bound a redelivery loop. store_inbox_messages
+    -- increments wh_message_deduplication.observation_count on every arrival and
+    -- PoisonMessageDetector reads that count. Recovery re-delivers by INSERTing straight into
+    -- wh_inbox, which bypasses that path, so before this every recovery-driven arrival was
+    -- invisible: a message could be recovered without limit because no pass was ever observed and
+    -- attempts is reset to 0 on the way in.
+    --
+    -- Charged only when the INSERT actually inserted. ON CONFLICT DO NOTHING means a double-recovery
+    -- race delivered nothing, and charging for a delivery that did not happen would push a healthy
+    -- message toward quarantine.
+    -- 162: this GET DIAGNOSTICS reads ROW_COUNT of the statement IMMEDIATELY above it, so nothing
+    -- may be inserted between them. An earlier draft put the work-state INSERT here and the counter
+    -- silently began measuring that instead, which zeroed the redelivery charge and made recovery
+    -- invisible to poison detection. The state row is created below, after the count is taken.
+    GET DIAGNOSTICS v_redelivered = ROW_COUNT;
+    IF v_redelivered > 0 THEN
+      INSERT INTO __SCHEMA__.wh_message_deduplication AS dedup
+        (message_id, first_seen_at, observation_count)
+      VALUES (v_source_id, NOW(), 1)
+      ON CONFLICT ON CONSTRAINT wh_message_deduplication_pkey DO UPDATE
+        SET observation_count = dedup.observation_count + 1;
+    END IF;
+    -- status, attempts and partition_number are work state, so recovery constructs the state row as
+    -- well as the message. A recovered message with no state row could never be claimed and would
+    -- fail silently, which is the shape this pair exists to prevent. attempts resets to 0 on the way
+    -- in, which is the point of recovery: the budget is deliberately refunded.
+    INSERT INTO __SCHEMA__.wh_inbox_state (
+      message_id, stream_id, received_at, partition_number, priority, is_event,
+      status, processed_at, instance_id, lease_expiry, attempts)
+    VALUES (v_source_id, v_stream_id, NOW(), v_partition, __PRIORITY_BACKGROUND__, FALSE,
+            0, NULL, NULL, NULL, 0)
+    ON CONFLICT (message_id) DO NOTHING;
+
+  ELSE
+    -- Unknown source table, leave as Recovering for an operator to investigate.
+    RAISE WARNING 'recover_dead_letter: unsupported source table %', v_source_table;
+    RETURN FALSE;
+  END IF;
+
+  -- Mark Recovered.
+  UPDATE __SCHEMA__.wh_dead_letters
+  SET recovery_status = 3,
+      recovered_at = NOW(),
+      retried_on_generations =
+        CASE WHEN generation = ANY(retried_on_generations) THEN retried_on_generations
+             ELSE array_append(retried_on_generations, generation) END
+  WHERE dead_letter_id = p_dead_letter_id;
+
+  RETURN TRUE;
 END;
 $$ LANGUAGE plpgsql;

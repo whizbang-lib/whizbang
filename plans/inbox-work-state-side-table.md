@@ -476,7 +476,7 @@ not a regression**, and they are expected in the final commit rather than treate
 | `chain_emitted_at` moved to the lease table with its index | **landed** |
 | Batch two remainder: `move_to_dead_letters`, `store_inbox_messages`, `_emit_event_store_chain_for_inbox` | **landed, 78 tests green** |
 | Batch three: `claim_orphaned_inbox` and `claim_work` | **landed, 127 tests green. Both became PURE state-table functions** |
-| Batch four: the six functions the re-derived enumeration found | not written |
+| Batch four: five functions rewritten, one needed no change | **landed, 59 tests green** |
 
 The migration is deliberately NOT in `src/Whizbang.Data.Postgres/Migrations/` yet. Shipped
 incomplete it would take `ACCESS EXCLUSIVE` on every startup and backfill a table nothing reads, and
@@ -548,6 +548,7 @@ verification rather than regressions. Listed as they are found so none is a surp
 |---|---|
 | `EmitChainInboxIndexTests.EmitChainInboxIndex_ExistsAfterMigrationsAsync` | Asserts `idx_inbox_chain_pending` exists on `wh_inbox`. That index keys on `instance_id` and predicates on `processed_at`, both of which move, so it cannot survive. Repoint at `idx_inbox_state_chain_pending`. |
 | `EmitChainInboxIndexTests.EmitChainInboxIndex_HasExpectedPartialPredicateAsync` | Same index, same reason. |
+| `EFCoreWorkCoordinatorDeepPathTests.RecomputePartitionNumbersAsync_MismatchedRows_RecomputesAllThreeTablesAsync` | Reads `wh_inbox.partition_number`. That column moves. Repoint at `wh_inbox_state`. |
 | Any test asserting on `wh_inbox.instance_id`, `lease_expiry`, `attempts`, `processed_at`, `scheduled_for`, `failure_reason`, `error` or `chain_emitted_at` | The column is gone. Move the assertion to `wh_inbox_state`. |
 | `InboxWorkStateIsTheOwnerSqlTests` (all four) | These PASS and become discriminating at that point. Their docstring says they are not discriminating yet and must be updated to say they now are. |
 
