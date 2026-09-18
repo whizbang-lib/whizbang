@@ -265,3 +265,4 @@
 154_PerspectiveFailureElementNames.sql::process_perspective_event_failures
 156_OutboxInboxFailureElementNames.sql::process_inbox_failures
 156_OutboxInboxFailureElementNames.sql::process_outbox_failures
+161_PerspectiveStreamEmptinessProbeIndex.sql::store_outbox_messages
