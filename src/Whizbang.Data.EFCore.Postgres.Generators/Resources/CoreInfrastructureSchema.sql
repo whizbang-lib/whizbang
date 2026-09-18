@@ -71,12 +71,23 @@ CREATE TABLE IF NOT EXISTS wh_inbox (
   received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_inbox_processed_at ON wh_inbox (processed_at);
+-- Only received_at is indexed here, and the five indexes that used to sit beside it are gone rather
+-- than moved. They keyed processed_at, lease_expiry, status, failure_reason and scheduled_for, all
+-- of which migration 162 moves to wh_inbox_state, where it creates the replacements.
+--
+-- Leaving them would not be untidy, it would break the second startup. This script runs on EVERY
+-- start, before the migrations. `CREATE INDEX IF NOT EXISTS` tests the INDEX NAME, not the columns,
+-- so once 162 has dropped a column -- taking its index with it -- the name is free again and
+-- PostgreSQL goes on to build the index, against a column that is no longer there: 42703, and the
+-- start fails behind the schema-ready gate. A fresh database never sees it, because on the first
+-- boot the columns still exist when this runs, which is exactly why no test caught it: every
+-- per-test database is a first boot.
+--
+-- This is the THIRD place the inbox is declared, after the Whizbang.Data.Schema descriptors and the
+-- numbered migrations. The descriptor hazard was the mirror image of this one -- it re-ADDED the
+-- dropped columns silently via ADD COLUMN IF NOT EXISTS -- and both have the same cause: a
+-- create-time declaration that outlives the shape it describes.
 CREATE INDEX IF NOT EXISTS idx_inbox_received_at ON wh_inbox (received_at);
-CREATE INDEX IF NOT EXISTS idx_inbox_lease_expiry ON wh_inbox (lease_expiry) WHERE lease_expiry IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_inbox_status_lease ON wh_inbox (status, lease_expiry) WHERE (status & 32768) = 0 AND (status & 2) != 2;
-CREATE INDEX IF NOT EXISTS idx_inbox_failure_reason ON wh_inbox (failure_reason) WHERE (status & 32768) = 32768;
-CREATE INDEX IF NOT EXISTS idx_inbox_scheduled_for ON wh_inbox (stream_id, scheduled_for, received_at) WHERE scheduled_for IS NOT NULL;
 
 -- Outbox - Transactional messaging pattern
 CREATE TABLE IF NOT EXISTS wh_outbox (
