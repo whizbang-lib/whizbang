@@ -248,6 +248,20 @@ dotnet_code_quality_unused_parameters = all:suggestion
 # C# Coding Conventions       #
 ###############################
 [*.cs]
+
+# CA1707 (no underscores in member names) directly contradicts this file's own
+# dotnet_naming_rule.constants_rule / private_constants_rule, which mandate all_upper_style
+# with '_' as the word separator for constant fields. Both cannot be satisfied, and the naming
+# rule is the deliberate house convention: every one of the 52 src hits is exactly such a
+# constant (METER_NAME, DEFAULT_CADENCE_MULTIPLIER, CONFIGURATION_SECTION), many of them public,
+# so renaming them would be a breaking API change for consumers.
+#
+# It is set here rather than with a pragma because CA1707 is reported against the SYMBOL with no
+# source location — `#pragma warning disable` cannot suppress a diagnostic that has no line to
+# attach to, which is why the one in PostgresNotificationsServiceCollectionExtensions.cs never
+# took effect and that constant kept being reported. Severity is the only lever that works.
+dotnet_diagnostic.CA1707.severity = none
+
 # var preferences
 csharp_style_var_for_built_in_types = true:silent
 csharp_style_var_when_type_is_apparent = true:silent

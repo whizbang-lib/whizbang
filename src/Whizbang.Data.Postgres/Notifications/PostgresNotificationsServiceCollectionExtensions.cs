@@ -43,10 +43,8 @@ namespace Whizbang.Data.Postgres.Notifications;
 /// </remarks>
 /// <docs>fundamentals/work-coordinator/notifications-and-pgbouncer</docs>
 public static class PostgresNotificationsServiceCollectionExtensions {
-#pragma warning disable CA1707 // project convention: public const strings use UPPER_CASE with underscores
   /// <summary>Configuration section the listener binds <see cref="WhizbangNotificationOptions"/> from.</summary>
   public const string CONFIGURATION_SECTION = "Whizbang:Database";
-#pragma warning restore CA1707
 
   /// <summary>
   /// Registers the Postgres LISTEN/NOTIFY listener and binds
