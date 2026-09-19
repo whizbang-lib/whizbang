@@ -115,9 +115,6 @@ BEGIN
   END IF;
 END $$;
 
--- ---------------------------------------------------------------------------------------------
--- claim_orphaned_inbox: last word 148_ActiveStreamLeases.sql, with the lane block replaced by the bucket lanes.
--- ---------------------------------------------------------------------------------------------
 -- Exactly one overload per framework function: this name is defined at more than one
 -- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
 -- overload beside the old one rather than replacing it. The duplicate then makes every
@@ -125,6 +122,9 @@ END $$;
 -- FUNCTION -- which fails the whole startup pass and strands every later migration.
 SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_inbox');
 
+-- ---------------------------------------------------------------------------------------------
+-- claim_orphaned_inbox: last word 148_ActiveStreamLeases.sql, with the lane block replaced by the bucket lanes.
+-- ---------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
   p_instance_id UUID,
   p_instance_rank INTEGER,

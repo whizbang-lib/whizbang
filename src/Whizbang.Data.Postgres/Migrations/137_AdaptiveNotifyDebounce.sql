@@ -76,12 +76,6 @@ INSERT INTO __SCHEMA__.wh_settings (setting_key, setting_value, value_type, desc
    'Adaptive notify (137): rapid_run must reach this many consecutive rapid doorbells before suppression escalates from the floor to the ceiling (notify_debounce_seconds). Below it, doorbells fire — the first few of any burst always ring so latency stays low until a flood is certain.')
 ON CONFLICT (setting_key) DO NOTHING;
 
--- ============================================================================
--- _notify_debounced — adaptive suppress-or-fire for one target instance.
--- SAME 130 signature (p_instance_id, p_payload, p_window): a pure CREATE OR REPLACE. p_window is
--- the CEILING seconds (notify_instance_owners passes notify_debounce_seconds, unchanged); the
--- floor/rapid-gap/churn knobs are read here from wh_settings. No DROP, no new overload.
--- ============================================================================
 -- Exactly one overload per framework function: this name is defined at more than one
 -- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
 -- overload beside the old one rather than replacing it. The duplicate then makes every
@@ -89,6 +83,12 @@ ON CONFLICT (setting_key) DO NOTHING;
 -- FUNCTION -- which fails the whole startup pass and strands every later migration.
 SELECT __SCHEMA__.drop_all_overloads('_notify_debounced');
 
+-- ============================================================================
+-- _notify_debounced — adaptive suppress-or-fire for one target instance.
+-- SAME 130 signature (p_instance_id, p_payload, p_window): a pure CREATE OR REPLACE. p_window is
+-- the CEILING seconds (notify_instance_owners passes notify_debounce_seconds, unchanged); the
+-- floor/rapid-gap/churn knobs are read here from wh_settings. No DROP, no new overload.
+-- ============================================================================
 CREATE OR REPLACE FUNCTION __SCHEMA__._notify_debounced(
   p_instance_id UUID,
   p_payload TEXT,

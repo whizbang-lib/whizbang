@@ -117,7 +117,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- (1c) Cap sweep re-created VERBATIM from 111 with the same journaling change.
 -- Exactly one overload per framework function: this name is defined at more than one
 -- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
 -- overload beside the old one rather than replacing it. The duplicate then makes every
@@ -125,6 +124,7 @@ $$ LANGUAGE plpgsql;
 -- FUNCTION -- which fails the whole startup pass and strands every later migration.
 SELECT __SCHEMA__.drop_all_overloads('reap_perspective_row_caps');
 
+-- (1c) Cap sweep re-created VERBATIM from 111 with the same journaling change.
 CREATE OR REPLACE FUNCTION __SCHEMA__.reap_perspective_row_caps()
 RETURNS TABLE(task TEXT, rows_affected INTEGER, duration_ms DOUBLE PRECISION, status TEXT) AS $$
 DECLARE

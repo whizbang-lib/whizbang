@@ -122,9 +122,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Re-created VERBATIM from 103 with one addition: rows under an active hold are excluded from the
--- eviction, though they still occupy their rank — a deferred row beyond the cap is simply retried
--- next cycle, and coherence converges when its hold lapses.
 -- Exactly one overload per framework function: this name is defined at more than one
 -- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
 -- overload beside the old one rather than replacing it. The duplicate then makes every
@@ -132,6 +129,9 @@ $$ LANGUAGE plpgsql;
 -- FUNCTION -- which fails the whole startup pass and strands every later migration.
 SELECT __SCHEMA__.drop_all_overloads('reap_perspective_row_caps');
 
+-- Re-created VERBATIM from 103 with one addition: rows under an active hold are excluded from the
+-- eviction, though they still occupy their rank — a deferred row beyond the cap is simply retried
+-- next cycle, and coherence converges when its hold lapses.
 CREATE OR REPLACE FUNCTION __SCHEMA__.reap_perspective_row_caps()
 RETURNS TABLE(task TEXT, rows_affected INTEGER, duration_ms DOUBLE PRECISION, status TEXT) AS $$
 DECLARE

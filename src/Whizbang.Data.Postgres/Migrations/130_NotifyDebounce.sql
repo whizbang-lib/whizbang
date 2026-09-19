@@ -32,9 +32,6 @@ VALUES ('notify_debounce_seconds', '7', 'integer',
         'Doorbell debounce window: notifies toward an instance whose wh_notify_state watermark is fresher than this many seconds are suppressed (the drainer is awake and polling). MUST stay below the C# drain linger (Whizbang:Workers:Claim:NotifyDrainLingerSeconds, default 8) so the suppression self-expires while the drainer still polls. Non-positive disables the debounce.')
 ON CONFLICT (setting_key) DO NOTHING;
 
--- ============================================================================
--- _notify_debounced — suppress-or-fire for one target instance
--- ============================================================================
 -- Exactly one overload per framework function: this name is defined at more than one
 -- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
 -- overload beside the old one rather than replacing it. The duplicate then makes every
@@ -42,6 +39,9 @@ ON CONFLICT (setting_key) DO NOTHING;
 -- FUNCTION -- which fails the whole startup pass and strands every later migration.
 SELECT __SCHEMA__.drop_all_overloads('_notify_debounced');
 
+-- ============================================================================
+-- _notify_debounced — suppress-or-fire for one target instance
+-- ============================================================================
 CREATE OR REPLACE FUNCTION __SCHEMA__._notify_debounced(
   p_instance_id UUID,
   p_payload TEXT,
