@@ -399,7 +399,7 @@ public class CommitHandlerBatchSqlTests : EFCoreTestBase {
     await Assert.That(rows.All(r => r.Tier == 2)).IsTrue()
       .Because("the bulk tier failed, so every row was committed by the per-handler fallback "
              + "— and the caller can finally SEE that");
-    await Assert.That(rows.Any(r => r.BulkError != null && r.BulkError.Contains("22P02"))).IsTrue()
+    await Assert.That(rows.Any(r => r.BulkError?.Contains("22P02") == true)).IsTrue()
       .Because("the Tier-1 SQLSTATE is the diagnosis (#573's third ask): a malformed UUID is "
              + "22P02 invalid_text_representation, and discarding it made the slow path "
              + "undiagnosable for the life of the deployment");

@@ -28,7 +28,7 @@ public class SchemaReadyHealthCheckExtensionsTests {
     var services = new ServiceCollection();
     services.AddHealthChecks().AddWhizbangSchemaReadyCheck();
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var registrations = provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations;
     var registration = registrations.Single(r => r.Name == "schema");
 
@@ -40,7 +40,7 @@ public class SchemaReadyHealthCheckExtensionsTests {
     var services = new ServiceCollection();
     services.AddHealthChecks().AddWhizbangSchemaReadyCheck("db-schema", "startup", "critical");
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var registrations = provider.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations;
     var registration = registrations.Single(r => r.Name == "db-schema");
 

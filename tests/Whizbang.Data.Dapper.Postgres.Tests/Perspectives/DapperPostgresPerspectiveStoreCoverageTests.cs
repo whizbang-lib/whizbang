@@ -264,7 +264,7 @@ public class DapperPostgresPerspectiveStoreCoverageTests : PostgresTestBase {
     await conn.OpenAsync();
     await using var cmd = new NpgsqlCommand(
       $"SELECT data->>'Name', scope->>'t' FROM {TABLE_NAME} WHERE id = @id", conn);
-    cmd.Parameters.AddWithValue("id", id);
+    cmd.Parameters.AddWithValue(nameof(id), id);
     await using var reader = await cmd.ExecuteReaderAsync();
     if (!await reader.ReadAsync()) {
       return (null, null);

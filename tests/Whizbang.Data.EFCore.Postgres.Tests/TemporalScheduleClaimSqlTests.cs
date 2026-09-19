@@ -172,7 +172,7 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     var s2 = Guid.NewGuid();
     await _pinStreamAsync(conn, s1, instance);
     await _pinStreamAsync(conn, s2, instance);
-    await _insertScheduleAsync(conn, Guid.NewGuid(), s1, DateTimeOffset.UtcNow.AddMinutes(-1), status: 1, eventType: "OccPaused");
+    await _insertScheduleAsync(conn, Guid.NewGuid(), s1, DateTimeOffset.UtcNow.AddMinutes(-1), eventType: "OccPaused", status: 1);
     await _insertScheduleAsync(conn, Guid.NewGuid(), s2, DateTimeOffset.UtcNow.AddHours(1), eventType: "OccFuture");
 
     var claimed = await _claimAsync(conn, instance, DateTimeOffset.UtcNow);
@@ -210,7 +210,7 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     await _pinStreamAsync(conn, stream, instance);
     // max 1 occurrence: the single fire completes it.
     await _insertScheduleAsync(conn, schedule, stream, DateTimeOffset.UtcNow.AddMinutes(-1),
-      kind: 1, intervalMs: 60_000, maxOccurrences: 1, eventType: "OccCap");
+      kind: 1, intervalMs: 60_000, eventType: "OccCap", maxOccurrences: 1);
 
     _ = await _claimAsync(conn, instance, DateTimeOffset.UtcNow);
 
@@ -230,7 +230,7 @@ public class TemporalScheduleClaimSqlTests : EFCoreTestBase {
     await _pinStreamAsync(conn, stream, instance);
     // until_at is before the next interval (next + 1min) => completes after this fire.
     await _insertScheduleAsync(conn, schedule, stream, next,
-      kind: 1, intervalMs: 60_000, untilAt: next.AddSeconds(30), eventType: "OccUntil");
+      kind: 1, intervalMs: 60_000, eventType: "OccUntil", untilAt: next.AddSeconds(30));
 
     _ = await _claimAsync(conn, instance, DateTimeOffset.UtcNow);
 

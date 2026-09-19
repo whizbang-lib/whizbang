@@ -127,7 +127,7 @@ CREATE TABLE IF NOT EXISTS whizbang_sequences (
 );
 ";
 
-    using var command = Connection.CreateCommand();
+    await using var command = Connection.CreateCommand();
     command.CommandText = schema;
     await command.ExecuteNonQueryAsync();
   }

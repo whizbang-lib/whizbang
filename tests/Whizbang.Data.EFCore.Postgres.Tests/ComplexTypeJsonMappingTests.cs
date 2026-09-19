@@ -330,7 +330,7 @@ public class ComplexTypeJsonMappingTests : IAsyncDisposable {
         .ToListAsync(cancellationToken);
 
     // Assert - verify Metadata structure preserved
-    var first = results.First();
+    var first = results[0];
     await Assert.That(first.Metadata).IsNotNull();
     await Assert.That(first.Metadata.EventType).IsEqualTo("ProductCreated");
     await Assert.That(first.Metadata.EventId).IsNotNull();

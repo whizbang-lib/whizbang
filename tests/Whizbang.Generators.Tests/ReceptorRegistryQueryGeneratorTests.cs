@@ -7,15 +7,18 @@ using TUnit.Core;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
+/// <para>
 /// Tests for ReceptorRegistryQueryGenerator — emits a static class that the receive boundary
 /// uses to decide whether a message has any consumer (handler / perspective / lifecycle
 /// receptor / tagged-notification attribute) without runtime reflection. See
 /// plans/pump-then-process.md slice 1.
-///
+/// </para>
+/// <para>
 /// Locked invariants:
 /// - HasReceptors(stage, type) → true iff a receptor with [FireAt(stage)] for that type is registered
 /// - HasInboxHandler(type)     → true iff any IReceptor&lt;T,...&gt; or IReceptor&lt;T&gt; is registered
 /// - HasAnyConsumer(type)      → true iff handler / perspective / lifecycle receptor / tag-attribute exists
+/// </para>
 /// </summary>
 [Category("SourceGenerators")]
 [Category("ReceptorRegistryQuery")]
@@ -582,7 +585,7 @@ public class Empty {}
   /// <summary>
   /// Extracts the array literal between <c>stageTypes[LifecycleStage.&lt;name&gt;]</c> and
   /// the next <c>}</c>. The generator emits per-stage entries like:
-  /// <code>stageTypes[LifecycleStage.PreInboxInline] = new string[] { "...", };</code>
+  /// <c>stageTypes[LifecycleStage.PreInboxInline] = new string[] { "...", };</c>
   /// </summary>
   private static string _extractStageArrayLiteral(string source, string stageName) {
     var marker = $"LifecycleStage.{stageName}";

@@ -8,8 +8,7 @@ using Whizbang.Data.Dapper.Sqlite;
 
 namespace Whizbang.Data.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Direct tests for <see cref="SqliteGuidHandler"/> — the Dapper type
@@ -70,7 +69,7 @@ public class SqliteGuidHandlerTests {
     // handler subsequently works for a round-trip query.
     SqliteGuidHandler.Register();
 
-    using var connection = new SqliteConnection("DataSource=:memory:");
+    await using var connection = new SqliteConnection("DataSource=:memory:");
     connection.Open();
     connection.Execute("CREATE TABLE t (id TEXT)");
 

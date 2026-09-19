@@ -186,12 +186,14 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
   private static async Task _insertInboxRowWithNullStreamAsync(
       NpgsqlConnection connection, Guid messageId, Guid instanceId) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_inbox
         (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
          instance_id, lease_expiry, stream_id, partition_number)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{""payload"":1}', '{""hop"":1}', 1, 0, NOW(),
-              @inst, NOW() + INTERVAL '5 minutes', NULL, NULL)";
+      VALUES (@msg, 'TestHandler', 'TestEvent', '{"payload":1}', '{"hop":1}', 1, 0, NOW(),
+              @inst, NOW() + INTERVAL '5 minutes', NULL, NULL)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("inst", instanceId);
     await ins.ExecuteNonQueryAsync();
@@ -229,12 +231,14 @@ public class FetchInboxBatchSqlTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, Guid streamId, Guid instanceId,
       DateTimeOffset? receivedAt = null, DateTimeOffset? processedAt = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_inbox
         (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
          instance_id, lease_expiry, stream_id, partition_number, processed_at)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{""payload"":1}', '{""hop"":1}', 1, 0, @received,
-              @inst, NOW() + INTERVAL '5 minutes', @stream, 0, @processed)";
+      VALUES (@msg, 'TestHandler', 'TestEvent', '{"payload":1}', '{"hop":1}', 1, 0, @received,
+              @inst, NOW() + INTERVAL '5 minutes', @stream, 0, @processed)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("inst", instanceId);

@@ -6,8 +6,7 @@ using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.Dapper.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Locks the Dapper turnkey path's DLQ wiring. v0.502 added
@@ -29,7 +28,7 @@ public class ServiceCollectionExtensions_DeadLetterRegistrationTests {
       services,
       "Host=localhost;Database=test;Username=u;Password=p");
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var store = sp.GetService<IDeadLetterStore>();
 
     await Assert.That(store).IsNotNull()
@@ -45,7 +44,7 @@ public class ServiceCollectionExtensions_DeadLetterRegistrationTests {
       services,
       "Host=localhost;Database=test;Username=u;Password=p");
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var store = sp.GetService<IDeadLetterStore>();
 
     await Assert.That(store).IsTypeOf<DapperDeadLetterStore>();

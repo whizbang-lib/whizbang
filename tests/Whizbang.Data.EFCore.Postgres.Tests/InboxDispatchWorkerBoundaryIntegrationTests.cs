@@ -35,16 +35,19 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// pull-from-ambient design could not cross.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Real PG via Testcontainers (L6). Real Dispatcher + ReceptorInvoker + ILifecycleMessageDeserializer +
 /// EFCoreWorkCoordinator + message-security establishment. Only the inbox CHANNEL/lease plumbing is faked
 /// (feeding <see cref="InboxWork"/> straight onto <see cref="IInboxChannelWriter"/>, as
 /// <c>InboxDispatchWorkerLeaseIntegrationTests</c> does) — the dispatch, establishment and outbox write all
 /// run on the worker's real execution-context flow, which is where a synthetic harness could not reproduce
 /// establishment persistence.
-///
+/// </para>
+/// <para>
 /// RED on 0.832 (outbox hop dropped co/ca); GREEN with #1/#2/#4/#5.
 /// The receptor fires at <c>PreInboxInline</c> — inline, BEFORE the worker enqueues the EventStored commit —
 /// so awaiting the commit signal deterministically guarantees the child is durable in wh_outbox.
+/// </para>
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/InboxDispatchWorker.cs</code-under-test>
 /// <code-under-test>src/Whizbang.Core/Dispatcher.cs</code-under-test>

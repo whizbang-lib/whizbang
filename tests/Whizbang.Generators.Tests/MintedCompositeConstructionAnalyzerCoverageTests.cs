@@ -92,7 +92,7 @@ public class MintedCompositeConstructionAnalyzerCoverageTests {
   public async Task ConstructionInsideADifferentAssembly_OutsideMintingNamespace_ReportsWhiz150Async() {
     var diagnostics = await _diagnosticsForAssemblyAsync("ConsumerApp", EXEMPTION_TWO_SOURCE);
 
-    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ150").Count()).IsEqualTo(1)
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ150")).IsEqualTo(1)
       .Because("only the Whizbang.Core assembly itself gets this exemption — a consumer assembly with the identical shape must still be flagged");
   }
 

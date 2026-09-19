@@ -174,13 +174,13 @@ public class PerspectiveVisibilityLatencyE2ETests : EFCoreTestBase {
       instanceProvider: instanceProvider,
       scopeFactory: scopeFactory,
       options: Options.Create(new PerspectiveWorkerOptions()),
+      schemaReadyGate: gate,
       logger: NullLogger<PerspectiveWorker>.Instance,
       perspectiveChannelWriter: harness.ChannelWriter,
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      perspectiveNotificationListener: listener,
-      schemaReadyGate: gate);
+      perspectiveNotificationListener: listener);
 
     return new RealPipeline {
       Services = provider,

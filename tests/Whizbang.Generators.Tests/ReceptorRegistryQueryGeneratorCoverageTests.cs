@@ -29,7 +29,8 @@ public class ReceptorRegistryQueryGeneratorCoverageTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_AbstractTypeWithNotificationTag_NotRegisteredAsConsumerAsync() {
-    const string source = @"
+    const string source = """
+
 namespace Whizbang.Core {
   public sealed class NotificationTagAttribute : System.Attribute {
     public NotificationTagAttribute(string tag) { }
@@ -37,9 +38,10 @@ namespace Whizbang.Core {
 }
 
 namespace MyApp {
-  [Whizbang.Core.NotificationTagAttribute(""legacy"")]
+  [Whizbang.Core.NotificationTagAttribute("legacy")]
   public abstract class AbstractTaggedNotice { }
-}";
+}
+""";
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 
@@ -58,7 +60,8 @@ namespace MyApp {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_ConcreteTypeWithNotificationIdTag_HasAnyConsumerReturnsTrueAsync() {
-    const string source = @"
+    const string source = """
+
 namespace Whizbang.Core {
   public sealed class NotificationIdTagAttribute : System.Attribute {
     public NotificationIdTagAttribute(string tag) { }
@@ -66,9 +69,10 @@ namespace Whizbang.Core {
 }
 
 namespace MyApp {
-  [Whizbang.Core.NotificationIdTagAttribute(""job-progress"")]
+  [Whizbang.Core.NotificationIdTagAttribute("job-progress")]
   public class JobProgressNotice { }
-}";
+}
+""";
 
     var result = GeneratorTestHelper.RunGenerator<ReceptorRegistryQueryGenerator>(source);
 

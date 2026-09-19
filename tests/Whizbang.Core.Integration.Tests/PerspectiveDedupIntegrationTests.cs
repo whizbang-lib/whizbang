@@ -667,6 +667,7 @@ public class PerspectiveDedupIntegrationTests {
       instanceProvider: instanceProvider,
       scopeFactory: serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       options: Options.Create(new PerspectiveWorkerOptions { PollingIntervalMilliseconds = 50 }),
+      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady(),
       tracingOptions: null,
       completionStrategy: strategy,
       eventTypeProvider: eventTypeProvider,
@@ -676,11 +677,10 @@ public class PerspectiveDedupIntegrationTests {
       perspectiveCompletionChannel: harness.CompletionCapture,
       failureChannel: harness.FailureCapture,
       perspectiveDrainChannel: harness.DrainChannel,
-      completionMeter: completionMeter,
       // Match production (WorkerPipelineExtensions always wires this). Without it the drain refetch
       // loop has no cooldown dedup and re-dispatches re-served events; see PerspectiveApplyExactlyOnceTests.
       recentlyProcessedEventCache: new RecentlyProcessedEventCache(new SystemTimeProvider()),
-      schemaReadyGate: Whizbang.Core.Workers.SchemaReadyGate.AlreadyReady());
+      completionMeter: completionMeter);
     return (worker, harness);
   }
 
@@ -693,14 +693,12 @@ public class PerspectiveDedupIntegrationTests {
   private sealed class ApplyTrackingRunner : IPerspectiveRunner {
     public Type PerspectiveType => typeof(object);
     private int _callCount;
-    private readonly ConcurrentBag<Guid> _processedWorkIds = [];
     private readonly ConcurrentBag<Guid> _streamIds = [];
-    private readonly ConcurrentBag<Guid> _duplicateWorkIds = [];
     private readonly TaskCompletionSource _firstCall = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<int, TaskCompletionSource> _callCountWaiters = new();
 
     public int CallCount => _callCount;
-    public ConcurrentBag<Guid> DuplicateWorkIds => _duplicateWorkIds;
+    public ConcurrentBag<Guid> DuplicateWorkIds { get; } = [];
     public HashSet<Guid> UniqueStreamIds => [.. _streamIds];
 
     public Task WaitForAtLeastOneCallAsync(TimeSpan timeout) =>

@@ -132,7 +132,7 @@ public class RabbitMQSharedInboxRetirementE2ELockTests {
 
     await Assert.That(domainResult.Success).IsTrue();
     await Assert.That(systemResult.Success).IsTrue();
-    var publishedExchanges = publisherChannel.PublishedMessages.Select(m => m.Exchange).ToList();
+    var publishedExchanges = publisherChannel.PublishedMessages.ConvertAll(m => m.Exchange);
     await Assert.That(publishedExchanges).Contains(flippedEntity);
     await Assert.That(publishedExchanges).Contains(broadcastEntity)
       .Because("durable system commands broadcast on inbox.whizbang — the sole carve-out");

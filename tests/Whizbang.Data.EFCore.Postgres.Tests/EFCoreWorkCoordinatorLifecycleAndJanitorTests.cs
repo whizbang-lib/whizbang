@@ -504,12 +504,14 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, Guid? streamId,
       DateTimeOffset? scheduledFor = null, DateTimeOffset? processedAt = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, scheduled_for, processed_at)
-      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{""payload"":1}', '{""hop"":1}', 1, 0,
-              NOW(), @stream, 0, @scheduled, @processed)";
+      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{"payload":1}', '{"hop":1}', 1, 0,
+              NOW(), @stream, 0, @scheduled, @processed)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", (object?)streamId ?? DBNull.Value);
     ins.Parameters.Add(new NpgsqlParameter("scheduled", NpgsqlDbType.TimestampTz) { Value = (object?)scheduledFor ?? DBNull.Value });
@@ -521,12 +523,14 @@ public class EFCoreWorkCoordinatorLifecycleAndJanitorTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, string messageType, Guid? streamId,
       Guid? instanceId = null, DateTimeOffset? scheduledFor = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_inbox
         (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at,
          instance_id, lease_expiry, stream_id, partition_number, scheduled_for)
-      VALUES (@msg, 'TestHandler', @type, '{""payload"":1}', '{""hop"":1}', 1, 0, NOW(),
-              @inst, @lease, @stream, 0, @scheduled)";
+      VALUES (@msg, 'TestHandler', @type, '{"payload":1}', '{"hop":1}', 1, 0, NOW(),
+              @inst, @lease, @stream, 0, @scheduled)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("type", messageType);
     ins.Parameters.AddWithValue("stream", (object?)streamId ?? DBNull.Value);

@@ -7,6 +7,7 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
+/// <para>
 /// v0.685 lock-in — <c>_emit_event_store_chain_for_inbox</c>'s per-row
 /// <c>NOT EXISTS in wh_event_store</c> scan is the dominant cost on the
 /// work-pump under heavy inbox load (a production PM measurement: 137 ms mean per
@@ -15,14 +16,17 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// PK-looks-up each against the ~600 k-row wh_event_store. Without a
 /// dedicated partial index, PG plans a sequential scan + nested-loop
 /// anti-join.
-///
+/// </para>
+/// <para>
 /// The lock-in: an index <c>idx_inbox_emit_chain</c> must exist that covers
 /// exactly the WHERE shape of emit_chain's outer scan, with <c>message_id</c>
 /// in the key so PG can pick a merge anti-join against the wh_event_store PK.
-///
+/// </para>
+/// <para>
 /// Without this partial index, a future refactor of migration 057 (or a
 /// missed apply on a fresh DB) would silently bring back the 137 ms / call
 /// regression.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/work-pump</docs>
 [Category("Shard4")]

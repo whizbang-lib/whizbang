@@ -12,8 +12,7 @@ using Whizbang.Data.Postgres.Notifications;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// End-to-end regression for a consumer's Azure SCRAM-SHA-256 incident.

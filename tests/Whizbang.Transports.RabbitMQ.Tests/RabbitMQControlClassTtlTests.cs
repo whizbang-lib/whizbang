@@ -58,7 +58,7 @@ public class RabbitMQControlClassTtlTests {
       ControlMessageTtl.Stamp(new TransportDestination("control-exchange"), TimeSpan.FromSeconds(120)));
 
     var headers = channel.Published[0].Properties.Headers;
-    await Assert.That(headers is null || !headers.ContainsKey(ControlMessageTtl.METADATA_KEY)).IsTrue();
+    await Assert.That(headers?.ContainsKey(ControlMessageTtl.METADATA_KEY) != true).IsTrue();
   }
 
   [Test]

@@ -732,13 +732,15 @@ public class PostgresFunctionTests : PostgresTestBase {
   }
 
   /// <summary>
+  /// <para>
   /// v0.671 — multi-pair regression lock for the bulk INSERT/UPDATE refactor of
   /// <c>update_perspective_cursors</c>. The current PL/pgSQL FOR-loop
   /// implementation does FOUR statements per (StreamId, PerspectiveName) pair
   /// (latest-gap-free SELECT, is-complete NOT EXISTS, UPDATE, conditional
   /// INSERT). Bulk pattern collapses that to two statements (one UPDATE for
   /// existing cursors, one INSERT for new pairs), regardless of M.
-  ///
+  /// </para>
+  /// <para>
   /// Mixed-state scenario this test locks:
   ///   - pair A: existing cursor, gap-free progress to event2 → advance
   ///     last_event_id, status stays incomplete (event3 still pending)
@@ -747,6 +749,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   ///   - pair C: existing cursor, no events with processed_at NOT NULL,
   ///     but pending events exist → no change (last_event_id unchanged,
   ///     status unchanged)
+  /// </para>
   /// </summary>
   [Test]
   public async Task UpdatePerspectiveCursors_MultiPair_MixedStates_RetainOldSemanticsAsync() {
@@ -936,12 +939,14 @@ public class PostgresFunctionTests : PostgresTestBase {
   /// gap-free event and status derived from is_complete.
   /// </summary>
   /// <remarks>
+  /// <para>
   /// The WHERE NOT EXISTS clause in the function's `needed_inserts` CTE filters
   /// to pairs without a cursor; the `WHERE new_last_event_id IS NOT NULL` filter
   /// further restricts to pairs with progress to record (the NOT NULL constraint
   /// on <c>wh_perspective_cursors.last_event_id</c> would error on a null).
   /// Both invariants get exercised here:
-  ///
+  /// </para>
+  /// <para>
   ///   - newPair: no cursor exists; events 1 and 2 processed, 3 pending
   ///     → INSERT a new cursor with last_event_id = event2Id and status = 0
   ///       (NOT complete because event3 is still pending).
@@ -951,6 +956,7 @@ public class PostgresFunctionTests : PostgresTestBase {
   ///     <c>store_perspective_events</c> creates the cursor when the first
   ///     event is stored; but the function must safely no-op rather than fail
   ///     the entire batch on this corner.)
+  /// </para>
   /// </remarks>
   [Test]
   public async Task UpdatePerspectiveCursors_InsertPath_NewPairWithGapFreeProgress_CreatesCursorAsync() {

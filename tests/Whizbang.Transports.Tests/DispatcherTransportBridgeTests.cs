@@ -532,9 +532,8 @@ public class DispatcherTransportBridgeTests {
   }
 
   private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
-    private readonly Guid _instanceId = Guid.NewGuid();
 
-    public Guid InstanceId => _instanceId;
+    public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName => "test-service";
     public string HostName => "test-host";
     public int ProcessId => 12345;

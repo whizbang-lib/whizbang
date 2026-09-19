@@ -109,7 +109,7 @@ public class PostgresDriverExtensionsTests {
     var builder = new WhizbangPerspectiveBuilder(services);
     _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     var fallback = sp.GetService<INotificationConnectionStringFallback>();
 
     await Assert.That(fallback).IsNotNull();
@@ -132,7 +132,7 @@ public class PostgresDriverExtensionsTests {
     var builder = new WhizbangPerspectiveBuilder(services);
     _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     using var scope = sp.CreateScope();
     var store = scope.ServiceProvider.GetService<IClaimedEmissionStore>();
 
@@ -159,7 +159,7 @@ public class PostgresDriverExtensionsTests {
     var builder = new WhizbangPerspectiveBuilder(services);
     _ = builder.WithEFCore<PostgresTestDbContext>().WithDriver.Postgres;
 
-    using var sp = services.BuildServiceProvider();
+    await using var sp = services.BuildServiceProvider();
     using var scope = sp.CreateScope();
     var store = scope.ServiceProvider.GetService<IClaimedEmissionStore>();
 

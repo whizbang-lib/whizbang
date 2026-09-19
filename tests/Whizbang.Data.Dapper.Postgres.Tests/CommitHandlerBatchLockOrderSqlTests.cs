@@ -70,17 +70,17 @@ public class CommitHandlerBatchLockOrderSqlTests : PostgresTestBase {
     // Joined into a single string ON PURPOSE. A collection-equivalence assertion can be
     // order-INSENSITIVE, which would pass on a correctly-ordered and a caller-ordered result alike —
     // vacuous for a test whose entire subject is order.
-    var returned = string.Join(",", (await connection.QueryAsync<Guid>(
+    var returned = string.Join(",", await connection.QueryAsync<Guid>(
       "SELECT handler_id FROM commit_handler_batch(@Payload::jsonb)",
-      new { Payload = payload })));
+      new { Payload = payload }));
 
-    var expected = string.Join(",", _submissionOrder.OrderBy(n => n).Select(n => Guid.Parse(_handlerId(n))));
+    var expected = string.Join(",", _submissionOrder.Order().Select(n => Guid.Parse(_handlerId(n))));
 
     await Assert.That(returned).IsEqualTo(expected)
       .Because("the batch must take its row locks in a total order derived from the data, not in the "
              + "order the caller happened to assemble it. Submitted as "
              + string.Join(",", _submissionOrder) + " it must still be processed as "
-             + string.Join(",", _submissionOrder.OrderBy(n => n)) + ", so that two concurrent "
+             + string.Join(",", _submissionOrder.Order()) + ", so that two concurrent "
              + "batches with overlapping handler sets can never acquire the same rows in opposite "
              + "orders and deadlock each other");
   }
@@ -97,11 +97,11 @@ public class CommitHandlerBatchLockOrderSqlTests : PostgresTestBase {
     });
     var payload = "[" + string.Join(",", elements) + "]";
 
-    var returned = string.Join(",", (await connection.QueryAsync<Guid>(
+    var returned = string.Join(",", await connection.QueryAsync<Guid>(
       "SELECT handler_id FROM commit_handler_batch(@Payload::jsonb)",
-      new { Payload = payload })));
+      new { Payload = payload }));
 
-    var expected = string.Join(",", _submissionOrder.OrderBy(n => n).Select(n => Guid.Parse(_handlerId(n))));
+    var expected = string.Join(",", _submissionOrder.Order().Select(n => Guid.Parse(_handlerId(n))));
 
     await Assert.That(returned).IsEqualTo(expected)
       .Because("a missing inbox_completion must not fall back to caller order — the handler_id "

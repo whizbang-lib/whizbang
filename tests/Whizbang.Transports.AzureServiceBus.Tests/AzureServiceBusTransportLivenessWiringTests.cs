@@ -9,12 +9,13 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Transports.AzureServiceBus.Tests;
 
 /// <summary>
+/// <para>
 /// Wiring tests for the transport's <see cref="ReceiveLivenessWatchdog"/> integration:
 /// construction gating (option + admin client), Track-on-subscribe, RecordActivity on every
 /// receive path (batch session, batch non-session, legacy session, legacy non-session),
 /// recovery-handler invocation on a detected stall, and disposal.
-///
-/// Uses the shared raisable client/processor doubles — no broker, no real time.
+/// </para>
+/// <para>Uses the shared raisable client/processor doubles — no broker, no real time.</para>
 /// </summary>
 [Timeout(10_000)]
 public class AzureServiceBusTransportLivenessWiringTests {

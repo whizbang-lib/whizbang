@@ -45,9 +45,9 @@ public class AsbMessageHeaderReaderTests {
 
     return ServiceBusModelFactory.ServiceBusReceivedMessage(
       body: BinaryData.FromString(envelopeJson),
-      properties: props,
       correlationId: correlationId
-    );
+,
+      properties: props);
   }
 
   [Test]

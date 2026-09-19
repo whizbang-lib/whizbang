@@ -22,7 +22,7 @@ public class GlobalUsingAliasTransformerTests {
 
     var result = await transformer.TransformAsync(source, "GlobalUsings.cs");
 
-    var match = Regex.Match(result.TransformedCode, @"global using LegacyAlias = ([^;]+);");
+    var match = Regex.Match(result.TransformedCode, "global using LegacyAlias = ([^;]+);");
     return match.Success ? match.Groups[1].Value.Trim() : string.Empty;
   }
 

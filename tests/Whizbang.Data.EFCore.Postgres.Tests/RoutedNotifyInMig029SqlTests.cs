@@ -61,7 +61,7 @@ public class RoutedNotifyInMig029SqlTests : EFCoreTestBase {
     var ownerMessages = received.Where(r => r.Channel == $"wh_work_i_{owner}").ToList();
     await Assert.That(ownerMessages).Count().IsGreaterThanOrEqualTo(1)
       .Because("the new outbox row's stream is owned by this instance → NOTIFY must land on its routed channel");
-    var ownerPayloads = ownerMessages.Select(m => m.Payload).ToList();
+    var ownerPayloads = ownerMessages.ConvertAll(m => m.Payload);
     await Assert.That(ownerPayloads).Contains("outbox")
       .Because("the outbox-store branch must emit 'outbox' payload");
 

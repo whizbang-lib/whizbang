@@ -360,12 +360,14 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   private static async Task _insertOutboxEventAsync(
       NpgsqlConnection conn, Guid messageId, Guid streamId, Guid instanceId, DateTimeOffset createdAt) {
     await using var ins = conn.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, envelope_type, event_data, metadata, scope, status, attempts,
          created_at, stream_id, partition_number, instance_id, lease_expiry, is_event)
-      VALUES (@msg, 'topic', 'TestEvent', 'TestEnv', '{""p"":1}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, 0,
-              @created, @stream, 0, @inst, NOW() + INTERVAL '5 minutes', true)";
+      VALUES (@msg, 'topic', 'TestEvent', 'TestEnv', '{"p":1}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, 0,
+              @created, @stream, 0, @inst, NOW() + INTERVAL '5 minutes', true)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("inst", instanceId);
@@ -376,12 +378,14 @@ public class EventStoreVersionOrderingSqlTests : EFCoreTestBase {
   private static async Task _insertInboxEventAsync(
       NpgsqlConnection conn, Guid messageId, Guid streamId, Guid instanceId, DateTimeOffset receivedAt) {
     await using var ins = conn.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_inbox
         (message_id, handler_name, message_type, event_data, metadata, scope, status, attempts,
          received_at, instance_id, lease_expiry, stream_id, partition_number, is_event)
-      VALUES (@msg, 'TestHandler', 'TestEvent', '{""p"":1}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, 0,
-              @received, @inst, NOW() + INTERVAL '5 minutes', @stream, 0, true)";
+      VALUES (@msg, 'TestHandler', 'TestEvent', '{"p":1}'::jsonb, '{}'::jsonb, '{}'::jsonb, 1, 0,
+              @received, @inst, NOW() + INTERVAL '5 minutes', @stream, 0, true)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("inst", instanceId);

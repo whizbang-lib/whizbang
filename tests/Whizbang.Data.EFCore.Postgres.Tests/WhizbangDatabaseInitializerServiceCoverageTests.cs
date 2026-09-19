@@ -34,7 +34,7 @@ public class WhizbangDatabaseInitializerServiceCoverageTests {
     // StopAsync cancels that SAME CancellationTokenSource; canceling a disposed one throws
     // ObjectDisposedException. That is the only externally observable proof Dispose tore down
     // the real object instead of doing nothing.
-    await Assert.That(() => { service.StopAsync(CancellationToken.None); })
+    await Assert.That(() => service.StopAsync(CancellationToken.None))
       .Throws<ObjectDisposedException>()
       .Because("Dispose must actually dispose the stop-loop's CancellationTokenSource, not no-op");
   }

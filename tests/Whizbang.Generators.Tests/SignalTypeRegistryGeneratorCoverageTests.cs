@@ -123,23 +123,25 @@ namespace App.Signals {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_SignalsWithNonWireNameAttributes_DefaultWireNameAndSortDeterministicallyAsync() {
-    const string source = @"
+    const string source = """
+
 using System;
 using Whizbang.Core.Signals;
 
 namespace App.Signals {
-  [Obsolete(""legacy"")]
+  [Obsolete("legacy")]
   public readonly record struct ZetaSignal : ISignal {
     public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.BestEffort;
     public static SignalTargeting Targeting => SignalTargeting.Broadcast;
   }
 
-  [Obsolete(""legacy"")]
+  [Obsolete("legacy")]
   public readonly record struct AlphaSignal : ISignal {
     public static SignalDeliveryClass DeliveryClass => SignalDeliveryClass.BestEffort;
     public static SignalTargeting Targeting => SignalTargeting.Broadcast;
   }
-}";
+}
+""";
 
     var result = GeneratorTestHelper.RunGenerator<SignalTypeRegistryGenerator>(source);
     var code = GeneratorTestHelper.GetGeneratedSource(result, "SignalTypeSource.g.cs");

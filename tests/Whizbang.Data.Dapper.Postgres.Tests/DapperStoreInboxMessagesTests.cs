@@ -57,7 +57,7 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
     var coordinator = _buildCoordinator();
     await coordinator.StoreInboxMessagesAsync([], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var inboxCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_inbox");
     var dedupCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_message_deduplication");
@@ -73,7 +73,7 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
 
     await coordinator.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var inboxCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_inbox WHERE message_id = @m", new { m = msgId });
     var dedupCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_message_deduplication WHERE message_id = @m", new { m = msgId });
@@ -91,7 +91,7 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
     await coordinator.StoreInboxMessagesAsync([msg], partitionCount: 100);
     await coordinator.StoreInboxMessagesAsync([msg], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var inboxCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_inbox WHERE message_id = @m", new { m = msgId });
     await Assert.That(inboxCount).IsEqualTo(1L)
@@ -111,7 +111,7 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
 
     await coordinator.StoreInboxMessagesAsync(messages, partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var inboxCount = await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM wh_inbox");
     await Assert.That(inboxCount).IsEqualTo(25L)
@@ -130,7 +130,7 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
 
     await coordinator.StoreInboxMessagesAsync([_makeInbox(msgId, streamId)], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var isEvent = await conn.ExecuteScalarAsync<bool>(
       "SELECT is_event FROM wh_inbox WHERE message_id = @m", new { m = msgId });
@@ -162,7 +162,7 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
     await coordinator.StoreInboxMessagesWithObservationsAsync(
       [_makeInbox(msgId, streamId)], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var stored = await conn.ExecuteScalarAsync<int>(
       "SELECT count(*) FROM wh_inbox WHERE message_id = @m", new { m = msgId });
@@ -198,7 +198,7 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
     var second = await coordinator.StoreInboxMessagesWithObservationsAsync(
       [_makeInbox(msgId, streamId)], partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var rows = await conn.ExecuteScalarAsync<int>(
       "SELECT count(*) FROM wh_inbox WHERE message_id = @m", new { m = msgId });
@@ -220,7 +220,7 @@ public class DapperStoreInboxMessagesTests : PostgresTestBase {
 
     await coordinator.StoreInboxMessagesWithObservationsAsync(messages, partitionCount: 100);
 
-    using var conn = new NpgsqlConnection(ConnectionString);
+    await using var conn = new NpgsqlConnection(ConnectionString);
     await conn.OpenAsync();
     var stored = await conn.ExecuteScalarAsync<int>(
       "SELECT count(*) FROM wh_inbox WHERE message_id = ANY(@ids)", new { ids });

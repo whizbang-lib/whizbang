@@ -125,7 +125,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     );
     var schemaSql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
-    using var schemaCommand = (NpgsqlCommand)connection.CreateCommand();
+    await using var schemaCommand = (NpgsqlCommand)connection.CreateCommand();
     schemaCommand.CommandText = schemaSql;
     await schemaCommand.ExecuteNonQueryAsync();
 
@@ -157,7 +157,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       // these tests) and the migration constants (rule 12) for their tokens.
       functionSql = MigrationConstants.Apply(functionSql.Replace("__SCHEMA__", "public"));
 
-      using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
+      await using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
       functionCommand.CommandText = functionSql;
       try {
         await functionCommand.ExecuteNonQueryAsync();

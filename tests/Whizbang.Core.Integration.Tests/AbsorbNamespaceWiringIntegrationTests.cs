@@ -53,7 +53,7 @@ public class AbsorbNamespaceWiringIntegrationTests {
     services.AddReceptors();
     services.AddWhizbangWorkers();
 
-    using var provider = services.BuildServiceProvider();
+    await using var provider = services.BuildServiceProvider();
     var policy = provider.GetRequiredService<IMessageDiscardPolicy>();
 
     // Absorbed namespace, no local consumer → KEPT (persist-for-later; the unconditional

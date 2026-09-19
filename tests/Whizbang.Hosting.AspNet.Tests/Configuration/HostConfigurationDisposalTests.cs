@@ -50,7 +50,7 @@ public class HostConfigurationDisposalTests {
     _ = builder.Configuration["__force_provider_realisation__"];
 
     // === the buggy pattern the generator emits today (sites 1520 & 1657) ===
-    using (var tempProvider = builder.Services.BuildServiceProvider(new ServiceProviderOptions {
+    await using (var tempProvider = builder.Services.BuildServiceProvider(new ServiceProviderOptions {
       ValidateOnBuild = false,
       ValidateScopes = false
     })) {
@@ -94,7 +94,7 @@ public class HostConfigurationDisposalTests {
     });
 
     // Build the host normally. No temp container.
-    using var host = builder.Build();
+    await using var host = builder.Build();
     _ = host.Services.GetRequiredService<MarkerService>();
 
     var fired = 0;

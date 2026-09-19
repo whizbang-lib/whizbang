@@ -168,8 +168,6 @@ internal sealed class FakeTransport : ITransport {
 /// Mimics AzureServiceBusHealthCheck's try-catch behavior.
 /// </summary>
 internal sealed class ThrowingHealthCheck(ITransport transport) : IHealthCheck {
-  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-
   public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) {
     try {
       throw new InvalidOperationException("Test exception");

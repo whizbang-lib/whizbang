@@ -212,7 +212,7 @@ public class RabbitMQTransportGuardCoverageTests {
 
     await transport.SubscribeBatchAsync((batch, ct) => Task.CompletedTask, destination, new TransportBatchOptions());
 
-    var boundKeys = channel.QueueBindings.Select(b => b.RoutingKey).ToList();
+    var boundKeys = channel.QueueBindings.ConvertAll(b => b.RoutingKey);
     await Assert.That(boundKeys).Contains("orders.created");
     await Assert.That(boundKeys).Contains("orders.updated")
       .Because("both comma-separated patterns must be bound, or half the intended traffic never arrives");

@@ -448,8 +448,8 @@ public class RabbitMQTransportFailurePathTests {
   public async Task HandleMessageFailure_NackThrowsAlreadyClosed_SwallowsAsync() {
     var channel = new RecordingChannel { ExceptionToThrowOnNack = RabbitTestWire.NewAlreadyClosedException() };
     var (_, handled, _, _) = await _subscribeAsync(
-      channel: channel,
-      handlerBehavior: () => throw new InvalidOperationException("handler boom"));
+      handlerBehavior: () => throw new InvalidOperationException("handler boom"),
+      channel: channel);
 
     var (props, body) = RabbitTestWire.ValidWireMessage("nack-fails");
     Exception? caught = null;

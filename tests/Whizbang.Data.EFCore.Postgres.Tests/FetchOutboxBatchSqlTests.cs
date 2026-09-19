@@ -280,12 +280,14 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
   private static async Task _insertOutboxRowWithNullStreamAsync(
       NpgsqlConnection connection, Guid messageId, Guid instanceId) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, instance_id, lease_expiry)
-      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{""payload"":1}', '{""hop"":1}', 1, 0,
-              NOW(), NULL, NULL, @inst, NOW() + INTERVAL '5 minutes')";
+      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{"payload":1}', '{"hop":1}', 1, 0,
+              NOW(), NULL, NULL, @inst, NOW() + INTERVAL '5 minutes')
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("inst", instanceId);
     await ins.ExecuteNonQueryAsync();
@@ -325,12 +327,14 @@ public class FetchOutboxBatchSqlTests : EFCoreTestBase {
       NpgsqlConnection connection, Guid messageId, Guid streamId, Guid instanceId,
       DateTimeOffset? createdAt = null, DateTimeOffset? publishedAt = null) {
     await using var ins = connection.CreateCommand();
-    ins.CommandText = @"
+    ins.CommandText = """
+
       INSERT INTO wh_outbox
         (message_id, destination, message_type, envelope_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, instance_id, lease_expiry, published_at)
-      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{""payload"":1}', '{""hop"":1}', 1, 0,
-              @created, @stream, 0, @inst, NOW() + INTERVAL '5 minutes', @pub)";
+      VALUES (@msg, 'topic', 'TestEvent', 'TestEnvelope', '{"payload":1}', '{"hop":1}', 1, 0,
+              @created, @stream, 0, @inst, NOW() + INTERVAL '5 minutes', @pub)
+""";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", streamId);
     ins.Parameters.AddWithValue("inst", instanceId);

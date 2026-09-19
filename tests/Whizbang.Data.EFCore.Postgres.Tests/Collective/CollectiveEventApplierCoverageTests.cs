@@ -43,7 +43,7 @@ public class CollectiveEventApplierCoverageTests {
       Invoker: invoker);
     var evt = new _evt(new _tenantScope("t"));
     var resolver = new _stubResolver("tenant");
-    using var ctx = _newCtx();
+    await using var ctx = _newCtx();
 
     await Assert.That(() => CollectiveEventApplier<_jobModel>.ApplyAsync(
         entry, new _handler(), evt, resolver, ctx, Guid.NewGuid(), CollectiveApplyOptions.Default))

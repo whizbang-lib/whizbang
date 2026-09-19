@@ -18,9 +18,9 @@ namespace Whizbang.Generators.Tests;
 /// dead-lettered — never once reaching the fan-out that would have made it useful.</para>
 ///
 /// <para>Observed in production as a broker dead-letter storm:
-/// <c>MaxDeliveryAttemptsExceeded — JsonTypeInfo metadata for type
+/// <code>MaxDeliveryAttemptsExceeded — JsonTypeInfo metadata for type
 /// 'Whizbang.Core.Observability.MessageEnvelope`1[Consumer.Job.DraftJobEventsComposite]' was not
-/// provided by TypeInfoResolver</c>, alongside inbox rows dying at <c>attempts &gt; max=10</c>.</para>
+/// provided by TypeInfoResolver</code>, alongside inbox rows dying at <c>attempts &gt; max=10</c>.</para>
 /// </summary>
 [Category("SourceGenerators")]
 [Category("JsonSerialization")]

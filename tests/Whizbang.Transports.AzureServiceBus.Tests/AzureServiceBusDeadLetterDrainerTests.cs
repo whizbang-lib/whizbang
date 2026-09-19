@@ -19,8 +19,8 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// <code-under-test>src/Whizbang.Transports.AzureServiceBus/AzureServiceBusDeadLetterDrainer.cs</code-under-test>
 public class AzureServiceBusDeadLetterDrainerTests {
 
-  private static readonly string _id1 = "00000000-0000-0000-0000-000000000001";
-  private static readonly string _id2 = "00000000-0000-0000-0000-000000000002";
+  private const string _id1 = "00000000-0000-0000-0000-000000000001";
+  private const string _id2 = "00000000-0000-0000-0000-000000000002";
 
   private static Func<BrokerDeadLetterImport, CancellationToken, Task<bool>> _noopImport =>
     (_, _) => Task.FromResult(true);
@@ -80,13 +80,13 @@ public class AzureServiceBusDeadLetterDrainerTests {
       body: BinaryData.FromString("""{"v":1,"p":{"x":1}}"""),
       messageId: _id1,
       sessionId: _id2,
-      deliveryCount: 10,
-      enqueuedTime: enqueued,
       properties: new Dictionary<string, object> {
         ["EnvelopeType"] = "Whizbang.Test.Envelope",
         ["DeadLetterReason"] = "MaxDeliveryAttemptsExceeded",
         ["DeadLetterErrorDescription"] = "JsonTypeInfo metadata for type X was not provided",
-      });
+      },
+      deliveryCount: 10,
+      enqueuedTime: enqueued);
 
     var ok = AzureServiceBusDeadLetterDrainer.TryBuildImport(msg, "orders", "billing", out var import);
 

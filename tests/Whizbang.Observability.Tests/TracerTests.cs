@@ -237,10 +237,9 @@ public class TracerTests {
   /// Simple IOptionsMonitor implementation for testing.
   /// </summary>
   private sealed class TestOptionsMonitor<T>(T options) : IOptionsMonitor<T> {
-    private readonly T _options = options;
 
-    public T CurrentValue => _options;
-    public T Get(string? name) => _options;
+    public T CurrentValue { get; } = options;
+    public T Get(string? name) => CurrentValue;
     public IDisposable? OnChange(Action<T, string?> listener) => null;
   }
 

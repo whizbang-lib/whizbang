@@ -85,7 +85,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     var envelopes = Enumerable.Range(0, 10)
       .Select(i => _createTestEnvelope($"{marker}-{i}"))
       .ToList();
-    var items = envelopes.Select(e => _createBulkItem(e)).ToList();
+    var items = envelopes.ConvertAll(e => _createBulkItem(e));
     var contentById = envelopes.ToDictionary(
       e => e.MessageId.Value.ToString(),
       e => e.Payload.Content);
@@ -184,7 +184,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
     var envelopes = Enumerable.Range(0, 6)
       .Select(i => _createTestEnvelope($"{marker}-{i}-{new string('x', 200_000)}"))
       .ToList();
-    var items = envelopes.Select(e => _createBulkItem(e)).ToList();
+    var items = envelopes.ConvertAll(e => _createBulkItem(e));
 
     // Act
     var results = await transport.PublishBatchAsync(items, new TransportDestination("topic-00"));
@@ -314,7 +314,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
     try {
       // Act — publish all 5 through the bulk path
-      var items = envelopes.Select(e => _createBulkItem(e)).ToList();
+      var items = envelopes.ConvertAll(e => _createBulkItem(e));
       var results = await transport.PublishBatchAsync(items, new TransportDestination("topic-00"));
       foreach (var result in results) {
         await Assert.That(result.Success).IsTrue()
@@ -367,7 +367,7 @@ public class AzureServiceBusDlqAndBatchIntegrationTests(ServiceBusEmulatorFixtur
 
     try {
       // Act — publish 5 messages in one session so ordering is guaranteed
-      var items = envelopes.Select(e => _createBulkItem(e, streamId)).ToList();
+      var items = envelopes.ConvertAll(e => _createBulkItem(e, streamId));
       var results = await transport.PublishBatchAsync(items, new TransportDestination("topic-fifo-02"));
       foreach (var result in results) {
         await Assert.That(result.Success).IsTrue()

@@ -60,7 +60,7 @@ public class DapperPostgresPerspectiveCheckpointCompleterTests : PostgresTestBas
               '{}'::jsonb, NOW())", conn);
     cmd.Parameters.AddWithValue("id", eventId);
     cmd.Parameters.AddWithValue("stream", streamId);
-    cmd.Parameters.AddWithValue("version", version);
+    cmd.Parameters.AddWithValue(nameof(version), version);
     await cmd.ExecuteNonQueryAsync();
   }
 

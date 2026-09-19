@@ -259,7 +259,7 @@ public class TagBoundCoalescingSqlTests : EFCoreTestBase {
         (message_id, destination, message_type, event_data, metadata, status, attempts,
          created_at, stream_id, partition_number, coalesce_group, scheduled_for)
       VALUES (@msg, 'test-topic', 'TestEvent', '{{}}', '{{}}', 0, 0,
-         NOW(), @stream, 0, @grp, {(scheduledFor ?? "NULL")})";
+         NOW(), @stream, 0, @grp, {scheduledFor ?? "NULL"})";
     ins.Parameters.AddWithValue("msg", messageId);
     ins.Parameters.AddWithValue("stream", Guid.NewGuid());
     ins.Parameters.AddWithValue("grp", (object?)coalesceGroup ?? DBNull.Value);
@@ -311,11 +311,11 @@ public class TagBoundCoalescingSqlTests : EFCoreTestBase {
     var sharedStream = Guid.NewGuid();
     // Earlier coalesce-pending row: parked into the future, same stream.
     await using (var ins = connection.CreateCommand()) {
-      ins.CommandText = $@"
+      ins.CommandText = @"
         INSERT INTO wh_outbox
           (message_id, destination, message_type, event_data, metadata, status, attempts,
            created_at, stream_id, partition_number, coalesce_group, scheduled_for)
-        VALUES (@msg, 'test-topic', 'TestEvent', '{{}}', '{{}}', 0, 0,
+        VALUES (@msg, 'test-topic', 'TestEvent', '{}', '{}', 0, 0,
            NOW() - INTERVAL '10 seconds', @stream, 0, 'sys-audit', NOW() + INTERVAL '110 seconds')";
       ins.Parameters.AddWithValue("msg", Guid.NewGuid());
       ins.Parameters.AddWithValue("stream", sharedStream);
@@ -324,11 +324,11 @@ public class TagBoundCoalescingSqlTests : EFCoreTestBase {
     // Later NORMAL row on the same stream: claimable now.
     var normalId = Guid.NewGuid();
     await using (var ins = connection.CreateCommand()) {
-      ins.CommandText = $@"
+      ins.CommandText = @"
         INSERT INTO wh_outbox
           (message_id, destination, message_type, event_data, metadata, status, attempts,
            created_at, stream_id, partition_number)
-        VALUES (@msg, 'test-topic', 'TestEvent', '{{}}', '{{}}', 0, 0, NOW(), @stream, 0)";
+        VALUES (@msg, 'test-topic', 'TestEvent', '{}', '{}', 0, 0, NOW(), @stream, 0)";
       ins.Parameters.AddWithValue("msg", normalId);
       ins.Parameters.AddWithValue("stream", sharedStream);
       await ins.ExecuteNonQueryAsync();

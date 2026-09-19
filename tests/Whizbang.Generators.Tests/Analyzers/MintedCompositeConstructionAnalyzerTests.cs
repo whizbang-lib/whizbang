@@ -169,7 +169,7 @@ public class MintedCompositeConstructionAnalyzerTests {
 
     var diagnostics = await AnalyzerTestHelper.GetDiagnosticsAsync<MintedCompositeConstructionAnalyzer>(source);
 
-    await Assert.That(diagnostics.Where(d => d.Id == "WHIZ150").Count()).IsEqualTo(1)
+    await Assert.That(diagnostics.Count(d => d.Id == "WHIZ150")).IsEqualTo(1)
       .Because("target-typed new is the same construction — the operation-based analysis sees both");
   }
 }

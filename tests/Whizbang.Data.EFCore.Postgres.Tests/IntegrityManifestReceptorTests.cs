@@ -1147,8 +1147,8 @@ public class IntegrityManifestReceptorTests {
 
     await Assert.That(coordinator.ForChunkStreamsSeen).IsNotNull()
       .Because("the chunk-bounded fold is the ONLY acceptable local read at stream level");
-    await Assert.That(coordinator.ForChunkStreamsSeen!.OrderBy(s => s).ToList())
-      .IsEquivalentTo(new[] { s1, s2 }.OrderBy(s => s).ToList())
+    await Assert.That(coordinator.ForChunkStreamsSeen!.Order().ToList())
+      .IsEquivalentTo(new[] { s1, s2 }.Order().ToList())
       .Because("exactly the chunk's streams — folding the lane to check a chunk is the OOM this fixes");
     await Assert.That(coordinator.ForChunkSinceSeen).IsEqualTo(100L);
     await Assert.That(coordinator.ForChunkUntilSeen).IsEqualTo(300L)

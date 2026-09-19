@@ -48,14 +48,13 @@ public class DapperPerspectiveStreamLockerCoverageTests : IDisposable {
   /// <summary>Captures the fully formatted message of every log call, and reports itself enabled for
   /// every level so the locker's `logger?.IsEnabled(LogLevel.Debug) == true` guard passes.</summary>
   private sealed class _capturingLogger : ILogger<DapperPerspectiveStreamLocker> {
-    private readonly List<string> _messages = [];
-    public List<string> Messages => _messages;
+    public List<string> Messages { get; } = [];
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     public bool IsEnabled(LogLevel logLevel) => true;
     public void Log<TState>(
         LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception,
         Func<TState, Exception?, string> formatter) {
-      lock (_messages) { _messages.Add(formatter(state, exception)); }
+      lock (Messages) { Messages.Add(formatter(state, exception)); }
     }
   }
 

@@ -13,8 +13,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <c>claim_orphaned_outbox</c> / <c>_inbox</c> / <c>_perspective_events</c>.
 ///
 /// <para>
-/// Original behavior (pre-PR-#227): every successful claim ran <c>INSERT INTO
-/// wh_active_streams ... ON CONFLICT (stream_id) DO UPDATE</c>, taking the unique-index
+/// Original behavior (pre-PR-#227): every successful claim ran <code>INSERT INTO
+/// wh_active_streams ... ON CONFLICT (stream_id) DO UPDATE</code>, taking the unique-index
 /// leaf-page lock even in the steady-state case where this instance already owned the
 /// stream with a live lease. Under N pods × 250 ms polling in production, two pods'
 /// transactions could end up holding overlapping leaf-page locks while waiting on each

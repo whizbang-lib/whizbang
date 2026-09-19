@@ -980,14 +980,16 @@ public class ClaimWorkSqlTests : EFCoreTestBase {
       await using var ins = connection.CreateCommand();
       // event_data carries a 'p' payload key — _emit_event_store_chain_for_inbox
       // COALESCE-extracts that into wh_event_store.event_data, which is NOT NULL.
-      ins.CommandText = @"
+      ins.CommandText = """
+
         INSERT INTO wh_inbox
           (message_id, handler_name, message_type, event_data, metadata, scope,
            stream_id, instance_id, lease_expiry, processed_at, is_event,
            status, attempts, received_at, partition_number)
-        VALUES (@msg, 'TestHandler', 'Test', '{""p"": {}}'::jsonb, '{}'::jsonb, NULL,
+        VALUES (@msg, 'TestHandler', 'Test', '{"p": {}}'::jsonb, '{}'::jsonb, NULL,
                 @stream, NULL, NULL, NULL, true,
-                0, 0, NOW(), 1)";
+                0, 0, NOW(), 1)
+""";
       ins.Parameters.AddWithValue("msg", Guid.NewGuid());
       ins.Parameters.AddWithValue("stream", Guid.NewGuid());
       await ins.ExecuteNonQueryAsync();

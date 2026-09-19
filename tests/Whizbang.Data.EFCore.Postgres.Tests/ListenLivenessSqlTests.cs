@@ -8,8 +8,7 @@ using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
-#pragma warning disable CA1707
-#pragma warning disable IDE1006
+#pragma warning disable CA1707, IDE1006
 
 /// <summary>
 /// Slice 2b of zero-idle-polling — integration regression locks for the
@@ -302,17 +301,20 @@ public class ListenLivenessSqlTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// <para>
   /// Opens a side connection carrying the
   /// <c>application_name='whizbang-&lt;instance_id&gt;'</c> stamp that
   /// PgSharedNotifyConnection emits on its real per-pod LISTEN connection.
   /// From <c>pg_stat_activity</c>'s perspective this is indistinguishable
   /// from the real thing — any client backend connection with the matching
   /// application_name proves the pod is alive at the TCP layer.
-  ///
+  /// </para>
+  /// <para>
   /// Each test that calls this must wrap the result in <c>await using</c>
   /// so the connection closes (and its <c>pg_stat_activity</c> row vanishes)
   /// when the test scope ends — otherwise tests interfere with each other
   /// when run in parallel.
+  /// </para>
   /// </summary>
   private async Task<NpgsqlConnection> _openSideConnectionAsync(Guid instanceId) {
     var csBuilder = new NpgsqlConnectionStringBuilder(ConnectionString) {

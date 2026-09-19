@@ -8,16 +8,16 @@ using TUnit.Core;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Phase H step 6 slice 2 regression locks for symmetric perspective ownership.
-///
-/// Pins three behaviors:
-///
+/// <para>Phase H step 6 slice 2 regression locks for symmetric perspective ownership.</para>
+/// <para>Pins three behaviors:</para>
+/// <para>
 /// 1. <c>store_perspective_events</c> populates <c>partition_number</c> via
 ///    <c>compute_partition(stream_id, partition_count)</c> at insert.
 /// 2. <c>claim_orphaned_perspective_events</c> applies partition-modulo selection
 ///    (<c>partition_number % active_count = instance_rank</c>) for unowned streams.
 /// 3. <c>claim_orphaned_perspective_events</c>' OWNER PATH (wh_active_streams pin)
 ///    overrides the partition-modulo branch — the registered owner always claims.
+/// </para>
 /// </summary>
 /// <docs>fundamentals/work-coordinator/stream-ownership</docs>
 [Category("Shard1")]
@@ -95,7 +95,7 @@ public class PerspectiveEventsPartitionSqlTests : EFCoreTestBase {
 
     // Non-matching instance (rank=1, count=4): partition (2 % 4) = 2 != 1, no claim.
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = @"SELECT * FROM claim_orphaned_perspective_events(@inst, NOW() + INTERVAL '5 minutes', NOW(), 500, 1, 4)";
+      cmd.CommandText = "SELECT * FROM claim_orphaned_perspective_events(@inst, NOW() + INTERVAL '5 minutes', NOW(), 500, 1, 4)";
       cmd.Parameters.AddWithValue("inst", instanceNonMatching);
       var rdr = await cmd.ExecuteReaderAsync();
       var nonMatchingRows = 0;
@@ -107,7 +107,7 @@ public class PerspectiveEventsPartitionSqlTests : EFCoreTestBase {
 
     // Matching instance (rank=2, count=4): partition (2 % 4) = 2 == 2, should claim.
     await using (var cmd = conn.CreateCommand()) {
-      cmd.CommandText = @"SELECT * FROM claim_orphaned_perspective_events(@inst, NOW() + INTERVAL '5 minutes', NOW(), 500, 2, 4)";
+      cmd.CommandText = "SELECT * FROM claim_orphaned_perspective_events(@inst, NOW() + INTERVAL '5 minutes', NOW(), 500, 2, 4)";
       cmd.Parameters.AddWithValue("inst", instanceMatching);
       var rdr = await cmd.ExecuteReaderAsync();
       var matchingRows = 0;
@@ -163,7 +163,7 @@ public class PerspectiveEventsPartitionSqlTests : EFCoreTestBase {
 
     // Owner claims with rank=0, count=4 — partition-modulo (2 % 4)=2 != 0, but owner path wins.
     await using var cmd2 = conn.CreateCommand();
-    cmd2.CommandText = @"SELECT * FROM claim_orphaned_perspective_events(@inst, NOW() + INTERVAL '5 minutes', NOW(), 500, 0, 4)";
+    cmd2.CommandText = "SELECT * FROM claim_orphaned_perspective_events(@inst, NOW() + INTERVAL '5 minutes', NOW(), 500, 0, 4)";
     cmd2.Parameters.AddWithValue("inst", ownerInstance);
     var rdr = await cmd2.ExecuteReaderAsync();
     var rows = 0;

@@ -10,8 +10,8 @@ namespace Whizbang.Data.Dapper.Postgres.Tests;
 
 /// <summary>
 /// Unit coverage for <c>MessageTypeRegistryReconciliationHostedService</c> — the
-/// hosted service that replaced the prior <c>using var populatorProvider =
-/// services.BuildServiceProvider();</c> pattern at startup (reported by a consumer
+/// hosted service that replaced the prior <code>using var populatorProvider =
+/// services.BuildServiceProvider();</code> pattern at startup (reported by a consumer
 /// whose configuration change-tokens it silently killed). Locks the contract:
 ///
 /// <list type="bullet">
