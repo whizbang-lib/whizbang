@@ -103,7 +103,16 @@ public class OutboxSchemaTests {
     var indexes = OutboxSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).Count().IsEqualTo(8);
+    await Assert.That(indexes).Count().IsEqualTo(5);
+
+    // The count dropped from eight because three declarations were partial on a status bitmask.
+    // The outbox discriminates claimable and completed rows with processed_at, and a partial index
+    // is considered only when the planner can prove the query's predicate implies the index's --
+    // textually, not arithmetically -- so "(status & 4) != 4" was unreachable from anything the
+    // outbox asks, while still being maintained on every write it took. Asserted as a property
+    // rather than left as a bare number, so the next one written that way fails here too.
+    await Assert.That(indexes.Where(i => i.WhereClause?.Contains("status &", StringComparison.Ordinal) == true))
+      .IsEmpty();
 
     // Verify composite index on status and created_at
     var statusCreatedIndex = indexes[0];
