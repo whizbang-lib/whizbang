@@ -21,10 +21,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <para>
 /// Unreachable is not free. Each one is still maintained on every insert, update and delete the
 /// outbox takes, which on the producer side of a bulk load is the hottest write path in the system.
-/// Migration 160 documented this for one of them, naming
-/// <c>idx_outbox_stream_pending (031) on (status &amp; 4) &lt;&gt; 4, which a planner cannot prove from
-/// "processed_at IS NULL"</c> -- and then added a replacement beside it rather than removing it. A
-/// deployed fleet carried four such indexes at zero scans through an entire bulk import.
+/// Migration 160 documented this for one of them, naming <c>idx_outbox_stream_pending</c> as an
+/// index on a status bit that a planner cannot reach from <c>processed_at IS NULL</c> -- and then
+/// added a replacement beside it rather than removing it. A deployed fleet carried four such
+/// indexes at zero scans through an entire bulk import.
 /// </para>
 /// <para>
 /// Stated as a rule rather than a list of four names on purpose: the next index written against the

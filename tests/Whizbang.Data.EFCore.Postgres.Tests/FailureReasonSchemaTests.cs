@@ -81,8 +81,8 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
   /// </summary>
   /// <remarks>
   /// <para>
-  /// <c>idx_outbox_failure_reason</c> keyed failure_reason and predicated on <c>(status &amp; 32768) =
-  /// 32768</c>. The outbox stopped discriminating on status bits and discriminates on
+  /// <c>idx_outbox_failure_reason</c> keyed failure_reason and predicated on the status bit
+  /// <c>32768</c>. The outbox stopped discriminating on status bits and discriminates on
   /// <c>processed_at</c>, and a partial index is considered only when Postgres can prove the query's
   /// predicate implies the index's -- textually, not arithmetically. So this index was not merely
   /// unused on current data: no query the outbox issues could reach it, whatever the data looked

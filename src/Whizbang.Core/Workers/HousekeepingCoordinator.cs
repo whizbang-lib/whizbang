@@ -292,11 +292,12 @@ public sealed class HousekeepingCoordinator {
       return new Decision(true, Verdict.ProceedUnmeasured);
     }
 
-    var reason = !backlog.IsSettled ? Verdict.ServiceBusy
-      : !_cooldownElapsed() ? Verdict.ServiceCoolingDown
-      : Verdict.Proceed;
-
-    if (reason == Verdict.Proceed) {
+    Verdict reason;
+    if (!backlog.IsSettled) {
+      reason = Verdict.ServiceBusy;
+    } else if (!_cooldownElapsed()) {
+      reason = Verdict.ServiceCoolingDown;
+    } else {
       return new Decision(true, Verdict.Proceed);
     }
 
