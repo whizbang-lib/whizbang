@@ -17,11 +17,14 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/HousekeepingCoordinator.cs</code-under-test>
 [Category("Workers")]
+// These cover slot mechanics, ranking and the deferral budget, not the settled dwell added
+// later (HousekeepingCooldownTests). They pin SettledCooldown to zero so each one still
+// exercises the behavior it names instead of the admission delay in front of it.
 public class HousekeepingIntegrityPriorityTests {
 
   [Test]
   public async Task IntegrityHoldsTheSlotForTheDurationOfItsWorkAsync() {
-    var coordinator = new HousekeepingCoordinator();
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     using (var hold = coordinator.BeginIntegrityScope()) {
       await Assert.That(hold.Granted).IsTrue();
@@ -39,7 +42,7 @@ public class HousekeepingIntegrityPriorityTests {
 
   [Test]
   public async Task TheSlotIsReturnedWhenIntegrityWorkThrowsAsync() {
-    var coordinator = new HousekeepingCoordinator();
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     try {
       using var hold = coordinator.BeginIntegrityScope();
@@ -54,7 +57,7 @@ public class HousekeepingIntegrityPriorityTests {
 
   [Test]
   public async Task AnUngrantedScopeDoesNotReleaseSomeoneElsesSlotAsync() {
-    var coordinator = new HousekeepingCoordinator();
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     using var first = coordinator.BeginIntegrityScope();
 
     using (var second = coordinator.BeginIntegrityScope()) {

@@ -91,6 +91,13 @@ public sealed class HousekeepingCoordinator {
     /// <summary>Work is still queued or a peer instance holds leases.</summary>
     ServiceBusy,
 
+    /// <summary>
+    /// The service reads settled, but not for long enough yet. Distinct from
+    /// <see cref="ServiceBusy"/> because the two call for opposite operator responses: busy means
+    /// the service has more work than it can finish, cooling down means it has just finished.
+    /// </summary>
+    ServiceCoolingDown,
+
     /// <summary>A higher-priority housekeeping activity holds the slot.</summary>
     HigherPriorityRunning,
 
@@ -105,6 +112,19 @@ public sealed class HousekeepingCoordinator {
     /// maintenance cadence that is an hour of sustained busyness before cleanup runs regardless.
     /// </summary>
     public int MaxConsecutiveDeferrals { get; set; } = 6;
+
+    /// <summary>
+    /// How long the service must read settled CONTINUOUSLY before a sweep is admitted (default two
+    /// minutes). Zero admits on the first settled reading, which is the pre-cooldown behavior.
+    /// </summary>
+    /// <remarks>
+    /// Settledness is a sample, and a sample is not a state. A pipeline working through a bulk load
+    /// empties its work tables between bursts, so an instant reading of zero says only "nothing is
+    /// queued right now" — and cleanup admitted on that reading starts a sweep of tens of seconds
+    /// just as the next burst lands, which is the case the gate exists to avoid. Requiring the
+    /// reading to hold for a dwell distinguishes a trough from an ending.
+    /// </remarks>
+    public TimeSpan SettledCooldown { get; set; } = TimeSpan.FromMinutes(2);
   }
 
   /// <summary>The outcome of one admission request.</summary>
@@ -113,6 +133,7 @@ public sealed class HousekeepingCoordinator {
   public readonly record struct Decision(bool Granted, Verdict Reason);
 
   private readonly Settings _settings;
+  private readonly TimeProvider _timeProvider;
   private Observability.HousekeepingMetrics? _metrics;
   private readonly object _gate = new();
   private bool _dlqRunning;
@@ -120,6 +141,11 @@ public sealed class HousekeepingCoordinator {
   private bool _maintenanceRunning;
   private int _consecutiveDeferrals;
   private int _recoveryDeferrals;
+
+  // When the service most recently STARTED reading settled, or null while it reads unsettled. Every
+  // unsettled reading clears it, so the dwell measures an unbroken run of settled readings rather
+  // than the time since the first one ever seen.
+  private DateTimeOffset? _settledSince;
 
   /// <summary>
   /// Initializes a new instance of the <see cref="HousekeepingCoordinator"/> class with default
@@ -137,9 +163,54 @@ public sealed class HousekeepingCoordinator {
 
   /// <summary>Initializes a new instance of the <see cref="HousekeepingCoordinator"/> class.</summary>
   /// <param name="settings">Tuning; defaults are production-safe.</param>
-  public HousekeepingCoordinator(Settings settings) {
+  public HousekeepingCoordinator(Settings settings) : this(settings, TimeProvider.System) { }
+
+  /// <summary>Initializes a new instance with an explicit clock.</summary>
+  /// <param name="settings">Tuning; defaults are production-safe.</param>
+  /// <param name="timeProvider">The clock the settled dwell is measured on.</param>
+  public HousekeepingCoordinator(Settings settings, TimeProvider timeProvider) {
     ArgumentNullException.ThrowIfNull(settings);
+    ArgumentNullException.ThrowIfNull(timeProvider);
     _settings = settings;
+    _timeProvider = timeProvider;
+  }
+
+  /// <summary>
+  /// Records a settledness reading without asking to start anything, so the dwell is measured from
+  /// readings taken between sweeps rather than only the one taken when a sweep is due.
+  /// </summary>
+  /// <param name="backlog">The reading, or null when the backend could not report one.</param>
+  /// <remarks>
+  /// A gate that samples only when it wants to run cannot tell a trough from an ending: its
+  /// resolution is its own interval. Any worker holding a fresh reading can feed it here.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/HousekeepingCooldownTests.cs</tests>
+  public void Observe(ServiceBacklog? backlog) {
+    lock (_gate) {
+      _trackSettled(backlog);
+    }
+  }
+
+  // Caller holds _gate. Null (unmeasured) does not clear the dwell: a reading that could not be
+  // taken is not evidence of work, and treating it as one would let a flaky probe starve cleanup.
+  private void _trackSettled(ServiceBacklog? backlog) {
+    if (backlog is null) {
+      return;
+    }
+    if (!backlog.IsSettled) {
+      _settledSince = null;
+      return;
+    }
+    _settledSince ??= _timeProvider.GetUtcNow();
+  }
+
+  // Caller holds _gate.
+  private bool _cooldownElapsed() {
+    if (_settings.SettledCooldown <= TimeSpan.Zero) {
+      return true;
+    }
+    return _settledSince is { } since
+      && _timeProvider.GetUtcNow() - since >= _settings.SettledCooldown;
   }
 
   /// <summary>Requests permission to start <paramref name="activity"/>.</summary>
@@ -156,6 +227,10 @@ public sealed class HousekeepingCoordinator {
 
   private Decision _tryBeginCore(Activity activity, ServiceBacklog? backlog) {
     lock (_gate) {
+      // Every reading feeds the dwell, including the ones that go on to be refused for an unrelated
+      // reason: settledness is a property of the service, not of this admission request.
+      _trackSettled(backlog);
+
       // Self-overlap is refused for every activity: a cycle must never race itself.
       var alreadyRunning = activity switch {
         Activity.DeadLetterRecovery => _dlqRunning,
@@ -222,6 +297,18 @@ public sealed class HousekeepingCoordinator {
           return new Decision(true, Verdict.ProceedDeferralLimit);
         }
         return new Decision(false, Verdict.ServiceBusy);
+      }
+
+      if (!_cooldownElapsed()) {
+        // Settled, but not for long enough. This counts against the SAME deferral budget as busy:
+        // a service that alternates between working and brief troughs must still reach the forced
+        // sweep, or the cooldown becomes a way to starve cleanup indefinitely.
+        _consecutiveDeferrals++;
+        if (_consecutiveDeferrals > _settings.MaxConsecutiveDeferrals) {
+          _maintenanceRunning = true;
+          return new Decision(true, Verdict.ProceedDeferralLimit);
+        }
+        return new Decision(false, Verdict.ServiceCoolingDown);
       }
 
       _maintenanceRunning = true;

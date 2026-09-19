@@ -40,6 +40,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/HousekeepingCoordinator.cs</code-under-test>
 [Category("Workers")]
+// These cover slot mechanics, ranking and the deferral budget, not the settled dwell added
+// later (HousekeepingCooldownTests). They pin SettledCooldown to zero so each one still
+// exercises the behavior it names instead of the admission delay in front of it.
 public class HousekeepingCoordinatorTests {
 
   private static ServiceBacklog _backlog(long unprocessed = 0, long leased = 0)
@@ -49,7 +52,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task MaintenanceWaitsWhileRowsAreStillQueuedAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     var decision = coordinator.TryBegin(
       HousekeepingCoordinator.Activity.Maintenance, _backlog(unprocessed: 18_956));
@@ -62,7 +65,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task MaintenanceWaitsWhileAPeerHoldsLeasesAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     // Nothing queued: this instance has finished its slice and looks completely idle from inside.
     // Peers still hold leases on the shared inbox, so the service is mid-drain.
@@ -77,7 +80,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task MaintenanceWaitsWhileOutboxRowsArePendingAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     // A producer under a bulk load: its inbox is empty and it holds no inbox leases, so the two
     // measures the gate used to read say "idle" while the outbox holds thousands of rows.
@@ -92,7 +95,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task MaintenanceWaitsWhilePerspectiveEventsArePendingAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     // A consumer mid-drain: inbox already stored, everything now queued as perspective events.
     var decision = coordinator.TryBegin(
@@ -113,7 +116,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task MaintenanceProceedsOnceTheServiceSettlesAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     var decision = coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _backlog());
 
@@ -127,7 +130,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task MaintenanceDoesNotFireWhileIntegrityWorkIsRunningAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     coordinator.TryBegin(HousekeepingCoordinator.Activity.Integrity, _backlog());
 
     var decision = coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _backlog());
@@ -141,7 +144,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task IntegrityIsNotHeldBackByAMaintenanceSweepAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _backlog());
 
     var decision = coordinator.TryBegin(HousekeepingCoordinator.Activity.Integrity, _backlog());
@@ -153,7 +156,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task ASecondMaintenanceRunCannotOverlapTheFirstAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _backlog());
 
     var decision = coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _backlog());
@@ -165,7 +168,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task ReleasingTheSlotLetsTheNextActivityInAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     coordinator.TryBegin(HousekeepingCoordinator.Activity.Integrity, _backlog());
     coordinator.End(HousekeepingCoordinator.Activity.Integrity);
 
@@ -180,7 +183,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task AnUnmeasurableBacklogMustNotDisableMaintenanceAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     // Backends that cannot answer the settledness query return null.
     var decision = coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, backlog: null);
@@ -195,7 +198,7 @@ public class HousekeepingCoordinatorTests {
   [Test]
   public async Task MaintenanceIsNotStarvedByAPermanentlyBusyServiceAsync() {
     var coordinator = new HousekeepingCoordinator(
-      new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 3 });
+      new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero, MaxConsecutiveDeferrals = 3 });
 
     HousekeepingCoordinator.Decision decision = default;
     for (var i = 0; i < 4; i++) {
@@ -215,7 +218,7 @@ public class HousekeepingCoordinatorTests {
   [Test]
   public async Task TheDeferralBudgetResetsAfterASweepActuallyRunsAsync() {
     var coordinator = new HousekeepingCoordinator(
-      new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 2 });
+      new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero, MaxConsecutiveDeferrals = 2 });
 
     coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _backlog(unprocessed: 10));
     coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _backlog(unprocessed: 10));
@@ -235,7 +238,7 @@ public class HousekeepingCoordinatorTests {
   [Test]
   public async Task ASettledRunDoesNotConsumeTheDeferralBudgetAsync() {
     var coordinator = new HousekeepingCoordinator(
-      new HousekeepingCoordinator.Settings { MaxConsecutiveDeferrals = 2 });
+      new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero, MaxConsecutiveDeferrals = 2 });
 
     for (var i = 0; i < 5; i++) {
       var granted = coordinator.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _backlog());
@@ -248,7 +251,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task EndingAnActivityThatNeverBeganIsHarmlessAsync() {
-    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var coordinator = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     coordinator.TryBegin(HousekeepingCoordinator.Activity.Integrity, _backlog());
 
     // A stray release must not hand away someone else's slot.
@@ -294,7 +297,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task DeadLetterRecovery_TakesTheSlotAheadOfIntegrityAsync() {
-    var c = new HousekeepingCoordinator();
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     var dlq = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
     var integrity = c.TryBegin(HousekeepingCoordinator.Activity.Integrity, backlog: null);
@@ -308,7 +311,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task Integrity_DoesNotBlockDeadLetterRecoveryAsync() {
-    var c = new HousekeepingCoordinator();
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     var integrity = c.TryBegin(HousekeepingCoordinator.Activity.Integrity, backlog: null);
     var dlq = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
@@ -320,7 +323,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task DeadLetterRecovery_WaitsWhileTheServiceIsBusyAsync() {
-    var c = new HousekeepingCoordinator();
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     var d = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _busy());
 
@@ -332,7 +335,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task DeadLetterRecovery_DoesNotOverlapItselfAsync() {
-    var c = new HousekeepingCoordinator();
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     var first = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
     var second = c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
@@ -343,7 +346,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task MaintenanceStillWaitsBehindDeadLetterRecoveryAsync() {
-    var c = new HousekeepingCoordinator();
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
 
     c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
     var sweep = c.TryBegin(HousekeepingCoordinator.Activity.Maintenance, _settled());
@@ -355,7 +358,7 @@ public class HousekeepingCoordinatorTests {
 
   [Test]
   public async Task EndingRecovery_ReleasesTheSlotForIntegrityAsync() {
-    var c = new HousekeepingCoordinator();
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
 
     c.End(HousekeepingCoordinator.Activity.DeadLetterRecovery);

@@ -25,6 +25,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// </remarks>
 /// <code-under-test>src/Whizbang.Core/Workers/MaintenanceWorker.cs</code-under-test>
 [NotInParallel("WhizbangBackgroundServiceTests")]
+// These cover slot mechanics, ranking and the deferral budget, not the settled dwell added
+// later (HousekeepingCooldownTests). They pin SettledCooldown to zero so each one still
+// exercises the behavior it names instead of the admission delay in front of it.
 public class MaintenanceWorkerHousekeepingGateTests {
 
   private sealed class GateFakeCoordinator(ServiceBacklog? backlog, bool throwOnSweep = false) : IWorkCoordinator {
@@ -73,7 +76,7 @@ public class MaintenanceWorkerHousekeepingGateTests {
   public async Task TheSweepIsSkippedWhileTheServiceIsDrainingAsync() {
     var (worker, coord) = _build(
       new ServiceBacklog { UnprocessedInboxRows = 34_033, ActiveLeasedRows = 1_870 },
-      new HousekeepingCoordinator(new HousekeepingCoordinator.Settings()));
+      new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero }));
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
@@ -87,7 +90,7 @@ public class MaintenanceWorkerHousekeepingGateTests {
   public async Task TheSweepRunsOnceTheServiceIsSettledAsync() {
     var (worker, coord) = _build(
       new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 },
-      new HousekeepingCoordinator(new HousekeepingCoordinator.Settings()));
+      new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero }));
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
 
@@ -98,7 +101,7 @@ public class MaintenanceWorkerHousekeepingGateTests {
 
   [Test]
   public async Task TheSweepIsSkippedWhileIntegrityWorkHoldsTheSlotAsync() {
-    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     housekeeping.TryBegin(HousekeepingCoordinator.Activity.Integrity, backlog: null);
     var (worker, coord) = _build(new ServiceBacklog(), housekeeping);
 
@@ -111,7 +114,7 @@ public class MaintenanceWorkerHousekeepingGateTests {
 
   [Test]
   public async Task TheSlotIsReleasedSoLaterCyclesStillRunAsync() {
-    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     var (worker, coord) = _build(new ServiceBacklog(), housekeeping);
 
     await worker.RunMaintenanceOnceAsync(CancellationToken.None);
@@ -124,7 +127,7 @@ public class MaintenanceWorkerHousekeepingGateTests {
 
   [Test]
   public async Task TheSlotIsReleasedEvenWhenTheSweepThrowsAsync() {
-    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings());
+    var housekeeping = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     var (worker, _) = _build(new ServiceBacklog(), housekeeping, throwOnSweep: true);
 
     try { await worker.RunMaintenanceOnceAsync(CancellationToken.None); } catch (InvalidOperationException) { }
