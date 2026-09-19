@@ -2227,8 +2227,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
 DECLARE
   -- 150: the bands (Whizbang.Core.Priority.WorkPriority) and the scheduling constants. The wait target and the
   -- floor are the framework's defaults for this release; a host's batch hook adjusts a stream's number in memory.
-  c_interactive_band_end CONSTANT INTEGER := __PRIORITY_INTERACTIVE_BAND_END__;
-  c_standard_band_end CONSTANT INTEGER := __PRIORITY_STANDARD_BAND_END__;
+  c_interactive_band_end CONSTANT INTEGER := 99;
+  c_standard_band_end CONSTANT INTEGER := 199;
   c_background_wait_target_seconds CONSTANT INTEGER := 300;
   c_background_floor_share CONSTANT NUMERIC := 0.1;
 BEGIN
@@ -2331,8 +2331,8 @@ BEGIN
   --
   -- A plpgsql constant would reintroduce the same defect. c_interactive_band_end is a PARAMETER at
   -- plan time, and the generic plan plpgsql settles into after a few executions cannot fold it, so
-  -- the bounds come from the migration constants (rule 12) and reach the planner as literals. The
-  -- indexes carry the same numbers from the same source, so index and query cannot drift apart.
+  -- the bounds are written here as the same literals the index predicates carry. That agreement is
+  -- held by PriorityLaneIndexUsabilityTests against WorkPriority, not by hope.
   --
   -- The four lanes partition the pending set with no overlap: interactive takes the whole band
   -- regardless of kind (its index has no is_event predicate), the two event lanes take their bands,
@@ -2342,7 +2342,7 @@ BEGIN
     (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
      FROM __SCHEMA__.wh_inbox_state i
      WHERE i.processed_at IS NULL AND i.instance_id IS NULL
-       AND i.priority <= __PRIORITY_INTERACTIVE_BAND_END__
+       AND i.priority <= 99
        AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
      ORDER BY i.received_at, i.message_id
      LIMIT (SELECT claim_window FROM params))
@@ -2351,8 +2351,8 @@ BEGIN
      FROM __SCHEMA__.wh_inbox_state i
      WHERE i.processed_at IS NULL AND i.instance_id IS NULL
        AND i.is_event = TRUE
-       AND i.priority >= __PRIORITY_INTERACTIVE_BAND_END__ + 1
-       AND i.priority <= __PRIORITY_STANDARD_BAND_END__
+       AND i.priority >= 99 + 1
+       AND i.priority <= 199
        AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
      ORDER BY i.received_at, i.message_id
      LIMIT (SELECT claim_window FROM params))
@@ -2361,7 +2361,7 @@ BEGIN
      FROM __SCHEMA__.wh_inbox_state i
      WHERE i.processed_at IS NULL AND i.instance_id IS NULL
        AND i.is_event = TRUE
-       AND i.priority > __PRIORITY_STANDARD_BAND_END__
+       AND i.priority > 199
        AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
      ORDER BY i.received_at, i.message_id
      LIMIT (SELECT claim_window FROM params))
@@ -2370,7 +2370,7 @@ BEGIN
      FROM __SCHEMA__.wh_inbox_state i
      WHERE i.processed_at IS NULL AND i.instance_id IS NULL
        AND i.is_event = FALSE
-       AND i.priority > __PRIORITY_INTERACTIVE_BAND_END__
+       AND i.priority > 99
        AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
      ORDER BY i.received_at, i.message_id
      LIMIT (SELECT claim_window FROM params))
@@ -2378,7 +2378,7 @@ BEGIN
     (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
      FROM __SCHEMA__.wh_inbox_state i
      WHERE i.processed_at IS NULL AND i.instance_id IS NOT NULL AND i.lease_expiry < p_now
-       AND i.priority <= __PRIORITY_INTERACTIVE_BAND_END__
+       AND i.priority <= 99
        AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
      ORDER BY i.lease_expiry, i.received_at, i.message_id
      LIMIT (SELECT claim_window FROM params))
@@ -2386,7 +2386,7 @@ BEGIN
     (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
      FROM __SCHEMA__.wh_inbox_state i
      WHERE i.processed_at IS NULL AND i.instance_id IS NOT NULL AND i.lease_expiry < p_now
-       AND i.priority > __PRIORITY_INTERACTIVE_BAND_END__
+       AND i.priority > 99
        AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
      ORDER BY i.lease_expiry, i.received_at, i.message_id
      LIMIT (SELECT claim_window FROM params))

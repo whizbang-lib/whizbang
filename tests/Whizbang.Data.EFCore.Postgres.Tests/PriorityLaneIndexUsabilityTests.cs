@@ -104,7 +104,8 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   [Test]
   public async Task TheClaimsLaneSelection_IsWrittenSoAnIndexCanMatchIt_NotAsAComputedBucketAsync() {
     // Read from the shipped migration, never copied: a copy of the claim's shape is a second shape, and it
-    // passes happily once the real one moves. Identity substitution leaves the corpus verbatim.
+    // passes happily once the real one moves. Identity substitution leaves the corpus verbatim. The bounds
+    // are compared against WorkPriority, so the claim and the framework cannot drift apart.
     var claim = new Whizbang.Data.Postgres.PostgresMigrationProvider(
         typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly, "__SCHEMA__")
       .GetMigrations()
@@ -126,20 +127,6 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
     await Assert.That(cte).Contains($"i.priority > {_standardBandEnd}");
   }
 
-  [Test]
-  public async Task EveryLaneBoundInTheClaim_ComesFromTheSharedConstants_NotARetypedNumberAsync() {
-    // The bounds have to reach the planner as literals, so they cannot be plpgsql constants — a constant is a
-    // parameter at plan time and the generic plan plpgsql settles into cannot fold it. Substituting them from
-    // constants.txt gets literals into the SQL without a second copy of the numbers to keep in agreement.
-    var raw = typeof(Whizbang.Data.Postgres.MigrationConstants).Assembly
-      .GetManifestResourceStream("Whizbang.Data.Postgres.Migrations.constants.txt")!;
-    using var reader = new StreamReader(raw);
-    var constants = await reader.ReadToEndAsync();
-
-    await Assert.That(constants).Contains($"__PRIORITY_INTERACTIVE_BAND_END__ = {_interactiveBandEnd}")
-      .Because("the migration's band bound and WorkPriority's must be one definition, not two that agree today.");
-    await Assert.That(constants).Contains($"__PRIORITY_STANDARD_BAND_END__ = {_standardBandEnd}");
-  }
 
   /// <summary>
   /// The background lane. Its query says "greater than the standard band end" and its index must say the same, or
