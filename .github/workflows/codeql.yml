@@ -40,10 +40,10 @@ jobs:
     # hand-written files, but the generators that emit them ARE hand-written and still get
     # analyzed, so a flaw reaches the report through its source rather than its output.
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@6bc82e05fd0ea64601dd4b465378bbcf57de0314 # v4.32.1
+      uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
       with:
         languages: ${{ matrix.language }}
         build-mode: none
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@6bc82e05fd0ea64601dd4b465378bbcf57de0314 # v4.32.1
+      uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
