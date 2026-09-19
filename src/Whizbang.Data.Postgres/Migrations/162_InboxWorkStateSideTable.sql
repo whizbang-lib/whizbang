@@ -2327,7 +2327,12 @@ BEGIN
   -- the bucket is a join column and not a constant. Every band index was therefore unusable, and
   -- the lanes fell back to reading the whole pending set once per bucket -- O(backlog) on the
   -- hottest path in the system, while the three indexes they were meant to read went on charging
-  -- every claim write for nothing. Measured on 300k pending rows: 11,118 buffers against 304.
+  -- every claim write for nothing. Measured on 300k pending rows with the held-lane index in
+  -- place, which is the comparison that is actually fair: 11,102 buffers and 5,249ms against
+  -- 5 buffers and under 20ms. The old shape DID reach an index -- the held-lane one -- but it
+  -- leads with instance_id, so for the unowned set it reads the whole backlog per bucket and
+  -- top-N sorts, because received_at sits late in its key. The band indexes are keyed on
+  -- (received_at, message_id), which is the ORDER BY, so they stop at the LIMIT.
   --
   -- A plpgsql constant would reintroduce the same defect. c_interactive_band_end is a PARAMETER at
   -- plan time, and the generic plan plpgsql settles into after a few executions cannot fold it, so

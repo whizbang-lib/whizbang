@@ -98,7 +98,9 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   /// <c>CASE ... END = b.bucket</c> implies <c>priority &lt;= 99</c> when the bucket is a join column rather than a
   /// constant. The partial indexes are then unusable, the lanes fall back to scanning the whole pending set once per
   /// bucket, and the indexes stay on the table costing every claim write and earning nothing. Measured on 300k rows:
-  /// 11,118 buffers against 304, and the deployed fleet showed the three band indexes at zero scans across a whole
+  /// 11,102 buffers and 5,249ms against 5 buffers and under 20ms -- measured with the held-lane index present, the
+  /// only fair comparison, since the old shape reached THAT index and read the whole unowned set per bucket rather
+  /// than reaching no index at all. The deployed fleet showed the three band indexes at zero scans across a whole
   /// bulk import while the table carried them.
   /// </remarks>
   [Test]
