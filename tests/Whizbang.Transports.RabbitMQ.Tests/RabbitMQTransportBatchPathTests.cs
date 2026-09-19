@@ -237,7 +237,7 @@ public class RabbitMQTransportBatchPathTests {
     InvalidOperationException? caught = null;
     try {
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
+        (_, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -258,7 +258,7 @@ public class RabbitMQTransportBatchPathTests {
     InvalidOperationException? caught = null;
     try {
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
+        (_, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -276,7 +276,7 @@ public class RabbitMQTransportBatchPathTests {
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection, logger: logger);
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
+      (_, ct) => Task.CompletedTask, RabbitTestWire.Destination(), new TransportBatchOptions());
 
     await Assert.That(subscription).IsNotNull();
     await Assert.That(logger.Entries.Any(e =>
@@ -375,7 +375,7 @@ public class RabbitMQTransportBatchPathTests {
     var options = new TransportBatchOptions { BatchSize = 2, SlideMs = 60_000, MaxWaitMs = 60_000 };
     var (channel, batches, _) = await _subscribeBatchAsync(
       options,
-      handler: (batch, ct) => throw RabbitTestWire.NewAlreadyClosedException(),
+      handler: (_, ct) => throw RabbitTestWire.NewAlreadyClosedException(),
       logger: logger);
 
     var (props1, body1) = RabbitTestWire.ValidWireMessage("m1");

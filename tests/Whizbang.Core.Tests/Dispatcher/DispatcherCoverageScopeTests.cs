@@ -37,14 +37,14 @@ public class DispatcherCoverageScopeTests {
   private sealed class ScopeTestDispatcher(IServiceProvider sp) : Core.Dispatcher(sp, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       if (messageType == typeof(ScopeTestCommand) && typeof(TResult) == typeof(ScopeTestResult)) {
-        return msg => ValueTask.FromResult((TResult)(object)new ScopeTestResult(true));
+        return _ => ValueTask.FromResult((TResult)(object)new ScopeTestResult(true));
       }
 
       return null;
     }
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
       if (messageType == typeof(ScopeTestCommand)) {
-        return msg => ValueTask.CompletedTask;
+        return _ => ValueTask.CompletedTask;
       }
 
       return null;

@@ -253,7 +253,7 @@ public class DispatcherSyncTrackingVerificationTests {
     services.AddScoped<IScopedEventTracker, ScopedEventTracker>();
 
     // Mock IWorkCoordinator
-    services.AddSingleton<IWorkCoordinator>(sp => new MockWorkCoordinator());
+    services.AddSingleton<IWorkCoordinator>(_ => new MockWorkCoordinator());
 
     // Register PerspectiveSyncAwaiter as scoped (like AddWhizbang does)
     services.AddScoped<IPerspectiveSyncAwaiter, PerspectiveSyncAwaiter>();

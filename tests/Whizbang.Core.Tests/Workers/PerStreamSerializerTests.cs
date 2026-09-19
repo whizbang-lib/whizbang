@@ -31,7 +31,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: (item, ct) => {
+      processor: (item, _) => {
         lock (lockObj) { processed.Add(item.MessageId); }
         if (processed.Count == 1) {
           throw new InvalidOperationException("first item fails");
@@ -83,7 +83,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: async (item, ct) => {
+      processor: async (item, _) => {
         await Task.Yield();
         lock (lockObj) {
           seen.Add(item.MessageId);
@@ -118,7 +118,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: async (item, ct) => {
+      processor: async (item, _) => {
         var current = Interlocked.Increment(ref inFlight);
         var observed = Volatile.Read(ref peakInFlight);
         while (current > observed) {
@@ -191,7 +191,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: x => x.StreamId,
-      processor: async (item, ct) => {
+      processor: async (item, _) => {
         await Task.Yield();
         lock (lockObj) {
           seen.Add(item.MessageId);
@@ -272,7 +272,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: async (item, ct) => {
+      processor: async (item, _) => {
         await Task.Yield();
         if (item.Tag == "A") {
           throw new InvalidOperationException("simulated");
@@ -439,7 +439,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: async (item, ct) => { await Task.Yield(); },
+      processor: async (_, ct) => { await Task.Yield(); },
       options: new PerStreamSerializerOptions {
         IdleEvictionWindow = TimeSpan.FromSeconds(5),
         IdleSweepInterval = TimeSpan.FromSeconds(1),
@@ -476,7 +476,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: (item, ct) => {
+      processor: (item, _) => {
         if (item.Tag == "healthy") {
           Interlocked.Increment(ref healthyProcessed);
           healthyDrained.TrySetResult();
@@ -524,7 +524,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: async (item, ct) => {
+      processor: async (item, _) => {
         if (processedOrder.Count == 0) {
           processorStarted.TrySetResult();
           await releaseProcessor.Task;
@@ -565,7 +565,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: (item, ct) => {
+      processor: (item, _) => {
         lock (lockObj) { seen.Add(item.MessageId); }
         return Task.CompletedTask;
       },
@@ -605,7 +605,7 @@ public class PerStreamSerializerTests {
 
     var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: async (item, ct) => {
+      processor: async (_, ct) => {
         processorStarted.TrySetResult();
         await releaseProcessor.Task;
         try {
@@ -649,7 +649,7 @@ public class PerStreamSerializerTests {
 
     var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: x => x.StreamId,
-      processor: async (item, ct) => {
+      processor: async (item, _) => {
         if (item.MessageId == i1.MessageId) {
           processorStarted.TrySetResult();
           await releaseProcessor.Task;

@@ -21,7 +21,7 @@ public class DispatcherSchemaGateTests {
   private sealed class _seamDispatcher(IServiceProvider sp) : Core.Dispatcher(
       sp, new ServiceInstanceProvider(configuration: null)) {
     protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType)
-      => msg => ValueTask.FromResult<TResult>(default!);
+      => _ => ValueTask.FromResult<TResult>(default!);
     protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType)
       => null;
     protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType)
@@ -33,7 +33,7 @@ public class DispatcherSchemaGateTests {
     protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType)
       => null;
     protected override Func<object, ValueTask<object?>>? GetReceptorInvokerAny(object message, Type messageType)
-      => msg => ValueTask.FromResult<object?>(null);
+      => _ => ValueTask.FromResult<object?>(null);
     protected override DispatchModes? GetReceptorDefaultRouting(Type messageType)
       => DispatchModes.LocalDispatch;
   }

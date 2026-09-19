@@ -34,7 +34,7 @@ public class TransportManagerPublishingTests {
     var publishedEnvelopes = new List<IMessageEnvelope>();
     var received = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           publishedEnvelopes.Add(msg.Envelope);
         }
@@ -85,7 +85,7 @@ public class TransportManagerPublishingTests {
     var receivedDest2 = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await transport1.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           publishedToDest1.Add(msg.Envelope);
         }
@@ -97,7 +97,7 @@ public class TransportManagerPublishingTests {
     );
 
     await transport2.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           publishedToDest2.Add(msg.Envelope);
         }
@@ -177,7 +177,7 @@ public class TransportManagerPublishingTests {
     var publishedEnvelopes = new List<IMessageEnvelope>();
     var received = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           publishedEnvelopes.Add(msg.Envelope);
         }
@@ -216,7 +216,7 @@ public class TransportManagerPublishingTests {
     var publishedEnvelopes = new List<IMessageEnvelope>();
     var received = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     await transport.SubscribeBatchAsync(
-      async (batch, ct) => {
+      async (batch, _) => {
         foreach (var msg in batch) {
           publishedEnvelopes.Add(msg.Envelope);
         }

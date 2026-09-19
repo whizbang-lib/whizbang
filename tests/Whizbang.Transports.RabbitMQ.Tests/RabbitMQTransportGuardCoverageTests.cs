@@ -146,7 +146,7 @@ public class RabbitMQTransportGuardCoverageTests {
     var transport = await RabbitTestWire.NewInitializedTransportAsync(connection, logger: logger);
     var options = new TransportBatchOptions { BatchSize = 1, SlideMs = 60_000, MaxWaitMs = 60_000 };
 
-    await transport.SubscribeBatchAsync((batch, ct) => Task.CompletedTask, RabbitTestWire.Destination(), options);
+    await transport.SubscribeBatchAsync((_, ct) => Task.CompletedTask, RabbitTestWire.Destination(), options);
     var (props, body) = RabbitTestWire.ValidWireMessage("solo");
     await RabbitTestWire.DeliverAsync(channel, props, body, 1);
 
@@ -173,7 +173,7 @@ public class RabbitMQTransportGuardCoverageTests {
     var batches = new List<IReadOnlyList<TransportMessage>>();
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => { batches.Add(batch); return Task.CompletedTask; },
+      (batch, _) => { batches.Add(batch); return Task.CompletedTask; },
       RabbitTestWire.Destination(),
       options);
 
@@ -210,7 +210,7 @@ public class RabbitMQTransportGuardCoverageTests {
         ["RoutingPattern"] = JsonDocument.Parse("\"\"").RootElement.Clone()
       });
 
-    await transport.SubscribeBatchAsync((batch, ct) => Task.CompletedTask, destination, new TransportBatchOptions());
+    await transport.SubscribeBatchAsync((_, ct) => Task.CompletedTask, destination, new TransportBatchOptions());
 
     var boundKeys = channel.QueueBindings.ConvertAll(b => b.RoutingKey);
     await Assert.That(boundKeys).Contains("orders.created");

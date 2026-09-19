@@ -60,7 +60,7 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
 
   private static Task<ISubscription> _subscribeBatchAsync(AzureServiceBusTransport transport, string topic, string routingKey) =>
     transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask,
+      (_, ct) => Task.CompletedTask,
       new TransportDestination(topic) { RoutingKey = routingKey },
       new TransportBatchOptions());
 

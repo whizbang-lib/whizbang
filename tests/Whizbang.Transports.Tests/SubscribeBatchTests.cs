@@ -63,7 +63,7 @@ public class SubscribeBatchTests {
 
     // Act
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask,
+      (_, ct) => Task.CompletedTask,
       destination,
       batchOptions
     );
@@ -85,7 +85,7 @@ public class SubscribeBatchTests {
     var batchReceived = new TaskCompletionSource();
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (batch, _) => {
         receivedBatches.Add(batch);
         batchReceived.TrySetResult();
         return Task.CompletedTask;
@@ -124,7 +124,7 @@ public class SubscribeBatchTests {
     var batchReceived = new TaskCompletionSource();
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (batch, _) => {
         receivedBatches.Add(batch);
         batchReceived.TrySetResult();
         return Task.CompletedTask;
@@ -158,7 +158,7 @@ public class SubscribeBatchTests {
     // Act & Assert
     await Assert.ThrowsAsync<OperationCanceledException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         destination,
         batchOptions,
         cts.Token
@@ -175,7 +175,7 @@ public class SubscribeBatchTests {
     var batchCount = 0;
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (_, ct) => {
         Interlocked.Increment(ref batchCount);
         return Task.CompletedTask;
       },
@@ -207,7 +207,7 @@ public class SubscribeBatchTests {
     var secondCallReceived = new TaskCompletionSource();
 
     var subscription = await transport.SubscribeBatchAsync(
-      (batch, ct) => {
+      (_, ct) => {
         var count = Interlocked.Increment(ref callCount);
         if (count == 1) {
           throw new InvalidOperationException("Simulated handler failure");

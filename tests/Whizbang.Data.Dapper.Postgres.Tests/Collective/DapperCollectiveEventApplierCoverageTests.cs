@@ -65,7 +65,7 @@ public class DapperCollectiveEventApplierCoverageTests : PostgresTestBase {
     MethodName: nameof(_jobPerspective.Archive),
     ScopeHandling: CollectiveScopeHandling.Framework,
     SpecKind: CollectiveSpecKind.Linq,
-    Invoker: static (h, e, q) => ((_jobPerspective)h).Archive((_archiveEvent)e));
+    Invoker: static (h, e, _) => ((_jobPerspective)h).Archive((_archiveEvent)e));
 
   private sealed class _jobModel {
     public string Status { get; set; } = "";

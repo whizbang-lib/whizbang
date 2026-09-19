@@ -36,7 +36,7 @@ public class AsbOpsRateHealthSourceTests {
 
   private static Task<ISubscription> _subscribeAsync(AzureServiceBusTransport transport) =>
     transport.SubscribeBatchAsync(
-      (batch, ct) => Task.CompletedTask,
+      (_, ct) => Task.CompletedTask,
       new TransportDestination("inbox") { RoutingKey = "health-sub" },
       new TransportBatchOptions());
 

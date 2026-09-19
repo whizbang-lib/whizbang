@@ -176,7 +176,7 @@ public class DispatcherSendAsyncSyncTests {
           new ReceptorInfo(
             MessageType: typeof(TestSyncCommand),
             ReceptorId: "TestSyncReceptor",
-            InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+            InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
               _onInvoke();
               return ValueTask.FromResult<object?>(new TestSyncResult(true));
             },

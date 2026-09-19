@@ -141,7 +141,7 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
     var callbackCount = 0;
     var callbackUnitIds = new List<Guid>();
 
-    strategy.OnFlushRequested += async (unitId, ct) => {
+    strategy.OnFlushRequested += async (unitId, _) => {
       callbackCount++;
       callbackUnitIds.Add(unitId);
       callbackTriggered.TrySetResult(unitId); // Signal first callback
@@ -244,7 +244,7 @@ public class IntervalUnitOfWorkStrategyTests : IUnitOfWorkStrategyContractTests 
     var firstFlushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var secondFlushSignal = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    strategy.OnFlushRequested += async (unitId, ct) => {
+    strategy.OnFlushRequested += async (unitId, _) => {
       var messages = strategy.GetMessagesForUnit(unitId);
       flushedUnitIds.Add(unitId);
       flushedMessageCounts.Add(messages.Count);

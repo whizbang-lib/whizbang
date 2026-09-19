@@ -40,7 +40,7 @@ public class OrderedStreamProcessorCoverageTests {
 
     await sut.ProcessInboxWorkAsync(
       messages,
-      processor: async work => {
+      processor: async _ => {
         Interlocked.Increment(ref processedCount);
         return await Task.FromResult(MessageProcessingStatus.EventStored);
       },
@@ -72,7 +72,7 @@ public class OrderedStreamProcessorCoverageTests {
 
     await sut.ProcessOutboxWorkAsync(
       messages,
-      processor: async work => {
+      processor: async _ => {
         Interlocked.Increment(ref processedCount);
         return await Task.FromResult(MessageProcessingStatus.Published);
       },

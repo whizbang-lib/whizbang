@@ -52,7 +52,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(TestInboxEvent),
       ReceptorId: $"test_inbox_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         invoked = true;
         capturedStage = stage;
         return ValueTask.FromResult<object?>(null);
@@ -102,7 +102,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     registry.AddReceptor(LifecycleStage.PreInboxDetached, new ReceptorInfo(
       MessageType: typeof(TestInboxEvent),
       ReceptorId: "test_context_receptor",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         // Access lifecycle context via the accessor (set by ReceptorInvoker)
         var accessor = sp.GetService<ILifecycleContextAccessor>();
         capturedContext = accessor?.Current;
@@ -150,7 +150,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
       registry.AddReceptor(stage, new ReceptorInfo(
         MessageType: typeof(TestInboxEvent),
         ReceptorId: $"test_dual_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }
@@ -220,7 +220,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
     registry.AddReceptor(LifecycleStage.PostInboxInline, new ReceptorInfo(
       MessageType: typeof(TestInboxEvent),
       ReceptorId: "test_security_receptor",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -261,7 +261,7 @@ public class ServiceBusConsumerWorkerLifecycleTests {
       registry.AddReceptor(stage, new ReceptorInfo(
         MessageType: typeof(TestInboxEvent),
         ReceptorId: $"test_postlifecycle_receptor_{stage}",
-        InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
           invokedStages.Add(capturedStage);
           return ValueTask.FromResult<object?>(null);
         }

@@ -640,7 +640,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         MethodName: nameof(_jobPerspective.ArchiveJobs),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, q) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)
+        Invoker: static (h, e, _) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)
       ),
     };
 
@@ -659,7 +659,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
     var entries = new CollectiveApplyEntry[] {
       new(typeof(_jobModel), typeof(_archiveJobsCollectiveEvent), typeof(_jobPerspective),
         nameof(_jobPerspective.ArchiveJobs), CollectiveScopeHandling.Framework, CollectiveSpecKind.Linq,
-        static (h, e, q) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)),
+        static (h, e, _) => ((_jobPerspective)h).ArchiveJobs((_archiveJobsCollectiveEvent)e)),
     };
     return new CollectiveDispatcher(
       services.BuildServiceProvider(), entries,
@@ -848,7 +848,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         MethodName: nameof(_overlayActivePerspective.SetActive),
         ScopeHandling: CollectiveScopeHandling.Custom,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, q) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e)),
+        Invoker: static (h, e, _) => ((_overlayActivePerspective)h).SetActive((_setActiveEvent)e)),
     };
     return new CollectiveDispatcher(
       services.BuildServiceProvider(),
@@ -961,7 +961,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         MethodName: nameof(_archiveDraftPerspective.ArchiveDrafts),
         ScopeHandling: handling,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, q) => ((_archiveDraftPerspective)h).ArchiveDrafts((_archiveJobsCollectiveEvent)e)
+        Invoker: static (h, e, _) => ((_archiveDraftPerspective)h).ArchiveDrafts((_archiveJobsCollectiveEvent)e)
       ),
     };
 
@@ -1046,7 +1046,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         MethodName: nameof(_clearArchivedPerspective.ClearArchivedAt),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, q) => ((_clearArchivedPerspective)h).ClearArchivedAt((_clearArchivedCollectiveEvent)e)
+        Invoker: static (h, e, _) => ((_clearArchivedPerspective)h).ClearArchivedAt((_clearArchivedCollectiveEvent)e)
       ),
     };
 
@@ -1161,7 +1161,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         MethodName: nameof(_setTagPerspective.SetTag),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, q) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e)
+        Invoker: static (h, e, _) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e)
       ),
     };
 
@@ -1371,7 +1371,7 @@ public class CollectiveDispatcherEFCoreIntegrationTests : IAsyncDisposable {
         MethodName: nameof(_setTagPerspective.SetTag),
         ScopeHandling: CollectiveScopeHandling.Framework,
         SpecKind: CollectiveSpecKind.Linq,
-        Invoker: static (h, e, q) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e),
+        Invoker: static (h, e, _) => ((_setTagPerspective)h).SetTag((_setTagCollectiveEvent)e),
         BatchSizeOverride: batchSizeOverride
       ),
     };

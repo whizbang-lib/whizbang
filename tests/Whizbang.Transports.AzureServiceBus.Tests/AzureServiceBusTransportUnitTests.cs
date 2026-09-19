@@ -589,7 +589,7 @@ public class AzureServiceBusTransportUnitTests {
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
     try {
-      await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
+      await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, destination, cts.Token);
     } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
       // Expected - no broker, but the admin plane was already reconciled above
     }
@@ -628,7 +628,7 @@ public class AzureServiceBusTransportUnitTests {
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
     try {
-      await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
+      await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, destination, cts.Token);
     } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
       // Expected - no broker
     }
@@ -665,7 +665,7 @@ public class AzureServiceBusTransportUnitTests {
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
     try {
-      await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
+      await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, destination, cts.Token);
     } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
       // Expected - no broker
     }
@@ -695,7 +695,7 @@ public class AzureServiceBusTransportUnitTests {
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
     try {
-      await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
+      await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, destination, cts.Token);
     } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
       // Expected - no broker
     }
@@ -723,7 +723,7 @@ public class AzureServiceBusTransportUnitTests {
 
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
     try {
-      await transport.SubscribeAsync((_, _, ct) => Task.CompletedTask, destination, cts.Token);
+      await transport.SubscribeAsync((_, _, _) => Task.CompletedTask, destination, cts.Token);
     } catch (Exception ex) when (ex is ServiceBusException or TimeoutException or OperationCanceledException or TaskCanceledException or InvalidOperationException) {
       // Expected - no broker
     }

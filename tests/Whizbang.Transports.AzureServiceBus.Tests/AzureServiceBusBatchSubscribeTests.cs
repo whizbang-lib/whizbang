@@ -48,7 +48,7 @@ public class AzureServiceBusBatchSubscribeTests {
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         null!,
         new TransportBatchOptions()
       )
@@ -64,7 +64,7 @@ public class AzureServiceBusBatchSubscribeTests {
     // Act & Assert
     await Assert.ThrowsAsync<ArgumentNullException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         new TransportDestination("test-topic", "test-sub"),
         null!
       )
@@ -81,7 +81,7 @@ public class AzureServiceBusBatchSubscribeTests {
     // Act & Assert
     await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
       await transport.SubscribeBatchAsync(
-        (batch, ct) => Task.CompletedTask,
+        (_, ct) => Task.CompletedTask,
         new TransportDestination("test-topic", "test-sub"),
         new TransportBatchOptions()
       )

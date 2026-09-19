@@ -268,7 +268,7 @@ public class AzureServiceBusFifoIntegrationTests(ServiceBusEmulatorFixtureSource
     const int messageCount = 10;
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, _, ct) => {
+      async (_, _, ct) => {
         concurrencyTracker.Enter();
         try {
           // Simulate some work

@@ -30,7 +30,7 @@ public class BodyClaimRehydratorCoverageTests {
     var services = new ServiceCollection();
     var instance = new _inMemoryStore("memory");
     store = instance;
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => instance);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => instance);
     return services.BuildServiceProvider();
   }
 

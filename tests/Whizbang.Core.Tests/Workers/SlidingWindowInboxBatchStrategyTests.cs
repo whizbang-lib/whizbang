@@ -28,7 +28,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var flushedSignal = new TaskCompletionSource();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (msgs, _) => {
         captured.Add(msgs);
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
@@ -139,7 +139,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var flushedSignal = new TaskCompletionSource();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (msgs, _) => {
         captured.Add(msgs);
         flushedSignal.TrySetResult();
         return Task.CompletedTask;
@@ -360,7 +360,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var logger = new RecordingLogger();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (_, ct) => {
         var n = Interlocked.Increment(ref attempts);
         if (n == 1) {
           firstFlush.TrySetResult();
@@ -404,7 +404,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var logger = new RecordingLogger();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (_, ct) => {
         failed.TrySetResult();
         return Task.FromException(new InvalidOperationException("database unavailable"));
       },

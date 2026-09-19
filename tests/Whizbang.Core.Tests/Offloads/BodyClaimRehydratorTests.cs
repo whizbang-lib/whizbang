@@ -109,7 +109,7 @@ public class BodyClaimRehydratorTests {
     // deserialize / unknown-provider — still dead-letter, asserted by the other tests.)
     var services = new ServiceCollection();
     var store = new ThrowingStore("memory");
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => store);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => store);
     var sp = services.BuildServiceProvider();
     var claim = new MessageBodyClaim(
       ProviderName: "memory", StorageKey: "test://does-not-exist",
@@ -131,7 +131,7 @@ public class BodyClaimRehydratorTests {
     // A hung body-store download must be aborted at DownloadTimeout and surfaced as a retryable throw —
     // never stall the consumer indefinitely on a blob call that never returns.
     var services = new ServiceCollection();
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => new HangingStore("memory"));
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => new HangingStore("memory"));
     services.AddSingleton<IOptions<MessageBodyOffloadOptions>>(
       Options.Create(new MessageBodyOffloadOptions { DownloadTimeout = TimeSpan.FromMilliseconds(100) }));
     var sp = services.BuildServiceProvider();
@@ -265,7 +265,7 @@ public class BodyClaimRehydratorTests {
     var services = new ServiceCollection();
     var instance = new InMemoryStoreImpl("memory");
     store = instance;
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => instance);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => instance);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(o => o.ActiveCleanup = activeCleanup);
     // Only register metrics when a test supplies an isolated instance (parallel-safe metric capture).
     if (metrics is not null) {
@@ -284,7 +284,7 @@ public class BodyClaimRehydratorTests {
     var services = new ServiceCollection();
     var instance = new InMemoryStoreImpl("memory");
     _store = instance;
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (sp, key) => instance);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => instance);
     return services.BuildServiceProvider();
   }
 

@@ -430,7 +430,7 @@ public class VectorSearchExtensionsTests {
     var query = context.Set<PerspectiveRow<EmbeddingTestModel>>().AsQueryable();
 
     // Act & Assert - Lambda that isn't a property access should throw
-    await Assert.That(() => query.OrderByCosineDistance(m => new float[] { 1, 0, 0 }, searchVector))
+    await Assert.That(() => query.OrderByCosineDistance(_ => new float[] { 1, 0, 0 }, searchVector))
         .Throws<ArgumentException>();
   }
 

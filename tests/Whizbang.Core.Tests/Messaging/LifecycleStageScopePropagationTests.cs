@@ -38,7 +38,7 @@ public class LifecycleStageScopePropagationTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -72,7 +72,7 @@ public class LifecycleStageScopePropagationTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_propagation_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -112,7 +112,7 @@ public class LifecycleStageScopePropagationTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_msg_context_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         return ValueTask.FromResult<object?>(null);
       }
     ));
@@ -145,7 +145,7 @@ public class LifecycleStageScopePropagationTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_no_scope_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -178,7 +178,7 @@ public class LifecycleStageScopePropagationTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_roles_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (sp, _, envelope, callerInfo, ct) => {
         var accessor = sp.GetService<IScopeContextAccessor>();
         capturedScope = accessor?.Current;
         return ValueTask.FromResult<object?>(null);
@@ -216,7 +216,7 @@ public class LifecycleStageScopePropagationTests {
     registry.AddReceptor(stage, new ReceptorInfo(
       MessageType: typeof(JsonElement),
       ReceptorId: $"test_initiating_receptor_{stage}",
-      InvokeAsync: (sp, msg, envelope, callerInfo, ct) => {
+      InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
         return ValueTask.FromResult<object?>(null);
       }
     ));

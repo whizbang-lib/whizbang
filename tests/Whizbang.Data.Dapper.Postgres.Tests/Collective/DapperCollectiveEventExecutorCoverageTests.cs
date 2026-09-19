@@ -38,7 +38,7 @@ public class DapperCollectiveEventExecutorCoverageTests {
   private static CollectiveApplyEntry _entryFor<TEvent>() => new(
     ModelType: typeof(_jobModel), EventType: typeof(TEvent), HandlerType: typeof(_handler),
     MethodName: nameof(_handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
-    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, q) => ((_handler)h).Apply((_evtA)e));
+    SpecKind: CollectiveSpecKind.Linq, Invoker: static (h, e, _) => ((_handler)h).Apply((_evtA)e));
 
   /// <summary>Throws once actually asked for a connection — never a shape the guards above should reach.</summary>
   private sealed class _factory : IDbConnectionFactory {

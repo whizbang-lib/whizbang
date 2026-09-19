@@ -130,7 +130,7 @@ public class AsbReceiveDecisionMakerTests {
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
     // Local registry says: no local consumer for THIS payload type.
-    bool _isHandledLocally(Type t) => false;
+    bool _isHandledLocally(Type _) => false;
 
     var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
 
@@ -147,7 +147,7 @@ public class AsbReceiveDecisionMakerTests {
     var envelope = _makeEnvelope();
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
-    bool _isHandledLocally(Type t) => true;
+    bool _isHandledLocally(Type _) => true;
 
     var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
 
@@ -182,7 +182,7 @@ public class AsbReceiveDecisionMakerTests {
     var envelope = _makeEnvelope();
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
-    static bool _isHandledLocally(Type t) => false; // no local consumer
+    static bool _isHandledLocally(Type _) => false; // no local consumer
     var absorbed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "System.Text.Json" };
 
     var decision = decider.Decide(
@@ -488,7 +488,7 @@ public class AsbReceiveDecisionMakerTests {
       "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Minting.RedeliveryComposite, Whizbang.Core]], Whizbang.Core");
 
     // Faithful to every real service: nothing consumes the composite type itself.
-    static bool _isHandledLocally(Type t) => false;
+    static bool _isHandledLocally(Type _) => false;
 
     var decision = decider.Decide(props, body, (_, _) => compositeTypeInfo, combinedOptions, _isHandledLocally);
 
@@ -509,7 +509,7 @@ public class AsbReceiveDecisionMakerTests {
     var envelope = _makeEnvelope();
     var body = JsonSerializer.Serialize(envelope, typeInfo);
 
-    static bool _isHandledLocally(Type t) => false;
+    static bool _isHandledLocally(Type _) => false;
 
     var decision = decider.Decide(props, body, (_, _) => typeInfo, combinedOptions, _isHandledLocally);
 

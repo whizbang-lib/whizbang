@@ -74,7 +74,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act
     await strategy.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => {
+      (_, ctx) => {
         handlerCalled = true;
         return ValueTask.FromResult(42);
       },
@@ -97,7 +97,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act
     var result = await strategy.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => ValueTask.FromResult(42),
+      (_, ctx) => ValueTask.FromResult(42),
       context
     );
 
@@ -118,7 +118,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act
     await strategy.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => {
+      (env, _) => {
         receivedEnvelope = env;
         return ValueTask.FromResult(0);
       },
@@ -143,7 +143,7 @@ public abstract class ExecutionStrategyContractTests {
     await Assert.That(async () => {
       await strategy.ExecuteAsync<int>(
         envelope,
-        (env, ctx) => throw new InvalidOperationException("Handler error"),
+        (_, ctx) => throw new InvalidOperationException("Handler error"),
         context
       );
     }).ThrowsExactly<InvalidOperationException>().WithMessage("Handler error");
@@ -165,7 +165,7 @@ public abstract class ExecutionStrategyContractTests {
     await Assert.That(async () => {
       await strategy.ExecuteAsync<int>(
         envelope,
-        async (env, ctx) => {
+        async (_, ctx) => {
           await Task.Delay(1000, cts.Token);
           return 0;
         },
@@ -230,7 +230,7 @@ public abstract class ExecutionStrategyContractTests {
     await Assert.That(async () => {
       await strategy.ExecuteAsync<int>(
         envelope,
-        (env, ctx) => ValueTask.FromResult(0),
+        (_, ctx) => ValueTask.FromResult(0),
         context
       );
     }).Throws<InvalidOperationException>();
@@ -249,7 +249,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act - Start a long-running handler
     var executionTask = strategy.ExecuteAsync<int>(
       envelope,
-      async (env, ctx) => {
+      async (_, ctx) => {
         handlerStarted.SetResult(true);
         await handlerCompleted.Task;
         return 0;
@@ -316,7 +316,7 @@ public abstract class ExecutionStrategyContractTests {
       var envelope = CreateTestEnvelope($"message-{index}");
       var task = strategy.ExecuteAsync<int>(
         envelope,
-        async (env, ctx) => {
+        async (_, ctx) => {
           await Task.Delay(10); // Simulate work
           lock (lockObj) {
             executionOrder.Add(index);

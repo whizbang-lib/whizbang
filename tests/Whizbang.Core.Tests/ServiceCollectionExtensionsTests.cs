@@ -844,7 +844,7 @@ public class ServiceCollectionExtensionsTests {
     ServiceRegistrationOptions? receivedOptions = null;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.LensServices = (s, options) => {
+    ServiceRegistrationCallbacks.LensServices = (_, options) => {
       callbackInvoked = true;
       receivedOptions = options;
     };
@@ -870,7 +870,7 @@ public class ServiceCollectionExtensionsTests {
     var callbackInvoked = false;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.PerspectiveServices = (s, options) => {
+    ServiceRegistrationCallbacks.PerspectiveServices = (_, options) => {
       callbackInvoked = true;
     };
 
@@ -893,7 +893,7 @@ public class ServiceCollectionExtensionsTests {
     var callbackInvoked = false;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.Dispatcher = s => {
+    ServiceRegistrationCallbacks.Dispatcher = _ => {
       callbackInvoked = true;
     };
 
@@ -916,7 +916,7 @@ public class ServiceCollectionExtensionsTests {
     ServiceRegistrationOptions? receivedOptions = null;
 
     ServiceRegistrationCallbacks.Reset();
-    ServiceRegistrationCallbacks.LensServices = (s, options) => {
+    ServiceRegistrationCallbacks.LensServices = (_, options) => {
       receivedOptions = options;
     };
 

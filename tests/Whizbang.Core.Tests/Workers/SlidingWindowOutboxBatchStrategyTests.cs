@@ -75,7 +75,7 @@ public class SlidingWindowOutboxBatchStrategyTests {
     var seenB = false;
 
     await using var sut = new SlidingWindowOutboxBatchStrategy(
-      flush: (msgs, ct) => {
+      flush: (msgs, _) => {
         var stream = msgs[0].StreamId;
         lock (lockObj) {
           captured.Add((stream, msgs.Length));

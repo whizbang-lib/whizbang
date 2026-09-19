@@ -202,7 +202,7 @@ public class RabbitMQTransportFailurePathTests {
     InvalidOperationException? caught = null;
     try {
       await transport.SubscribeAsync(
-        (envelope, envelopeType, ct) => Task.CompletedTask, RabbitTestWire.Destination());
+        (_, envelopeType, ct) => Task.CompletedTask, RabbitTestWire.Destination());
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -222,7 +222,7 @@ public class RabbitMQTransportFailurePathTests {
     InvalidOperationException? caught = null;
     try {
       await transport.SubscribeAsync(
-        (envelope, envelopeType, ct) => Task.CompletedTask, RabbitTestWire.Destination());
+        (_, envelopeType, ct) => Task.CompletedTask, RabbitTestWire.Destination());
     } catch (InvalidOperationException ex) {
       caught = ex;
     }
@@ -646,7 +646,7 @@ public class RabbitMQTransportFailurePathTests {
 
     var handled = new List<(IMessageEnvelope Envelope, string? EnvelopeType)>();
     var subscription = await transport.SubscribeAsync(
-      (envelope, envelopeType, ct) => {
+      (envelope, envelopeType, _) => {
         handled.Add((envelope, envelopeType));
         return handlerBehavior != null ? handlerBehavior() : Task.CompletedTask;
       },

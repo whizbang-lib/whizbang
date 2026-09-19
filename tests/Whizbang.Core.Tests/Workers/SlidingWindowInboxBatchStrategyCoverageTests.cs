@@ -84,7 +84,7 @@ public class SlidingWindowInboxBatchStrategyCoverageTests {
     var logger = new _RecordingLogger();
 
     var sut = new SlidingWindowInboxBatchStrategy(
-      flush: async (msgs, ct) => {
+      flush: async (_, ct) => {
         flushStarted.TrySetResult();
         // Hangs until the strategy's own internal cancellation source is force-canceled by
         // FlushAndStopAsync's hard-shutdown branch — never completes on its own.

@@ -77,7 +77,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -101,7 +101,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -126,7 +126,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -151,7 +151,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -175,7 +175,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -199,7 +199,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -223,7 +223,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -249,7 +249,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -313,7 +313,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act & Assert
     await Assert.That(async () => await manager.SubscribeFromTargetsAsync(targets, handler))
@@ -337,7 +337,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope _) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);

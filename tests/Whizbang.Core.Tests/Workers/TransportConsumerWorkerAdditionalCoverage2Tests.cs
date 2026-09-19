@@ -490,7 +490,7 @@ public class TransportConsumerWorkerAdditionalCoverage2Tests {
 
     var services = new ServiceCollection();
     services.AddSingleton<IInfrastructureProvisioner>(provisioner);
-    services.Configure<RoutingOptions>(opts => { }); // Empty OwnedDomains
+    services.Configure<RoutingOptions>(_ => { }); // Empty OwnedDomains
     var sp = services.BuildServiceProvider();
     var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
 

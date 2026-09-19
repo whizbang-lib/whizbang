@@ -383,7 +383,7 @@ public class MessageSecurityContextProviderTests {
       priority: 100,
       extraction: null,
       onExtract: () => { },
-      onExtractWithContext: (envelope, options) => {
+      onExtractWithContext: (_, options) => {
         receivedValidateFlag = options.ValidateCredentials;
       }
     );
