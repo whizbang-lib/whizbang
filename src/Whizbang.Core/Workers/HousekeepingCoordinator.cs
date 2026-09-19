@@ -278,6 +278,18 @@ public sealed class HousekeepingCoordinator {
           }
           return new Decision(false, Verdict.ServiceBusy);
         }
+        if (!_cooldownElapsed()) {
+          // The same dwell cleanup waits for, and recovery has the sharper version of the hazard:
+          // re-driving puts work BACK onto the queues that just drained, so starting on a trough
+          // makes the recovery the next burst rather than a response to the last one. Charged to
+          // recovery's own budget so the forced pass above still arrives.
+          _recoveryDeferrals++;
+          if (_recoveryDeferrals > _settings.MaxConsecutiveDeferrals) {
+            _dlqRunning = true;
+            return new Decision(true, Verdict.ProceedDeferralLimit);
+          }
+          return new Decision(false, Verdict.ServiceCoolingDown);
+        }
         _dlqRunning = true;
         return new Decision(true, Verdict.Proceed);
       }

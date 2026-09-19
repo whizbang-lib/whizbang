@@ -154,6 +154,55 @@ public class HousekeepingCooldownTests {
   }
 
   [Test]
+  public async Task RecoveryAlsoWaitsForTheDwell_BecauseRedrivingReloadsTheSameQueuesAsync() {
+    // Recovery has the same hazard as cleanup and a sharper version of it: re-driving puts work
+    // BACK onto the queues that just drained, so starting on a trough is how a recovery becomes
+    // the next burst rather than a response to the last one.
+    var (coordinator, clock) = _build(TimeSpan.FromMinutes(2));
+
+    var first = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+    await Assert.That(first.Granted).IsFalse();
+    await Assert.That(first.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.ServiceCoolingDown);
+
+    clock.Advance(TimeSpan.FromMinutes(2));
+    var second = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+
+    await Assert.That(second.Granted).IsTrue();
+    await Assert.That(second.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.Proceed);
+  }
+
+  [Test]
+  public async Task RecoveryThatKeepsCoolingDown_StillReachesItsOwnForcedPassAsync() {
+    // Recovery carries its own budget, separate from cleanup's: a service with a permanent
+    // trickle never reads settled at scan time, and without a floor its dead letters defer
+    // forever — observed once as 20,000 due rows behind a service whose backlog never hit zero.
+    var (coordinator, _) = _build(TimeSpan.FromMinutes(2), maxDeferrals: 2);
+
+    for (var i = 0; i < 2; i++) {
+      var refused = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+      await Assert.That(refused.Granted).IsFalse();
+    }
+
+    var forced = coordinator.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, _settled());
+
+    await Assert.That(forced.Granted).IsTrue();
+    await Assert.That(forced.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.ProceedDeferralLimit);
+  }
+
+  [Test]
+  public async Task IntegrityIsNotHeldByTheDwell_BecauseItCarriesItsOwnGateAsync() {
+    // Integrity is correctness-bearing and on a far tighter cadence; the checkpoint path applies
+    // its own settledness rule that distinguishes a lagging consumer from a genuine deficit.
+    // Putting the cleanup dwell in front of it would hold correctness work behind cleanup policy.
+    var (coordinator, _) = _build(TimeSpan.FromMinutes(2));
+
+    var decision = coordinator.TryBegin(HousekeepingCoordinator.Activity.Integrity, _settled());
+
+    await Assert.That(decision.Granted).IsTrue();
+    await Assert.That(decision.Reason).IsEqualTo(HousekeepingCoordinator.Verdict.Proceed);
+  }
+
+  [Test]
   public async Task ABusyService_StillReportsBusy_NotCoolingDownAsync() {
     // The cooldown must not swallow the busy verdict: they mean different things.
     var (coordinator, _) = _build(TimeSpan.FromMinutes(2));

@@ -1074,7 +1074,10 @@ public class DeadLetterRecoveryWorkerTests {
   public async Task RecoveryTakesTheSlotAheadOfIntegrityAsync() {
     // The ranking that matters: the dead-letter table often CONTAINS what integrity would detect as
     // a gap and ask an origin to redeliver. Recovering locally first removes the reason to ask.
-    var housekeeping = new HousekeepingCoordinator();
+    // The settled dwell is pinned off: this covers which activity wins the slot, not how long the
+    // service has to have been quiet before either is offered it (HousekeepingCooldownTests).
+    var housekeeping = new HousekeepingCoordinator(
+      new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero });
     var settled = new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
 
     var dlq = housekeeping.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, settled);
