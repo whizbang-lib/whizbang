@@ -114,9 +114,9 @@ public class OverloadGuardsCoverEveryDefinitionSiteTests {
     var byMigration = _rawCorpus().ToDictionary(m => m.Name, m => m.Sql, StringComparer.Ordinal);
 
     var unguarded = _definitions()
-      .Where(d => multi.Contains(d.Function))
-      .Where(d => !byMigration[d.Migration].Contains(
-        $"drop_all_overloads('{d.Function}')", StringComparison.Ordinal))
+      .Where(d => multi.Contains(d.Function)
+        && !byMigration[d.Migration].Contains(
+          $"drop_all_overloads('{d.Function}')", StringComparison.Ordinal))
       .Select(d => $"{d.Migration}: {d.Function}({d.Arity} args)")
       .Distinct(StringComparer.Ordinal)
       .Order(StringComparer.Ordinal)
