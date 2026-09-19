@@ -25,10 +25,12 @@ BEGIN
   END IF;
 END $$;
 
--- Stream-pending indexes: support NOT EXISTS ordering subqueries in claim functions
-CREATE INDEX IF NOT EXISTS idx_outbox_stream_pending
-ON __SCHEMA__.wh_outbox (stream_id)
-WHERE (status & 4) != 4;
+-- The outbox half of this pair is gone. It was partial on "(status & 4) != 4", and once the outbox
+-- moved to processed_at no query could reach it: a planner proves partial-index applicability
+-- textually, and "processed_at IS NULL" implies nothing about a status bit. 160 measured exactly
+-- that, named this index as the one the emptiness probe could not use, and added
+-- idx_outbox_stream_unpublished beside it -- so this one has been unreachable and still maintained
+-- on every outbox write since. 164 drops it where it already landed.
 
 -- 162 moves status to wh_inbox_state and drops them here, so a replayed
 -- ledger reaches this statement against the post-split shape. It must no-op rather than

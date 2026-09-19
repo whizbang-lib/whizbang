@@ -256,76 +256,54 @@ public sealed class HousekeepingCoordinator {
         return new Decision(true, Verdict.Proceed);
       }
 
+      // Recovery and cleanup ask the same question of the service and differ only in which budget
+      // they spend and which slot they take, so they share one admission rule rather than two
+      // copies of it that can drift.
       if (activity == Activity.DeadLetterRecovery) {
-        // Recovery IS gated on settledness: re-driving puts work back onto the same queues, so
-        // doing it mid-drain is how a recovery becomes a second storm. Unmeasured proceeds, for
-        // the same reason it does below — a gate that cannot measure must not silently disable
-        // what it gates.
-        if (backlog is null) {
+        var recovery = _admitWhenQuiet(backlog, ref _recoveryDeferrals);
+        if (recovery.Granted) {
           _dlqRunning = true;
-          return new Decision(true, Verdict.ProceedUnmeasured);
         }
-        if (!backlog.IsSettled) {
-          _recoveryDeferrals++;
-          if (_recoveryDeferrals > _settings.MaxConsecutiveDeferrals) {
-            // Bounded deferral, recovery's own budget. A service with a permanent trickle never
-            // reads settled at scan time, and without this floor its dead letters defer forever —
-            // observed in production as 20,000 due rows behind a service whose backlog never once
-            // touched zero. One forced pass, distinctly reported; the budget re-arms on End so
-            // this is a trickle under load, never an open gate.
-            _dlqRunning = true;
-            return new Decision(true, Verdict.ProceedDeferralLimit);
-          }
-          return new Decision(false, Verdict.ServiceBusy);
-        }
-        if (!_cooldownElapsed()) {
-          // The same dwell cleanup waits for, and recovery has the sharper version of the hazard:
-          // re-driving puts work BACK onto the queues that just drained, so starting on a trough
-          // makes the recovery the next burst rather than a response to the last one. Charged to
-          // recovery's own budget so the forced pass above still arrives.
-          _recoveryDeferrals++;
-          if (_recoveryDeferrals > _settings.MaxConsecutiveDeferrals) {
-            _dlqRunning = true;
-            return new Decision(true, Verdict.ProceedDeferralLimit);
-          }
-          return new Decision(false, Verdict.ServiceCoolingDown);
-        }
-        _dlqRunning = true;
-        return new Decision(true, Verdict.Proceed);
+        return recovery;
       }
 
-      if (backlog is null) {
+      var maintenance = _admitWhenQuiet(backlog, ref _consecutiveDeferrals);
+      if (maintenance.Granted) {
         _maintenanceRunning = true;
-        return new Decision(true, Verdict.ProceedUnmeasured);
       }
+      return maintenance;
+    }
+  }
 
-      if (!backlog.IsSettled) {
-        _consecutiveDeferrals++;
-        if (_consecutiveDeferrals > _settings.MaxConsecutiveDeferrals) {
-          // Bounded deferral. Space has to be reclaimed eventually, so an indefinitely busy service
-          // gets its sweep anyway — reported distinctly, because reaching this branch means the
-          // service has not settled once across the whole window.
-          _maintenanceRunning = true;
-          return new Decision(true, Verdict.ProceedDeferralLimit);
-        }
-        return new Decision(false, Verdict.ServiceBusy);
-      }
+  /// <summary>
+  /// The settledness rule both deferrable activities apply, over the caller's own deferral budget.
+  /// Decides only whether to admit; the caller claims its own slot.
+  /// </summary>
+  /// <remarks>
+  /// Unmeasured proceeds: a gate that cannot measure must never silently disable what it gates.
+  /// Busy and cooling-down both spend the budget, so a service that alternates between working and
+  /// brief troughs still reaches its forced pass instead of deferring forever — observed once as
+  /// 20,000 due dead letters behind a service whose backlog never touched zero. The forced pass is
+  /// reported distinctly, because "this service never went quiet" is worth an operator's attention
+  /// on its own. The budget re-arms on End, so this is a trickle under load, never an open gate.
+  /// </remarks>
+  private Decision _admitWhenQuiet(ServiceBacklog? backlog, ref int deferrals) {
+    if (backlog is null) {
+      return new Decision(true, Verdict.ProceedUnmeasured);
+    }
 
-      if (!_cooldownElapsed()) {
-        // Settled, but not for long enough. This counts against the SAME deferral budget as busy:
-        // a service that alternates between working and brief troughs must still reach the forced
-        // sweep, or the cooldown becomes a way to starve cleanup indefinitely.
-        _consecutiveDeferrals++;
-        if (_consecutiveDeferrals > _settings.MaxConsecutiveDeferrals) {
-          _maintenanceRunning = true;
-          return new Decision(true, Verdict.ProceedDeferralLimit);
-        }
-        return new Decision(false, Verdict.ServiceCoolingDown);
-      }
+    var reason = !backlog.IsSettled ? Verdict.ServiceBusy
+      : !_cooldownElapsed() ? Verdict.ServiceCoolingDown
+      : Verdict.Proceed;
 
-      _maintenanceRunning = true;
+    if (reason == Verdict.Proceed) {
       return new Decision(true, Verdict.Proceed);
     }
+
+    deferrals++;
+    return deferrals > _settings.MaxConsecutiveDeferrals
+      ? new Decision(true, Verdict.ProceedDeferralLimit)
+      : new Decision(false, reason);
   }
 
   /// <summary>
