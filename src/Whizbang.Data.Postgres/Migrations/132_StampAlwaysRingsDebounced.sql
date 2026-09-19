@@ -23,6 +23,13 @@
 -- Dependencies: 118 (signature), 130 (debounce), 131 (debounce arms on found work only)
 -- Objects: stamp_pending_commit_sequences
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('stamp_pending_commit_sequences');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.stamp_pending_commit_sequences(
   p_batch_size INTEGER DEFAULT 1000,
   p_notify_owners BOOLEAN DEFAULT FALSE

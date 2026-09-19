@@ -125,6 +125,40 @@ public class DbContextInitializationRegistryTests {
   }
 
   [Test]
+  public async Task InitializeAllAsync_WhenAnInitializerThrows_DoesNotLatchSoTheRetryReRunsItAsync() {
+    // The guard claims the provider BEFORE running the callbacks, so a failed attempt used to keep
+    // the claim: the caller's retry loop then took the "already initialized" exit, returned having
+    // done nothing, and — because the loop reads this method returning as success — opened the
+    // schema-ready gate over a database whose migration had thrown. A service came up reporting
+    // "recovered" while its schema sat a release behind and its workers queried a table the failed
+    // migration was supposed to create.
+    var attempts = 0;
+    DbContextInitializationRegistry.Register<FakeDbContextA>(
+        (_, _, _) => {
+          attempts++;
+          return attempts == 1
+            ? Task.FromException(new InvalidOperationException("migration failed"))
+            : Task.CompletedTask;
+        });
+    var host = new FakeServiceProvider();
+
+    // Act — the first attempt throws, exactly as a failing migration does.
+    await Assert.That(async () => await DbContextInitializationRegistry.InitializeAllAsync(host))
+      .Throws<InvalidOperationException>();
+
+    // Assert — the retry actually runs the initializer again rather than short-circuiting.
+    await DbContextInitializationRegistry.InitializeAllAsync(host);
+    await Assert.That(attempts).IsEqualTo(2)
+      .Because("a failed attempt must release the claim, or the next attempt reports success "
+        + "without having initialized anything.");
+
+    // And the claim latches once it genuinely succeeds.
+    await DbContextInitializationRegistry.InitializeAllAsync(host);
+    await Assert.That(attempts).IsEqualTo(2)
+      .Because("the idempotence guard still has to hold after a successful initialization.");
+  }
+
+  [Test]
   public async Task InitializeAllAsync_WithNoRegistrations_CompletesSuccessfullyAsync() {
     // Arrange
     var sp = new FakeServiceProvider();

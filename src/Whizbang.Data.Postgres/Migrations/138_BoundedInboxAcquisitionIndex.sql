@@ -66,6 +66,13 @@ END $$;
 DROP INDEX IF EXISTS __SCHEMA__.idx_inbox_stream_received_pending;
 DROP INDEX IF EXISTS __SCHEMA__.idx_inbox_pending_stream_received;
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_inbox');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
   p_instance_id UUID,
   p_instance_rank INTEGER,

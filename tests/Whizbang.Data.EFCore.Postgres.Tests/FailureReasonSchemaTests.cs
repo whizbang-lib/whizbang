@@ -76,25 +76,52 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     }
   }
 
+  /// <summary>
+  /// No index is maintained on the outbox's failure reason either, for the same reasons and one more.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <c>idx_outbox_failure_reason</c> keyed failure_reason and predicated on the status bit
+  /// <c>32768</c>. The outbox stopped discriminating on status bits and discriminates on
+  /// <c>processed_at</c>, and a partial index is considered only when Postgres can prove the query's
+  /// predicate implies the index's -- textually, not arithmetically. So this index was not merely
+  /// unused on current data: no query the outbox issues could reach it, whatever the data looked
+  /// like. A deployed fleet carried it at zero scans through an entire bulk import.
+  /// </para>
+  /// <para>
+  /// Unreachable is not free. It was still maintained on every insert, update and delete the outbox
+  /// took, and the producer side of a bulk load is the hottest write path in the system. Migration
+  /// 164 drops it, and the descriptor that recreated it on every boot no longer declares it.
+  /// </para>
+  /// <para>
+  /// Asserted as an absence for the same reason the inbox one below is: a test that simply
+  /// disappears takes the decision with it. The rule that keeps the next one from being written
+  /// against the retired shape lives in OutboxIndexesMatchLiveQueriesTests.
+  /// </para>
+  /// </remarks>
   [Test]
-  public async Task OutboxTable_FailureReasonIndex_ShouldExistAsync() {
-    // Arrange
+  public async Task OutboxTable_FailureReason_IsDeliberatelyNotIndexedAsync() {
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
-    // Act - Query for index on failure_reason
     const string sql = @"
       SELECT indexname
       FROM pg_indexes
       WHERE tablename = 'wh_outbox'
-        AND indexname = 'idx_outbox_failure_reason'";
+        AND indexdef LIKE '%failure_reason%'";
 
     await using var command = new NpgsqlCommand(sql, connection);
     await using var reader = await command.ExecuteReaderAsync();
 
-    // Assert - Index should exist
-    var indexExists = await reader.ReadAsync();
-    await Assert.That(indexExists).IsTrue();
+    var found = new List<string>();
+    while (await reader.ReadAsync()) {
+      found.Add(reader.GetString(0));
+    }
+
+    await Assert.That(found).IsEmpty()
+      .Because("the index was partial on a status bitmask no outbox query can reach, so it could "
+        + "never be chosen while still costing every outbox write. Found: "
+        + string.Join(", ", found));
   }
 
   /// <summary>

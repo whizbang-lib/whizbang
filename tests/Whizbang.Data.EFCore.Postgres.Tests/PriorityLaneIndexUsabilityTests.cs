@@ -89,6 +89,48 @@ public class PriorityLaneIndexUsabilityTests : EFCoreTestBase {
   }
 
   /// <summary>
+  /// The shape the claim actually issues, not a lane predicate written for the test.
+  /// </summary>
+  /// <remarks>
+  /// Every other case here builds its own <c>priority &gt; 199</c> style predicate and proves the index is usable BY
+  /// THAT QUERY. That is a property of the index, not of the claim, and the two came apart: the claim selects a band
+  /// by comparing a CASE expression to a bucket column joined in from a VALUES list, and Postgres cannot prove
+  /// <c>CASE ... END = b.bucket</c> implies <c>priority &lt;= 99</c> when the bucket is a join column rather than a
+  /// constant. The partial indexes are then unusable, the lanes fall back to scanning the whole pending set once per
+  /// bucket, and the indexes stay on the table costing every claim write and earning nothing. Measured on 300k rows:
+  /// 11,102 buffers and 5,249ms against 5 buffers and under 20ms -- measured with the held-lane index present, the
+  /// only fair comparison, since the old shape reached THAT index and read the whole unowned set per bucket rather
+  /// than reaching no index at all. The deployed fleet showed the three band indexes at zero scans across a whole
+  /// bulk import while the table carried them.
+  /// </remarks>
+  [Test]
+  public async Task TheClaimsLaneSelection_IsWrittenSoAnIndexCanMatchIt_NotAsAComputedBucketAsync() {
+    // Read from the shipped migration, never copied: a copy of the claim's shape is a second shape, and it
+    // passes happily once the real one moves. Identity substitution leaves the corpus verbatim. The bounds
+    // are compared against WorkPriority, so the claim and the framework cannot drift apart.
+    var claim = new Whizbang.Data.Postgres.PostgresMigrationProvider(
+        typeof(Whizbang.Data.Postgres.PostgresMigrationProvider).Assembly, "__SCHEMA__")
+      .GetMigrations()
+      .Single(m => m.Name.StartsWith("162_", StringComparison.Ordinal)).Sql;
+
+    var start = claim.IndexOf("claimable AS MATERIALIZED", StringComparison.Ordinal);
+    await Assert.That(start).IsGreaterThan(-1)
+      .Because("the CTE this rule is about has to be findable, or the rule asserts nothing.");
+    var cte = claim[start..(start + 4000)];
+
+    await Assert.That(cte).DoesNotContain("= b.bucket")
+      .Because("selecting a band by comparing a CASE expression to a bucket column joined in from a VALUES "
+        + "list is not provable against any partial index predicate, because the bucket is a join column and "
+        + "not a constant. Every band index is then unusable and each lane reads the whole pending set.");
+
+    await Assert.That(cte).Contains($"i.priority <= {_interactiveBandEnd}")
+      .Because("the interactive lane has to name its bound as a literal the planner can match to the index.");
+    await Assert.That(cte).Contains($"i.priority <= {_standardBandEnd}");
+    await Assert.That(cte).Contains($"i.priority > {_standardBandEnd}");
+  }
+
+
+  /// <summary>
   /// The background lane. Its query says "greater than the standard band end" and its index must say the same, or
   /// the index it exists for is never consulted and the lane reads the whole pending set through a broader index.
   /// </summary>

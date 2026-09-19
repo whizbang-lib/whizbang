@@ -35,6 +35,13 @@ COMMENT ON TABLE __SCHEMA__.wh_event_archive IS
 -- make a 2-arg call ambiguous, so drop it first; the C# adapter always passes all three args.
 DROP FUNCTION IF EXISTS __SCHEMA__.close_stream(UUID, BIGINT);
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('close_stream');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.close_stream(
   p_stream_id UUID, p_through_version BIGINT, p_archive BOOLEAN DEFAULT FALSE)
 RETURNS TABLE(close_status TEXT, events_truncated BIGINT) AS $$

@@ -14,6 +14,8 @@ namespace Whizbang.Core.Tests.Observability;
 /// this meter, "is recovery running, deferred, or idle — and why?" was a log grep.
 /// </summary>
 /// <code-under-test>src/Whizbang.Core/Observability/HousekeepingMetrics.cs</code-under-test>
+// These cover what the metrics record about admission decisions, not the settled dwell in
+// front of them (HousekeepingCooldownTests), so the dwell is pinned off.
 public class HousekeepingMetricsTests {
 
   private sealed class FakeTracker : IIdleActivityTracker {
@@ -50,7 +52,7 @@ public class HousekeepingMetricsTests {
     var (metrics, seen, listener) = _listen();
     using var l_ = listener;
 
-    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings(), metrics);
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero }, metrics);
     c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery,
       new ServiceBacklog { UnprocessedInboxRows = 500, ActiveLeasedRows = 1 });
     listener.RecordObservableInstruments();
@@ -69,7 +71,7 @@ public class HousekeepingMetricsTests {
   public async Task RunningGauge_TracksTheSlot_UpOnGrantDownOnEndAsync() {
     var (metrics, seen, listener) = _listen();
     using var l_ = listener;
-    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings(), metrics);
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero }, metrics);
     var settled = new ServiceBacklog { UnprocessedInboxRows = 0, ActiveLeasedRows = 0 };
 
     c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery, settled);
@@ -90,7 +92,7 @@ public class HousekeepingMetricsTests {
   public async Task RefusedVerdicts_DoNotTouchTheRunningGaugeAsync() {
     var (metrics, seen, listener) = _listen();
     using var l_ = listener;
-    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings(), metrics);
+    var c = new HousekeepingCoordinator(new HousekeepingCoordinator.Settings { SettledCooldown = TimeSpan.Zero }, metrics);
 
     c.TryBegin(HousekeepingCoordinator.Activity.DeadLetterRecovery,
       new ServiceBacklog { UnprocessedInboxRows = 9, ActiveLeasedRows = 0 });

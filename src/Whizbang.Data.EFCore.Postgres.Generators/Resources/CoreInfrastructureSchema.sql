@@ -115,8 +115,6 @@ CREATE TABLE IF NOT EXISTS wh_outbox (
 CREATE INDEX IF NOT EXISTS idx_outbox_status_created_at ON wh_outbox (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_published_at ON wh_outbox (published_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_lease_expiry ON wh_outbox (lease_expiry) WHERE lease_expiry IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_outbox_status_lease ON wh_outbox (status, lease_expiry) WHERE (status & 32768) = 0 AND (status & 4) != 4;
-CREATE INDEX IF NOT EXISTS idx_outbox_failure_reason ON wh_outbox (failure_reason) WHERE (status & 32768) = 32768;
 CREATE INDEX IF NOT EXISTS idx_outbox_scheduled_for ON wh_outbox (stream_id, scheduled_for, created_at) WHERE scheduled_for IS NOT NULL;
 
 -- Event Store - Event sourcing and audit trail

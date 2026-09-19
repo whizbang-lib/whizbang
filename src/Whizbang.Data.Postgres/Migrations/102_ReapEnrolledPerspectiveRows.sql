@@ -14,6 +14,13 @@
 --
 -- Dependencies: 082 (row reap), 101 (retention enrolment on wh_perspective_registry)
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('reap_enrolled_perspective_rows');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.reap_enrolled_perspective_rows()
 RETURNS TABLE(task TEXT, rows_affected INTEGER, duration_ms DOUBLE PRECISION, status TEXT) AS $$
 DECLARE

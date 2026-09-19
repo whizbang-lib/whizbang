@@ -75,6 +75,13 @@ $$ LANGUAGE plpgsql;
 -- 42725 "function is not unique". Same trap migration 085 hit when adding a defaulted argument.
 DROP FUNCTION IF EXISTS __SCHEMA__.reap_enrolled_perspective_rows();
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('reap_enrolled_perspective_rows');
+
 CREATE OR REPLACE FUNCTION __SCHEMA__.reap_enrolled_perspective_rows(p_batch_size INTEGER DEFAULT 5000)
 RETURNS TABLE(task TEXT, rows_affected INTEGER, duration_ms DOUBLE PRECISION, status TEXT) AS $$
 DECLARE

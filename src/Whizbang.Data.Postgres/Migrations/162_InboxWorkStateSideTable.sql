@@ -1350,6 +1350,13 @@ BEGIN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('fetch_inbox_batch');
+
 -- <docs>fundamentals/work-coordinator/claim-loop</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchSqlTests.cs:FetchInboxBatch_ReturnsRowsForOwnedStreams_InReceivedAtOrderAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FetchInboxBatchSqlTests.cs:FetchInboxBatch_FiltersOutOtherInstancesRowsAsync</tests>
@@ -2189,6 +2196,13 @@ $$ LANGUAGE plpgsql;
 -- the planner would not walk a priority-ordered index on a table that wide. On the narrow table it
 -- walks the index and stops after 206 rows. The bound is reached before the per-row work.
 
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('claim_orphaned_inbox');
+
 -- <docs>fundamentals/work-coordinator/claim-loop</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BucketAwareClaimSqlTests.cs:ClaimOrphanedInbox_AnInteractiveStream_IsClaimedAheadOfOlderStandardStreamsAsync</tests>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/BucketAwareClaimSqlTests.cs:ClaimOrphanedInbox_AStreamWithAnInteractiveRowBehindStandardRows_IsPulledForward_InOrderAsync</tests>
@@ -2306,29 +2320,81 @@ BEGIN
   --
   -- The scheduled_for predicate rides along: a row that is not due yet is not claimable now, and
   -- every lane applied it.
+  -- Each lane names its band as a LITERAL, and the reason is the only reason: a partial index is
+  -- considered only when Postgres can prove the query's predicate implies the index's, and that
+  -- proof is textual. The previous shape selected a band by comparing a CASE expression to a bucket
+  -- column joined in from a VALUES list, which is not provable against ANY band predicate because
+  -- the bucket is a join column and not a constant. Every band index was therefore unusable, and
+  -- the lanes fell back to reading the whole pending set once per bucket -- O(backlog) on the
+  -- hottest path in the system, while the three indexes they were meant to read went on charging
+  -- every claim write for nothing. Measured on 300k pending rows with the held-lane index in
+  -- place, which is the comparison that is actually fair: 11,102 buffers and 5,249ms against
+  -- 5 buffers and under 20ms. The old shape DID reach an index -- the held-lane one -- but it
+  -- leads with instance_id, so for the unowned set it reads the whole backlog per bucket and
+  -- top-N sorts, because received_at sits late in its key. The band indexes are keyed on
+  -- (received_at, message_id), which is the ORDER BY, so they stop at the LIMIT.
+  --
+  -- A plpgsql constant would reintroduce the same defect. c_interactive_band_end is a PARAMETER at
+  -- plan time, and the generic plan plpgsql settles into after a few executions cannot fold it, so
+  -- the bounds are written here as the same literals the index predicates carry. That agreement is
+  -- held by PriorityLaneIndexUsabilityTests against WorkPriority, not by hope.
+  --
+  -- The four lanes partition the pending set with no overlap: interactive takes the whole band
+  -- regardless of kind (its index has no is_event predicate), the two event lanes take their bands,
+  -- and commands take everything else that is not an event. Each keeps its own claim_window, so a
+  -- deep background band cannot consume the budget an interactive row needs.
   claimable AS MATERIALIZED (
-    SELECT c.message_id, c.stream_id, c.received_at, c.is_event, c.priority, c.partition_number
-    FROM (VALUES (0), (1), (2)) AS b(bucket)
-    CROSS JOIN LATERAL (
-      (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
-       FROM __SCHEMA__.wh_inbox_state i
-       WHERE i.processed_at IS NULL
-         AND i.instance_id IS NULL
-         AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = b.bucket
-         AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
-       ORDER BY i.received_at, i.message_id
-       LIMIT (SELECT claim_window FROM params))
-      UNION ALL
-      (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
-       FROM __SCHEMA__.wh_inbox_state i
-       WHERE i.processed_at IS NULL
-         AND i.instance_id IS NOT NULL
-         AND i.lease_expiry < p_now
-         AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = b.bucket
-         AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
-       ORDER BY i.lease_expiry, i.received_at, i.message_id
-       LIMIT (SELECT claim_window FROM params))
-    ) c
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NULL
+       AND i.priority <= 99
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NULL
+       AND i.is_event = TRUE
+       AND i.priority >= 99 + 1
+       AND i.priority <= 199
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NULL
+       AND i.is_event = TRUE
+       AND i.priority > 199
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NULL
+       AND i.is_event = FALSE
+       AND i.priority > 99
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NOT NULL AND i.lease_expiry < p_now
+       AND i.priority <= 99
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.lease_expiry, i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NOT NULL AND i.lease_expiry < p_now
+       AND i.priority > 99
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.lease_expiry, i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
   ),
   -- 150 BUCKET LANES (priority step 3). Every row carries an effective priority (149); the claim schedules by the
   -- bucket the number falls in: interactive (1 to 99), standard (100 to 199), background (200 and up). Lane 0 is
@@ -2823,6 +2889,13 @@ BEGIN
   ORDER BY c.c_lane, c.c_kind, c.c_stream_seq, c.c_received_at, c.c_message_id;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Exactly one overload per framework function: this name is defined at more than one
+-- arity across the migration set, and CREATE OR REPLACE at a different arity ADDS an
+-- overload beside the old one rather than replacing it. The duplicate then makes every
+-- unqualified reference ambiguous (42725) -- including this file's own COMMENT ON
+-- FUNCTION -- which fails the whole startup pass and strands every later migration.
+SELECT __SCHEMA__.drop_all_overloads('claim_work');
 
 -- <docs>fundamentals/work-coordinator/claim-loop</docs>
 -- <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ClaimWorkSqlTests.cs:ClaimWork_OutboxHasUnprocessedWork_ReturnsThatWorkAsync</tests>
