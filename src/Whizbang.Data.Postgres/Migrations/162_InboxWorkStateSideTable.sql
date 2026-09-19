@@ -2227,8 +2227,8 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_inbox(
 DECLARE
   -- 150: the bands (Whizbang.Core.Priority.WorkPriority) and the scheduling constants. The wait target and the
   -- floor are the framework's defaults for this release; a host's batch hook adjusts a stream's number in memory.
-  c_interactive_band_end CONSTANT INTEGER := 99;
-  c_standard_band_end CONSTANT INTEGER := 199;
+  c_interactive_band_end CONSTANT INTEGER := __PRIORITY_INTERACTIVE_BAND_END__;
+  c_standard_band_end CONSTANT INTEGER := __PRIORITY_STANDARD_BAND_END__;
   c_background_wait_target_seconds CONSTANT INTEGER := 300;
   c_background_floor_share CONSTANT NUMERIC := 0.1;
 BEGIN
@@ -2320,29 +2320,76 @@ BEGIN
   --
   -- The scheduled_for predicate rides along: a row that is not due yet is not claimable now, and
   -- every lane applied it.
+  -- Each lane names its band as a LITERAL, and the reason is the only reason: a partial index is
+  -- considered only when Postgres can prove the query's predicate implies the index's, and that
+  -- proof is textual. The previous shape selected a band by comparing a CASE expression to a bucket
+  -- column joined in from a VALUES list, which is not provable against ANY band predicate because
+  -- the bucket is a join column and not a constant. Every band index was therefore unusable, and
+  -- the lanes fell back to reading the whole pending set once per bucket -- O(backlog) on the
+  -- hottest path in the system, while the three indexes they were meant to read went on charging
+  -- every claim write for nothing. Measured on 300k pending rows: 11,118 buffers against 304.
+  --
+  -- A plpgsql constant would reintroduce the same defect. c_interactive_band_end is a PARAMETER at
+  -- plan time, and the generic plan plpgsql settles into after a few executions cannot fold it, so
+  -- the bounds come from the migration constants (rule 12) and reach the planner as literals. The
+  -- indexes carry the same numbers from the same source, so index and query cannot drift apart.
+  --
+  -- The four lanes partition the pending set with no overlap: interactive takes the whole band
+  -- regardless of kind (its index has no is_event predicate), the two event lanes take their bands,
+  -- and commands take everything else that is not an event. Each keeps its own claim_window, so a
+  -- deep background band cannot consume the budget an interactive row needs.
   claimable AS MATERIALIZED (
-    SELECT c.message_id, c.stream_id, c.received_at, c.is_event, c.priority, c.partition_number
-    FROM (VALUES (0), (1), (2)) AS b(bucket)
-    CROSS JOIN LATERAL (
-      (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
-       FROM __SCHEMA__.wh_inbox_state i
-       WHERE i.processed_at IS NULL
-         AND i.instance_id IS NULL
-         AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = b.bucket
-         AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
-       ORDER BY i.received_at, i.message_id
-       LIMIT (SELECT claim_window FROM params))
-      UNION ALL
-      (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
-       FROM __SCHEMA__.wh_inbox_state i
-       WHERE i.processed_at IS NULL
-         AND i.instance_id IS NOT NULL
-         AND i.lease_expiry < p_now
-         AND (CASE WHEN i.priority <= 99 THEN 0 WHEN i.priority <= 199 THEN 1 ELSE 2 END) = b.bucket
-         AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
-       ORDER BY i.lease_expiry, i.received_at, i.message_id
-       LIMIT (SELECT claim_window FROM params))
-    ) c
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NULL
+       AND i.priority <= __PRIORITY_INTERACTIVE_BAND_END__
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NULL
+       AND i.is_event = TRUE
+       AND i.priority >= __PRIORITY_INTERACTIVE_BAND_END__ + 1
+       AND i.priority <= __PRIORITY_STANDARD_BAND_END__
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NULL
+       AND i.is_event = TRUE
+       AND i.priority > __PRIORITY_STANDARD_BAND_END__
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NULL
+       AND i.is_event = FALSE
+       AND i.priority > __PRIORITY_INTERACTIVE_BAND_END__
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NOT NULL AND i.lease_expiry < p_now
+       AND i.priority <= __PRIORITY_INTERACTIVE_BAND_END__
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.lease_expiry, i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
+    UNION ALL
+    (SELECT i.message_id, i.stream_id, i.received_at, i.is_event, i.priority, i.partition_number
+     FROM __SCHEMA__.wh_inbox_state i
+     WHERE i.processed_at IS NULL AND i.instance_id IS NOT NULL AND i.lease_expiry < p_now
+       AND i.priority > __PRIORITY_INTERACTIVE_BAND_END__
+       AND (i.scheduled_for IS NULL OR i.scheduled_for <= p_now)
+     ORDER BY i.lease_expiry, i.received_at, i.message_id
+     LIMIT (SELECT claim_window FROM params))
   ),
   -- 150 BUCKET LANES (priority step 3). Every row carries an effective priority (149); the claim schedules by the
   -- bucket the number falls in: interactive (1 to 99), standard (100 to 199), background (200 and up). Lane 0 is

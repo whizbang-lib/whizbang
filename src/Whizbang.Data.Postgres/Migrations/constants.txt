@@ -32,3 +32,5 @@ __CATEGORY_PERSPECTIVE__ = 'perspective'
 
 # The band a row nobody waits on is declared in: recovered, replayed, repaired and audit work (WorkPriority.BACKGROUND).
 __PRIORITY_BACKGROUND__ = 250
+__PRIORITY_INTERACTIVE_BAND_END__ = 99
+__PRIORITY_STANDARD_BAND_END__ = 199
