@@ -659,7 +659,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   // 10.0.10. The methods below generate per-model PerspectiveDataCoalescer registrations that restore every
   // non-nullable List<T>/array in the Data graph (and the framework's PerspectiveScope.Extensions) to empty on
   // materialization. DELETE this region, PerspectiveDataCoalescer, and its call sites (grep
-  // "WORKAROUND(dotnet/efcore#38625)") once a fixed EF Core release ships.
+  // "WORKAROUND(dotnet/efcore#38625)") once a fixed EF Core release ships. Fix status: proposed in
+  // https://github.com/dotnet/efcore/pull/39014 (targets main = EF Core 12; release/11.0 and release/10.0 backports
+  // requested there). See PerspectiveDataCoalescer for the removal checklist.
 
   /// <summary>Defensive nesting cap for the coalesce walker (real perspective models are 2–3 levels deep).</summary>
   private const int MAX_COALESCE_DEPTH = 8;
@@ -1598,7 +1600,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var rowType = $"global::Whizbang.Core.Lenses.PerspectiveRow<{model.ModelTypeName}>";
     sb.AppendLine("        // WORKAROUND(dotnet/efcore#38625): EF Core 10 ComplexProperty().ToJson() materializes JSON-absent");
     sb.AppendLine("        // complex collections as null (old-shape rows after schema evolution) — coalesce to empty on");
-    sb.AppendLine("        // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream.");
+    sb.AppendLine("        // materialization so reads don't NRE and tracked saves pass PrepareToSave. Remove when fixed upstream (dotnet/efcore#39014).");
     sb.AppendLine($"        Whizbang.Data.EFCore.Postgres.PerspectiveDataCoalescer.Register(typeof({rowType}), entity => {{");
     sb.AppendLine($"          var row = ({rowType})entity;");
     sb.AppendLine("          if (row.Scope is not null) { row.Scope.Extensions ??= new global::System.Collections.Generic.List<global::Whizbang.Core.Lenses.ScopeExtension>(); }");
