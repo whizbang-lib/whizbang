@@ -102,9 +102,7 @@ public class MessageTagDiscoveryGeneratorTests {
             return Type.EmptyTypes;
           }
         })
-        .Where(t => t.IsClass && !t.IsAbstract)
-        .Where(t => dispatcherInterface.IsAssignableFrom(t))
-        .Where(t => t.Name.Contains("Generated") || t.Namespace?.Contains("Generated") == true)
+        .Where(t => t.IsClass && !t.IsAbstract && dispatcherInterface.IsAssignableFrom(t) && (t.Name.Contains("Generated") || t.Namespace?.Contains("Generated") == true))
         .ToList();
 
     // If there are generated dispatchers, verify they have correct signature

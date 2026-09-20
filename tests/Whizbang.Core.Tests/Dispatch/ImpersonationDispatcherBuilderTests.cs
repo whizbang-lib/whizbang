@@ -229,8 +229,8 @@ public class ImpersonationDispatcherBuilderTests {
     // Arrange
     var type = typeof(ImpersonationDispatcherBuilder);
     var publicMethods = type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-        .Where(m => !m.IsSpecialName) // Exclude property getters/setters
-        .Where(m => m.DeclaringType == typeof(ImpersonationDispatcherBuilder)) // Only methods declared on this type
+        .Where(m => !m.IsSpecialName && m.DeclaringType == typeof(ImpersonationDispatcherBuilder)) // Exclude property getters/setters
+                                                                                                   // Only methods declared on this type
         .Select(m => m.Name)
         .ToHashSet();
 

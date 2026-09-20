@@ -38,8 +38,7 @@ public class PassiveCounterDriftLockTests {
   public async Task EveryCoreMetricsClass_ReportsEveryCounterAtTheFirstCollectionAsync() {
     var metricsClasses = typeof(WhizbangMetrics).Assembly.GetTypes()
       .Where(t => t.IsClass && !t.IsAbstract && t.Namespace == typeof(WhizbangMetrics).Namespace
-                  && t.Name.EndsWith("Metrics", StringComparison.Ordinal) && t != typeof(WhizbangMetrics))
-      .Where(t => t.GetConstructors().Any(c => c.GetParameters().Length > 0 && c.GetParameters()[0].ParameterType == typeof(WhizbangMetrics)))
+                  && t.Name.EndsWith("Metrics", StringComparison.Ordinal) && t != typeof(WhizbangMetrics) && t.GetConstructors().Any(c => c.GetParameters().Length > 0 && c.GetParameters()[0].ParameterType == typeof(WhizbangMetrics)))
       .OrderBy(t => t.Name, StringComparer.Ordinal)
       .ToList();
 

@@ -195,8 +195,8 @@ public class SystemDispatcherBuilderTests {
     // Arrange
     var type = typeof(SystemDispatcherBuilder);
     var publicMethods = type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-        .Where(m => !m.IsSpecialName) // Exclude property getters/setters
-        .Where(m => m.DeclaringType == typeof(SystemDispatcherBuilder)) // Only methods declared on this type
+        .Where(m => !m.IsSpecialName && m.DeclaringType == typeof(SystemDispatcherBuilder)) // Exclude property getters/setters
+                                                                                            // Only methods declared on this type
         .Select(m => m.Name)
         .ToHashSet();
 
