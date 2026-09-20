@@ -134,7 +134,7 @@ public class PerspectiveWorkerSecurityContextTests {
     var lifecycleInvoked = false;
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (_, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveDetached) {
           lifecycleInvoked = true;
         }
@@ -293,7 +293,7 @@ public class PerspectiveWorkerSecurityContextTests {
     var messageContextAccessor = new TestMessageContextAccessor();
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (_, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PostPerspectiveInline) {
           capturedUserId = messageContextAccessor.Current?.UserId;
           postPerspectiveInlineInvoked.TrySetResult();
@@ -476,7 +476,7 @@ public class PerspectiveWorkerSecurityContextTests {
     var lifecycleInvoked = false;
 
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (_, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveDetached) {
           lifecycleInvoked = true;
         }
@@ -580,7 +580,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // PrePerspectiveDetached (fires via Task.Run and may not complete before test cancellation).
     // Security context is established BEFORE all stages, so the context is already set.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (_, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
@@ -680,7 +680,7 @@ public class PerspectiveWorkerSecurityContextTests {
     // Capture at PrePerspectiveInline (fires synchronously) rather than PrePerspectiveDetached
     // (fires via Task.Run). Security context is established before all stages.
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (_, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveInline) {
           capturedTenantId = messageContextAccessor.Current?.TenantId;
           capturedUserId = messageContextAccessor.Current?.UserId;
@@ -774,7 +774,7 @@ public class PerspectiveWorkerSecurityContextTests {
 
     // Lifecycle invoker captures the InitiatingContext state during invocation
     var lifecycleInvoker = new CapturingLifecycleInvoker(
-      onInvoke: (_, stage, ctx) => {
+      onInvoke: (_, stage, _) => {
         if (stage == LifecycleStage.PrePerspectiveDetached) {
           capturedInitiatingContext = scopeContextAccessor.InitiatingContext;
           capturedScopeContextFromAccessor = scopeContextAccessor.Current;

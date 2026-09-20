@@ -265,7 +265,7 @@ public class BodyClaimRehydratorTests {
     var services = new ServiceCollection();
     var instance = new InMemoryStoreImpl("memory");
     store = instance;
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => instance);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => instance);
     services.AddOptions<MessageBodyOffloadOptions>().Configure(o => o.ActiveCleanup = activeCleanup);
     // Only register metrics when a test supplies an isolated instance (parallel-safe metric capture).
     if (metrics is not null) {
@@ -284,7 +284,7 @@ public class BodyClaimRehydratorTests {
     var services = new ServiceCollection();
     var instance = new InMemoryStoreImpl("memory");
     _store = instance;
-    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, key) => instance);
+    services.AddKeyedSingleton<IMessageBodyStore>("memory", (_, _) => instance);
     return services.BuildServiceProvider();
   }
 

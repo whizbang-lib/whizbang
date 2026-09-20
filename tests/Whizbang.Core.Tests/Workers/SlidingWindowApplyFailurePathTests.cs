@@ -43,7 +43,7 @@ public class SlidingWindowApplyFailurePathTests {
     // loop that survived the first failure can produce one.
     var secondAttempt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     await using var sut = new SlidingWindowApplyBatchStrategy(
-      flush: (sid, _, ct) => {
+      flush: (sid, _, _) => {
         attempts.Enqueue(sid);
         if (attempts.Count >= 2) {
           secondAttempt.TrySetResult();

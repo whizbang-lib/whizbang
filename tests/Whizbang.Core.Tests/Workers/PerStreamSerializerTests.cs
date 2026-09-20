@@ -439,7 +439,7 @@ public class PerStreamSerializerTests {
 
     await using var sut = new PerStreamSerializer<StreamItem>(
       streamIdSelector: i => i.StreamId,
-      processor: async (_, ct) => { await Task.Yield(); },
+      processor: async (_, _) => await Task.Yield(),
       options: new PerStreamSerializerOptions {
         IdleEvictionWindow = TimeSpan.FromSeconds(5),
         IdleSweepInterval = TimeSpan.FromSeconds(1),

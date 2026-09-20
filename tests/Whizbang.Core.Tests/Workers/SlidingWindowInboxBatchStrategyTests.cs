@@ -360,7 +360,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var logger = new RecordingLogger();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (_, ct) => {
+      flush: (_, _) => {
         var n = Interlocked.Increment(ref attempts);
         if (n == 1) {
           firstFlush.TrySetResult();
@@ -404,7 +404,7 @@ public class SlidingWindowInboxBatchStrategyTests {
     var logger = new RecordingLogger();
 
     await using var sut = new SlidingWindowInboxBatchStrategy(
-      flush: (_, ct) => {
+      flush: (_, _) => {
         failed.TrySetResult();
         return Task.FromException(new InvalidOperationException("database unavailable"));
       },

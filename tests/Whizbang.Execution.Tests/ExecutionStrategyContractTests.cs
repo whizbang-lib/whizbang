@@ -230,7 +230,7 @@ public abstract class ExecutionStrategyContractTests {
     await Assert.That(async () => {
       await strategy.ExecuteAsync<int>(
         envelope,
-        (_, ctx) => ValueTask.FromResult(0),
+        (_, _) => ValueTask.FromResult(0),
         context
       );
     }).Throws<InvalidOperationException>();
@@ -249,7 +249,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act - Start a long-running handler
     var executionTask = strategy.ExecuteAsync<int>(
       envelope,
-      async (_, ctx) => {
+      async (_, _) => {
         handlerStarted.SetResult(true);
         await handlerCompleted.Task;
         return 0;
@@ -316,7 +316,7 @@ public abstract class ExecutionStrategyContractTests {
       var envelope = CreateTestEnvelope($"message-{index}");
       var task = strategy.ExecuteAsync<int>(
         envelope,
-        async (_, ctx) => {
+        async (_, _) => {
           await Task.Delay(10); // Simulate work
           lock (lockObj) {
             executionOrder.Add(index);

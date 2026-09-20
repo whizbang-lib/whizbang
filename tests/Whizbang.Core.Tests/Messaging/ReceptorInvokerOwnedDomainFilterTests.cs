@@ -56,7 +56,7 @@ public class ReceptorInvokerOwnedDomainFilterTests {
       list.Add(new ReceptorInfo(
         MessageType: typeof(TMessage),
         ReceptorId: typeof(TMessage).Name,
-        InvokeAsync: (_, msg, envelope, callerInfo, ct) => {
+        InvokeAsync: (_, _, _, _, _) => {
           tracker.Record();
           return ValueTask.FromResult<object?>(null);
         }));

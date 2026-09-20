@@ -366,7 +366,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     for (int i = 0; i < 5; i++) {
       var task = executor.ExecuteAsync<int>(
         envelope,
-        async (_, ctx) => {
+        async (_, _) => {
           executionTimes.Add(DateTimeOffset.UtcNow);
           await Task.Delay(10); // Small delay
           return 42;
@@ -402,7 +402,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Act - Fill the semaphore
     var blockingTask = executor.ExecuteAsync<int>(
       envelope,
-      async (_, ctx) => await tcs.Task,
+      async (_, _) => await tcs.Task,
       context
     ).AsTask();
 
@@ -412,7 +412,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     // Assert - Should throw OperationCanceledException
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (_, ctx) => ValueTask.FromResult(99),
+      (_, _) => ValueTask.FromResult(99),
       context,
       cts.Token
     )).Throws<OperationCanceledException>();

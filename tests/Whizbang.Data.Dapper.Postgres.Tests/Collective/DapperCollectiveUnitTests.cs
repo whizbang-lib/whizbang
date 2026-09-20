@@ -534,7 +534,7 @@ public class DapperCollectiveUnitTests {
     var nullSpecEntry = new CollectiveApplyEntry(
       ModelType: typeof(_jobModel), EventType: typeof(_evtA), HandlerType: typeof(_handler),
       MethodName: nameof(_handler.Apply), ScopeHandling: CollectiveScopeHandling.Framework,
-      SpecKind: CollectiveSpecKind.Linq, Invoker: static (_, e, q) => null!);
+      SpecKind: CollectiveSpecKind.Linq, Invoker: static (_, _, _) => null!);
 
     await Assert.That(() => DapperCollectiveEventApplier<_jobModel>.ApplyAsync(
         nullSpecEntry, new _handler(), new _evtA { Scope = new TenantCollectiveScope("t") },

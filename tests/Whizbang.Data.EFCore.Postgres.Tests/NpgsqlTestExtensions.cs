@@ -50,7 +50,7 @@ internal static class NpgsqlTestExtensions {
     if (result is null or DBNull) {
       return default!;
     }
-    return (T)Convert.ChangeType(result!, typeof(T), CultureInfo.InvariantCulture);
+    return (T)Convert.ChangeType(result, typeof(T), CultureInfo.InvariantCulture);
   }
 
   /// <summary>

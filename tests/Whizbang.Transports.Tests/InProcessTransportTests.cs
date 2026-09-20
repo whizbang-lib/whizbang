@@ -249,7 +249,7 @@ public class InProcessTransportTests {
 
     // Act
     var subscription = await transport.SubscribeBatchAsync(
-      async (_, ct) => { },
+      async (_, _) => { },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
     );
@@ -269,7 +269,7 @@ public class InProcessTransportTests {
 
     // Act & Assert
     await Assert.That(async () => await transport.SubscribeBatchAsync(
-      async (_, ct) => { },
+      async (_, _) => { },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       cts.Token
@@ -590,7 +590,7 @@ public class InProcessTransportTests {
     var tasks = Enumerable.Range(0, 50)
       .Select(async _ => {
         var subscription = await transport.SubscribeBatchAsync(
-          async (_, ct) => { },
+          async (_, _) => { },
           destination,
           new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 }
         );
@@ -625,7 +625,7 @@ public class InProcessTransportTests {
     var handlerSucceeded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
     await transport.SubscribeBatchAsync(
-      async (_, ct) => {
+      async (_, _) => {
         var attempt = Interlocked.Increment(ref handlerCallCount);
         if (attempt == 1) {
           // First attempt fails — batch collector re-queues for retry

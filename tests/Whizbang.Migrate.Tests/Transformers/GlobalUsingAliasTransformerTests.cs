@@ -14,7 +14,11 @@ namespace Whizbang.Migrate.Tests.Transformers;
 /// literal in a dictionary cannot go stale silently if a test resolves it.
 /// </remarks>
 /// <tests>Whizbang.Migrate/Transformers/GlobalUsingAliasTransformer.cs:*</tests>
-public class GlobalUsingAliasTransformerTests {
+public partial class GlobalUsingAliasTransformerTests {
+
+  [GeneratedRegex("global using LegacyAlias = ([^;]+);")]
+  private static partial Regex _legacyAlias();
+
 
   private static async Task<string> _replacementForAsync(string martenOrWolverineType) {
     var transformer = new GlobalUsingAliasTransformer();
@@ -22,7 +26,7 @@ public class GlobalUsingAliasTransformerTests {
 
     var result = await transformer.TransformAsync(source, "GlobalUsings.cs");
 
-    var match = Regex.Match(result.TransformedCode, "global using LegacyAlias = ([^;]+);");
+    var match = _legacyAlias().Match(result.TransformedCode);
     return match.Success ? match.Groups[1].Value.Trim() : string.Empty;
   }
 

@@ -247,7 +247,7 @@ public class DispatcherSyncTests : DiagnosticTestBase {
 
     protected override Func<object, IMessageEnvelope?, CancellationToken, Task>? GetUntypedReceptorPublisher(Type eventType) {
       if (_publishedEvents != null) {
-        return (evt, _, ct) => {
+        return (evt, _, _) => {
           _publishedEvents.Add(evt);
           return Task.CompletedTask;
         };

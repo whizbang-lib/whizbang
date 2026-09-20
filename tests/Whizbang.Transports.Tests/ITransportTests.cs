@@ -85,7 +85,7 @@ public class ITransportTests {
 
     // Act
     var subscription = await transport.SubscribeBatchAsync(
-      async (_, ct) => { },
+      async (_, _) => { },
       destination,
       new TransportBatchOptions { BatchSize = 1, SlideMs = 10, MaxWaitMs = 100 },
       CancellationToken.None

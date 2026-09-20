@@ -303,7 +303,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
       var index = i;
       var task = executor.ExecuteAsync<int>(
         envelope,
-        async (_, ctx) => {
+        async (_, _) => {
           lock (executionOrder) {
             executionOrder.Add(index);
           }
@@ -342,14 +342,14 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Act - Queue blocking work first to fill the channel
     var blockingTask = executor.ExecuteAsync<int>(
       envelope,
-      async (_, ctx) => await blockingTcs.Task,
+      async (_, _) => await blockingTcs.Task,
       context
     ).AsTask();
 
     // Queue work with cancellation token (will queue successfully)
     var cancellableTask = executor.ExecuteAsync<int>(
       envelope,
-      (_, ctx) => {
+      (_, _) => {
         Interlocked.Increment(ref handlerCalled);
         return ValueTask.FromResult(42);
       },
@@ -387,7 +387,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     var tcs = new TaskCompletionSource<int>();
 
     // Act - Queue long-running work
-    var task = executor.ExecuteAsync<int>(envelope, async (_, ctx) => await tcs.Task, context
+    var task = executor.ExecuteAsync<int>(envelope, async (_, _) => await tcs.Task, context
 , cancellationToken).AsTask();
 
     // Complete the work BEFORE stopping to avoid deadlock
@@ -425,7 +425,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     try {
       await executor.ExecuteAsync<int>(
         envelope,
-        (_, ctx) => {
+        (_, _) => {
           exceptionThrown = true;
           throw new InvalidOperationException("Test exception");
         },
@@ -450,7 +450,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
 
     var result = await executor.ExecuteAsync<int>(
       envelope,
-      (_, ctx) => ValueTask.FromResult(7),
+      (_, _) => ValueTask.FromResult(7),
       context
     );
     await Assert.That(result).IsEqualTo(7);
@@ -461,7 +461,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     // Assert - executor is stopped; further executions are rejected
     await Assert.That(async () => await executor.ExecuteAsync<int>(
       envelope,
-      (_, ctx) => ValueTask.FromResult(0),
+      (_, _) => ValueTask.FromResult(0),
       context
     )).Throws<InvalidOperationException>();
   }
@@ -508,7 +508,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     for (int i = 0; i < capacity + 10; i++) {
       var task = executor.ExecuteAsync<int>(
         envelope,
-        async (_, ctx) => {
+        async (_, _) => {
           await tcs.Task;
           return 42;
         },
