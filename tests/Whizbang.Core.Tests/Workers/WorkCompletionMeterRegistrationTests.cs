@@ -33,7 +33,7 @@ public class WorkCompletionMeterRegistrationTests {
   [Test]
   public async Task CoreRegistration_ProvidesTheMeterAsync() {
     var services = new ServiceCollection();
-    Whizbang.Core.ServiceCollectionExtensions.AddWhizbang(services);
+    services.AddWhizbang();
 
     await using var provider = services.BuildServiceProvider();
 
@@ -45,7 +45,7 @@ public class WorkCompletionMeterRegistrationTests {
   [Test]
   public async Task Meter_IsSharedBetweenTheClaimAndDispatchSidesAsync() {
     var services = new ServiceCollection();
-    Whizbang.Core.ServiceCollectionExtensions.AddWhizbang(services);
+    services.AddWhizbang();
 
     await using var provider = services.BuildServiceProvider();
     var first = provider.GetService<WorkCompletionMeter>();
