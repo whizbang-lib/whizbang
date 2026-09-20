@@ -31,6 +31,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests.Migrations;
 /// </remarks>
 /// <docs>operations/infrastructure/migrations</docs>
 [Category("Migrations")]
+[Category("Shard4")]
 public class TtlReapDrivesFromRegistryTests {
 
   private static string _maintenanceBody() {
