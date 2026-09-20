@@ -61,8 +61,7 @@ public record ServiceBusWorkerTestEvent : IEvent {
 [JsonSerializable(typeof(ServiceBusWorkerTestEvent))]
 [JsonSerializable(typeof(MessageEnvelope<ServiceBusWorkerTestEvent>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
-internal sealed partial class TestWorkerJsonContext : JsonSerializerContext {
-}
+internal sealed partial class TestWorkerJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Test double for ITransport

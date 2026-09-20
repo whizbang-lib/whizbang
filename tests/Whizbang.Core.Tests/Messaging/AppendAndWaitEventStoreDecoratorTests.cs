@@ -267,7 +267,7 @@ public class AppendAndWaitEventStoreDecoratorTests {
     await Assert.That(lastSequence).IsGreaterThanOrEqualTo(0);
   }
 
-  private sealed class FakePerspective { }
+  private sealed class FakePerspective;
 
   private sealed class FakePerspectiveSyncAwaiter : IPerspectiveSyncAwaiter {
     public Guid AwaiterId { get; } = Guid.NewGuid();

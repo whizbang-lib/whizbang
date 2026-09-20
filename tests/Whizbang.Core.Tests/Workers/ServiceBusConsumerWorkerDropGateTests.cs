@@ -21,7 +21,7 @@ internal sealed record DropGateTestEvent(string Value);
 [JsonSerializable(typeof(DropGateTestEvent))]
 [JsonSerializable(typeof(MessageEnvelope<DropGateTestEvent>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
-internal sealed partial class DropGateTestJsonContext : JsonSerializerContext { }
+internal sealed partial class DropGateTestJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Slice 3 of plans/pump-then-process.md (Half A) — partial completion: locks the

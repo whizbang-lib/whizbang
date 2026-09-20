@@ -159,10 +159,10 @@ public class PersistenceStrategyTests {
 
   // Test types
   [PersistenceStrategy(PersistenceMode.Batched)]
-  private sealed class TestBatchedReceptor { }
+  private sealed class TestBatchedReceptor;
 
   [PersistenceStrategy("high-throughput")]
-  private sealed class TestCustomStrategyReceptor { }
+  private sealed class TestCustomStrategyReceptor;
 
-  private sealed class TestDefaultReceptor { }
+  private sealed class TestDefaultReceptor;
 }

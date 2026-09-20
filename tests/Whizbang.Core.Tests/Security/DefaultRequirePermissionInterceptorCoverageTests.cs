@@ -29,11 +29,11 @@ public class DefaultRequirePermissionInterceptorCoverageTests {
 
   [RequirePermission("x", OnDenied = DeniedAction.Throw)]
   [RequirePermission("y", OnDenied = DeniedAction.Quarantine)]
-  private sealed class _throwThenQuarantineReceptor { }
+  private sealed class _throwThenQuarantineReceptor;
 
   [RequirePermission("x", OnDenied = (DeniedAction)99)]
   [RequirePermission("y", OnDenied = DeniedAction.DropQuiet)]
-  private sealed class _unknownActionReceptor { }
+  private sealed class _unknownActionReceptor;
 
   /// <summary>What breaks: Quarantine (3) must outrank Throw (2) so a "must quarantine"
   /// requirement is never silently relaxed to a bare throw by a peer attribute on the same

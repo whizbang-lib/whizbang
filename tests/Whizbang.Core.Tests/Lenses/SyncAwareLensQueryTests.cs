@@ -21,7 +21,7 @@ public class SyncAwareLensQueryTests {
   }
 
   // Test perspective type
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   // ==========================================================================
   // ISyncAwareLensQuery interface tests

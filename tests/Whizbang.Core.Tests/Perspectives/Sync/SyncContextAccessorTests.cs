@@ -12,7 +12,7 @@ public class SyncContextAccessorTests {
   /// <summary>
   /// Dummy perspective type for tests.
   /// </summary>
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   /// <summary>
   /// Helper to create a test SyncContext.

@@ -1676,5 +1676,5 @@ public class TransportConsumerWorkerDeepCoverageTests {
     }
   }
 
-  private sealed class DeepTestEvent : IEvent { }
+  private sealed class DeepTestEvent : IEvent;
 }

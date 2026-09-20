@@ -101,8 +101,7 @@ public class MessageTagProcessorCoverageTests {
   // A custom attribute type that is neither a built-in (Signal/Telemetry/Metric) nor registered
   // with MessageTagHookDispatcherRegistry — the exact shape that forces
   // _createHookContextForAttribute past both fast paths into the base-context fallback.
-  private sealed class FallbackOnlyTagAttribute : MessageTagAttribute {
-  }
+  private sealed class FallbackOnlyTagAttribute : MessageTagAttribute;
 
   private sealed record FallbackTaggedMessage(string Value);
 

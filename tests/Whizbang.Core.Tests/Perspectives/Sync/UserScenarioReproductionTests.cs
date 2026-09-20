@@ -234,9 +234,9 @@ public class UserScenarioReproductionTests {
 }
 
 // Test types for user scenario
-internal sealed class UserScenarioEventB { }
+internal sealed class UserScenarioEventB;
 
-internal sealed class UserScenarioPerspectiveC { }
+internal sealed class UserScenarioPerspectiveC;
 
 /// <summary>
 /// Mock work coordinator that integrates with the singleton tracker.

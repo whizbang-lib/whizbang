@@ -10,7 +10,7 @@ namespace Whizbang.Core.Tests.Security;
 /// </summary>
 /// <tests>ReceptorInterceptorPipeline</tests>
 public class ReceptorInterceptorPipelineTests {
-  private sealed class StubReceptor { }
+  private sealed class StubReceptor;
 
   private sealed class AllowingInterceptor : IReceptorInterceptor {
     public int CallCount { get; private set; }

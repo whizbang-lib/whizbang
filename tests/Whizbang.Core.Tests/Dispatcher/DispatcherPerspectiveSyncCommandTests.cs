@@ -18,7 +18,7 @@ namespace Whizbang.Core.Tests.Dispatcher;
 [NotInParallel]
 public sealed class DispatcherPerspectiveSyncCommandTests {
   // Test perspective type
-  public sealed class TestSyncPerspective { }
+  public sealed class TestSyncPerspective;
 
   // Test command (NOT an event) - should NOT wait for perspective sync
   public sealed record TestSyncCommand([property: StreamId] Guid StreamId) : ICommand;

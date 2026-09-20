@@ -290,7 +290,7 @@ public class CrossCommandPerspectiveSyncTests {
 }
 
 // Test types for cross-command sync tests
-internal sealed class TestEventB { }
-internal sealed class TestPerspectiveC { }
-internal sealed class TestPerspectiveD { }
-internal sealed class TestCommandE { }
+internal sealed class TestEventB;
+internal sealed class TestPerspectiveC;
+internal sealed class TestPerspectiveD;
+internal sealed class TestCommandE;

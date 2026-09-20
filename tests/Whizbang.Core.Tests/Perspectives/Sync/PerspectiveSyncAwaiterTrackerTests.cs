@@ -22,7 +22,7 @@ namespace Whizbang.Core.Tests.Perspectives.Sync;
 [NotInParallel("SyncTests")]
 public class PerspectiveSyncAwaiterTrackerTests {
   // Dummy perspective type for testing
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   // Sample event types for testing
   private sealed record TestEventA;

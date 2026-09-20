@@ -29,8 +29,7 @@ public record SerializerTestCommand : ICommand {
 [JsonSerializable(typeof(SerializerTestCommand))]
 [JsonSerializable(typeof(MessageEnvelope<SerializerTestCommand>))]
 [JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
-internal sealed partial class SerializerTestJsonContext : JsonSerializerContext {
-}
+internal sealed partial class SerializerTestJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// Tests for JsonMessageSerializer constructor validation, converter integration,

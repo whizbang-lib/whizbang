@@ -15,7 +15,7 @@ public class PerspectiveSyncAwaiterStreamTests {
   /// <summary>
   /// Dummy perspective type for tests.
   /// </summary>
-  private sealed class TestPerspective { }
+  private sealed class TestPerspective;
 
   /// <summary>
   /// Dummy event type for filter tests.

@@ -346,5 +346,5 @@ public class DispatcherSyncTrackingVerificationTests {
 }
 
 // Test types
-internal sealed class VerificationTestEventB { }
-internal sealed class VerificationTestPerspectiveC { }
+internal sealed class VerificationTestEventB;
+internal sealed class VerificationTestPerspectiveC;

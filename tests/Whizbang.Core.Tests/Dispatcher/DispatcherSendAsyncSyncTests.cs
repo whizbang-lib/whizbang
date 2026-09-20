@@ -19,7 +19,7 @@ public class DispatcherSendAsyncSyncTests {
   /// <summary>
   /// Test perspective for sync testing.
   /// </summary>
-  private sealed class TestSyncPerspective { }
+  private sealed class TestSyncPerspective;
 
   /// <summary>
   /// Test event that should be synced before receptor runs.

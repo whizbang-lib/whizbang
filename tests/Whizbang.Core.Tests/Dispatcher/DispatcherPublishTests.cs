@@ -48,7 +48,7 @@ public class DispatcherPublishTests {
   }
 
   // Fake perspective marker class
-  public sealed class FakePerspective { }
+  public sealed class FakePerspective;
 
   // ========================================
   // LocalInvokeAndSyncAsync<TMessage, TResult, TPerspective> - 3-type-param overload

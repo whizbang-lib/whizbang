@@ -102,5 +102,5 @@ public class TopicAttributeTests {
   }
 
   [Topic("test-events")]
-  private sealed class TestEventWithTopic { }
+  private sealed class TestEventWithTopic;
 }

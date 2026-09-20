@@ -98,8 +98,8 @@ public class PinnedIdAttributeTests {
   }
 
   [PinnedId("11111111-2222-3333-4444-555555555555")]
-  private sealed class TestClassWithPinnedId { }
+  private sealed class TestClassWithPinnedId;
 
   [PinnedId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")]
-  private readonly struct TestStructWithPinnedId { }
+  private readonly struct TestStructWithPinnedId;
 }

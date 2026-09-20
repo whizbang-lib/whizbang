@@ -275,7 +275,7 @@ public class ControlPlaneSecurityExemptionTests {
   }
 
   /// <summary>Consumer-style subclass: the message type lives on the base, not here.</summary>
-  private sealed class _derivedEnvelope : MessageEnvelope<RedeliveryComposite> { }
+  private sealed class _derivedEnvelope : MessageEnvelope<RedeliveryComposite>;
 
   /// <summary>An envelope with no message-type argument at all.</summary>
   private sealed class _nonGenericEnvelope : IMessageEnvelope {

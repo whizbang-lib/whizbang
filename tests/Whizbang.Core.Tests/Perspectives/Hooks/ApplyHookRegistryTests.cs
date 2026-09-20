@@ -29,7 +29,7 @@ public class ApplyHookRegistryTests {
     public string Title { get; set; } = "";
   }
 
-  private sealed class _unrelated { }
+  private sealed class _unrelated;
 
   private sealed class _collectiveHook<TMarker>(Action<ICollectiveApplyHookBuilder<TMarker>, ApplyHookContext> body)
       : ICollectiveApplyHook<TMarker> {
