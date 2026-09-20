@@ -258,17 +258,19 @@ public class AzureServiceBusTransportThrottleAndAdaptiveTests {
     var processor = client.LastSessionProcessor!;
 
     var resumed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    processor.Started += () => {
-      // Call #1 was the initial subscribe start; call #2 is the detached pause's resume.
-      if (processor.StartProcessingAsyncCallCount >= 2) {
+    // Wait for the RESUME LOG, not for Started. The detached pause runs
+    // stop -> delay -> startProcessingAsync() -> LogInformation("Resumed ..."), so the Started
+    // event fires strictly BEFORE the line this test asserts on. Waiting on Started let the
+    // assertion run against a log that had not been written yet, which is why this test failed
+    // intermittently. The signal has to be the thing being asserted.
+    logger.MessageLogged += (_, message) => {
+      if (message.Contains("Resumed Service Bus processor for inbox/throttle-sub after throttle pause", StringComparison.Ordinal)) {
         resumed.TrySetResult();
       }
     };
 
     await processor.RaiseErrorAsync(_serviceBusyErrorArgs());
 
-    // The pause runs detached (stop -> real delay -> start) — wait for the SECOND
-    // StartProcessingAsync, never a fixed sleep.
     await resumed.Task;
 
     await Assert.That(processor.StopProcessingAsyncCallCount).IsEqualTo(1)
