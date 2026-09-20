@@ -13,8 +13,13 @@ name: Analyzer Sweep
 # Every other test project completes locally in well under a gigabyte. A hosted runner has 16 GB
 # and is disposable, so a run that dies costs a job rather than someone's machine.
 #
-# One diagnostic per invocation, always: that is what bounds the working set. Do not "optimize"
-# this by passing the whole list.
+# One diagnostic per invocation, always, AND --fix-scope document: together they bound the
+# working set. Do not "optimize" this by passing the whole list or by dropping the fix scope.
+#
+# The fix scope is the part that is easy to get wrong. A memory trace taken immediately after a
+# completed rule showed the working set fully reclaimed (15 total / 0 used / 14 free), so the
+# runner deaths are not cumulative leakage and shutting down the build server does not address
+# them -- a single project-scoped FixAll is simply larger than the runner.
 
 on:
   workflow_dispatch:
@@ -90,7 +95,14 @@ jobs:
           TOTAL=0
           for d in $DIAGS; do
             echo "::group::$d"
+            # --fix-scope document is what makes this fit in a runner. The default, project
+            # scope, runs a FixAll across the whole compilation and holds every proposed change
+            # at once; on a 310k-line suite that exhausts 15 GB and the runner is killed at
+            # exit 143. Three runs died that way -- two during RCS1261, one during RCS1021 --
+            # while RCS1249 completed twice, so it is the size of the batch that decides it,
+            # not any single rule.
             n=$(roslynator fix "$PROJECT" --supported-diagnostics "$d" -a "$A" \
+                  --fix-scope document --batch-size 200 \
                   --ignore-compiler-errors --verbosity minimal 2>&1 \
                 | grep -oE '^[0-9]+ diagnostics fixed' | grep -oE '^[0-9]+' | head -1)
             echo "$d: ${n:-0} fixed"
