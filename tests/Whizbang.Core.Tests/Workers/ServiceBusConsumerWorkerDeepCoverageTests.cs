@@ -1316,7 +1316,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelope(MessageId messageId, Guid streamId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1340,7 +1340,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithAggregateId(MessageId messageId, Guid aggregateId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1364,7 +1364,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithoutMetadata(MessageId messageId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,
@@ -1386,7 +1386,7 @@ public class ServiceBusConsumerWorkerDeepCoverageTests {
   }
 
   private static MessageEnvelope<JsonElement> _createJsonEnvelopeWithTraceParent(MessageId messageId, Guid streamId) {
-    var payload = JsonDocument.Parse($"{{\"Data\":\"test-data\"}}").RootElement;
+    var payload = JsonDocument.Parse("{\"Data\":\"test-data\"}").RootElement;
     return new MessageEnvelope<JsonElement> {
       MessageId = messageId,
       Payload = payload,

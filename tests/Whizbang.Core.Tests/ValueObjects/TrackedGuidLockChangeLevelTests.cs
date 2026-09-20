@@ -99,7 +99,7 @@ public class TrackedGuidLockChangeLevelTests {
     for (var i = 1; i < ids.Length; i++) {
       var cmp = string.CompareOrdinal(ids[i].ToString("D"), ids[i - 1].ToString("D"));
       await Assert.That(cmp).IsGreaterThan(0)
-        .Because($"Sequential single-thread NewMedo() must remain strictly monotonic after the lock fix.");
+        .Because("Sequential single-thread NewMedo() must remain strictly monotonic after the lock fix.");
     }
   }
 
