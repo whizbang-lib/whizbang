@@ -115,7 +115,7 @@ jobs:
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
         with:
-          versionSpec: '6.1.x'
+          versionSpec: '6.2.x'
 
       - name: Determine Base Version
         id: gitversion
