@@ -162,3 +162,36 @@ claim_write.wide_row.indexes	17	indexes		recorded: the index set the cutover rem
 claim_write.state_row.blocks_per_row	18.3	blocks/row		recorded, not gated: follows the index count below, which is the gate
 claim_write.state_row.indexes	11	indexes	12	GATED: a design property. The write win IS the index count on the hot table; 6 indexes gave 69 percent off, 11 gives 51, and a return toward 17 gives back the whole reason the split exists
 claim_write.reduction_percent	50.9	percent		recorded, not gated: a ceiling cannot express a floor. The test asserts the wide/narrow ratio exceeds 1.5x; measured 2.03x
+
+# --- Maintenance row-expiry reap, nothing expired ---------------------------------------------
+# 24 perspective tables holding 500 unexpired rows each, of which 2 declare a row lifetime in the
+# registry. Both discovery shapes run against the same fixture so the pair reads as a before and
+# after, the way the ephemeral reap scenario drops and recreates its index. Only wh_per_* tables are
+# measured, so the cycle's other twelve tasks stay out of the number.
+#
+# expires_at comes from the shared perspective table template, so EVERY perspective table has the
+# column whether or not its perspective declares a lifetime. Finding tables by asking the catalog for
+# that column therefore selected all of them and issued an unindexed DELETE against each. The
+# predicate matched nothing -- a perspective that declares no lifetime never stamps the column -- but
+# not matching still read every row of every table.
+#
+# Measured on a deployed service before the change: 120 tables scanned for the 3 that declare a
+# lifetime, 14,758 ms to delete zero rows, against 377 ms for the other twelve maintenance tasks
+# combined. perform_maintenance was the heaviest statement on that database by total time, averaging
+# 19.2 s and 615k buffers a call, and 98 percent of it was this one task. Two other services scanned
+# 81 tables for one declaring perspective and 32 for nine.
+#
+# The gate is TABLES SCANNED, because that is a property of the design rather than of the machine:
+# the reap has no reason to read a table whose perspective never declared a lifetime, whatever the
+# planner or the hardware does. Four leaves room for another declaring perspective in the fixture
+# while failing any drift back toward sweeping all 24. Tuples read is the same finding counted a
+# second way, gated loosely so it cannot be satisfied by reading fewer rows from more tables.
+#
+# Residual, recorded here rather than hidden: the DELETE against a DECLARING table is still
+# unindexed, because expires_at carries no index. That is proportionate now -- three tables on the
+# service above rather than a hundred and twenty -- but a service with many declaring perspectives
+# holding large tables would want an index on the column, and this is the measure that would show it.
+maintenance.ttl_reap.catalog_sweep.tables_scanned_per_cycle	24	tables/cycle		recorded, not gated: the shape the registry replaces, kept so the pair reads as a before and after
+maintenance.ttl_reap.catalog_sweep.tuples_read_per_cycle	12000	tuples/cycle		recorded, not gated: every row of every table, to prove nothing was expired
+maintenance.ttl_reap.registry.tables_scanned_per_cycle	2	tables/cycle	4	GATED: a design property. The reap reads the registry, so it touches only the perspectives that declare a row lifetime; a return toward 24 is the catalog sweep coming back
+maintenance.ttl_reap.registry.tuples_read_per_cycle	1000	tuples/cycle	3000	GATED: the declaring tables are still read in full, since expires_at is unindexed. The ceiling fails a sweep of the non-declaring ones without pretending the residual scan is free
